@@ -37,8 +37,8 @@ class Program
     {
         Console.WriteLine("Usage: slsk-batchdl.exe [OPTIONS]");
         Console.WriteLine("Options:");
-        Console.WriteLine("  --output-folder <path>        Downloaded files will be placed here");
-        Console.WriteLine("  --tracks-csv <path>          The csv file containing track information (in case it's not in the output folder)");
+        Console.WriteLine("  --output <path>              Downloaded files will be placed here");
+        Console.WriteLine("  --csv <path>                 The csv file containing track information (in case it's not in the output folder)");
         Console.WriteLine("  --username <username>        Soulseek username");
         Console.WriteLine("  --password <password>        Soulseek password");
         Console.WriteLine("  --artist-col <column>        Specify if the csv file contains an artist name column");
@@ -46,25 +46,25 @@ class Program
         Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns are not in the csv");
         Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader col in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
-        Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s");
-        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
+        Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
+        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided) (default: false)");
         //Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing (currently too slow / unusable)");
-        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
-        Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir.");
-        Console.WriteLine("  --search-timeout <timeout>   Maximal search time");
-        Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress");
-        Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (unstable)");
-        Console.WriteLine("  --max-retries-per-file <num> Maximum number of users to try downloading from before skipping track");
-        Console.WriteLine("  --pref-format <format>       Preferred file format; files satisfying these will be downloaded first");
-        Console.WriteLine("  --pref-length-tolerance <tol> Preferred length tolerance (if length col provided); files satisfying these will be downloaded first");
-        Console.WriteLine("  --pref-min-bitrate <rate>    Preferred minimum bitrate; files satisfying these will be downloaded first");
-        Console.WriteLine("  --pref-max-bitrate <rate>    Preferred maximum bitrate; files satisfying these will be downloaded first");
-        Console.WriteLine("  --pref-max-sample-rate <rate> Preferred maximum sample rate; files satisfying these will be downloaded first");
-        Console.WriteLine("  --nec-format <format>        Necessary file format; files not satisfying this are not downloaded");
-        Console.WriteLine("  --nec-length-tolerance <tol> Necessary length tolerance (if length col provided); files not satisfying this are not downloaded");
-        Console.WriteLine("  --nec-min-bitrate <rate>     Necessary minimum bitrate; files not satisfying this are not downloaded");
-        Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate; files not satisfying this are not downloaded");
-        Console.WriteLine("  --nec-max-sample-rate <rate> Necessary maximum sample rate; files not satisfying this are not downloaded");
+        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal. (default: false)");
+        Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir. (default: false)");
+        Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
+        Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 60000)");
+        Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
+        Console.WriteLine("  --max-retries-per-file <num> Maximum number of users to try downloading from before skipping track (default: 30)");
+        Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
+        Console.WriteLine("  --pref-length-tolerance <tol> Preferred length tolerance (if length col provided) (default: 3)");
+        Console.WriteLine("  --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)");
+        Console.WriteLine("  --pref-max-bitrate <rate>    Preferred maximum bitrate (default: 2200)");
+        Console.WriteLine("  --pref-max-sample-rate <rate> Preferred maximum sample rate (default: 96000)");
+        Console.WriteLine("  --nec-format <format>        Necessary file format");
+        Console.WriteLine("  --nec-length-tolerance <tol> Necessary length tolerance (default: 3)");
+        Console.WriteLine("  --nec-min-bitrate <rate>     Necessary minimum bitrate");
+        Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate");
+        Console.WriteLine("  --nec-max-sample-rate <rate> Necessary maximum sample rate");
     }
 
     static async Task Main(string[] args)
@@ -72,7 +72,7 @@ class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine();
         lastLine = Console.CursorTop;
-        if (args.Contains("--help"))
+        if (args.Contains("--help") || args.Length <= 1 || !args.Contains("--output"))
         {
             PrintHelp();
             return;
@@ -132,13 +132,13 @@ class Program
         {
             switch (args[i])
             {
-                case "--output-folder":
+                case "--output":
                     outputFolder = args[++i];
                     break;
                 case "--music-dir":
                     musicDir = args[++i];
                     break;
-                case "--tracks-csv":
+                case "--csv":
                     tracksCsv = args[++i];
                     break;
                 case "--username":
