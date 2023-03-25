@@ -48,9 +48,10 @@ class Program
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
         Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
         Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided) (default: false)");
-        //Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing (currently too slow / unusable)");
+        Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
         Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal. (default: false)");
         Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir. (default: false)");
+        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit (default: false)");
         Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
         Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 60000)");
         Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
@@ -106,6 +107,7 @@ class Program
         bool skipExisting = false;
         bool skipIfPrefFailed = false;
         bool createM3u = false;
+        bool m3uOnly = false;
         int searchTimeout = 15000;
         downloadMaxStaleTime = 60000;
         int maxConcurrentProcesses = 2;
@@ -174,6 +176,9 @@ class Program
                 case "--create-m3u":
                     createM3u = true;
                     break;
+                case "--m3u-only":
+                    m3uOnly = true;
+                    break;
                 case "--search-timeout":
                     searchTimeout = int.Parse(args[++i]);
                     break;
@@ -229,7 +234,7 @@ class Program
         if ((trackCol == "" && artistCol == "" && fullTitleCol == "") || (trackCol != "" && artistCol == "") || (fullTitleCol != "" && (artistCol != "" || trackCol != "")))
             throw new Exception("Use one of: full title column, (artist column AND track name)");
         if (lengthCol == "")
-            WriteLastLine($"Warning: No lenght column specified, results may be imprecise.");
+            WriteLastLine($"Warning: No length column specified, results may be imprecise.");
 
         System.IO.Directory.CreateDirectory(outputFolder);
 
@@ -251,45 +256,59 @@ class Program
             try { System.IO.File.Delete(failsFilePath); }
             catch { }
         }
+        createM3u |= m3uOnly;
         m3uFilePath = Path.Combine(outputFolder, "playlist.m3u");
         List<string> m3uLines = Enumerable.Repeat("", tracksStart.Count).ToList();
 
-        if (skipExisting && tracks.First().Length > 0)
+        if (skipExisting || m3uOnly)
         {
             WriteLastLine("Checking if tracks exist in output folder...");
             var outputDirFiles = System.IO.Directory.GetFiles(outputFolder, "*", SearchOption.AllDirectories);
-            var musicFiles = outputDirFiles
-                .Where(filename =>
-                {
-                    try { return IsMusicFile(filename) && TagLib.File.Create(filename) != null; }
-                    catch { return false; }
-                });
+            var musicFiles = outputDirFiles.Where(f => IsMusicFile(f)).ToArray();
             tracks = tracks.Where(x =>
             {
-                bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string path);
+                bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string? path);
                 if (exists)
                     m3uLines[tracksStart.IndexOf(x)] = path;
                 return !exists;
             }).ToList();
+
+            if (musicDir != "")
+            {
+                WriteLastLine($"Checking if tracks exist in library...");
+                var musicDirFiles = System.IO.Directory.GetFiles(musicDir, "*", SearchOption.AllDirectories);
+                musicFiles = musicDirFiles
+                    .Where(filename => !filename.Contains(outputFolder))
+                    .Where(filename => IsMusicFile(filename)).ToArray();
+                tracks = tracks.Where(x =>
+                {
+                    bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string? path);
+                    if (exists && m3uLines[tracksStart.IndexOf(x)] == "")
+                        m3uLines[tracksStart.IndexOf(x)] = path;
+                    return !exists;
+                }).ToList();
+            }
         }
-        if (musicDir != "" && tracks.First().Length > 0)
+
+        if (createM3u)
         {
-            WriteLastLine("Checking if tracks exist in library...");
-            var musicDirFiles = System.IO.Directory.GetFiles(musicDir, "*", SearchOption.AllDirectories).Where(x => IsMusicFile(x));
-            var musicFiles = musicDirFiles
-                .Where(filename =>
-                {
-                    try { return IsMusicFile(filename) && TagLib.File.Create(filename) != null; }
-                    catch { return false; }
-                });
-            tracks = tracks.Where(x =>
+            if (System.IO.File.Exists(m3uFilePath))
+                using (var fileStream = new FileStream(m3uFilePath, FileMode.Truncate, FileAccess.Write, FileShare.ReadWrite)) { fileStream.SetLength(0); }
+            if (tracks.Count < tracksStart.Count)
             {
-                bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string path);
-                if (exists)
-                    m3uLines[tracksStart.IndexOf(x)] = path;
-                return !exists;
-            }).ToList();
-            WriteLastLine("Done");
+                using (var fileStream = new FileStream(m3uFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
+                using (var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+                {
+                    foreach (var line in m3uLines)
+                        streamWriter.WriteLine(line);
+                }
+            }
+
+            if (m3uOnly)
+            {
+                WriteLastLine($"Created m3u file: {tracksStart.Count - tracks.Count} of {tracksStart.Count} found as local files");
+                return;
+            }
         }
 
         int tracksRemaining = tracks.Count;
@@ -304,6 +323,8 @@ class Program
 
         string alreadyExist = skipExisting && tracksStart.Count - tracks.Count > 0 ? $" ({tracksStart.Count - tracks.Count} already exist)" : "";
         WriteLastLine($"Downloading {tracks.Count} tracks{alreadyExist}");
+
+        return;
 
         var downloadTasks = tracks.Select(async (track) =>
         {
@@ -888,34 +909,47 @@ class Program
         var extension = Path.GetExtension(fileName).ToLower();
         return musicExtensions.Contains(extension);
     }
-    static bool FileExistsInCollection(string searchName, int length, FileConditions conditions, IEnumerable<string> collection, out string foundPath)
+    static bool FileExistsInCollection(string searchName, int length, FileConditions conditions, IEnumerable<string> collection, out string? foundPath)
     {
         char[] invalidChars = Path.GetInvalidFileNameChars();
         foreach (char c in invalidChars)
             searchName = searchName.Replace(c.ToString(), "");
         searchName = searchName.Replace(" ", "");
 
-        Debug.WriteLine($"total: {collection.Count()}");
+        var matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
 
-        var matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase));
-
-        Debug.WriteLine($"matches: {matchingFiles.Count()}");
-
-        if (matchingFiles.Any())
+        foreach (var p in matchingFiles)
         {
-            foundPath = matchingFiles.First();
-            return true;
-        }
-        else if (searchName.Count(c => c == '-') == 1)
-        {
-            searchName = searchName.Split('-')[1];
-            matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase));
-            if (matchingFiles.Any())
+            TagLib.File f;
+            try { f = TagLib.File.Create(p); }
+            catch { continue; }
+
+            if (conditions.FileSatisfies(f, length))
             {
-                foundPath = matchingFiles.First();
+                foundPath = p;
                 return true;
             }
         }
+
+        if (searchName.Count(c => c == '-') == 1)
+        {
+            searchName = searchName.Split('-')[1];
+            matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+            foreach (var p in matchingFiles)
+            {
+                TagLib.File f;
+                try { f = TagLib.File.Create(p); }
+                catch { continue; }
+
+                if (conditions.FileSatisfies(f, length))
+                {
+                    foundPath = p;
+                    return true;
+                }
+            }
+        }
+
         foundPath = null;
         return false;
     }
