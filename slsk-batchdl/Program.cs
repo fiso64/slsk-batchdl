@@ -41,21 +41,20 @@ class Program
         Console.WriteLine("  --csv <path>                 The csv file containing track information (in case it's not in the output folder)");
         Console.WriteLine("  --username <username>        Soulseek username");
         Console.WriteLine("  --password <password>        Soulseek password");
+        Console.WriteLine();
         Console.WriteLine("  --artist-col <column>        Specify if the csv file contains an artist name column");
         Console.WriteLine("  --track-col <column>         Specify if if the csv file contains an track name column");
         Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv");
         Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
         Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
+        Console.WriteLine();
         Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
         Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
         Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
         Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir");
         Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
-        Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
-        Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 60000)");
-        Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
-        Console.WriteLine("  --max-retries-per-file <num> Maximum number of users to try downloading from before skipping track (default: 30)");
+        Console.WriteLine();
         Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
         Console.WriteLine("  --pref-length-tolerance <tol> Preferred length tolerance (if length col provided) (default: 3)");
         Console.WriteLine("  --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)");
@@ -66,10 +65,18 @@ class Program
         Console.WriteLine("  --nec-min-bitrate <rate>     Necessary minimum bitrate");
         Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate");
         Console.WriteLine("  --nec-max-sample-rate <rate> Necessary maximum sample rate");
+        Console.WriteLine();
+        Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
+        Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 80000)");
+        Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
+        Console.WriteLine("  --max-retries-per-file <num> Maximum number of users to try downloading from before skipping track (default: 30)");
     }
 
     static async Task Main(string[] args)
     {
+        AppDomain.CurrentDomain.UnhandledException += (sender, e) => {
+            Console.WriteLine($"{e.ExceptionObject}");
+        };
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine();
         lastLine = Console.CursorTop;
@@ -79,20 +86,6 @@ class Program
             return;
         }
 
-        //tracks = new List<Track>()
-        //{
-        //    new Track { ArtistName = "Daft Punk", TrackTitle = "One More Time", Length = 320 },
-        //    new Track { ArtistName = "The Chemical Brothers", TrackTitle = "Block Rockin' Beats", Length = 294 },
-        //    new Track { ArtistName = "Fatboy Slim", TrackTitle = "Praise You", Length = 324 },
-        //    new Track { ArtistName = "The Prodigy", TrackTitle = "Firestarter", Length = 279 },
-        //    new Track { ArtistName = "Underworld", TrackTitle = "Born Slippy", Length = 456 },
-        //    new Track { ArtistName = "Orbital", TrackTitle = "Chime", Length = 194 },
-        //    new Track { ArtistName = "Aphex Twin", TrackTitle = "Windowlicker", Length = 365 },
-        //    new Track { ArtistName = "Moby", TrackTitle = "Porcelain", Length = 238 },
-        //    new Track { ArtistName = "Leftfield", TrackTitle = "Phat Planet", Length = 323 },
-        //    new Track { ArtistName = "The Crystal Method", TrackTitle = "Busy Child", Length = 444 },
-        //    new Track { ArtistName = "Real Musician", TrackTitle = "This track does not EXIST!!! LOL!!!! LMAO!!!! HAHAHAHHAA!!! !", Length = 324 }
-        //};
         outputFolder = "";
         musicDir = "";
         string tracksCsv = "";
@@ -109,7 +102,7 @@ class Program
         bool createM3u = false;
         bool m3uOnly = false;
         int searchTimeout = 15000;
-        downloadMaxStaleTime = 60000;
+        downloadMaxStaleTime = 80000;
         int maxConcurrentProcesses = 2;
         int maxRetriesPerFile = 30;
         var preferredCond = new FileConditions
@@ -226,10 +219,6 @@ class Program
                     break;
             }
         }
-
-        AppDomain.CurrentDomain.UnhandledException += (sender, e) => {
-            Console.WriteLine($"{e.ExceptionObject}");
-        };
 
         if ((trackCol == "" && artistCol == "" && fullTitleCol == "") || (trackCol != "" && artistCol == "") || (fullTitleCol != "" && (artistCol != "" || trackCol != "")))
             throw new Exception("Use one of: full title column, (artist column AND track name)");
@@ -471,6 +460,7 @@ class Program
                 WriteLastLine($"Failed to find: {title}, skipping", ConsoleColor.Red);
                 var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: No file found with matching criteria]";
                 WriteLineOutputFile(failedDownloadInfo);
+                cts.Dispose();
                 return "";
             }
 
@@ -483,30 +473,41 @@ class Program
                     WriteLastLine($"Pref. version of the file exists, but couldn't be downloaded: {title}, skipping", ConsoleColor.Red);
                     var failedDownloadInfo = $"{title} ({track.Length}s) [Preferred version of the file exists, but couldn't be downloaded]";
                     WriteLineOutputFile(failedDownloadInfo);
-                    saveFilePath = "";
-                    break;
+                    cts.Dispose();
+                    return "";
                 }
-                else if (pref)
-                    attemptedDownloadPref = true;
 
                 saveFilePath = GetSavePath(x.file, track);
 
                 try
                 {
+                    downloading = true;
+                    if (pref)
+                        attemptedDownloadPref = true;
                     await DownloadFile(x.response, x.file, saveFilePath);
                     break;
                 }
                 catch
                 {
+                    downloading = false;
                     if (--downloadRetries <= 0)
                     {
-                        saveFilePath = "";
                         WriteLastLine($"Failed to download: {title}, skipping", ConsoleColor.Red);
                         var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: Out of download retries]";
                         WriteLineOutputFile(failedDownloadInfo);
-                        break;
+                        cts.Dispose();
+                        return "";
                     }
                 }
+            }
+
+            if (!downloading)
+            {
+                WriteLastLine($"Failed to download: {title}", ConsoleColor.Red);
+                var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: All downloads failed]";
+                WriteLineOutputFile(failedDownloadInfo);
+                cts.Dispose();
+                return "";
             }
         }
 
@@ -612,10 +613,7 @@ class Program
     static string GetSavePath(Soulseek.File file, Track track)
     {
         string name = track.TrackTitle == "" ? $"{track.UnparsedTitle}" : $"{track.ArtistName} - {track.TrackTitle}";
-        char[] invalidChars = Path.GetInvalidFileNameChars();
-        foreach (char c in invalidChars)
-            name = name.Replace(c, ' ');
-        return Path.Combine(outputFolder, $"{name}{Path.GetExtension(file.Filename)}");
+        return Path.Combine(outputFolder, $"{RemoveInvalidChars(name, " ")}{Path.GetExtension(file.Filename)}");
     }
 
     struct Track
@@ -627,61 +625,6 @@ class Program
         public int Length = -1;
         public Track() { }
     }
-
-    //class ConsoleProcessDisplay
-    //{
-    //    public DownloadInfo? download;
-    //    public SearchInfo? search;
-    //    public string displayText = "";
-    //    public bool finished = false;
-
-    //    private int rotatingBarState = 0;
-    //    private int displayPos = 0;
-
-    //    public ConsoleProcessDisplay(DownloadInfo? download, SearchInfo? search)
-    //    {
-    //        this.download = download;
-    //        this.search = search;
-    //        MoveCursorLastLine();
-    //        displayPos = Console.CursorTop;
-    //    }
-
-    //    public void UpdateText()
-    //    {
-    //        Console.SetCursorPosition(0, displayPos);
-    //        if (finished && (download == null || !download.success))
-    //        {
-    //            Console.WriteLine(displayText);
-    //            return;
-    //        }
-
-    //        char[] bars = { '/', '|', '\\', '—' };
-    //        rotatingBarState++;
-    //        rotatingBarState %= bars.Length;
-    //        string bar = bars[rotatingBarState] + " ";
-
-    //        if (download != null)
-    //        {
-    //            string sampleRate = download.file.SampleRate.HasValue ? $" / {download.file.SampleRate}Hz" : "";
-    //            string bitRate = download.file.BitRate.HasValue ? $" / {download.file.BitRate}kbps" : "";
-    //            string fileSize = $"{download.file.Size / (float)(1024 * 1024):F1}MB";
-    //            displayText = $"{download.response.Username}\\..\\{download.file.Filename.Split('\\').Last()} " +
-    //                $"[{download.file.Length}s{sampleRate}{bitRate} / {fileSize}]";
-    //            float percentage = download.bytesTransferred / (float)download.file.Size;
-    //            //queued = transfer?.State is TransferStates.Remotely or TransferStates.Locally or TransferStates.Queued;
-    //            Console.WriteLine($"{(download.success ? bar : "")}[{percentage:P}] {download?.transfer?.State}: {displayText}");
-    //        }
-    //        else if (search != null)
-    //        {
-    //            Console.WriteLine($"{bar}Searching for: {search.query.SearchText}");
-    //        }
-    //    }
-
-    //    public bool IsDone()
-    //    {
-    //        return download == null && search == null;
-    //    }
-    //}
 
     class DownloadInfo
     {
@@ -903,18 +846,18 @@ class Program
     }
     static bool IsMusicFile(string fileName)
     {
-        var musicExtensions = new string[] { ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma", ".m4a", ".alac", ".ape", ".dsd", ".dff", ".dsf", ".ogg", ".opus" };
+        var musicExtensions = new string[] { ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma", ".m4a", ".alac", ".ape", ".dsd", ".dff", ".dsf", ".opus" };
         var extension = Path.GetExtension(fileName).ToLower();
         return musicExtensions.Contains(extension);
     }
     static bool FileExistsInCollection(string searchName, int length, FileConditions conditions, IEnumerable<string> collection, out string? foundPath)
     {
-        char[] invalidChars = Path.GetInvalidFileNameChars();
-        foreach (char c in invalidChars)
-            searchName = searchName.Replace(c.ToString(), "");
-        searchName = searchName.Replace(" ", "");
+        string[] ignore = new string[] { " ", "_", "-", ".", "(", ")" };
+        searchName = searchName.Replace(ignore, "");
+        searchName = RemoveInvalidChars(searchName, "");
 
-        var matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var matchingFiles = collection
+            .Where(fileName => fileName.Replace(ignore, "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
 
         foreach (var p in matchingFiles)
         {
@@ -932,7 +875,8 @@ class Program
         if (searchName.Count(c => c == '-') == 1)
         {
             searchName = searchName.Split('-')[1];
-            matchingFiles = collection.Where(fileName => fileName.Replace(" ", "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            matchingFiles = collection
+                .Where(fileName => fileName.Replace(ignore, "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
 
             foreach (var p in matchingFiles)
             {
@@ -978,5 +922,22 @@ class Program
         for (int i = 0; i < matches.Count; i++)
             args[i] = matches[i].Value.Trim('"');
         return args;
+    }
+    static string RemoveInvalidChars(string str, string replaceStr)
+    {
+        char[] invalidChars = Path.GetInvalidFileNameChars();
+        foreach (char c in invalidChars)
+            str = str.Replace(c.ToString(), replaceStr);
+        return str;
+    }
+}
+
+public static class ExtensionMethods
+{
+    public static string Replace(this string s, string[] separators, string newVal)
+    {
+        string[] temp;
+        temp = s.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+        return String.Join(newVal, temp);
     }
 }
