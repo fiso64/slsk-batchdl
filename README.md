@@ -39,7 +39,7 @@ Options:
   --nec-max-bitrate <rate>     Necessary maximum bitrate
   --nec-max-sample-rate <rate> Necessary maximum sample rate
 ```
-- Provide either track-col & artist-col (ideally), or full-title-col in case separate artist and title names are unavailable (useful when downloading a csv of a YT playlist). You can also specify --uploader-col (channel names) in that case to use as artist names whenever full-title-col doesn't contain them.
+- Provide either both a track-col and artist-col (ideally), or full-title-col in case separate artist and track names are unavailable. You can also specify --uploader-col (channel names) in that case to use as artist names whenever full-title-col doesn't contain them.
 - Always provide a length-col or get wrong results
 - Files satisfying `pref` conditions will be preferred. Files not satisfying `nec` conditions will not be downloaded.  
 
