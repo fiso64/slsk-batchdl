@@ -1,6 +1,6 @@
 # slsk-batchdl
 
-A barely-functional batch downloader for Soulseek. Accepts csv files.
+A barely-functional batch downloader for Soulseek using Soulseek.NET. Accepts csv files.
 
 ```
 Usage: slsk-batchdl.exe [OPTIONS]
