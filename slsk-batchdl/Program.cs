@@ -43,8 +43,8 @@ class Program
         Console.WriteLine("  --password <password>        Soulseek password");
         Console.WriteLine("  --artist-col <column>        Specify if the csv file contains an artist name column");
         Console.WriteLine("  --track-col <column>         Specify if if the csv file contains an track name column");
-        Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns are not in the csv");
-        Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader col in the csv (fallback in case artist name cannot be extracted from title)");
+        Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv");
+        Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
         Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
         Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
