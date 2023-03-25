@@ -9,19 +9,25 @@ Options:
   --csv <path>                 The csv file containing track information (in case it's not in the output folder)
   --username <username>        Soulseek username
   --password <password>        Soulseek password
+  
   --artist-col <column>        Specify if the csv file contains an artist name column
   --track-col <column>         Specify if if the csv file contains an track name column
-  --full-title-col <column>    Specify only if there are no separate artist and track name columns are not in the csv
-  --uploader-col <column>      Specify when using full title col if there is also an uploader col in the csv (fallback in case artist name cannot be extracted from title)
+  --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv
+  --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)
   --length-col <column>        Specify the name of the track duration column, if exists
   --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)
-  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided) (default: false)
-  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal. (default: false)
-  --create-m3u                 Create an m3u playlist file in the output dir. (default: false)
+  
+  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)
+  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing
+  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.
+  --create-m3u                 Create an m3u playlist file in the output dir
+  --m3u-only                   Only create an m3u playlist file with existing tracks and exit
+  
   --search-timeout <timeout>   Maximal search time (default: 15000)
   --download-max-stale-time <time> Maximal download time with no progress (default: 60000)
   --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)
   --max-retries-per-file <num> Maximum number of users to try downloading from before skipping track (default: 30)
+  
   --pref-format <format>       Preferred file format (default: mp3)
   --pref-length-tolerance <tol> Preferred length tolerance (if length col provided) (default: 3)
   --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)
