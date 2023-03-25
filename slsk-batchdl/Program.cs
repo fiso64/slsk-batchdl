@@ -47,11 +47,11 @@ class Program
         Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader col in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
         Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
-        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided) (default: false)");
+        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
         Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
-        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal. (default: false)");
-        Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir. (default: false)");
-        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit (default: false)");
+        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
+        Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir");
+        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
         Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
         Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 60000)");
         Console.WriteLine("  --max-concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
