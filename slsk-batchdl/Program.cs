@@ -324,8 +324,6 @@ class Program
         string alreadyExist = skipExisting && tracksStart.Count - tracks.Count > 0 ? $" ({tracksStart.Count - tracks.Count} already exist)" : "";
         WriteLastLine($"Downloading {tracks.Count} tracks{alreadyExist}");
 
-        return;
-
         var downloadTasks = tracks.Select(async (track) =>
         {
             await semaphore.WaitAsync();
