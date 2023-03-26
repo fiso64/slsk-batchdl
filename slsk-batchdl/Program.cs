@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Soulseek;
+using Spotify;
 using TagLib.Matroska;
 using static System.Formats.Asn1.AsnWriter;
 using static System.Net.WebRequestMethods;
@@ -37,23 +38,22 @@ class Program
     {
         Console.WriteLine("Usage: slsk-batchdl.exe [OPTIONS]");
         Console.WriteLine("Options:");
-        Console.WriteLine("  --output <path>              Downloaded files will be placed here");
-        Console.WriteLine("  --csv <path>                 The csv file containing track information (in case it's not in the output folder)");
+        Console.WriteLine("  -p --parent <path>           Downloaded music will be placed here");
+        Console.WriteLine("  -n --name <name>             Folder / playlist name. If not specified, the name of the csv file / spotify playlist is used.");
         Console.WriteLine("  --username <username>        Soulseek username");
         Console.WriteLine("  --password <password>        Soulseek password");
         Console.WriteLine();
+        Console.WriteLine("  --spotify <url>              Download a spotify playlist");
+        Console.WriteLine("  --spotify-id <id>            Your spotify client id (in case the default one failed)");
+        Console.WriteLine("  --spotify-secret <sec>       Your spotify client secret (in case the default one failed)");
+        Console.WriteLine();
+        Console.WriteLine("  --csv <path>                 Use a csv file containing track info to download");
         Console.WriteLine("  --artist-col <column>        Specify if the csv file contains an artist name column");
         Console.WriteLine("  --track-col <column>         Specify if if the csv file contains an track name column");
         Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv");
         Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        Specify the name of the track duration column, if exists");
         Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
-        Console.WriteLine();
-        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
-        Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
-        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
-        Console.WriteLine("  --create-m3u                 Create an m3u playlist file in the output dir");
-        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
         Console.WriteLine();
         Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
         Console.WriteLine("  --pref-length-tolerance <tol> Preferred length tolerance (if length col provided) (default: 3)");
@@ -65,6 +65,13 @@ class Program
         Console.WriteLine("  --nec-min-bitrate <rate>     Necessary minimum bitrate");
         Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate");
         Console.WriteLine("  --nec-max-sample-rate <rate> Necessary maximum sample rate");
+        Console.WriteLine();
+        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
+        Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
+        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
+        Console.WriteLine("  --create-m3u                 Create an m3u playlist file");
+        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
+        Console.WriteLine("  --m3u <path>                 Where to place created m3u files (--parent by default)");
         Console.WriteLine();
         Console.WriteLine("  --search-timeout <timeout>   Maximal search time (default: 15000)");
         Console.WriteLine("  --download-max-stale-time <time> Maximal download time with no progress (default: 80000)");
@@ -80,14 +87,19 @@ class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.WriteLine();
         lastLine = Console.CursorTop;
-        if (args.Contains("--help") || args.Length <= 1 || !args.Contains("--output"))
+        if (args.Contains("--help"))
         {
             PrintHelp();
             return;
         }
 
-        outputFolder = "";
+
         musicDir = "";
+        string parentFolder = "";
+        string folderName = "";
+        string spotifyUrl = "";
+        string spotifyId = "1bf4691bbb1a4f41bced9b2c1cfdbbd2";
+        string spotifySecret = "e79992e56f4642169acef68c742303f1";
         string tracksCsv = "";
         string username = "";
         string password = "";
@@ -127,14 +139,28 @@ class Program
         {
             switch (args[i])
             {
-                case "--output":
-                    outputFolder = args[++i];
+                case "-p":
+                case "--parent":
+                    parentFolder = args[++i];
+                    break;
+                case "-n":
+                case "--name":
+                    folderName = args[++i];
                     break;
                 case "--music-dir":
                     musicDir = args[++i];
                     break;
                 case "--csv":
                     tracksCsv = args[++i];
+                    break;
+                case "--spotify":
+                    spotifyUrl = args[++i];
+                    break;
+                case "--spotify-id":
+                    spotifyId = args[++i];
+                    break;
+                case "--spotify-secret":
+                    spotifySecret = args[++i];
                     break;
                 case "--username":
                     username = args[++i];
@@ -171,6 +197,9 @@ class Program
                     break;
                 case "--m3u-only":
                     m3uOnly = true;
+                    break;
+                case "--m3u":
+                    m3uFilePath = args[++i];
                     break;
                 case "--search-timeout":
                     searchTimeout = int.Parse(args[++i]);
@@ -215,59 +244,104 @@ class Program
                     necessaryCond.MaxSampleRate = int.Parse(args[++i]);
                     break;
                 default:
-                    Console.WriteLine($"Unknown argument: {args[i]}");
+                    WriteLastLine($"Unknown argument: {args[i]}", ConsoleColor.Red);
                     break;
             }
         }
 
-        if ((trackCol == "" && artistCol == "" && fullTitleCol == "") || (trackCol != "" && artistCol == "") || (fullTitleCol != "" && (artistCol != "" || trackCol != "")))
-            throw new Exception("Use one of: full title column, (artist column AND track name)");
-        if (lengthCol == "")
-            WriteLastLine($"Warning: No length column specified, results may be imprecise.");
+        if (spotifyUrl != "")
+        {
+            string? playlistName;
+            try
+            {
+                (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, false);
+            }
+            catch (SpotifyAPI.Web.APIException)
+            {
+                WriteLastLine("Spotify playlist not found. It may be set to private. Login? [Y/n]");
+                string answer = Console.ReadLine();
+                if (answer.ToLower() == "y")
+                {
+                    try { (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, true); }
+                    catch (SpotifyAPI.Web.APIException) { throw; }
+                }
+                else
+                    return;
+            }
+            if (folderName == "")
+                folderName = playlistName;
+        }
+        else if (tracksCsv != "")
+        {
+            if (!System.IO.File.Exists(tracksCsv))
+                throw new Exception("csv file not found");
+            if ((trackCol == "" && artistCol == "" && fullTitleCol == "") || (trackCol != "" && artistCol == "") || (fullTitleCol != "" && (artistCol != "" || trackCol != "")))
+                throw new Exception("Use one of: full title column, (artist column AND track name)");
+            if (lengthCol == "")
+                WriteLastLine($"Warning: No length column specified, results may be imprecise.");
+            tracks = ParseCsvIntoTrackInfo(tracksCsv, artistCol, trackCol, lengthCol, fullTitleCol, uploaderCol, timeUnit: timeUnit);
 
-        System.IO.Directory.CreateDirectory(outputFolder);
+            if (folderName == "")
+                folderName = Path.GetFileNameWithoutExtension(tracksCsv);
+        }
+        else
+            throw new Exception("No csv or spotify url provided");
 
-        string[] csvFiles = System.IO.Directory.GetFiles(outputFolder, "*.csv");
-        if ((tracksCsv != "" && !System.IO.File.Exists(tracksCsv)) && csvFiles.Length == 0)
-            throw new Exception("csv file not found");
-        if (tracksCsv == "" && csvFiles.Length > 0)
-            tracksCsv = csvFiles[0];
 
-        tracks = ParseCsvIntoTrackInfo(tracksCsv, artistCol, trackCol, lengthCol, fullTitleCol, uploaderCol, timeUnit: timeUnit);
+        folderName = RemoveInvalidChars(folderName, " ");
+
+        if (parentFolder == "" && !m3uOnly)
+            throw new Exception("No folder provided (-p <path>)");
+        else if (parentFolder != "")
+        {
+            outputFolder = Path.Combine(parentFolder, folderName);
+            System.IO.Directory.CreateDirectory(outputFolder);
+            failsFilePath = Path.Combine(outputFolder, $"{folderName}_failed.txt");
+            if (!m3uOnly && System.IO.File.Exists(failsFilePath))
+            {
+                WriteAllLinesOutputFile("");
+                try { System.IO.File.Delete(failsFilePath); }
+                catch { }
+            }
+        }
+
+        if (m3uFilePath != "")
+        {
+            m3uFilePath = Path.Combine(m3uFilePath, folderName + ".m3u");
+            createM3u = true;
+        }
+        else if (outputFolder != "")
+            m3uFilePath = Path.Combine(outputFolder, folderName + ".m3u");
+
         Track[] tmp = new Track[tracks.Count];
         tracks.CopyTo(tmp);
         var tracksStart = tmp.ToList();
 
-        failsFilePath = Path.Combine(outputFolder, "_failed.txt");
-        if (System.IO.File.Exists(failsFilePath))
-        {
-            WriteAllLinesOutputFile("");
-            try { System.IO.File.Delete(failsFilePath); }
-            catch { }
-        }
         createM3u |= m3uOnly;
-        m3uFilePath = Path.Combine(outputFolder, "playlist.m3u");
         List<string> m3uLines = Enumerable.Repeat("", tracksStart.Count).ToList();
 
-        if (skipExisting || m3uOnly)
+        if (skipExisting || m3uOnly || musicDir != "")
         {
-            WriteLastLine("Checking if tracks exist in output folder...");
-            var outputDirFiles = System.IO.Directory.GetFiles(outputFolder, "*", SearchOption.AllDirectories);
-            var musicFiles = outputDirFiles.Where(f => IsMusicFile(f)).ToArray();
-            tracks = tracks.Where(x =>
+            if (outputFolder != "")
             {
-                bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string? path);
-                if (exists)
-                    m3uLines[tracksStart.IndexOf(x)] = path;
-                return !exists;
-            }).ToList();
+                WriteLastLine("Checking if tracks exist in output folder...");
+                var outputDirFiles = System.IO.Directory.GetFiles(outputFolder, "*", SearchOption.AllDirectories);
+                var musicFiles = outputDirFiles.Where(f => IsMusicFile(f)).ToArray();
+                tracks = tracks.Where(x =>
+                {
+                    bool exists = FileExistsInCollection(x.TrackTitle == "" ? x.UnparsedTitle : x.TrackTitle, x.Length, necessaryCond, musicFiles, out string? path);
+                    if (exists)
+                        m3uLines[tracksStart.IndexOf(x)] = path;
+                    return !exists;
+                }).ToList();
+            }
 
             if (musicDir != "")
             {
                 WriteLastLine($"Checking if tracks exist in library...");
                 var musicDirFiles = System.IO.Directory.GetFiles(musicDir, "*", SearchOption.AllDirectories);
-                musicFiles = musicDirFiles
-                    .Where(filename => !filename.Contains(outputFolder))
+                var musicFiles = musicDirFiles
+                    .Where(filename => outputFolder == "" || !filename.Contains(outputFolder))
                     .Where(filename => IsMusicFile(filename)).ToArray();
                 tracks = tracks.Where(x =>
                 {
@@ -281,6 +355,7 @@ class Program
 
         if (createM3u)
         {
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(m3uFilePath));
             if (System.IO.File.Exists(m3uFilePath))
                 using (var fileStream = new FileStream(m3uFilePath, FileMode.Truncate, FileAccess.Write, FileShare.ReadWrite)) { fileStream.SetLength(0); }
             if (tracks.Count < tracksStart.Count)
@@ -296,6 +371,12 @@ class Program
             if (m3uOnly)
             {
                 WriteLastLine($"Created m3u file: {tracksStart.Count - tracks.Count} of {tracksStart.Count} found as local files");
+                if (tracks.Count > 0)
+                {
+                    WriteLastLine($"Missing:");
+                    foreach (var t in tracks)
+                        WriteLastLine((t.TrackTitle == "" ? t.UnparsedTitle : $"{t.TrackTitle} - {t.ArtistName}") + (t.Length > 0 ? $" ({t.Length}s)" : ""));
+                }
                 return;
             }
         }
@@ -458,7 +539,8 @@ class Program
             if (fileResponses.Count == 0)
             {
                 WriteLastLine($"Failed to find: {title}, skipping", ConsoleColor.Red);
-                var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: No file found with matching criteria]";
+                var length = track.Length > 0 ? $"({track.Length}s) " : "";
+                var failedDownloadInfo = $"{title} {length}[Reason: No file found with matching criteria]";
                 WriteLineOutputFile(failedDownloadInfo);
                 cts.Dispose();
                 return "";
@@ -471,7 +553,8 @@ class Program
                 if (skipIfPrefFailed && attemptedDownloadPref && !pref)
                 {
                     WriteLastLine($"Pref. version of the file exists, but couldn't be downloaded: {title}, skipping", ConsoleColor.Red);
-                    var failedDownloadInfo = $"{title} ({track.Length}s) [Preferred version of the file exists, but couldn't be downloaded]";
+                    var length = track.Length > 0 ? $"({track.Length}s) " : "";
+                    var failedDownloadInfo = $"{title} {length}[Preferred version of the file exists, but couldn't be downloaded]";
                     WriteLineOutputFile(failedDownloadInfo);
                     cts.Dispose();
                     return "";
@@ -493,7 +576,8 @@ class Program
                     if (--downloadRetries <= 0)
                     {
                         WriteLastLine($"Failed to download: {title}, skipping", ConsoleColor.Red);
-                        var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: Out of download retries]";
+                        var length = track.Length > 0 ? $"({track.Length}s) " : "";
+                        var failedDownloadInfo = $"{title} {length}[Reason: Out of download retries]";
                         WriteLineOutputFile(failedDownloadInfo);
                         cts.Dispose();
                         return "";
@@ -504,7 +588,8 @@ class Program
             if (!downloading)
             {
                 WriteLastLine($"Failed to download: {title}", ConsoleColor.Red);
-                var failedDownloadInfo = $"{title} ({track.Length}s) [Reason: All downloads failed]";
+                var length = track.Length > 0 ? $"({track.Length}s) " : "";
+                var failedDownloadInfo = $"{title} {length}[Reason: All downloads failed]";
                 WriteLineOutputFile(failedDownloadInfo);
                 cts.Dispose();
                 return "";
@@ -781,6 +866,29 @@ class Program
         {
             return MaxSampleRate < 0 || file.Properties.AudioSampleRate <= MaxSampleRate;
         }
+    }
+
+    static async Task<(string?, List<Track>)> GetSpotifyPlaylist(string url, string id, string secret, bool login)
+    {
+        var spotify = new Client(id, secret);
+        if (login)
+        {
+            await spotify.AuthorizeLogin();
+            await spotify.IsClientReady();
+        }
+        else
+            await spotify.Authorize();
+
+        (string? name, var res) = await spotify.GetPlaylist(url);
+        
+        List<Track> trackList = res.Select(t =>
+            new Track
+            {
+                TrackTitle = t.Item2,
+                ArtistName = t.Item1,
+                Length = t.Item3
+            }).ToList();
+        return (name, trackList);
     }
 
     static List<Track> ParseCsvIntoTrackInfo(string path, string artistCol = "", string trackCol = "", string lengthCol = "", string titleCol = "", string uploaderCol = "", string timeUnit = "s")
