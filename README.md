@@ -11,8 +11,8 @@ Options:
   --password <password>        Soulseek password
 
   --spotify <url>              Download a spotify playlist
-  --spotify-id <id>            Your spotify client id (in case the default one failed)
-  --spotify-secret <sec>       Your spotify client secret (in case the default one failed)
+  --spotify-id <id>            Your spotify client id
+  --spotify-secret <sec>       Your spotify client secret
 
   --csv <path>                 Use a csv file containing track info to download
   --artist-col <column>        Specify if the csv file contains an artist name column
@@ -54,8 +54,9 @@ slsk-batchdl.exe -p "C:\Users\fiso64\Music\Playlists" --csv "C:\Users\fiso64\Dow
 ```
 Download spotify playlist and create m3u:
 ```
-slsk-batchdl.exe --spotify <url> -p "C:\Users\fiso64\Music\Playlists" --m3u "C:\Users\fiso64\Documents\MusicBee\Playlists" --music-dir "C:\Users\fiso64\Music" --username "fakename" --password "fakepass" --skip-existing --pref-format "flac"
+slsk-batchdl.exe --spotify <url> -p "C:\Users\fiso64\Music\Playlists" --m3u "C:\Users\fiso64\Documents\MusicBee\Playlists" --music-dir "C:\Users\fiso64\Music" --username "fakename" --password "fakepass" --skip-existing --pref-format "flac" --spotify-id "12894214" --spotify-secret "2094234823"
 ```
+As of right now you must provide an id and secret when using spotify (which you can get here https://developer.spotify.com/dashboard/applications, under "Create an app"). The throwaway I made was immediately disabled after I pushed to github.
 
 ## Notes:
 - The console output tends to break after a while
