@@ -11,15 +11,16 @@ Options:
   --password <password>        Soulseek password
 
   --spotify <url>              Download a spotify playlist
-  --spotify-id <id>            Your spotify client id (in case the default one failed)
-  --spotify-secret <sec>       Your spotify client secret (in case the default one failed)
+  --spotify-id <id>            Your spotify client id (use if the default fails or if playlist private)
+  --spotify-secret <sec>       Your spotify client secret (use if the default fails or if playlist private)
 
   --csv <path>                 Use a csv file containing track info to download
   --artist-col <column>        Specify if the csv file contains an artist name column
   --track-col <column>         Specify if if the csv file contains an track name column
+  --album-col <unit>           CSV album column name. Optional, may improve searching
   --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv
   --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)
-  --length-col <column>        Specify the name of the track duration column, if exists
+  --length-col <column>        CSV duration column name. Recommended, will improve accuracy
   --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)
 
   --pref-format <format>       Preferred file format (default: mp3)
@@ -39,6 +40,8 @@ Options:
   --create-m3u                 Create an m3u playlist file
   --m3u-only                   Only create an m3u playlist file with existing tracks and exit
   --m3u <path>                 Where to place created m3u files (--parent by default)
+  --yt-dlp                     Use yt-dlp to download tracks that weren't found on Soulseek. yt-dlp must be availble from the command line.
+  --yt-dlp-f <format>          yt-dlp audio format (default: "bestaudio/best")
 
   --search-timeout <timeout>   Maximal search time (default: 15000)
   --download-max-stale-time <time> Maximal download time with no progress (default: 80000)
@@ -52,10 +55,11 @@ Download tracks from a csv file and create m3u:
 ```
 slsk-batchdl.exe -p "C:\Users\fiso64\Music\Playlists" --csv "C:\Users\fiso64\Downloads\test.csv" --username "fakename" --password "fakepass" --artist-col "Artist Name(s)" --track-col "Track Name" --length-col "Duration (ms)" --time-unit "ms" --skip-existing --create-m3u --pref-format "flac"
 ```
-Download spotify playlist and create m3u:
+Download spotify playlist with fallback to yt-dlp and create a m3u:
 ```
-slsk-batchdl.exe --spotify <url> -p "C:\Users\fiso64\Music\Playlists" --m3u "C:\Users\fiso64\Documents\MusicBee\Playlists" --music-dir "C:\Users\fiso64\Music" --username "fakename" --password "fakepass" --skip-existing --pref-format "flac"
+slsk-batchdl.exe --spotify <url> -p "C:\Users\fiso64\Music\Playlists" --m3u "C:\Users\fiso64\Documents\MusicBee\Playlists" --music-dir "C:\Users\fiso64\Music" --username "fakename" --password "fakepass" --skip-existing --pref-format "flac" --yt-dlp
 ```
+You might need to provide an id and secret when using spotify (which you can get here https://developer.spotify.com/dashboard/applications, under "Create an app").
 
 ## Notes:
 - The console output tends to break after a while

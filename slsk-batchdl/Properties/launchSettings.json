@@ -2,6 +2,14 @@
   "profiles": {
     "slsk-batchdl": {
       "commandName": "Project"
+    },
+    "Profile 1": {
+      "commandName": "Project",
+      "commandLineArgs": "-p \"C:\\Users\\fiso64\\Music\\Playlists\" --csv \"C:\\Users\\fiso64\\Downloads\\test.csv\" --username \"fakename99123\" --password \"fakepass123123\" --artist-col \"Artist Name(s)\" --album-col \"Album Name\" --track-col \"Track Name\" --length-col \"Duration (ms)\" --time-unit \"ms\" --pref-format \"flac\" --yt-dlp"
+    },
+    "Profile 2": {
+      "commandName": "Project",
+      "commandLineArgs": "--spotify \"\" -p \"C:\\Users\\fiso64\\Music\\Playlists\" --username \"fakename99123\" --password \"fakepass123123\" --pref-format \"flac\" --yt-dlp"
     }
   }
 }

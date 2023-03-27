@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using SpotifyAPI.Web;
 using SpotifyAPI.Web.Auth;
 using Swan;
+using TagLib.IFD.Tags;
 
 namespace Spotify
 {
@@ -13,6 +14,7 @@ namespace Spotify
         private readonly string _clientId;
         private readonly string _clientSecret;
         private SpotifyClient _client;
+        private bool loggedIn = false;
 
         public Client(string clientId, string clientSecret)
         {
@@ -41,9 +43,10 @@ namespace Spotify
 
             var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code)
             {
-                Scope = new List<string> { Scopes.UserReadEmail }
+                Scope = new List<string> { Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate }
             };
             BrowserUtil.Open(request.ToUri());
+            loggedIn = true;
         }
 
         private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
@@ -72,20 +75,42 @@ namespace Spotify
             return true;
         }
 
-        public async Task<(string?, List<(string, string, int)> )> GetPlaylist(string url)
+        public async Task<List<Track>> GetLikes()
         {
-            var playlistId = GetPlaylistIdFromUrl(url);
-            var p = await _client.Playlists.Get(playlistId);
-            var tracks = await _client.Playlists.GetItems(playlistId);
-            List<(string, string, int)> res = new List<(string, string, int)>();
+            if (!loggedIn)
+                throw new Exception("Can't get liked music, not logged in");
+
+            var tracks = await _client.Library.GetTracks();
+            List<Track> res = new List<Track>();
 
             foreach (var track in tracks.Items)
             {
                 string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
                 string artist = artists[0];
                 string name = (string)track.Track.ReadProperty("name");
+                string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                 int duration = (int)track.Track.ReadProperty("durationMs");
-                res.Add((artist, name, duration / 1000));
+                res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });
+            }
+
+            return res;
+        }
+
+        public async Task<(string?, List<Track>)> GetPlaylist(string url)
+        {
+            var playlistId = GetPlaylistIdFromUrl(url);
+            var p = await _client.Playlists.Get(playlistId);
+            var tracks = await _client.Playlists.GetItems(playlistId);
+            List<Track> res = new List<Track>();
+
+            foreach (var track in tracks.Items)
+            {
+                string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
+                string artist = artists[0];
+                string name = (string)track.Track.ReadProperty("name");
+                string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
+                int duration = (int)track.Track.ReadProperty("durationMs");
+                res.Add(new Track { Album=album, ArtistName=artist, TrackTitle=name, Length=duration / 1000 });
             }
 
             return (p.Name, res);
