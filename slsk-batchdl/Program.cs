@@ -13,7 +13,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Soulseek;
-using Spotify;
 using TagLib.Matroska;
 using static System.Formats.Asn1.AsnWriter;
 using static System.Net.WebRequestMethods;
@@ -45,14 +44,16 @@ class Program
         Console.WriteLine("  --username <username>        Soulseek username");
         Console.WriteLine("  --password <password>        Soulseek password");
         Console.WriteLine();
-        Console.WriteLine("  --spotify <url>              Download a spotify playlist");
+        Console.WriteLine("  --spotify <url>              Download a spotify playlist. \"likes\" to download all your liked music.");
         Console.WriteLine("  --spotify-id <id>            Your spotify client id (use if the default fails or if playlist private)");
         Console.WriteLine("  --spotify-secret <sec>       Your spotify client secret (use if the default fails or if playlist private)");
+        Console.WriteLine();
+        Console.WriteLine("  --youtube <url>              Download YouTube playlist");
         Console.WriteLine();
         Console.WriteLine("  --csv <path>                 Use a csv file containing track info to download");
         Console.WriteLine("  --artist-col <column>        Specify if the csv file contains an artist name column");
         Console.WriteLine("  --track-col <column>         Specify if if the csv file contains an track name column");
-        Console.WriteLine("  --album-col <unit>           CSV album column name. Optional, may improve searching");
+        Console.WriteLine("  --album-col <unit>           CSV album column name. Optional, may improve searching, slower");
         Console.WriteLine("  --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv");
         Console.WriteLine("  --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)");
         Console.WriteLine("  --length-col <column>        CSV duration column name. Recommended, will improve accuracy");
@@ -69,8 +70,10 @@ class Program
         Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate");
         Console.WriteLine("  --nec-max-sample-rate <rate> Necessary maximum sample rate");
         Console.WriteLine();
+        Console.WriteLine("  --album-search               Also search for \"[Album name] [track name]\". Occasionally helps to find more");
         Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
         Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
+        Console.WriteLine("  --reverse                    Download tracks in reverse order");
         Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
         Console.WriteLine("  --create-m3u                 Create an m3u playlist file");
         Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
@@ -101,6 +104,7 @@ class Program
         musicDir = "";
         string parentFolder = "";
         string folderName = "";
+        string ytUrl = "";
         string spotifyUrl = "";
         string spotifyId = "";
         string spotifySecret = "";
@@ -117,9 +121,11 @@ class Program
         string lengthCol = "";
         string timeUnit = "s";
         ytdlpFormat = "bestaudio/best";
+        bool reverse = false;
         bool useYtdlp = false;
         bool skipExisting = false;
         bool skipIfPrefFailed = false;
+        bool albumSearch = false;
         bool createM3u = false;
         bool m3uOnly = false;
         int searchTimeout = 15000;
@@ -161,6 +167,9 @@ class Program
                 case "--csv":
                     tracksCsv = args[++i];
                     break;
+                case "--youtube":
+                    ytUrl = args[++i];
+                    break;
                 case "--spotify":
                     spotifyUrl = args[++i];
                     break;
@@ -185,6 +194,9 @@ class Program
                 case "--album-col":
                     albumCol = args[++i];
                     break;
+                case "--album-search":
+                    albumSearch = true;
+                    break;
                 case "--full-title-col":
                     fullTitleCol = args[++i];
                     break;
@@ -205,6 +217,9 @@ class Program
                     break;
                 case "--skip-existing":
                     skipExisting = true;
+                    break;
+                case "--reverse":
+                    reverse = true;
                     break;
                 case "--skip-if-pref-failed":
                     skipIfPrefFailed = true;
@@ -279,6 +294,15 @@ class Program
             if (spotifyUrl == "likes")
             {
                 playlistName = "Spotify Likes";
+                if (usedDefaultId)
+                {
+                    WriteLastLine("");
+                    Console.Write("Spotify client ID:");
+                    spotifyId = Console.ReadLine();
+                    WriteLastLine("");
+                    Console.Write("Spotify client secret:");
+                    spotifySecret = Console.ReadLine();
+                }
                 tracks = await GetSpotifyLikes(spotifyId, spotifySecret);
             }
             else
@@ -310,7 +334,15 @@ class Program
                 }
             }
             if (folderName == "")
-                folderName = playlistName;
+                folderName = RemoveInvalidChars(playlistName, " ");
+        }
+        else if (ytUrl != "")
+        {
+            WriteLastLine("Loading youtube playlist...");
+            (string name, tracks) = await YouTube.GetTracks(ytUrl);
+
+            if (folderName == "")
+                folderName = RemoveInvalidChars(name, " ");
         }
         else if (tracksCsv != "")
         {
@@ -327,7 +359,7 @@ class Program
                 folderName = Path.GetFileNameWithoutExtension(tracksCsv);
         }
         else
-            throw new Exception("No csv or spotify url provided");
+            throw new Exception("No csv, spotify or youtube url provided");
 
 
         folderName = RemoveInvalidChars(folderName, " ");
@@ -423,7 +455,10 @@ class Program
             }
         }
 
+        albumSearch |= albumCol != "";
         int tracksRemaining = tracks.Count;
+        if (reverse)
+            tracks.Reverse();
 
         //foreach (var track in tracks)
         //    WriteLastLine($"{track.Title}, {track.ArtistName} - {track.TackTitle} ({track.Length}s)");
@@ -441,7 +476,7 @@ class Program
             await semaphore.WaitAsync();
             try
             {
-                var savedFilePath = await SearchAndDownload(track, preferredCond, necessaryCond, skipIfPrefFailed, maxRetriesPerFile, searchTimeout, albumSearchTimeout: 5000, useYtdlp);
+                var savedFilePath = await SearchAndDownload(track, preferredCond, necessaryCond, skipIfPrefFailed, maxRetriesPerFile, searchTimeout, albumSearch, useYtdlp);
                 if (savedFilePath != "")
                 {
                     tracksRemaining--;
@@ -471,7 +506,7 @@ class Program
             WriteLastLine($"Failed to download:\n{System.IO.File.ReadAllText(failsFilePath)}");
     }
 
-    static async Task<string> SearchAndDownload(Track track, FileConditions preferredCond, FileConditions necessaryCond, bool skipIfPrefFailed, int maxRetriesPerFile, int searchTimeout, int albumSearchTimeout, bool useYtdlp)
+    static async Task<string> SearchAndDownload(Track track, FileConditions preferredCond, FileConditions necessaryCond, bool skipIfPrefFailed, int maxRetriesPerFile, int searchTimeout, bool albumSearch, bool useYtdlp)
     {
         var title = track.TrackTitle == "" ? $"{track.UnparsedTitle}" : $"{track.ArtistName} - {track.TrackTitle}";
         if (track.TrackTitle == "")
@@ -544,13 +579,13 @@ class Program
         }
         catch (OperationCanceledException ex) { }
        
-        if (responses.Count == 0 && track.Album != "" && track.TrackTitle != "")
+        if (albumSearch && responses.Count == 0 && track.Album != "" && track.TrackTitle != "")
         {
             Debug.WriteLine("\"Artist - Track\" not found, trying \"Album Track\"");
             string searchText = $"{track.Album} {track.TrackTitle}";
             searchOptions = new SearchOptions
             (
-                minimumPeerUploadSpeed: 1, searchTimeout: albumSearchTimeout,
+                minimumPeerUploadSpeed: 1, searchTimeout: 5000,
                 responseFilter: (response) =>
                 {
                     return response.UploadSpeed > 0;
@@ -647,7 +682,7 @@ class Program
             try {
                 downloading = true;
                 string fname = GetSaveName(track);
-                YtdlpDownload(track, necessaryCond, Path.Combine(outputFolder, fname));
+                YtdlpSearchAndDownload(track, necessaryCond, Path.Combine(outputFolder, fname));
                 string[] files = System.IO.Directory.GetFiles(outputFolder, fname + ".*");
                 foreach (string file in files)
                 {
@@ -799,14 +834,20 @@ class Program
         return RemoveInvalidChars(name, " ");
     }
 
-    static void YtdlpDownload(Track track, FileConditions conditions, string savePath)
+    static void YtdlpSearchAndDownload(Track track, FileConditions conditions, string savePathNoExt)
     {
+        if (track.YtID != "")
+        {
+            YtdlpDownload(track.YtID, savePathNoExt);
+            return;
+        }
+
         Process process = new Process();
         ProcessStartInfo startInfo = new ProcessStartInfo();
 
         startInfo.FileName = "yt-dlp";
         string search = track.TrackTitle == "" ? track.UnparsedTitle : $"{track.ArtistName} - {track.TrackTitle}";
-        startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%H:%M:%S)s - %(id)s - %(title)s\"";
+        startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%H:%M:%S)s ¦¦ %(id)s ¦¦ %(title)s\"";
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -822,7 +863,7 @@ class Program
 
         List<(int, string, string)> results = new List<(int, string, string)>();
         string output;
-        Regex regex = new Regex(@"^(\d+):(\d+):(\d+) - ([\w-]+) - (.+)$"); // I LOVE CHATGPT !!!!
+        Regex regex = new Regex(@"^(\d+):(\d+):(\d+) ¦¦ ([\w-]+) ¦¦ (.+)$"); // I LOVE CHATGPT !!!!
         while ((output = process.StandardOutput.ReadLine()) != null)
         {
             Match match = regex.Match(output);
@@ -842,30 +883,36 @@ class Program
 
         foreach (var res in results)
         {
+            bool possibleMatch = false;
             if (conditions.LengthToleranceSatisfies(track, res.Item1))
             {
                 WriteLastLine($"[yt-dlp] Downloading: {res.Item3} ({res.Item1}s)");
-                process = new Process();
-                startInfo = new ProcessStartInfo();
-
-                startInfo.FileName = "yt-dlp";
-                startInfo.Arguments = $"{res.Item2} -f {ytdlpFormat} -ci -o \"{savePath}.%(ext)s\" --extract-audio";
-                WriteLastLine($"{startInfo.FileName} {startInfo.Arguments}");
-
-                startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
-                startInfo.UseShellExecute = false;
-                process.StartInfo = startInfo;
-                process.OutputDataReceived += (sender, e) => { WriteLastLine(e.Data); };
-                process.ErrorDataReceived += (sender, e) => { WriteLastLine(e.Data); };
-
-                process.Start();
-                process.WaitForExit();
+                YtdlpDownload(res.Item2, savePathNoExt);
                 return;
             }
         }
 
         throw new Exception($"[yt-dlp] No matching files found");
+    }
+
+    static void YtdlpDownload(string id, string savePathNoExt)
+    {
+        Process process = new Process();
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+
+        startInfo.FileName = "yt-dlp";
+        startInfo.Arguments = $"{id} -f {ytdlpFormat} -ci -o \"{savePathNoExt}.%(ext)s\" --extract-audio";
+        WriteLastLine($"{startInfo.FileName} {startInfo.Arguments}");
+
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.UseShellExecute = false;
+        process.StartInfo = startInfo;
+        process.OutputDataReceived += (sender, e) => { WriteLastLine(e.Data); };
+        process.ErrorDataReceived += (sender, e) => { WriteLastLine(e.Data); };
+
+        process.Start();
+        process.WaitForExit();
     }
 
     class DownloadInfo
@@ -1038,7 +1085,7 @@ class Program
 
     static async Task<(string?, List<Track>)> GetSpotifyPlaylist(string url, string id, string secret, bool login)
     {
-        var spotify = new Client(id, secret);
+        var spotify = new Spotify(id, secret);
         if (login)
         {
             await spotify.AuthorizeLogin();
@@ -1053,7 +1100,7 @@ class Program
 
     static async Task<List<Track>> GetSpotifyLikes(string id, string secret)
     {
-        var spotify = new Client(id, secret);
+        var spotify = new Spotify(id, secret);
         await spotify.AuthorizeLogin();
         await spotify.IsClientReady();
 
@@ -1209,6 +1256,16 @@ class Program
             str = str.Replace(c.ToString(), replaceStr);
         return str;
     }
+
+    static void PrintTracks(List<Track> tracks)
+    {
+        foreach (var track in tracks)
+        {
+            string title = track.TrackTitle == "" ? track.UnparsedTitle : $"{track.ArtistName} - {track.TrackTitle}";
+            WriteLastLine($"{title} ({track.Length})");
+        }
+        WriteLastLine(tracks.Count);
+    }
 }
 
 public struct Track
@@ -1218,6 +1275,7 @@ public struct Track
     public string TrackTitle = "";
     public string ArtistName = "";
     public string Album = "";
+    public string YtID = "";
     public int Length = -1;
     public Track() { }
 }

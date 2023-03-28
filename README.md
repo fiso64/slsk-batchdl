@@ -1,6 +1,6 @@
 # slsk-batchdl
 
-A batch downloader for Soulseek using Soulseek.NET. Accepts csv files and spotify playlist urls.
+A batch downloader for Soulseek using Soulseek.NET. Accepts CSV files, Spotify & YouTube urls.
 
 ```
 Usage: slsk-batchdl.exe [OPTIONS]
@@ -10,14 +10,16 @@ Options:
   --username <username>        Soulseek username
   --password <password>        Soulseek password
 
-  --spotify <url>              Download a spotify playlist
+  --spotify <url>              Download a spotify playlist. "likes" to download all your liked music.
   --spotify-id <id>            Your spotify client id (use if the default fails or if playlist private)
   --spotify-secret <sec>       Your spotify client secret (use if the default fails or if playlist private)
+
+  --youtube <url>              Download YouTube playlist
 
   --csv <path>                 Use a csv file containing track info to download
   --artist-col <column>        Specify if the csv file contains an artist name column
   --track-col <column>         Specify if if the csv file contains an track name column
-  --album-col <unit>           CSV album column name. Optional, may improve searching
+  --album-col <unit>           CSV album column name. Optional, may improve searching, slower
   --full-title-col <column>    Specify only if there are no separate artist and track name columns in the csv
   --uploader-col <column>      Specify when using full title col if there is also an uploader column in the csv (fallback in case artist name cannot be extracted from title)
   --length-col <column>        CSV duration column name. Recommended, will improve accuracy
@@ -34,8 +36,10 @@ Options:
   --nec-max-bitrate <rate>     Necessary maximum bitrate
   --nec-max-sample-rate <rate> Necessary maximum sample rate
 
+  --album-search               Also search for "[Album name] [track name]". Occasionally helps to find more
   --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)
   --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing
+  --reverse                    Download tracks in reverse order
   --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.
   --create-m3u                 Create an m3u playlist file
   --m3u-only                   Only create an m3u playlist file with existing tracks and exit
@@ -62,5 +66,6 @@ slsk-batchdl.exe --spotify <url> -p "C:\Users\fiso64\Music\Playlists" --m3u "C:\
 You might need to provide an id and secret when using spotify (which you can get here https://developer.spotify.com/dashboard/applications, under "Create an app").
 
 ## Notes:
+- YouTube playlist downloading is bad: There is no way of reliably parsing video information into artist & track name. Also, many videos may be unavailable (or unavailable specifically through the api, for reasons that are beyond me), in which case they won't be downloaded.
 - The console output tends to break after a while
 - Much of the code was written by ChatGPT
