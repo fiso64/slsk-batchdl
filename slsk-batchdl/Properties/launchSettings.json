@@ -3,17 +3,17 @@
     "slsk-batchdl": {
       "commandName": "Project"
     },
-    "Profile 1": {
+    "YouTube": {
+      "commandName": "Project",
+      "commandLineArgs": "--youtube \"https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX\" -p \"C:\\Users\\fiso64\\Music\\Playlists\" --username \"testing_sorry_12312\" --password \"fakepass123123\" --yt-dlp --skip-existing"
+    },
+    "Spotify": {
+      "commandName": "Project",
+      "commandLineArgs": "--spotify \"likes\" -p \"C:\\Users\\fiso64\\Music\\Playlists\" --username \"fakenameee2233\" --password \"addafffl;\" --skip-existing"
+    },
+    "CSV": {
       "commandName": "Project",
       "commandLineArgs": "-p \"C:\\Users\\fiso64\\Music\\Playlists\" --csv \"C:\\Users\\fiso64\\Downloads\\test.csv\" --username \"fakename99123\" --password \"fakepass123123\" --artist-col \"Artist Name(s)\" --album-col \"Album Name\" --track-col \"Track Name\" --length-col \"Duration (ms)\" --time-unit \"ms\" --pref-format \"flac\" --yt-dlp"
-    },
-    "Profile 3": {
-      "commandName": "Project",
-      "commandLineArgs": "--spotify \"likes\" -p \"C:\\Users\\fiso64\\Music\\Playlists\" --username \"fakename99123\" --password \"fakepass123123\" --yt-dlp"
-    },
-    "Profile 4": {
-      "commandName": "Project",
-      "commandLineArgs": "--youtube \"https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX\" -p \"C:\\Users\\fiso64\\Music\\Playlists\" --username \"fakename99123\" --password \"fakepass123123\" --yt-dlp"
     }
   }
 }

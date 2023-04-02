@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using SpotifyAPI.Web;
+﻿using SpotifyAPI.Web;
 using SpotifyAPI.Web.Auth;
 using Swan;
-using TagLib.IFD.Tags;
 
 public class Spotify
 {
@@ -33,7 +29,7 @@ public class Spotify
     public async Task AuthorizeLogin()
     {
         Swan.Logging.Logger.NoLogging();
-        _server = new EmbedIOAuthServer(new Uri("http://localhost:5000/callback"), 5000);
+        _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
         await _server.Start();
 
         _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
@@ -43,8 +39,8 @@ public class Spotify
         {
             Scope = new List<string> { Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate }
         };
+
         BrowserUtil.Open(request.ToUri());
-        loggedIn = true;
     }
 
     private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
@@ -54,16 +50,18 @@ public class Spotify
         var config = SpotifyClientConfig.CreateDefault();
         var tokenResponse = await new OAuthClient(config).RequestToken(
             new AuthorizationCodeTokenRequest(
-                _clientId, _clientSecret, response.Code, new Uri("http://localhost:5000/callback")
+                _clientId, _clientSecret, response.Code, new Uri("http://localhost:48721/callback")
             )
         );
+
         _client = new SpotifyClient(tokenResponse.AccessToken);
+        loggedIn = true;
     }
 
     private async Task OnErrorReceived(object sender, string error, string state)
     {
-        Console.WriteLine($"Aborting authorization, error received: {error}");
         await _server.Stop();
+        throw new Exception($"Aborting authorization, error received: {error}");
     }
 
     public async Task<bool> IsClientReady()
@@ -73,7 +71,7 @@ public class Spotify
         return true;
     }
 
-    public async Task<List<Track>> GetLikes()
+    public async Task<List<Track>> GetLikes(StringEdit stringEdit)
     {
         if (!loggedIn)
             throw new Exception("Can't get liked music, not logged in");
@@ -90,7 +88,7 @@ public class Spotify
             {
                 string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
                 string artist = artists[0];
-                string name = (string)track.Track.ReadProperty("name");
+                string name = stringEdit.Edit((string)track.Track.ReadProperty("name"));
                 string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                 int duration = (int)track.Track.ReadProperty("durationMs");
                 res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });
@@ -106,7 +104,7 @@ public class Spotify
     }
 
 
-    public async Task<(string?, List<Track>)> GetPlaylist(string url)
+    public async Task<(string?, List<Track>)> GetPlaylist(string url, StringEdit stringEdit)
     {
         var playlistId = GetPlaylistIdFromUrl(url);
         var p = await _client.Playlists.Get(playlistId);
@@ -123,7 +121,7 @@ public class Spotify
             {
                 string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
                 string artist = artists[0];
-                string name = (string)track.Track.ReadProperty("name");
+                string name = stringEdit.Edit((string)track.Track.ReadProperty("name"));
                 string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                 int duration = (int)track.Track.ReadProperty("durationMs");
                 res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });

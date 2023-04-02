@@ -8,11 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Goblinfactory.Konsole" Version="6.2.2" />
+    <PackageReference Include="Google.Apis.YouTube.v3" Version="1.60.0.2945" />
     <PackageReference Include="Soulseek" Version="6.1.1" />
     <PackageReference Include="SpotifyAPI.Web" Version="7.0.0" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.0.0" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="YoutubeExplode" Version="6.2.11" />
+    <PackageReference Include="YoutubeExplode" Version="6.2.12" />
   </ItemGroup>
 
 </Project>
