@@ -440,7 +440,7 @@ class Program
         Track[] tmp = new Track[tracks.Count];
         tracks.CopyTo(tmp);
         var tracksStart = tmp.ToList();
-
+        
         createM3u |= m3uOnly;
         List<string> m3uLines = Enumerable.Repeat("", tracksStart.Count).ToList();
 
@@ -1232,7 +1232,10 @@ class Program
 
         public bool NameSatisfies(string fname, string tname)
         {
+            if (string.IsNullOrEmpty(tname))
+                return false;
             tname = tname.Split('-', StringSplitOptions.RemoveEmptyEntries).Last();
+
             foreach (var word in dangerWords)
             {
                 if (fname.Contains(word, StringComparison.OrdinalIgnoreCase) ^ tname.Contains(word, StringComparison.OrdinalIgnoreCase))
@@ -1410,6 +1413,9 @@ class Program
     {
         string[] ignore = new string[] { " ", "_", "-", ".", "(", ")" };
         string searchName = track.TrackTitle.Replace(ignore, "");
+        if (string.IsNullOrEmpty(searchName))
+            searchName = track.TrackTitle;
+
         searchName = RemoveInvalidChars(searchName, "");
 
         var matchingFiles = collection
