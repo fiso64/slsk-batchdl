@@ -1,7 +1,8 @@
 {
   "profiles": {
     "slsk-batchdl": {
-      "commandName": "Project"
+      "commandName": "Project",
+      "commandLineArgs": "-s \"nanoray mimicloq\""
     },
     "YouTube": {
       "commandName": "Project",

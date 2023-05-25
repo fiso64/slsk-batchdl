@@ -51,6 +51,9 @@ class Program
         Console.WriteLine("  --yt-id-col <column>         Youtube video ID column (only needed if length-col or yt-desc-col don't exist). Use with --yt-parse.");
         Console.WriteLine("  --yt-parse                   Enable if you have a csv file of YouTube video titles and channel names; attempt to parse.");
         Console.WriteLine();
+        Console.WriteLine("  -s --single <str>            Search & download a specific track");
+        Console.WriteLine("  -a --album <str>             Search & download a specific album. DOES NOTHING");
+        Console.WriteLine();
         Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
         Console.WriteLine("  --pref-length-tol <tol>      Preferred length tolerance (if length col provided) (default: 3)");
         Console.WriteLine("  --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)");
@@ -105,9 +108,10 @@ class Program
         }
 
         musicDir = "";
-        string parentFolder = "";
+        string parentFolder = System.IO.Directory.GetCurrentDirectory();
         string folderName = "";
         string ytUrl = "";
+        string singleName = "";
         string spotifyUrl = "";
         string spotifyId = "";
         string spotifySecret = "";
@@ -179,6 +183,10 @@ class Program
                     break;
                 case "--youtube":
                     ytUrl = args[++i];
+                    break;
+                case "-s":
+                case "--single":
+                    singleName = args[++i];
                     break;
                 case "--no-channel-search":
                     searchWithoutArtist = true;
@@ -412,22 +420,24 @@ class Program
             if (folderName == "")
                 folderName = Path.GetFileNameWithoutExtension(tracksCsv);
         }
+        else if (singleName != "")
+        {
+            tracks.Add(new Track { TrackTitle=singleName, onlyTrackTitle=true });
+        }
         else
-            throw new Exception("No csv, spotify or youtube url provided");
+            throw new Exception("Nothing url, csv or name provided to download.");
 
-        Console.WriteLine("First 10 tracks:");
-        PrintTracks(tracks, 10);
+        if (tracks.Count > 1)
+        {
+            Console.WriteLine("First 10 tracks:");
+            PrintTracks(tracks, 10);
+        }
 
         folderName = RemoveInvalidChars(folderName, " ");
 
-        if (parentFolder == "" && !m3uOnly)
-            throw new Exception("No folder provided (-p <path>)");
-        else if (parentFolder != "")
-        {
-            outputFolder = Path.Combine(parentFolder, folderName);
-            System.IO.Directory.CreateDirectory(outputFolder);
-            failsFilePath = Path.Combine(outputFolder, $"{folderName}_failed.txt");
-        }
+        outputFolder = Path.Combine(parentFolder, folderName);
+        System.IO.Directory.CreateDirectory(outputFolder);
+        failsFilePath = Path.Combine(outputFolder, $"{folderName}_failed.txt");
 
         if (m3uFilePath != "")
         {
@@ -560,7 +570,9 @@ class Program
         string alreadyExist = skipExisting && tracksStart.Count - tracksCount2 > 0 ? $"{tracksStart.Count - tracksCount2} already exist" : "";
         notFoundLastTime = alreadyExist != "" && notFoundLastTime != "" ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist + notFoundLastTime != "" ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        Console.WriteLine($"Downloading {tracks.Count} tracks{skippedTracks}\n");
+        
+        if (tracks.Count > 1 || skippedTracks != "")
+            Console.WriteLine($"Downloading {tracks.Count} tracks{skippedTracks}\n");
 
         int successCount = 0;
         int failCount = 0;
@@ -631,7 +643,8 @@ class Program
 
         await Task.WhenAll(downloadTasks);
 
-        Console.WriteLine($"\n\nDownloaded {tracks.Count - tracksRemaining} of {tracks.Count} tracks");
+        if (tracks.Count > 1)
+            Console.WriteLine($"\n\nDownloaded {tracks.Count - tracksRemaining} of {tracks.Count} tracks");
         if (System.IO.File.Exists(failsFilePath))
             Console.WriteLine($"Failed:\n{System.IO.File.ReadAllText(failsFilePath)}");
     }
@@ -639,7 +652,7 @@ class Program
     static async Task<string> SearchAndDownload(Track track, FileConditions preferredCond, FileConditions necessaryCond, 
         bool skipIfPrefFailed, int maxRetriesPerFile, int searchTimeout, bool albumSearch, bool useYtdlp, bool noChannelSearch, bool noDiacrSearch)
     {
-        var title = $"{track.ArtistName} - {track.TrackTitle}";
+        var title = !track.onlyTrackTitle ? $"{track.ArtistName} - {track.TrackTitle}" : $"{track.TrackTitle}";
         var saveFilePath = "";
 
         var searchQuery = SearchQuery.FromText($"{title}");
@@ -1010,7 +1023,10 @@ class Program
 
     static string GetSavePath(Soulseek.File file, Track track)
     {
-        return $"{GetSavePathNoExt(track)}{Path.GetExtension(file.Filename)}";
+        if (!track.onlyTrackTitle)
+            return $"{GetSavePathNoExt(track)}{Path.GetExtension(file.Filename)}";
+        else
+            return $"{Path.Combine(outputFolder, RemoveInvalidChars(Path.GetFileName(file.Filename), " "))}";
     }
 
     static string GetSavePathNoExt(Track track)
@@ -1586,13 +1602,17 @@ public struct Track
     public string YtID = "";
     public int Length = -1;
     public bool ArtistMaybeWrong = false;
+    public bool onlyTrackTitle = false;
 
     public Track() { }
 
     public override string ToString()
     {
         var length = Length > 0 ? $" ({Length}s)" : "";
-        return $"{ArtistName} - {TrackTitle}{length}";
+        if (!onlyTrackTitle)
+            return $"{ArtistName} - {TrackTitle}{length}";
+        else
+            return $"{TrackTitle}{length}";
     }
 }
 
