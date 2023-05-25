@@ -162,7 +162,7 @@ class Program
             MaxSampleRate = -1,
         };
 
-        string confPath = Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "slsk-batchdl.conf");
+        string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
         if (System.IO.File.Exists(confPath))
         {
             string confArgs = System.IO.File.ReadAllText(confPath);

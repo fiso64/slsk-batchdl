@@ -28,6 +28,9 @@ Options:
   --yt-id-col <column>         Youtube video ID column (only needed if length-col or yt-desc-col don't exist). Use with --yt-parse.
   --yt-parse                   Enable if you have a csv file of YouTube video titles and channel names; attempt to parse.
 
+  -s --single <str>            Search & download a specific track
+  -a --album <str>             Does nothing
+
   --pref-format <format>       Preferred file format (default: mp3)
   --pref-length-tol <tol>      Preferred length tolerance (if length col provided) (default: 3)
   --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)
@@ -93,3 +96,4 @@ Supports .conf files: Create a file named `slsk-batchdl.conf` in the same direct
 - YouTube playlist downloading is unreliable since there are no track name / artist tags
 - The CSV file must be saved with `,` as field delimiter and `"` as string delimiter, encoded with UTF8
 - 40% of the code was written by ChatGPT
+- Sometimes it starts vomiting text in the terminal (I don't know why), use --slow-output if that's an issue.
