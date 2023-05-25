@@ -4,7 +4,6 @@ using Soulseek;
 using Konsole;
 using System.Net.NetworkInformation;
 
-
 class Program
 {
     static SoulseekClient client = new SoulseekClient();
@@ -52,7 +51,7 @@ class Program
         Console.WriteLine("  --yt-parse                   Enable if you have a csv file of YouTube video titles and channel names; attempt to parse.");
         Console.WriteLine();
         Console.WriteLine("  -s --single <str>            Search & download a specific track");
-        Console.WriteLine("  -a --album <str>             Search & download a specific album. DOES NOTHING");
+        Console.WriteLine("  -a --album <str>             Does nothing");
         Console.WriteLine();
         Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
         Console.WriteLine("  --pref-length-tol <tol>      Preferred length tolerance (if length col provided) (default: 3)");
@@ -162,6 +161,16 @@ class Program
             MaxBitrate = -1,
             MaxSampleRate = -1,
         };
+
+        string confPath = Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "slsk-batchdl.conf");
+        if (System.IO.File.Exists(confPath))
+        {
+            string confArgs = System.IO.File.ReadAllText(confPath);
+            List<string> finalArgs = new List<string>();
+            finalArgs.AddRange(ParseCommand(confArgs));
+            finalArgs.AddRange(args);
+            args = finalArgs.ToArray();
+        }
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -560,6 +569,8 @@ class Program
         if (reverse)
             tracks.Reverse();
 
+        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            throw new Exception("No soulseek username or password");
         await client.ConnectAsync(username, password);
 
         object lockObj = new object();

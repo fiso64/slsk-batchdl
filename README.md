@@ -82,6 +82,13 @@ Download youtube playlist:
 ```
 To include unavailable videos, you will need to provide an api key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.  
   
+Supports .conf files: Create a file named `slsk-batchdl.conf` in the same directory as the exe and write your arguments there, e.g:
+```
+--username "fakename"
+--password "fakepass"
+--pref-format "flac"
+```  
+  
 ## Notes:
 - YouTube playlist downloading is unreliable since there are no track name / artist tags
 - The CSV file must be saved with `,` as field delimiter and `"` as string delimiter, encoded with UTF8
