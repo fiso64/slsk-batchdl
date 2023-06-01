@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 using Soulseek;
 using Konsole;
 using System.Net.NetworkInformation;
+using System.Xml.Linq;
+using TagLib.Matroska;
 
 class Program
 {
@@ -25,68 +27,93 @@ class Program
 
     static void PrintHelp()
     {
-        Console.WriteLine("Usage: slsk-batchdl.exe [OPTIONS]");
-        Console.WriteLine("Options:");
-        Console.WriteLine("  -p --parent <path>           Downloaded music will be placed here");
-        Console.WriteLine("  -n --name <name>             Folder / playlist name. If not specified, the name of the csv file / spotify / yt playlist is used.");
-        Console.WriteLine("  --username <username>        Soulseek username");
-        Console.WriteLine("  --password <password>        Soulseek password");
-        Console.WriteLine();
-        Console.WriteLine("  --spotify <url>              Download a spotify playlist. \"likes\" to download all your liked music.");
-        Console.WriteLine("  --spotify-id <id>            Your spotify client id (use if the default fails or if playlist private)");
-        Console.WriteLine("  --spotify-secret <sec>       Your spotify client secret (use if the default fails or if playlist private)");
-        Console.WriteLine();
-        Console.WriteLine("  --youtube <url>              Get tracks from a YouTube playlist");
-        Console.WriteLine("  --youtube-key <key>          Provide an API key if you also want to search for unavailable uploads");
-        Console.WriteLine("  --no-channel-search          Enable to also perform a search without channel name if nothing was found (only for yt).");
-        Console.WriteLine();
-        Console.WriteLine("  --csv <path>                 Use a csv file containing track info to download");
-        Console.WriteLine("  --artist-col <column>        Artist or uploader name column");
-        Console.WriteLine("  --title-col <column>         Title or track name column");
-        Console.WriteLine("  --album-col <column>         CSV album column name. Optional, may improve searching, slower");
-        Console.WriteLine("  --length-col <column>        CSV duration column name. Recommended, will improve accuracy");
-        Console.WriteLine("  --time-unit <unit>           Time unit for the track duration column, ms or s (default: s)");
-        Console.WriteLine("  --yt-desc-col <column>       Description column name. Use with --yt-parse.");
-        Console.WriteLine("  --yt-id-col <column>         Youtube video ID column (only needed if length-col or yt-desc-col don't exist). Use with --yt-parse.");
-        Console.WriteLine("  --yt-parse                   Enable if you have a csv file of YouTube video titles and channel names; attempt to parse.");
-        Console.WriteLine();
-        Console.WriteLine("  -s --single <str>            Search & download a specific track");
-        Console.WriteLine("  -a --album <str>             Does nothing");
-        Console.WriteLine();
-        Console.WriteLine("  --pref-format <format>       Preferred file format (default: mp3)");
-        Console.WriteLine("  --pref-length-tol <tol>      Preferred length tolerance (if length col provided) (default: 3)");
-        Console.WriteLine("  --pref-min-bitrate <rate>    Preferred minimum bitrate (default: 200)");
-        Console.WriteLine("  --pref-max-bitrate <rate>    Preferred maximum bitrate (default: 2200)");
-        Console.WriteLine("  --pref-max-samplerate <rate> Preferred maximum sample rate (default: 96000)");
-        Console.WriteLine("  --pref-danger-words <list>   Comma separated list of words that must appear in either both search result and track title, or in neither of the two. Case-insensitive. (default: \"mix, edit,dj ,cover\")");
-        Console.WriteLine("  --nec-format <format>        Necessary file format");
-        Console.WriteLine("  --nec-length-tolerance <tol> Necessary length tolerance (default: 3)");
-        Console.WriteLine("  --nec-min-bitrate <rate>     Necessary minimum bitrate");
-        Console.WriteLine("  --nec-max-bitrate <rate>     Necessary maximum bitrate");
-        Console.WriteLine("  --nec-max-samplerate <rate>  Necessary maximum sample rate");
-        Console.WriteLine("  --nec-danger-words <list>    Comma separated list of words that must appear in either both search result and track title, or in neither of the two. Case-insensitive. (default: \"mix, edit,dj ,cover\")");
-        Console.WriteLine();
-        Console.WriteLine("  --album-search               Also search for \"[Album name] [track name]\". Occasionally helps to find more, slower.");
-        Console.WriteLine("  --no-diacr-search            Also perform a search without diacritics");
-        Console.WriteLine("  --skip-existing              Skip if a track matching the conditions is found in the output folder or your music library (if provided)");
-        Console.WriteLine("  --skip-notfound              Skip searching for tracks that weren't found in Soulseek last time");
-        Console.WriteLine("  --remove-ft                  Remove \"ft.\" or \"feat.\" and everything after from the track names.");
-        Console.WriteLine("  --remove-strings <strings>   Comma separated list of strings to remove when searching for tracks. Case insesitive.");
-        Console.WriteLine("  --music-dir <path>           Specify to also skip downloading tracks which are in your library, use with --skip-existing");
-        Console.WriteLine("  --reverse                    Download tracks in reverse order");
-        Console.WriteLine("  --skip-if-pref-failed        Skip if preferred versions of a track exist but failed to download. If no pref. versions were found, download as normal.");
-        Console.WriteLine("  --create-m3u                 Create an m3u playlist file");
-        Console.WriteLine("  --m3u-only                   Only create an m3u playlist file with existing tracks and exit");
-        Console.WriteLine("  --m3u <path>                 Where to place created m3u files (--parent by default)");
-        Console.WriteLine("  --yt-dlp                     Use yt-dlp to download tracks that weren't found on Soulseek. yt-dlp must be available from the command line.");
-        Console.WriteLine("  --yt-dlp-f <format>          yt-dlp audio format (default: \"bestaudio/best\")");
-        Console.WriteLine();
-        Console.WriteLine("  --search-timeout <ms>        Maximal search time (default: 10000)");
-        Console.WriteLine("  --max-stale-time <ms>        Maximal download time with no progress (default: 60000)");
-        Console.WriteLine("  --concurrent-processes <num> Max concurrent searches / downloads (default: 2)");
-        Console.WriteLine("  --max-retries <num>          Maximum number of users to try downloading from before skipping track (default: 30)");
-        Console.WriteLine();
-        Console.WriteLine("  --slow-output                Enable if the progress bars aren't properly updated (bug)");
+        Console.WriteLine("Usage: slsk-batchdl.exe [OPTIONS]" +
+                            "\nOptions:" +
+                            "\n  -p --parent <path>           	Downloaded music will be placed here" +
+                            "\n  -n --name <name>             	Folder / playlist name. If not specified, the name of the" +
+                            "\n				csv file / spotify / yt playlist is used." +
+                            "\n  --username <username>        	Soulseek username" +
+                            "\n  --password <password>        	Soulseek password" +
+                            "\n" +
+                            "\n  --spotify <url>              	Download a spotify playlist. \"likes\" to download all your" +
+                            "\n				liked music." +
+                            "\n  --spotify-id <id>            	Your spotify client id (use if the default fails or if" +
+                            "\n				playlist private)" +
+                            "\n  --spotify-secret <sec>       	Your spotify client secret (use if the default fails or if" +
+                            "\n				playlist private)" +
+                            "\n" +
+                            "\n  --youtube <url>              	Get tracks from a YouTube playlist" +
+                            "\n  --youtube-key <key>          	Provide an API key if you also want to search for" +
+                            "\n				unavailable uploads" +
+                            "\n  --no-channel-search          	Enable to also perform a search without channel name if" +
+                            "\n				nothing was found (only for yt)" +
+                            "\n" +
+                            "\n  --csv <path>                 	Use a csv file containing track info to download" +
+                            "\n  --artist-col <column>        	Artist or uploader name column" +
+                            "\n  --title-col <column>         	Title or track name column" +
+                            "\n  --album-col <column>         	CSV album column name. Optional, may improve searching," +
+                            "\n				slower" +
+                            "\n  --length-col <column>        	CSV duration column name. Recommended, will improve" +
+                            "\n				accuracy" +
+                            "\n  --time-unit <unit>           	Time unit in track duration column, ms or s (default: s)" +
+                            "\n  --yt-desc-col <column>       	Description column name. Use with --yt-parse." +
+                            "\n  --yt-id-col <column>         	Youtube video ID column (only needed if length-col or" +
+                            "\n				yt-desc-col don't exist). Use with --yt-parse." +
+                            "\n  --yt-parse                   	Enable if you have a csv file of YouTube video titles and" +
+                            "\n				channel names; attempt to parse." +
+                            "\n" +
+                            "\n  -s --single <str>            	Search & download a specific track" +
+                            "\n  -a --album <str>             	Does nothing" +
+                            "\n" +
+                            "\n  --pref-format <format>       	Preferred file format (default: mp3)" +
+                            "\n  --pref-length-tol <tol>      	Preferred length tolerance (default: 3)" +
+                            "\n  --pref-min-bitrate <rate>    	Preferred minimum bitrate (default: 200)" +
+                            "\n  --pref-max-bitrate <rate>    	Preferred maximum bitrate (default: 2200)" +
+                            "\n  --pref-max-samplerate <rate> 	Preferred maximum sample rate (default: 96000)" +
+                            "\n  --pref-danger-words <list>   	Comma separated list of words that must appear in either" +
+                            "\n				both search result and track title, or in neither of the" +
+                            "\n				two, case-insensitive (default:\"mix, edit, dj, cover\")" +
+                            "\n  --nec-format <format>        	Necessary file format" +
+                            "\n  --nec-length-tolerance <tol> 	Necessary length tolerance (default: 3)" +
+                            "\n  --nec-min-bitrate <rate>     	Necessary minimum bitrate" +
+                            "\n  --nec-max-bitrate <rate>     	Necessary maximum bitrate" +
+                            "\n  --nec-max-samplerate <rate>  	Necessary maximum sample rate" +
+                            "\n  --nec-danger-words <list>    	Comma separated list of words that must appear in either" +
+                            "\n				both search result and track title, or in neither of the" +
+                            "\n				two. Case-insensitive. (default:\"mix, edit, dj, cover\")" +
+                            "\n" +
+                            "\n  --album-search		Also search for \"[Album name][track name]\". Occasionally" +
+                            "\n				helps to find more, slower." +
+                            "\n  --no-diacr-search           	Also perform a search without diacritics" +
+                            "\n  --skip-existing              	Skip if a track matching the conditions is found in the" +
+                            "\n				output folder or your music library (if provided)" +
+                            "\n  --skip-notfound              	Skip searching for tracks that weren't found in Soulseek" +
+                            "\n				last time" +
+                            "\n  --remove-ft                  	Remove \"ft.\" or \"feat.\" and everything after from the track" +
+                            "\n				names." +
+                            "\n  --remove-strings <strings>   	Comma separated list of strings to remove when searching" +
+                            "\n				for tracks. Case insesitive." +
+                            "\n  --music-dir <path>           	Specify to also skip downloading tracks which are in your" +
+                            "\n				library, use with --skip-existing" +
+                            "\n  --reverse                    	Download tracks in reverse order" +
+                            "\n  --skip-if-pref-failed        	Skip if preferred versions of a track exist but failed to" +
+                            "\n				download. If no pref. versions were found, download as " +
+                            "\n				usual." +
+                            "\n  --create-m3u                 	Create an m3u playlist file" +
+                            "\n  --m3u-only                   	Only create an m3u playlist file with existing tracks and" +
+                            "\n				exit" +
+                            "\n  --m3u <path>                 	Where to place created m3u files (--parent by default)" +
+                            "\n  --yt-dlp                     	Use yt-dlp to download tracks that weren't found on" +
+                            "\n				Soulseek. yt-dlp must be available from the command line." +
+                            "\n  --yt-dlp-f <format>          	yt-dlp audio format (default: \"bestaudio / best\")" +
+                            "\n" +
+                            "\n  --search-timeout <ms>        	Maximal search time (default: 8000)" +
+                            "\n  --max-stale-time <ms>        	Maximal download time with no progress (default: 60000)" +
+                            "\n  --concurrent-processes <num> 	Max concurrent searches / downloads (default: 2)" +
+                            "\n  --max-retries <num>          	Maximum number of users to try downloading from before" +
+                            "\n				skipping track (default: 30)" +
+                            "\n" +
+                            "\n  --slow-output                	Enable if the progress bars aren't properly updated (bug)");
     }
 
     static async Task Main(string[] args)
@@ -100,7 +127,7 @@ class Program
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        if (args.Contains("--help") || args.Length == 0)
+        if (args.Contains("--help") || args.Contains("-h") || args.Length == 0)
         {
             PrintHelp();
             return;
@@ -141,7 +168,7 @@ class Program
         bool albumSearch = false;
         bool createM3u = false;
         bool m3uOnly = false;
-        int searchTimeout = 10000;
+        int searchTimeout = 8000;
         downloadMaxStaleTime = 60000;
         int maxConcurrentProcesses = 2;
         int maxRetriesPerTrack = 30;
