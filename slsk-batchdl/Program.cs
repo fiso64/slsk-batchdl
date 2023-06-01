@@ -3,14 +3,13 @@ using System.Text.RegularExpressions;
 using Soulseek;
 using Konsole;
 using System.Net.NetworkInformation;
-using System.Xml.Linq;
-using TagLib.Matroska;
+using System.Collections.Concurrent;
 
 class Program
 {
     static SoulseekClient client = new SoulseekClient();
-    static Dictionary<Track, SearchInfo> searches = new Dictionary<Track, SearchInfo>();
-    static Dictionary<string, DownloadWrapper> downloads = new Dictionary<string, DownloadWrapper>();
+    static ConcurrentDictionary<Track, SearchInfo> searches = new ConcurrentDictionary<Track, SearchInfo>();
+    static ConcurrentDictionary<string, DownloadWrapper> downloads = new ConcurrentDictionary<string, DownloadWrapper>();
     static List<Track> tracks = new List<Track>();
     static string outputFolder = "";
     static string failsFilePath = "";
@@ -18,11 +17,17 @@ class Program
     static string musicDir = "";
     static string ytdlpFormat = "";
     static int downloadMaxStaleTime = 0;
-    static int updateDelay = 300;
-    static int slowUpdateDelay = 5000;
+    static int updateDelay = 200;
+    static int slowUpdateDelay = 2000;
     static bool slowConsoleOutput = false;
 
-    private static object consoleLock = new object();
+    static string logLocation = "";
+    static StreamWriter? logFile = null;
+    static TextWriterTraceListener? textListener = null;
+
+    static object failsFileLock = new object();
+    static object consoleLock = new object();
+    static bool writeFails = true;
 
     static DateTime lastUpdate;
     static bool skipUpdate = false;
@@ -65,7 +70,6 @@ class Program
                             "\n				channel names; attempt to parse." +
                             "\n" +
                             "\n  -s --single <str>            	Search & download a specific track" +
-                            "\n  -a --album <str>             	Does nothing" +
                             "\n" +
                             "\n  --pref-format <format>       	Preferred file format (default: mp3)" +
                             "\n  --pref-length-tol <tol>      	Preferred length tolerance (default: 3)" +
@@ -120,10 +124,23 @@ class Program
 
     static async Task Main(string[] args)
     {
+        if (!string.IsNullOrEmpty(logLocation))
+        {
+            logFile = new StreamWriter(System.IO.Path.Combine(logLocation, "log.txt"), append: false);
+            textListener = new TextWriterTraceListener(logFile);
+            Trace.Listeners.Add(textListener);
+        }
+
         AppDomain.CurrentDomain.UnhandledException += (sender, e) => {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"{e.ExceptionObject}");
             Console.ResetColor();
+            Trace.TraceError($"{e.ExceptionObject}");
+            if (logFile != null)
+            {
+                logFile.Flush();
+                logFile.Close();
+            }
         };
 
         Console.ResetColor();
@@ -461,6 +478,7 @@ class Program
         else if (singleName != "")
         {
             tracks.Add(new Track { TrackTitle=singleName, onlyTrackTitle=true });
+            writeFails = false;
         }
         else
             throw new Exception("Nothing url, csv or name provided to download.");
@@ -673,9 +691,12 @@ class Program
             {
                 skipUpdate = true;
                 await Task.Delay(50);
-                Console.ForegroundColor = ConsoleColor.Blue;
-                Console.WriteLine($"\nSuccesses: {successCount}, fails: {failCount}, tracks left: {tracksRemaining}\n");
-                Console.ResetColor();
+                lock (consoleLock)
+                {
+                    Console.ForegroundColor = ConsoleColor.Blue;
+                    Console.WriteLine($"\nSuccesses: {successCount}, fails: {failCount}, tracks left: {tracksRemaining}\n");
+                    Console.ResetColor();
+                }
                 await Task.Delay(50);
                 skipUpdate = false;
             }
@@ -684,7 +705,7 @@ class Program
         await Task.WhenAll(downloadTasks);
 
         if (tracks.Count > 1)
-            Console.WriteLine($"\n\nDownloaded {tracks.Count - tracksRemaining} of {tracks.Count} tracks");
+            Console.WriteLine($"\n\nDownloaded {tracks.Count - failCount} of {tracks.Count} tracks");
         if (System.IO.File.Exists(failsFilePath))
             Console.WriteLine($"Failed:\n{System.IO.File.ReadAllText(failsFilePath)}");
     }
@@ -694,6 +715,8 @@ class Program
     {
         var title = !track.onlyTrackTitle ? $"{track.ArtistName} - {track.TrackTitle}" : $"{track.TrackTitle}";
         var saveFilePath = "";
+        Trace.TraceInformation($"Searching for {title}");
+        logFile?.Flush();
 
         var searchQuery = SearchQuery.FromText($"{title}");
         var searchOptions = new SearchOptions
@@ -711,56 +734,61 @@ class Program
 
         bool attemptedDownloadPref = false;
         Task? downloadTask = null;
+        object downloadingLocker = new object();
         bool downloading = false;
-        var responses = new List<SearchResponse>();
+        var responses = new ConcurrentDictionary<string, SearchResponse>();
         var cts = new CancellationTokenSource();
 
         Console.ResetColor();
         ProgressBar progress = new ProgressBar(PbStyle.DoubleLine, 100);
-        lock (consoleLock) {
-            progress.Refresh(0, $"Searching: {title}");
-        }
+        SafeRefresh(progress, 0, $"Searching: {title}");
 
         Action<SearchResponse> responseHandler = (r) =>
         {
             if (r.Files.Count > 0)
             {
-                responses.Add(r);
-                if (!downloading)
+                responses.TryAdd(r.Files.First().Filename, r);
+                lock (downloadingLocker)
                 {
-                    var f = r.Files.First();
-                    if (preferredCond.FileSatisfies(f, track) && r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1)
+                    if (!downloading)
                     {
-                        downloading = true;
-                        saveFilePath = GetSavePath(f, track);
-                        attemptedDownloadPref = true;
-                        try
+                        var f = r.Files.First();
+                        if (preferredCond.FileSatisfies(f, track) && r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1)
                         {
-                            downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
-                        }
-                        catch
-                        {
-                            saveFilePath = "";
-                            downloading = false;
+                            downloading = true;
+                            saveFilePath = GetSavePath(f, track);
+                            attemptedDownloadPref = true;
+                            try
+                            {
+                                Trace.TraceInformation($"Early download: {f.Filename}");
+                                logFile?.Flush();
+                                downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
+                            }
+                            catch
+                            {
+                                saveFilePath = "";
+                                downloading = false;
+                            }
                         }
                     }
                 }
             }
         };
 
-        lock (searches) {
+        lock (searches)
             searches[track] = new SearchInfo(searchQuery, responses, searchOptions, progress);
-        }
 
         try
         {
             await WaitForInternetConnection();
             var searchTasks = new List<Task>();
+            Trace.TraceInformation("Search pos 1");
             searchTasks.Add(client.SearchAsync(searchQuery, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
 
             if (noDiacrSearch && title.RemoveDiacriticsIfExist(out string newSearch))
             {
                 var searchQuery2 = SearchQuery.FromText(newSearch);
+                Trace.TraceInformation("Search pos 2");
                 searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
             }
 
@@ -789,15 +817,14 @@ class Program
             var searchQuery1 = SearchQuery.FromText($"{track.Album} {track.TrackTitle}");
             var searchQuery2 = SearchQuery.FromText($"{track.ArtistName} {track.Album}");
 
-            lock (consoleLock)
-            {
-                progress.Refresh(0, $"Searching (album name): {title}");
-            }
+            SafeRefresh(progress, 0, $"Searching (album name): {title}");
+
             try
             {
                 await WaitForInternetConnection();
                 var searchTasks = new List<Task>();
 
+                Trace.TraceInformation("Search pos 3, 4");
                 searchTasks.Add(client.SearchAsync(searchQuery1, options: searchOptions1, cancellationToken: cts.Token, responseHandler: responseHandler));
                 searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions2, cancellationToken: cts.Token, responseHandler: responseHandler));
 
@@ -805,11 +832,13 @@ class Program
                 {
                     if (searchQuery1.SearchText.RemoveDiacriticsIfExist(out string newSearch1))
                     {
+                        Trace.TraceInformation("Search pos 5");
                         var searchQuery1_2 = SearchQuery.FromText(newSearch1);
                         searchTasks.Add(client.SearchAsync(searchQuery1_2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
                     }
                     if (searchQuery2.SearchText.RemoveDiacriticsIfExist(out string newSearch2))
                     {
+                        Trace.TraceInformation("Search pos 6");
                         var searchQuery2_2 = SearchQuery.FromText(newSearch2);
                         searchTasks.Add(client.SearchAsync(searchQuery2_2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
                     }
@@ -828,20 +857,21 @@ class Program
                 minimumPeerUploadSpeed: 1, searchTimeout: 8000,
                 fileFilter: (file) => { return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track); }
             );
-            lock (consoleLock)
-            {
-                progress.Refresh(0, $"Searching (no channel name): {searchText}");
-            }
+
+            SafeRefresh(progress, 0, $"Searching (no channel name): {searchText}");
+
             try
             {
                 await WaitForInternetConnection();
                 var searchTasks = new List<Task>();
 
+                Trace.TraceInformation("Search pos 7");
                 searchTasks.Add(client.SearchAsync(SearchQuery.FromText(searchText), options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
 
                 if (noDiacrSearch && title.RemoveDiacriticsIfExist(out string newSearch))
                 {
                     var searchQuery2 = SearchQuery.FromText(newSearch);
+                    Trace.TraceInformation("Search pos 8");
                     searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
                 }
 
@@ -850,8 +880,10 @@ class Program
             catch (OperationCanceledException ex) { }
         }
 
-        lock (searches) { searches.Remove(track); }
+        searches.TryRemove(track, out _);
         cts.Dispose();
+
+        lock (downloadingLocker) { }
 
         bool notFound = false;
         if (!downloading && responses.Count == 0 && !useYtdlp)
@@ -874,7 +906,7 @@ class Program
         if (!downloading && responses.Count > 0)
         {
             var fileResponses = responses
-                .SelectMany(response => response.Files.Select(file => (response, file)))
+                .SelectMany(kvp => kvp.Value.Files.Select(file => (response: kvp.Value, file)))
                 .OrderByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => preferredCond.BitrateSatisfies(x.file))
                 .ThenByDescending(x => preferredCond.FileSatisfies(x.file, track))
@@ -888,10 +920,7 @@ class Program
                 bool pref = preferredCond.FileSatisfies(x.file, track);
                 if (skipIfPrefFailed && attemptedDownloadPref && !pref)
                 {
-                    lock (consoleLock)
-                    {
-                        progress.Refresh(0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping");
-                    }
+                    SafeRefresh(progress, 0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping");
                     var failedDownloadInfo = $"{track} [Pref. version of the file exists, but couldn't be downloaded]";
                     WriteLineOutputFile(failedDownloadInfo);
                     return "";
@@ -912,10 +941,7 @@ class Program
                     downloading = false;
                     if (--maxRetriesPerFile <= 0)
                     {
-                        lock (consoleLock)
-                        {
-                            progress.Refresh(0, $"Out of download retries: {track}, skipping");
-                        }
+                        SafeRefresh(progress, 0, $"Out of download retries: {track}, skipping");
                         var failedDownloadInfo = $"{track} [Out of download retries]";
                         WriteLineOutputFile(failedDownloadInfo);
                         return "";
@@ -928,10 +954,7 @@ class Program
         {
             notFound = false;
             try {
-                lock (consoleLock)
-                {
-                    progress.Refresh(0, $"Not found, searching with yt-dlp: {track}");
-                }
+                SafeRefresh(progress, 0, $"Not found, searching with yt-dlp: {track}");
                 downloading = true;
                 string fname = GetSaveName(track);
                 await YtdlpSearchAndDownload(track, necessaryCond, Path.Combine(outputFolder, fname), progress);
@@ -940,10 +963,7 @@ class Program
                 {
                     if (IsMusicFile(file))
                     {
-                        lock (consoleLock)
-                        {
-                            progress.Refresh(100, $"yt-dlp: Completed download for {track}");
-                        }
+                        SafeRefresh(progress, 100, $"yt-dlp: Completed download for {track}");
                         saveFilePath = file;
                         break;
                     }
@@ -956,10 +976,7 @@ class Program
                 downloading = false;
                 if (e.Message.Contains("No matching files found"))
                     notFound = true;
-                lock (consoleLock)
-                {
-                    progress.Refresh(0, $"{e.Message}");
-                }
+                SafeRefresh(progress, 0, $"{e.Message}");
             }
         }
 
@@ -967,19 +984,13 @@ class Program
         {
             if (notFound)
             {
-                lock (consoleLock)
-                {
-                    progress.Refresh(0, $"Not found: {track}, skipping");
-                }
+                SafeRefresh(progress, 0, $"Not found: {track}, skipping");   
                 var failedDownloadInfo = $"{track} [No suitable file found]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
             else
             {
-                lock (consoleLock)
-                {
-                    progress.Refresh(0, $"Failed to download: {track}, skipping");
-                }
+                SafeRefresh(progress, 0, $"Failed to download: {track}, skipping");
                 var failedDownloadInfo = $"{track} [All downloads failed]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
@@ -991,6 +1002,8 @@ class Program
 
     static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource? searchCts = null)
     {
+        Trace.TraceInformation($"Downloading {file.Filename}");
+        logFile.Flush();
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(filePath));
 
         bool transferSet = false;
@@ -1010,7 +1023,8 @@ class Program
         using (var cts = new CancellationTokenSource())
         using (var outputStream = new FileStream(filePath, FileMode.Create))
         {
-            lock (downloads) { downloads[file.Filename] = new DownloadWrapper(filePath, response, file, track, cts, progress); }
+            lock (downloads) 
+                downloads[file.Filename] = new DownloadWrapper(filePath, response, file, track, cts, progress);
 
             try
             {
@@ -1020,7 +1034,7 @@ class Program
             catch (Exception e)
             {
                 downloads[file.Filename].UpdateText();
-                lock (downloads) { downloads.Remove(file.Filename); }
+                downloads.TryRemove(file.Filename, out _);
                 try
                 {
                     if (System.IO.File.Exists(filePath))
@@ -1035,7 +1049,7 @@ class Program
         catch { }
         downloads[file.Filename].success = true;
         downloads[file.Filename].UpdateText();
-        lock (downloads) { downloads.Remove(file.Filename); }
+        downloads.TryRemove(file.Filename, out _);
     }
 
     static int totalCalls = 0;
@@ -1056,7 +1070,7 @@ class Program
                 foreach (var (key, val) in searches)
                 {
                     if (val == null)
-                        lock (searches) { searches.Remove(key); }
+                        searches.TryRemove(key, out _);
                 }
 
                 foreach (var (key, val) in downloads)
@@ -1066,23 +1080,18 @@ class Program
                         val.UpdateText();
 
                         if (val.success)
-                            lock (downloads)
-                            {
-                                downloads.Remove(key);
-                            }
+                            downloads.TryRemove(key, out _);
                         else if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > downloadMaxStaleTime)
                         {
                             try { val.cts.Cancel(); }
                             catch { }
                             val.stalled = true;
                             val.UpdateText();
-                            lock (downloads) { downloads.Remove(key); }
+                            downloads.TryRemove(key, out _);
                         }
                     }
                     else
-                    {
-                        lock (downloads) { downloads.Remove(key); }
-                    }
+                        downloads.TryRemove(key, out _);
                 }
             }
 
@@ -1123,10 +1132,7 @@ class Program
         startInfo.FileName = "yt-dlp";
         string search = $"{track.ArtistName} - {track.TrackTitle}";
         startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%H:%M:%S)s ¦¦ %(id)s ¦¦ %(title)s\"";
-        lock (consoleLock)
-        {
-            progress.Refresh(0, $"{startInfo.FileName} {startInfo.Arguments}");
-        }
+        SafeRefresh(progress, 0, $"{startInfo.FileName} {startInfo.Arguments}");
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1178,10 +1184,7 @@ class Program
 
         startInfo.FileName = "yt-dlp";
         startInfo.Arguments = $"\"{id}\" -f {ytdlpFormat} -ci -o \"{savePathNoExt}.%(ext)s\" -x";
-        lock (consoleLock)
-        {
-            progress.Refresh(0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x");
-        }
+        SafeRefresh(progress, 0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x");
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1230,10 +1233,7 @@ class Program
                 $"[{file.Length}s{sampleRate}{bitRate}/{fileSize}]";
 
             this.progress = progress;
-            lock (consoleLock)
-            {
-                progress.Refresh(0, displayText);
-            }
+            SafeRefresh(progress, 0, displayText);
         }
 
         public string UpdateText()
@@ -1267,11 +1267,8 @@ class Program
 
             string txt = $"{bar}{state}:".PadRight(14, ' ');
 
-            lock (consoleLock)
-            {
-                Console.ResetColor();
-                progress.Refresh((int)((percentage ?? 0) * 100), $"{txt} {displayText}");
-            }
+            Console.ResetColor();
+            SafeRefresh(progress, (int)((percentage ?? 0) * 100), $"{txt} {displayText}");
 
             return progress.Line1 + "\n" + progress.Line2;
         }
@@ -1291,10 +1288,10 @@ class Program
     {
         public SearchQuery query;
         public SearchOptions searchOptions;
-        public List<SearchResponse> responses;
+        public ConcurrentDictionary<string, SearchResponse> responses;
         public ProgressBar progress;
 
-        public SearchInfo(SearchQuery query, List<SearchResponse> responses, SearchOptions searchOptions, ProgressBar progress)
+        public SearchInfo(SearchQuery query, ConcurrentDictionary<string, SearchResponse> responses, SearchOptions searchOptions, ProgressBar progress)
         {
             this.query = query;
             this.responses = responses;
@@ -1507,6 +1504,7 @@ class Program
         var extension = Path.GetExtension(fileName).ToLower();
         return musicExtensions.Contains(extension);
     }
+
     static bool TrackExistsInCollection(Track track, FileConditions conditions, IEnumerable<string> collection, out string? foundPath)
     {
         string[] ignore = new string[] { " ", "_", "-", ".", "(", ")" };
@@ -1558,20 +1556,29 @@ class Program
 
     static void WriteLineOutputFile(string line)
     {
-        using (var fileStream = new FileStream(failsFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-        using (var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+        if (!writeFails)
+            return;
+        lock (failsFileLock)
         {
-            streamWriter.WriteLine(line);
+            using (var fileStream = new FileStream(failsFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            using (var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+            {
+                streamWriter.WriteLine(line);
+            }
         }
     }
     static void WriteAllLinesOutputFile(string text)
     {
-        using (var fileStream = new FileStream(failsFilePath, FileMode.Create, FileAccess.Write, FileShare.Read))
-        using (var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+        if (!writeFails)
+            return;
+        lock (failsFileLock)
         {
-            streamWriter.WriteLine(text);
+            using (var fileStream = new FileStream(failsFilePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            using (var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+            {
+                streamWriter.WriteLine(text);
+            }
         }
-
     }
     static string[] ParseCommand(string cmd)
     {
@@ -1603,6 +1610,11 @@ class Program
         Console.WriteLine($"Track count: {tracks.Count}");
     }
 
+    static void SafeRefresh(ProgressBar progress, int current, string item)
+    {
+        lock (consoleLock)
+            progress.Refresh(current, item);
+    }
 
     public static async Task WaitForInternetConnection()
     {
