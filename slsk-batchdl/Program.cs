@@ -18,9 +18,11 @@ class Program
     static string musicDir = "";
     static string ytdlpFormat = "";
     static int downloadMaxStaleTime = 0;
-    static int updateDelay = 200;
+    static int updateDelay = 300;
     static int slowUpdateDelay = 5000;
     static bool slowConsoleOutput = false;
+
+    private static object consoleLock = new object();
 
     static DateTime lastUpdate;
     static bool skipUpdate = false;
@@ -113,7 +115,7 @@ class Program
                             "\n  --max-retries <num>          	Maximum number of users to try downloading from before" +
                             "\n				skipping track (default: 30)" +
                             "\n" +
-                            "\n  --slow-output                	Enable if the progress bars aren't properly updated (bug)");
+                            "\n  --simple-output                No download bars in console");
     }
 
     static async Task Main(string[] args)
@@ -715,7 +717,9 @@ class Program
 
         Console.ResetColor();
         ProgressBar progress = new ProgressBar(PbStyle.DoubleLine, 100);
-        progress.Refresh(0, $"Searching: {title}");
+        lock (consoleLock) {
+            progress.Refresh(0, $"Searching: {title}");
+        }
 
         Action<SearchResponse> responseHandler = (r) =>
         {
@@ -785,7 +789,10 @@ class Program
             var searchQuery1 = SearchQuery.FromText($"{track.Album} {track.TrackTitle}");
             var searchQuery2 = SearchQuery.FromText($"{track.ArtistName} {track.Album}");
 
-            progress.Refresh(0, $"Searching (album name): {title}");
+            lock (consoleLock)
+            {
+                progress.Refresh(0, $"Searching (album name): {title}");
+            }
             try
             {
                 await WaitForInternetConnection();
@@ -821,7 +828,10 @@ class Program
                 minimumPeerUploadSpeed: 1, searchTimeout: 8000,
                 fileFilter: (file) => { return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track); }
             );
-            progress.Refresh(0, $"Searching (no channel name): {searchText}");
+            lock (consoleLock)
+            {
+                progress.Refresh(0, $"Searching (no channel name): {searchText}");
+            }
             try
             {
                 await WaitForInternetConnection();
@@ -878,7 +888,10 @@ class Program
                 bool pref = preferredCond.FileSatisfies(x.file, track);
                 if (skipIfPrefFailed && attemptedDownloadPref && !pref)
                 {
-                    progress.Refresh(0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping");
+                    lock (consoleLock)
+                    {
+                        progress.Refresh(0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping");
+                    }
                     var failedDownloadInfo = $"{track} [Pref. version of the file exists, but couldn't be downloaded]";
                     WriteLineOutputFile(failedDownloadInfo);
                     return "";
@@ -899,7 +912,10 @@ class Program
                     downloading = false;
                     if (--maxRetriesPerFile <= 0)
                     {
-                        progress.Refresh(0, $"Out of download retries: {track}, skipping");
+                        lock (consoleLock)
+                        {
+                            progress.Refresh(0, $"Out of download retries: {track}, skipping");
+                        }
                         var failedDownloadInfo = $"{track} [Out of download retries]";
                         WriteLineOutputFile(failedDownloadInfo);
                         return "";
@@ -912,7 +928,10 @@ class Program
         {
             notFound = false;
             try {
-                progress.Refresh(0, $"Not found, searching with yt-dlp: {track}");
+                lock (consoleLock)
+                {
+                    progress.Refresh(0, $"Not found, searching with yt-dlp: {track}");
+                }
                 downloading = true;
                 string fname = GetSaveName(track);
                 await YtdlpSearchAndDownload(track, necessaryCond, Path.Combine(outputFolder, fname), progress);
@@ -921,7 +940,10 @@ class Program
                 {
                     if (IsMusicFile(file))
                     {
-                        progress.Refresh(100, $"yt-dlp: Completed download for {track}");
+                        lock (consoleLock)
+                        {
+                            progress.Refresh(100, $"yt-dlp: Completed download for {track}");
+                        }
                         saveFilePath = file;
                         break;
                     }
@@ -934,7 +956,10 @@ class Program
                 downloading = false;
                 if (e.Message.Contains("No matching files found"))
                     notFound = true;
-                progress.Refresh(0, $"{e.Message}");
+                lock (consoleLock)
+                {
+                    progress.Refresh(0, $"{e.Message}");
+                }
             }
         }
 
@@ -942,13 +967,19 @@ class Program
         {
             if (notFound)
             {
-                progress.Refresh(0, $"Not found: {track}, skipping");
+                lock (consoleLock)
+                {
+                    progress.Refresh(0, $"Not found: {track}, skipping");
+                }
                 var failedDownloadInfo = $"{track} [No suitable file found]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
             else
             {
-                progress.Refresh(0, $"Failed to download: {track}, skipping");
+                lock (consoleLock)
+                {
+                    progress.Refresh(0, $"Failed to download: {track}, skipping");
+                }
                 var failedDownloadInfo = $"{track} [All downloads failed]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
@@ -1092,7 +1123,10 @@ class Program
         startInfo.FileName = "yt-dlp";
         string search = $"{track.ArtistName} - {track.TrackTitle}";
         startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%H:%M:%S)s ¦¦ %(id)s ¦¦ %(title)s\"";
-        progress.Refresh(0, $"{startInfo.FileName} {startInfo.Arguments}");
+        lock (consoleLock)
+        {
+            progress.Refresh(0, $"{startInfo.FileName} {startInfo.Arguments}");
+        }
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1144,7 +1178,10 @@ class Program
 
         startInfo.FileName = "yt-dlp";
         startInfo.Arguments = $"\"{id}\" -f {ytdlpFormat} -ci -o \"{savePathNoExt}.%(ext)s\" -x";
-        progress.Refresh(0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x");
+        lock (consoleLock)
+        {
+            progress.Refresh(0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x");
+        }
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1193,7 +1230,10 @@ class Program
                 $"[{file.Length}s{sampleRate}{bitRate}/{fileSize}]";
 
             this.progress = progress;
-            progress.Refresh(0, displayText);
+            lock (consoleLock)
+            {
+                progress.Refresh(0, displayText);
+            }
         }
 
         public string UpdateText()
@@ -1226,8 +1266,12 @@ class Program
                 success = true;
 
             string txt = $"{bar}{state}:".PadRight(14, ' ');
-            Console.ResetColor();
-            progress.Refresh((int)((percentage ?? 0) * 100), $"{txt} {displayText}");
+
+            lock (consoleLock)
+            {
+                Console.ResetColor();
+                progress.Refresh((int)((percentage ?? 0) * 100), $"{txt} {displayText}");
+            }
 
             return progress.Line1 + "\n" + progress.Line2;
         }
