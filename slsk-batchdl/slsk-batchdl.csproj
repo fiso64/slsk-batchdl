@@ -7,8 +7,20 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DefineConstants>$(DefineConstants)TRACE;</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DefineConstants>$(DefineConstants)TRACE;</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Goblinfactory.Konsole" Version="6.2.2" />
+    <Compile Remove="Test.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Goblinfactory.ProgressBar" Version="1.0.0" />
     <PackageReference Include="Google.Apis.YouTube.v3" Version="1.60.0.2945" />
     <PackageReference Include="Soulseek" Version="6.1.1" />
     <PackageReference Include="SpotifyAPI.Web" Version="7.0.0" />

@@ -1,11 +1,12 @@
-﻿using System.Diagnostics;
-using System.Text.RegularExpressions;
+﻿using Konsole;
 using Soulseek;
-using Konsole;
-using System.Net.NetworkInformation;
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.IO;
+using System.Net.NetworkInformation;
+using System.Text.RegularExpressions;
 
-class Program
+static class Program
 {
     static SoulseekClient client = new SoulseekClient();
     static ConcurrentDictionary<Track, SearchInfo> searches = new ConcurrentDictionary<Track, SearchInfo>();
@@ -15,15 +16,83 @@ class Program
     static string failsFilePath = "";
     static string m3uFilePath = "";
     static string musicDir = "";
-    static string ytdlpFormat = "";
-    static int downloadMaxStaleTime = 0;
-    static int updateDelay = 200;
-    static int slowUpdateDelay = 2000;
-    static bool slowConsoleOutput = false;
 
-    static string logLocation = "";
-    static StreamWriter? logFile = null;
-    static TextWriterTraceListener? textListener = null;
+    static string parentFolder = System.IO.Directory.GetCurrentDirectory();
+    static string folderName = "";
+    static string ytUrl = "";
+    static string singleName = "";
+    static string spotifyUrl = "";
+    static string spotifyId = "";
+    static string spotifySecret = "";
+    static string encodedSpotifyId = "MWJmNDY5MWJiYjFhNGY0MWJjZWQ5YjJjMWNmZGJiZDI="; // base64 encoded client id and secret to avoid git guardian detection (annoying)
+    static string encodedSpotifySecret = "ZmQ3NjYyNmM0ZjcxNGJkYzg4Y2I4ZTQ1ZTU1MDBlNzE=";
+    static string ytKey = "";
+    static string tracksCsv = "";
+    static string username = "";
+    static string password = "";
+    static string artistCol = "";
+    static string albumCol = "";
+    static string trackCol = "";
+    static string ytIdCol = "";
+    static string descCol = "";
+    static string lengthCol = "";
+    static string noRegexSearch = "";
+    static string timeUnit = "";
+    static string displayStyle = "single";
+    static bool preciseSkip = true;
+    static string albumName = "";
+    static string nameFormat = "";
+    static bool skipNotFound = false;
+    static bool noArtistSearchTrack = false;
+    static bool albumSearchTrack = false;
+    static bool artistSearchTrack = false;
+    static bool noDiacrSearch = false;
+    static bool ytParse = false;
+    static bool removeFt = false;
+    static bool reverse = false;
+    static bool useYtdlp = false;
+    static bool skipExisting = false;
+    static bool skipIfPrefFailed = false;
+    static bool createM3u = false;
+    static bool m3uOnly = false;
+    static bool useTagsCheckExisting = false;
+    static int maxTracks = int.MaxValue;
+    static int offset = 0;
+    
+    static FileConditions preferredCond = new FileConditions
+    {
+        Formats = new string[] { "mp3" },
+        LengthTolerance = 3,
+        MinBitrate = 200,
+        MaxBitrate = 2200,
+        MaxSampleRate = 96000,
+        StrictTitle = false,
+        StrictArtist = false,
+        DangerWords = new string[] { "mix", "dj ", " edit", "cover" }
+    };
+    static FileConditions necessaryCond = new FileConditions
+    {
+        Formats = { },
+        LengthTolerance = 3,
+        MinBitrate = -1,
+        MaxBitrate = -1,
+        MaxSampleRate = -1,
+        StrictTitle = false,
+        StrictArtist = false,
+        DangerWords = new string[] { "mix", "dj ", " edit", "cover" }
+    };
+
+    static string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
+
+    static string ytdlpFormat = "bestaudio/best";
+    static int downloadMaxStaleTime = 50000;
+    static int updateDelay = 100;
+    static int slowUpdateDelay = 2000;
+    static int searchTimeout = 6000;
+    static int maxConcurrentProcesses = 2;
+    static int maxRetriesPerTrack = 30;
+    static int maxResultsPerUser = 30;
+    static bool slowConsoleOutput = false;
 
     static object failsFileLock = new object();
     static object consoleLock = new object();
@@ -31,120 +100,120 @@ class Program
 
     static DateTime lastUpdate;
     static bool skipUpdate = false;
+    static bool debugDisableDownload = false;
+    static bool debugPrintTracks = false;
+    static bool noModifyShareCount = false;
+    static bool printResultsFull = false;
 
     static void PrintHelp()
     {
-        Console.WriteLine("Usage: slsk-batchdl.exe [OPTIONS]" +
+        // additional options: --m3u-only, --yt-dlp-f, --skip-if-pref-failed, --slow-output, --no-modify-share-count, --max-retries, --max-results-per-user
+        Console.WriteLine("Usage: slsk-batchdl [OPTIONS]" +
                             "\nOptions:" +
-                            "\n  -p --parent <path>           	Downloaded music will be placed here" +
-                            "\n  -n --name <name>             	Folder / playlist name. If not specified, the name of the" +
-                            "\n				csv file / spotify / yt playlist is used." +
-                            "\n  --username <username>        	Soulseek username" +
-                            "\n  --password <password>        	Soulseek password" +
+                            "\n  --user <username>              Soulseek username" +
+                            "\n  --pass <password>              Soulseek password" +
                             "\n" +
-                            "\n  --spotify <url>              	Download a spotify playlist. \"likes\" to download all your" +
-                            "\n				liked music." +
-                            "\n  --spotify-id <id>            	Your spotify client id (use if the default fails or if" +
-                            "\n				playlist private)" +
-                            "\n  --spotify-secret <sec>       	Your spotify client secret (use if the default fails or if" +
-                            "\n				playlist private)" +
+                            "\n  --spotify <url>                Download a spotify playlist (\"likes\" for liked music)" +
+                            "\n  --spotify-id <id>              Your spotify client id (required for private playlists)" +
+                            "\n  --spotify-secret <sec>         Your spotify client secret (required for private playlists)" +
                             "\n" +
-                            "\n  --youtube <url>              	Get tracks from a YouTube playlist" +
-                            "\n  --youtube-key <key>          	Provide an API key if you also want to search for" +
-                            "\n				unavailable uploads" +
-                            "\n  --no-channel-search          	Enable to also perform a search without channel name if" +
-                            "\n				nothing was found (only for yt)" +
+                            "\n  --youtube <url>                Get tracks from a YouTube playlist" +
+                            "\n  --youtube-key <key>            Provide an API key to include unavailable uploads" +
                             "\n" +
-                            "\n  --csv <path>                 	Use a csv file containing track info to download" +
-                            "\n  --artist-col <column>        	Artist or uploader name column" +
-                            "\n  --title-col <column>         	Title or track name column" +
-                            "\n  --album-col <column>         	CSV album column name. Optional, may improve searching," +
-                            "\n				slower" +
-                            "\n  --length-col <column>        	CSV duration column name. Recommended, will improve" +
-                            "\n				accuracy" +
-                            "\n  --time-unit <unit>           	Time unit in track duration column, ms or s (default: s)" +
-                            "\n  --yt-desc-col <column>       	Description column name. Use with --yt-parse." +
-                            "\n  --yt-id-col <column>         	Youtube video ID column (only needed if length-col or" +
-                            "\n				yt-desc-col don't exist). Use with --yt-parse." +
-                            "\n  --yt-parse                   	Enable if you have a csv file of YouTube video titles and" +
-                            "\n				channel names; attempt to parse." +
+                            "\n  --csv <path>                   Use a csv file containing track info to download" +
+                            "\n  --artist-col <column>          Artist or uploader column name" +
+                            "\n  --title-col <column>           Title or track name column name" +
+                            "\n  --album-col <column>           Track album column name (optional for more results)" +
+                            "\n  --length-col <column>          Track duration column name (optional for better accuracy)" +
+                            "\n  --time-unit <unit>             Time unit in track duration column, ms or s (default: s)" +
+                            "\n  --yt-desc-col <column>         YT description column name (optional, use with --yt-parse)" +
+                            "\n  --yt-id-col <column>           Youtube video ID column (optional, use with --yt-parse)" +
+                            "\n  --yt-parse                     Enable if you have a csv file of YouTube video titles and" +
+                            "\n                                 channel names; attempt to parse them into title and artist" +
                             "\n" +
-                            "\n  -s --single <str>            	Search & download a specific track" +
+                            "\n  -s --single <str>              Search & download a specific track. <str> is a simple" +
+                            "\n                                 search string, or a comma-separated list of properties:" +
+                            "\n                                 \"title=Song Name,artist=Artist Name,length=215\"" +
                             "\n" +
-                            "\n  --pref-format <format>       	Preferred file format (default: mp3)" +
-                            "\n  --pref-length-tol <tol>      	Preferred length tolerance (default: 3)" +
-                            "\n  --pref-min-bitrate <rate>    	Preferred minimum bitrate (default: 200)" +
-                            "\n  --pref-max-bitrate <rate>    	Preferred maximum bitrate (default: 2200)" +
-                            "\n  --pref-max-samplerate <rate> 	Preferred maximum sample rate (default: 96000)" +
-                            "\n  --pref-danger-words <list>   	Comma separated list of words that must appear in either" +
-                            "\n				both search result and track title, or in neither of the" +
-                            "\n				two, case-insensitive (default:\"mix, edit, dj, cover\")" +
-                            "\n  --nec-format <format>        	Necessary file format" +
-                            "\n  --nec-length-tolerance <tol> 	Necessary length tolerance (default: 3)" +
-                            "\n  --nec-min-bitrate <rate>     	Necessary minimum bitrate" +
-                            "\n  --nec-max-bitrate <rate>     	Necessary maximum bitrate" +
-                            "\n  --nec-max-samplerate <rate>  	Necessary maximum sample rate" +
-                            "\n  --nec-danger-words <list>    	Comma separated list of words that must appear in either" +
-                            "\n				both search result and track title, or in neither of the" +
-                            "\n				two. Case-insensitive. (default:\"mix, edit, dj, cover\")" +
+                            "\n  -p --path <path>               Place downloaded files in custom path" +
+                            "\n  -f --folder <name>             Custom folder name (default: provided playlist name)" +
+                            "\n  -n --number <maxtracks>        Download at most n tracks of a playlist" +
+                            "\n  -o --offset <offset>           Skip a specified number of tracks" +
+                            "\n  --reverse                      Download tracks in reverse order" +
+                            "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
+                            "\n  --m3u                          Create an m3u8 playlist file" +
                             "\n" +
-                            "\n  --album-search		Also search for \"[Album name][track name]\". Occasionally" +
-                            "\n				helps to find more, slower." +
-                            "\n  --no-diacr-search           	Also perform a search without diacritics" +
-                            "\n  --skip-existing              	Skip if a track matching the conditions is found in the" +
-                            "\n				output folder or your music library (if provided)" +
-                            "\n  --skip-notfound              	Skip searching for tracks that weren't found in Soulseek" +
-                            "\n				last time" +
-                            "\n  --remove-ft                  	Remove \"ft.\" or \"feat.\" and everything after from the track" +
-                            "\n				names." +
-                            "\n  --remove-strings <strings>   	Comma separated list of strings to remove when searching" +
-                            "\n				for tracks. Case insesitive." +
-                            "\n  --music-dir <path>           	Specify to also skip downloading tracks which are in your" +
-                            "\n				library, use with --skip-existing" +
-                            "\n  --reverse                    	Download tracks in reverse order" +
-                            "\n  --skip-if-pref-failed        	Skip if preferred versions of a track exist but failed to" +
-                            "\n				download. If no pref. versions were found, download as " +
-                            "\n				usual." +
-                            "\n  --create-m3u                 	Create an m3u playlist file" +
-                            "\n  --m3u-only                   	Only create an m3u playlist file with existing tracks and" +
-                            "\n				exit" +
-                            "\n  --m3u <path>                 	Where to place created m3u files (--parent by default)" +
-                            "\n  --yt-dlp                     	Use yt-dlp to download tracks that weren't found on" +
-                            "\n				Soulseek. yt-dlp must be available from the command line." +
-                            "\n  --yt-dlp-f <format>          	yt-dlp audio format (default: \"bestaudio / best\")" +
+                            "\n  --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)" +
+                            "\n  --pref-length-tol <tol>        Preferred length tolerance in seconds (default: 3)" +
+                            "\n  --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)" +
+                            "\n  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)" +
+                            "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)" +
+                            "\n  --pref-strict-title            Prefer download if filename contains track title" +
+                            "\n  --pref-strict-artist           Prefer download if filepath contains track artist" +
+                            "\n  --pref-danger-words <list>     Comma-separated list of words that must appear in either" +
+                            "\n                                 both search result and track title, or in neither of the" +
+                            "\n                                 two, case-insensitive (default:\"mix, edit, dj, cover\")" +
+                            "\n  --nec-format <format>          Necessary file format(s), comma-separated" +
+                            "\n  --nec-length-tol <tol>         Necessary length tolerance in seconds (default: 3)" +
+                            "\n  --nec-min-bitrate <rate>       Necessary minimum bitrate" +
+                            "\n  --nec-max-bitrate <rate>       Necessary maximum bitrate" +
+                            "\n  --nec-max-samplerate <rate>    Necessary maximum sample rate" +
+                            "\n  --nec-strict-title             Only download if filename contains track title" +
+                            "\n  --nec-strict-artist            Only download if filepath contains track artist" +
+                            "\n  --nec-danger-words <list>      Comma-separated list of words that must appear in either" +
+                            "\n                                 both search result and track title, or in neither of the" +
+                            "\n                                 two. Case-insensitive. (default:\"mix, edit, dj, cover\")" +
                             "\n" +
-                            "\n  --search-timeout <ms>        	Maximal search time (default: 8000)" +
-                            "\n  --max-stale-time <ms>        	Maximal download time with no progress (default: 60000)" +
-                            "\n  --concurrent-processes <num> 	Max concurrent searches / downloads (default: 2)" +
-                            "\n  --max-retries <num>          	Maximum number of users to try downloading from before" +
-                            "\n				skipping track (default: 30)" +
+                            "\n  --skip-existing                Skip if a track matching nec. conditions is found in the" +
+                            "\n                                 output folder or your music library (if provided)" +
+                            "\n  --skip-mode <mode>             \"name\": Use only filenames to check if a track exists" +
+                            "\n                                 \"name-precise\": Use filenames and check nec-cond (default)" +
+                            "\n                                 \"tag\": Use tags (slower)" +
+                            "\n                                 \"tag-precise\": Use tags and check all nec. cond. (slower)" +
+                            "\n  --music-dir <path>             Specify to skip downloading tracks found in a music library" +
+                            "\n                                 Use with --skip-existing" +
+                            "\n  --skip-not-found               Skip searching for tracks that weren't found on Soulseek" +
+                            "\n                                 last run" +
+                            "\n  --remove-ft                    Remove \"ft.\" or \"feat.\" and everything after from the" +
+                            "\n                                 track names before searching." +
+                            "\n  --album-search                 Also search for album name before filtering for track name. " +
+                            "\n                                 Sometimes helps to find more, but slower." +
+                            "\n  --artist-search                Also search for artist, before filtering for track name." +
+                            "\n                                 Sometimes helps to find more, but slower." +
+                            "\n  --no-artist-search             Also perform a search without artist name if nothing was" +
+                            "\n                                 found. Only use if the source is imprecise" +
+                            "\n                                 and the provided \"artist\" is possibly wrong (yt, sc)" +
+                            "\n  --no-regex-search <reg>        Also perform a search with a regex pattern removed from the" +
+                            "\n                                 titles and artist names" +
+                            "\n  --no-diacr-search              Also perform a search without diacritics" +
+                            "\n  -d --desperate                 Equivalent to enabling all additional searches" +
+                            "\n  --yt-dlp                       Use yt-dlp to download tracks that weren't found on" +
+                            "\n                                 Soulseek. yt-dlp must be available from the command line." +
                             "\n" +
-                            "\n  --simple-output                No download bars in console");
+                            "\n  --search-timeout <ms>          Maximal search time (ms, default: 6000)" +
+                            "\n  --max-stale-time <ms>          Maximal download time with no progress (ms, default: 50000)" +
+                            "\n  --concurrent-processes <num>   Max concurrent searches & downloads (default: 2)" +
+                            "\n  --display <str>                \"single\" (default): Show transfer state and percentage." +
+                            "\n                                 \"double\": Also show a progress bar. \"simple\": simple" +
+                            "\n" +
+                            "\n  --print-tracks                 Do not search, only print all tracks to be downloaded" +
+                            "\n  --print-results                Do not download, print search results satisfying nec. cond." +
+                            "\n  --print-results-full           Do not download, print all search results with full path");
     }
 
     static async Task Main(string[] args)
     {
-        if (!string.IsNullOrEmpty(logLocation))
-        {
-            logFile = new StreamWriter(System.IO.Path.Combine(logLocation, "log.txt"), append: false);
-            textListener = new TextWriterTraceListener(logFile);
-            Trace.Listeners.Add(textListener);
-        }
-
-        AppDomain.CurrentDomain.UnhandledException += (sender, e) => {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"{e.ExceptionObject}");
-            Console.ResetColor();
-            Trace.TraceError($"{e.ExceptionObject}");
-            if (logFile != null)
-            {
-                logFile.Flush();
-                logFile.Close();
-            }
-        };
-
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+#if WINDOWS
+        try
+        {
+            if (Console.BufferHeight <= 50)
+                WriteLine("You may be using the windows terminal app. Recommended to use command prompt to avoid printing issues.", ConsoleColor.DarkYellow);
+        }
+        catch { }
+#endif
 
         if (args.Contains("--help") || args.Contains("-h") || args.Length == 0)
         {
@@ -152,63 +221,6 @@ class Program
             return;
         }
 
-        musicDir = "";
-        string parentFolder = System.IO.Directory.GetCurrentDirectory();
-        string folderName = "";
-        string ytUrl = "";
-        string singleName = "";
-        string spotifyUrl = "";
-        string spotifyId = "";
-        string spotifySecret = "";
-        string encodedSpotifyId = "MWJmNDY5MWJiYjFhNGY0MWJjZWQ5YjJjMWNmZGJiZDI="; // base64 encoded client id and secret to avoid git guardian detection (annoying)
-        string encodedSpotifySecret = "ZmQ3NjYyNmM0ZjcxNGJkYzg4Y2I4ZTQ1ZTU1MDBlNzE=";
-        string ytKey = "";
-        string tracksCsv = "";
-        string username = "";
-        string password = "";
-        string artistCol = "";
-        string albumCol = "";
-        string trackCol = "";
-        string ytIdCol = "";
-        string descCol = "";
-        string lengthCol = "";
-        string removeStrings = "";
-        string timeUnit = "s";
-        ytdlpFormat = "bestaudio/best";
-        bool skipNotFound = false;
-        bool searchWithoutArtist = false;
-        bool searchWithoutDiacr = false;
-        bool ytParse = false;
-        bool removeFt = false;
-        bool reverse = false;
-        bool useYtdlp = false;
-        bool skipExisting = false;
-        bool skipIfPrefFailed = false;
-        bool albumSearch = false;
-        bool createM3u = false;
-        bool m3uOnly = false;
-        int searchTimeout = 8000;
-        downloadMaxStaleTime = 60000;
-        int maxConcurrentProcesses = 2;
-        int maxRetriesPerTrack = 30;
-        var preferredCond = new FileConditions
-        {
-            Format = "mp3",
-            LengthTolerance = 3,
-            MinBitrate = 200,
-            MaxBitrate = 2200,
-            MaxSampleRate = 96000
-        };
-        var necessaryCond = new FileConditions
-        {
-            LengthTolerance = 3,
-            Format = "",
-            MinBitrate = -1,
-            MaxBitrate = -1,
-            MaxSampleRate = -1,
-        };
-
-        string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
         if (System.IO.File.Exists(confPath))
         {
             string confArgs = System.IO.File.ReadAllText(confPath);
@@ -223,11 +235,12 @@ class Program
             switch (args[i])
             {
                 case "-p":
+                case "--path":
                 case "--parent":
                     parentFolder = args[++i];
                     break;
-                case "-n":
-                case "--name":
+                case "-f":
+                case "--folder":
                     folderName = args[++i];
                     break;
                 case "--music-dir":
@@ -243,8 +256,12 @@ class Program
                 case "--single":
                     singleName = args[++i];
                     break;
-                case "--no-channel-search":
-                    searchWithoutArtist = true;
+                case "-a":
+                case "--album":
+                    albumName = args[++i];
+                    break;
+                case "--no-artist-search":
+                    noArtistSearchTrack = true;
                     break;
                 case "--spotify":
                     spotifyUrl = args[++i];
@@ -258,9 +275,11 @@ class Program
                 case "--youtube-key":
                     ytKey = args[++i];
                     break;
+                case "--user":
                 case "--username":
                     username = args[++i];
                     break;
+                case "--pass":
                 case "--password":
                     password = args[++i];
                     break;
@@ -274,16 +293,37 @@ class Program
                     albumCol = args[++i];
                     break;
                 case "--album-search":
-                    albumSearch = true;
+                    albumSearchTrack = true;
                     break;
                 case "--no-diacr-search":
-                    searchWithoutDiacr = true;
+                    noDiacrSearch = true;
                     break;
                 case "--yt-desc-col":
                     descCol = args[++i];
                     break;
                 case "--yt-id-col":
                     ytIdCol = args[++i];
+                    break;
+                case "-n":
+                case "--number":
+                    maxTracks = int.Parse(args[++i]);
+                    break;
+                case "-o":
+                case "--offset":
+                    offset = int.Parse(args[++i]);
+                    break;
+                case "--name-format":
+                    nameFormat = args[++i];
+                    break;
+                case "--print-results":
+                    debugDisableDownload = true;
+                    break;
+                case "--print-results-full":
+                    debugDisableDownload = true;
+                    printResultsFull = true;
+                    break;
+                case "--print-tracks":
+                    debugPrintTracks = true;
                     break;
                 case "--yt-parse":
                     ytParse = true;
@@ -303,14 +343,14 @@ class Program
                 case "--skip-existing":
                     skipExisting = true;
                     break;
-                case "--skip-notfound":
+                case "--skip-not-found":
                     skipNotFound = true;
                     break;
                 case "--remove-ft":
                     removeFt = true;
                     break;
-                case "--remove-strings":
-                    removeStrings = args[++i];
+                case "--no-regex-search":
+                    noRegexSearch = args[++i];
                     break;
                 case "--reverse":
                     reverse = true;
@@ -318,14 +358,11 @@ class Program
                 case "--skip-if-pref-failed":
                     skipIfPrefFailed = true;
                     break;
-                case "--create-m3u":
+                case "--m3u":
                     createM3u = true;
                     break;
                 case "--m3u-only":
                     m3uOnly = true;
-                    break;
-                case "--m3u":
-                    m3uFilePath = args[++i];
                     break;
                 case "--search-timeout":
                     searchTimeout = int.Parse(args[++i]);
@@ -339,8 +376,11 @@ class Program
                 case "--max-retries":
                     maxRetriesPerTrack = int.Parse(args[++i]);
                     break;
+                case "--max-results-per-user":
+                    maxResultsPerUser = int.Parse(args[++i]);
+                    break;
                 case "--pref-format":
-                    preferredCond.Format = args[++i];
+                    preferredCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries);
                     break;
                 case "--pref-length-tol":
                     preferredCond.LengthTolerance = int.Parse(args[++i]);
@@ -355,10 +395,16 @@ class Program
                     preferredCond.MaxSampleRate = int.Parse(args[++i]);
                     break;
                 case "--pref-danger-words":
-                    preferredCond.dangerWords = args[++i].Split(',');
+                    preferredCond.DangerWords = args[++i].Split(',');
+                    break;
+                case "--pref-strict-title":
+                    preferredCond.StrictTitle = true;
+                    break;
+                case "--pref-strict-artist":
+                    preferredCond.StrictArtist = true;
                     break;
                 case "--nec-format":
-                    necessaryCond.Format = args[++i];
+                    necessaryCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries);
                     break;
                 case "--nec-length-tol":
                     necessaryCond.LengthTolerance = int.Parse(args[++i]);
@@ -373,23 +419,73 @@ class Program
                     necessaryCond.MaxSampleRate = int.Parse(args[++i]);
                     break;
                 case "--nec-danger-words":
-                    necessaryCond.dangerWords = args[++i].Split(',');
+                    necessaryCond.DangerWords = args[++i].Split(',');
+                    break;
+                case "--nec-strict-title":
+                    necessaryCond.StrictTitle = true;
+                    break;
+                case "--nec-strict-artist":
+                    necessaryCond.StrictArtist = true;
                     break;
                 case "--slow-output":
                     slowConsoleOutput = true;
+                    break;
+                case "--no-modify-share-count":
+                    noModifyShareCount = true;
+                    break;
+                case "--skip-existing-use-tags":
+                    skipExisting = true;
+                    useTagsCheckExisting = true;
+                    break;
+                case "--artist-search":
+                    artistSearchTrack = true;
+                    break;
+                case "-d":
+                case "--desperate":
+                    noArtistSearchTrack = true;
+                    noDiacrSearch = true;
+                    albumSearchTrack = true;
+                    artistSearchTrack = true;
+                    break;
+                case "--display":
+                    switch (args[++i])
+                    {
+                        case "single":
+                        case "double":
+                        case "simple":
+                            displayStyle = args[i];
+                            break;
+                        default:
+                            throw new Exception($"Invalid display style \"{args[i]}\"");
+                    }
+                    break;
+                case "--skip-mode":
+                    switch (args[++i])
+                    {
+                        case "name":
+                        case "name-precise":
+                        case "tag":
+                        case "tag-precise":
+                            useTagsCheckExisting = args[i].Contains("tag");
+                            preciseSkip = args[i].Contains("-precise");
+                            break;
+                        default:
+                            throw new Exception($"Invalid skip mode \"{args[i]}\"");
+                    }
                     break;
                 default:
                     throw new Exception($"Unknown argument: {args[i]}");
             }
         }
 
+        if (debugDisableDownload)
+            maxConcurrentProcesses = 1;
+
         if (ytKey != "")
             YouTube.apiKey = ytKey;
 
-        StringEdit strEdit = new StringEdit(removeFt: removeFt);
-        if (removeStrings != "")
-            strEdit.stringsToRemove = removeStrings.Split(',');
-
+        int max = reverse ? int.MaxValue : maxTracks;
+        int off = reverse ? 0 : offset;
         if (spotifyUrl != "")
         {
             bool usedDefaultId = false;
@@ -411,13 +507,13 @@ class Program
                     spotifySecret = Console.ReadLine();
                     Console.WriteLine();
                 }
-                tracks = await GetSpotifyLikes(spotifyId, spotifySecret, strEdit);
+                tracks = await GetSpotifyLikes(spotifyId, spotifySecret, max, off);
             }
             else
             {
                 try
                 {
-                    (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, false, strEdit);
+                    (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, false, max, off);
                 }
                 catch (SpotifyAPI.Web.APIException)
                 {
@@ -433,8 +529,7 @@ class Program
                             spotifySecret = Console.ReadLine();
                             Console.WriteLine();
                         }
-                        try { (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, true, strEdit); }
-                        catch (SpotifyAPI.Web.APIException) { throw; }
+                        (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, true, max, off);
                     }
                     else
                         return;
@@ -450,12 +545,12 @@ class Program
             if (YouTube.apiKey != "")
             {
                 Console.WriteLine("Loading YouTube playlist (API)");
-                (name, tracks) = await YouTube.GetTracksApi(ytUrl, strEdit);
+                (name, tracks) = await YouTube.GetTracksApi(ytUrl, max, off);
             }
             else
             {
                 Console.WriteLine("Loading YouTube playlist");
-                (name, tracks) = await YouTube.GetTracksYtExplode(ytUrl, strEdit);
+                (name, tracks) = await YouTube.GetTracksYtExplode(ytUrl, max, off);
             }
 
             if (folderName == "")
@@ -467,41 +562,56 @@ class Program
         {
             if (!System.IO.File.Exists(tracksCsv))
                 throw new Exception("csv file not found");
-            if (lengthCol == "")
-                Console.WriteLine($"Warning: No length column specified, results may be imprecise.");
 
-            tracks = await ParseCsvIntoTrackInfo(tracksCsv, strEdit, artistCol, trackCol, lengthCol, albumCol, descCol, ytIdCol, timeUnit, ytParse);
+            tracks = await ParseCsvIntoTrackInfo(tracksCsv, artistCol, trackCol, lengthCol, albumCol, descCol, ytIdCol, timeUnit, ytParse);
+            tracks = tracks.Skip(off).Take(max).ToList();
 
             if (folderName == "")
                 folderName = Path.GetFileNameWithoutExtension(tracksCsv);
         }
         else if (singleName != "")
         {
-            tracks.Add(new Track { TrackTitle=singleName, onlyTrackTitle=true });
+            tracks.Add(ParseTrackArg(singleName));
             writeFails = false;
         }
-        else
-            throw new Exception("Nothing url, csv or name provided to download.");
-
-        if (tracks.Count > 1)
+        else if (albumName != "")
         {
-            Console.WriteLine("First 10 tracks:");
-            PrintTracks(tracks, 10);
+            throw new NotImplementedException();
+            var t = ParseTrackArg(albumName);
+            await client.ConnectAsync(username, password);
+            (string path, int count) = await SearchAndDownloadAlbum(t.TrackTitle, t.ArtistName, parentFolder, folderName);
+            Console.WriteLine($"Downloaded {count} tracks");
+            return;
+        }
+        else
+            throw new Exception("No url, csv or name provided to download.");
+
+        if (reverse)
+        {
+            tracks.Reverse();
+            tracks = tracks.Skip(offset).Take(maxTracks).ToList();
+        }
+
+        if (removeFt)
+        {
+            for (int i = 0; i < tracks.Count; i++)
+            {
+                Track track = tracks[i];
+                track.TrackTitle = track.TrackTitle.RemoveFt();
+                track.ArtistName = track.ArtistName.RemoveFt();
+                tracks[i] = track;
+            }
         }
 
         folderName = RemoveInvalidChars(folderName, " ");
 
         outputFolder = Path.Combine(parentFolder, folderName);
-        System.IO.Directory.CreateDirectory(outputFolder);
         failsFilePath = Path.Combine(outputFolder, $"{folderName}_failed.txt");
 
         if (m3uFilePath != "")
-        {
-            m3uFilePath = Path.Combine(m3uFilePath, folderName + ".m3u");
-            createM3u = true;
-        }
-        else if (outputFolder != "")
-            m3uFilePath = Path.Combine(outputFolder, folderName + ".m3u");
+            m3uFilePath = Path.Combine(m3uFilePath, folderName + ".m3u8");
+        else 
+            m3uFilePath = Path.Combine(outputFolder, folderName + ".m3u8");
 
         Track[] tmp = new Track[tracks.Count];
         tracks.CopyTo(tmp);
@@ -510,40 +620,30 @@ class Program
         createM3u |= m3uOnly;
         List<string> m3uLines = Enumerable.Repeat("", tracksStart.Count).ToList();
 
-        if (skipExisting || m3uOnly || musicDir != "")
+        if (skipExisting || m3uOnly)
         {
-            if (outputFolder != "")
+            var existing = new Dictionary<Track, string>();
+            if (!(musicDir != "" && outputFolder.StartsWith(musicDir, StringComparison.OrdinalIgnoreCase)) && System.IO.Directory.Exists(outputFolder))
             {
-                Console.WriteLine("Checking if tracks exist in output folder");
-                var outputDirFiles = System.IO.Directory.GetFiles(outputFolder, "*", SearchOption.AllDirectories);
-                var musicFiles = outputDirFiles.Where(f => IsMusicFile(f)).ToArray();
-                tracks = tracks.Where(x =>
-                {
-                    bool exists = TrackExistsInCollection(x, necessaryCond, musicFiles, out string? path);
-                    if (exists)
-                        m3uLines[tracksStart.IndexOf(x)] = path;
-                    return !exists;
-                }).ToList();
+                Console.WriteLine($"Checking if tracks exist in output folder");
+                var d = RemoveTracksIfExist(tracks, outputFolder, necessaryCond, useTagsCheckExisting, preciseSkip);
+                d.ToList().ForEach(x => existing.Add(x.Key, x.Value));
             }
-
-            if (musicDir != "")
+            if (musicDir != "" && System.IO.Directory.Exists(musicDir))
             {
                 Console.WriteLine($"Checking if tracks exist in library");
-                var musicDirFiles = System.IO.Directory.GetFiles(musicDir, "*", SearchOption.AllDirectories);
-                var musicFiles = musicDirFiles
-                    .Where(filename => outputFolder == "" || !filename.Contains(outputFolder))
-                    .Where(filename => IsMusicFile(filename)).ToArray();
-                tracks = tracks.Where(x =>
-                {
-                    bool exists = TrackExistsInCollection(x, necessaryCond, musicFiles, out string? path);
-                    if (exists && m3uLines[tracksStart.IndexOf(x)] == "")
-                        m3uLines[tracksStart.IndexOf(x)] = path;
-                    return !exists;
-                }).ToList();
+                var d = RemoveTracksIfExist(tracks, musicDir, necessaryCond, useTagsCheckExisting, preciseSkip);
+                d.ToList().ForEach(x => existing.Add(x.Key, x.Value));
+            }
+
+            foreach (var x in existing)
+            {
+                string p = Path.GetDirectoryName(x.Value).Equals(outputFolder, StringComparison.OrdinalIgnoreCase) ? Path.GetFileName(x.Value) : x.Value;
+                m3uLines[tracksStart.IndexOf(x.Key)] = p;
             }
         }
 
-        if (createM3u)
+        if (createM3u && !debugPrintTracks)
         {
             System.IO.Directory.CreateDirectory(Path.GetDirectoryName(m3uFilePath));
             if (System.IO.File.Exists(m3uFilePath))
@@ -589,7 +689,8 @@ class Program
                         tracks.Remove(track);
                 }
 
-                var filteredLines = failsFileCont.Split('\n').Where(line => line.Contains("[No suitable file found]")).ToList();
+                var filteredLines = failsFileCont.Split('\n', StringSplitOptions.TrimEntries)
+                    .Where(line => line.Contains("[No suitable file found]")).ToList();
 
                 using (var fileStream = new FileStream(failsFilePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
                 {
@@ -611,30 +712,42 @@ class Program
             }
         }
 
-        albumSearch |= albumCol != "";
         int tracksRemaining = tracks.Count;
-        if (reverse)
-            tracks.Reverse();
-
-        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
-            throw new Exception("No soulseek username or password");
-        await client.ConnectAsync(username, password);
-
-        object lockObj = new object();
-        var UpdateTask = Task.Run(() => Update());
-        SemaphoreSlim semaphore = new SemaphoreSlim(maxConcurrentProcesses);
 
         string notFoundLastTime = skipNotFound && tracksCount2 - tracks.Count > 0 ? $"{tracksCount2 - tracks.Count} not found" : "";
         string alreadyExist = skipExisting && tracksStart.Count - tracksCount2 > 0 ? $"{tracksStart.Count - tracksCount2} already exist" : "";
         notFoundLastTime = alreadyExist != "" && notFoundLastTime != "" ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist + notFoundLastTime != "" ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        
-        if (tracks.Count > 1 || skippedTracks != "")
+
+        if (debugPrintTracks)
+        {
+            Console.WriteLine($"\n{tracks.Count} tracks{skippedTracks}");
+            Console.WriteLine($"\nTo be downloaded:");
+            PrintTracks(tracks);
+            Console.WriteLine($"\nSkipped:");
+            PrintTracks(tracksStart.Where(t => !tracks.Contains(t)).ToList());
+            return;
+        }
+        else if (tracks.Count > 1 || skippedTracks != "")
+        {
+            PrintTracks(tracks, 10);
             Console.WriteLine($"Downloading {tracks.Count} tracks{skippedTracks}\n");
+        }
+
+        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            throw new Exception("No soulseek username or password");
+
+        await WaitForInternetConnection();
+        await client.ConnectAsync(username, password);
+        if (!noModifyShareCount)
+            await client.SetSharedCountsAsync(10, 50);
 
         int successCount = 0;
         int failCount = 0;
 
+        var UpdateTask = Task.Run(() => Update());
+
+        SemaphoreSlim semaphore = new SemaphoreSlim(maxConcurrentProcesses);
         var downloadTasks = tracks.Select(async (track) =>
         {
             await semaphore.WaitAsync();
@@ -643,13 +756,12 @@ class Program
             try
             {
                 await WaitForInternetConnection();
-                
-                var savedFilePath = await SearchAndDownload(track, preferredCond, necessaryCond, skipIfPrefFailed, 
-                                                            maxRetriesPerTrack, searchTimeout, albumSearch, useYtdlp, searchWithoutArtist, searchWithoutDiacr);
+
+                var savedFilePath = await SearchAndDownload(track);
                 if (savedFilePath != "")
                 {
-                    successCount++;
-                    m3uLines[tracksStart.IndexOf(track)] = savedFilePath;
+                    Interlocked.Increment(ref successCount);
+                    m3uLines[tracksStart.IndexOf(track)] = Path.GetFileName(savedFilePath);
 
                     if (createM3u)
                     {
@@ -662,44 +774,31 @@ class Program
                     }
                 }
                 else
-                {
-                    failCount++;
-                }
+                    Interlocked.Increment(ref failCount);
             }
             catch (Exception ex)
             {
                 if (ex is System.InvalidOperationException && ex.Message.Contains("disconnected", StringComparison.OrdinalIgnoreCase) && netRetries-- > 0)
-                {
                     goto retry;
-                }
                 else
-                    failCount++;
+                    Interlocked.Increment(ref failCount);
             }
-            finally
-            {
-                semaphore.Release();
-            }
+            finally { semaphore.Release(); }
 
             if ((DateTime.Now - lastUpdate).TotalMilliseconds > updateDelay * 3)
-            {
                 UpdateTask = Task.Run(() => Update());
-            }
-
-            tracksRemaining--;
-
-            if ((successCount + failCount + 1) % 25 == 0)
+            else if ((successCount + failCount + 1) % 25 == 0)
             {
                 skipUpdate = true;
                 await Task.Delay(50);
-                lock (consoleLock)
-                {
-                    Console.ForegroundColor = ConsoleColor.Blue;
-                    Console.WriteLine($"\nSuccesses: {successCount}, fails: {failCount}, tracks left: {tracksRemaining}\n");
-                    Console.ResetColor();
+                lock (consoleLock) {
+                    WriteLine($"\nSuccesses: {successCount}, fails: {failCount}, tracks left: {tracksRemaining}\n", ConsoleColor.Yellow);
                 }
                 await Task.Delay(50);
                 skipUpdate = false;
             }
+
+            Interlocked.Decrement(ref tracksRemaining);
         });
 
         await Task.WhenAll(downloadTasks);
@@ -710,192 +809,200 @@ class Program
             Console.WriteLine($"Failed:\n{System.IO.File.ReadAllText(failsFilePath)}");
     }
 
-    static async Task<string> SearchAndDownload(Track track, FileConditions preferredCond, FileConditions necessaryCond, 
-        bool skipIfPrefFailed, int maxRetriesPerFile, int searchTimeout, bool albumSearch, bool useYtdlp, bool noChannelSearch, bool noDiacrSearch)
+    // Unfinished
+    static async Task<(string, int)> SearchAndDownloadAlbum(string title, string artist, string path, string folder="") 
     {
-        var title = !track.onlyTrackTitle ? $"{track.ArtistName} - {track.TrackTitle}" : $"{track.TrackTitle}";
-        var saveFilePath = "";
-        Trace.TraceInformation($"Searching for {title}");
-        logFile?.Flush();
+        int trackCount = 0;
+        var search = artist != "" ? $"{artist} - {title}" : title;
+        var saveFolderPath = "";
+        var seps = new string[] { " ", "_", "-" };
+        var emptyTrack = new Track { };
 
-        var searchQuery = SearchQuery.FromText($"{title}");
-        var searchOptions = new SearchOptions
-        (
+        var responses = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File[])>();
+        var cts = new CancellationTokenSource();
+        ProgressBar? progress = GetProgressBar(displayStyle);
+
+        if (search.Replace(seps, "").RemoveInvalidChars("") == "")
+        {
+            RefreshOrPrint(progress, 0, $"Album title only contains invalid characters: {search}, not searching", true);
+            return ("", 0);
+        }
+
+        RefreshOrPrint(progress, 0, $"Searching for album: {search}", true);
+
+        Action<SearchResponse> responseHandler = ((r) => {
+            if (r.Files.Count > 0)
+            {
+                var fileGroups = r.Files.GroupBy(f => GetDirectoryNameSlsk(f.Filename));
+                foreach (var group in fileGroups)
+                {
+                    var key = r.Username + "\\" + group.Key;
+                    responses.TryAdd(key, (r, group.ToArray()));
+                }
+            }
+        });
+
+        var searchOptions = new SearchOptions (
             minimumPeerUploadSpeed: 1, searchTimeout: searchTimeout,
-            responseFilter: (response) =>
-            {
-                return response.UploadSpeed > 0;
-            },
-            fileFilter: (file) =>
-            {
-                return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track);
+            responseFilter: (response) => { return response.UploadSpeed > 0; },
+            fileFilter: (file) => {
+                return !IsMusicFile(file.Filename) || 
+                    (necessaryCond.FileSatisfies(file, emptyTrack) 
+                        && necessaryCond.StrictTitleSatisfies(GetDirectoryNameSlsk(file.Filename), title)
+                        && necessaryCond.StrictArtistSatisfies(file.Filename, artist));
             }
         );
+
+        await RunSearches(search, searchOptions, responseHandler, cts.Token);
+        cts.Dispose();
+
+        if (responses.Count > 0)
+        {
+            if (debugDisableDownload)
+            {
+                foreach (var r in responses)
+                {
+                    Console.WriteLine(r.Key);
+                    foreach (var item in r.Value.Item2)
+                        Console.WriteLine($"{GetFileNameSlsk(item.Filename)}");
+                    Console.WriteLine("\n");
+                }
+                return ("", 0);
+            }
+        }
+
+        return (saveFolderPath, trackCount);
+    }
+
+    static async Task<string> SearchAndDownload(Track track)
+    {
+        var title = !string.IsNullOrEmpty(track.ArtistName) ? $"{track.ArtistName} - {track.TrackTitle}" : $"{track.TrackTitle}";
+        string searchText = $"{title}";
+        var saveFilePath = "";
+        var removeChars = new string[] { " ", "_", "-" };
 
         bool attemptedDownloadPref = false;
         Task? downloadTask = null;
         object downloadingLocker = new object();
         bool downloading = false;
-        var responses = new ConcurrentDictionary<string, SearchResponse>();
+        var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         var cts = new CancellationTokenSource();
 
         Console.ResetColor();
-        ProgressBar progress = new ProgressBar(PbStyle.DoubleLine, 100);
-        SafeRefresh(progress, 0, $"Searching: {title}");
 
-        Action<SearchResponse> responseHandler = (r) =>
+        ProgressBar? progress = GetProgressBar(displayStyle);
+
+        if (track.TrackTitle.Replace(removeChars, "").RemoveInvalidChars("") == "")
         {
-            if (r.Files.Count > 0)
-            {
-                responses.TryAdd(r.Files.First().Filename, r);
-                lock (downloadingLocker)
+            RefreshOrPrint(progress, 0, $"Track title only contains invalid characters: {title}, not searching", true);
+            WriteLineOutputFile($"{title} [Track title has only invalid chars]");
+            return "";
+        }
+
+        RefreshOrPrint(progress, 0, $"Searching: {track}", true);
+
+        searches.TryAdd(track, new SearchInfo(results, progress));
+
+        Action<SearchResponse> getResponseHandler(FileConditions cond, int maxPerUser = -1)
+        {
+            maxPerUser = maxPerUser == -1 ? int.MaxValue : maxPerUser;
+            return (r) => {
+                if (r.Files.Count() > 0)
                 {
-                    if (!downloading)
+                    int count = 0;
+                    foreach (var file in r.Files)
                     {
-                        var f = r.Files.First();
-                        if (preferredCond.FileSatisfies(f, track) && r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1)
+                        results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
+                        if (++count >= maxPerUser) break;
+                    }
+
+                    var f = r.Files.First();
+                    if (cond.FileSatisfies(f, track) && r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1)
+                    {
+                        lock (downloadingLocker)
                         {
-                            downloading = true;
-                            saveFilePath = GetSavePath(f, track);
-                            attemptedDownloadPref = true;
-                            try
+                            if (!downloading)
                             {
-                                Trace.TraceInformation($"Early download: {f.Filename}");
-                                logFile?.Flush();
+                                downloading = true;
+                                saveFilePath = GetSavePath(f.Filename, track);
+                                attemptedDownloadPref = true;
                                 downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
-                            }
-                            catch
-                            {
-                                saveFilePath = "";
-                                downloading = false;
+                                downloadTask.ContinueWith(task => {
+                                    lock (downloadingLocker)
+                                    {
+                                        downloading = false;
+                                        saveFilePath = "";
+                                        results.TryRemove(r.Username + "\\" + f.Filename, out _);
+                                    }
+                                }, TaskContinuationOptions.OnlyOnFaulted);
                             }
                         }
                     }
                 }
-            }
-        };
-
-        lock (searches)
-            searches[track] = new SearchInfo(searchQuery, responses, searchOptions, progress);
-
-        try
-        {
-            await WaitForInternetConnection();
-            var searchTasks = new List<Task>();
-            Trace.TraceInformation("Search pos 1");
-            searchTasks.Add(client.SearchAsync(searchQuery, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-
-            if (noDiacrSearch && title.RemoveDiacriticsIfExist(out string newSearch))
-            {
-                var searchQuery2 = SearchQuery.FromText(newSearch);
-                Trace.TraceInformation("Search pos 2");
-                searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-            }
-
-            await Task.WhenAll(searchTasks);
-        }
-        catch (OperationCanceledException ex) { }
-
-        if (albumSearch && responses.Count == 0 && track.Album != "")
-        {
-            Func<Soulseek.File, bool> ff1 = (file) =>
-            {
-                var seps = new string[] { " ", "_" };
-                return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track)
-                    && file.Filename.Replace(seps, "").Contains(track.ArtistName.Replace(seps, ""), StringComparison.OrdinalIgnoreCase);
             };
-            Func<Soulseek.File, bool> ff2 = (file) =>
-            {
-                var seps = new string[] { " ", "_" };
-                return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track)
-                    && file.Filename.Replace(seps, "").Contains(track.TrackTitle.Replace(seps, ""), StringComparison.OrdinalIgnoreCase);
-            };
-
-            var searchOptions1 = new SearchOptions(minimumPeerUploadSpeed: 1, searchTimeout: 5000, fileFilter: ff1);
-            var searchOptions2 = new SearchOptions(minimumPeerUploadSpeed: 1, searchTimeout: 5000, fileFilter: ff2);
-
-            var searchQuery1 = SearchQuery.FromText($"{track.Album} {track.TrackTitle}");
-            var searchQuery2 = SearchQuery.FromText($"{track.ArtistName} {track.Album}");
-
-            SafeRefresh(progress, 0, $"Searching (album name): {title}");
-
-            try
-            {
-                await WaitForInternetConnection();
-                var searchTasks = new List<Task>();
-
-                Trace.TraceInformation("Search pos 3, 4");
-                searchTasks.Add(client.SearchAsync(searchQuery1, options: searchOptions1, cancellationToken: cts.Token, responseHandler: responseHandler));
-                searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions2, cancellationToken: cts.Token, responseHandler: responseHandler));
-
-                if (noDiacrSearch)
-                {
-                    if (searchQuery1.SearchText.RemoveDiacriticsIfExist(out string newSearch1))
-                    {
-                        Trace.TraceInformation("Search pos 5");
-                        var searchQuery1_2 = SearchQuery.FromText(newSearch1);
-                        searchTasks.Add(client.SearchAsync(searchQuery1_2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-                    }
-                    if (searchQuery2.SearchText.RemoveDiacriticsIfExist(out string newSearch2))
-                    {
-                        Trace.TraceInformation("Search pos 6");
-                        var searchQuery2_2 = SearchQuery.FromText(newSearch2);
-                        searchTasks.Add(client.SearchAsync(searchQuery2_2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-                    }
-                }
-
-                await Task.WhenAll(searchTasks);
-            }
-            catch (OperationCanceledException ex) { }
         }
 
-        if (noChannelSearch && responses.Count == 0 && track.ArtistMaybeWrong && new[] { " ", ":", "-" }.Any(c => track.TrackTitle.Contains(c)))
+        SearchOptions getSearchOptions(int timeout, FileConditions cond) 
         {
-            string searchText = $"{track.TrackTitle}";
-            searchOptions = new SearchOptions
-            (
-                minimumPeerUploadSpeed: 1, searchTimeout: 8000,
-                fileFilter: (file) => { return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track); }
-            );
-
-            SafeRefresh(progress, 0, $"Searching (no channel name): {searchText}");
-
-            try
-            {
-                await WaitForInternetConnection();
-                var searchTasks = new List<Task>();
-
-                Trace.TraceInformation("Search pos 7");
-                searchTasks.Add(client.SearchAsync(SearchQuery.FromText(searchText), options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-
-                if (noDiacrSearch && title.RemoveDiacriticsIfExist(out string newSearch))
-                {
-                    var searchQuery2 = SearchQuery.FromText(newSearch);
-                    Trace.TraceInformation("Search pos 8");
-                    searchTasks.Add(client.SearchAsync(searchQuery2, options: searchOptions, cancellationToken: cts.Token, responseHandler: responseHandler));
-                }
-
-                await Task.WhenAll(searchTasks);
-            }
-            catch (OperationCanceledException ex) { }
+            return new SearchOptions(
+                minimumResponseFileCount: 1,
+                minimumPeerUploadSpeed: 1,
+                searchTimeout: searchTimeout,
+                responseFilter: (response) => { return response.UploadSpeed > 0; },
+                fileFilter: (file) => {
+                    return IsMusicFile(file.Filename) && (cond.FileSatisfies(file, track) || printResultsFull);
+                });
         }
 
-        searches.TryRemove(track, out _);
-        cts.Dispose();
+        var responseHandler = getResponseHandler(preferredCond, maxResultsPerUser);
+        var responseHandlerUncapped = getResponseHandler(preferredCond);
+        var searchOptions = getSearchOptions(searchTimeout, necessaryCond);
+
+        await RunSearches(searchText, searchOptions, responseHandler, cts.Token);
+
+        if (results.Count == 0 && albumSearchTrack && track.Album != "")
+        {
+            searchText = $"{track.Album}";
+            var necCond2 = new FileConditions(necessaryCond);
+            necCond2.StrictTitle = true;
+            searchOptions = getSearchOptions(Math.Min(5000, searchTimeout), necCond2);
+
+            RefreshOrPrint(progress, 0, $"Searching (album name): {track.Album}");
+            await RunSearches(searchText, searchOptions, responseHandlerUncapped, cts.Token);
+        }
+
+        if (results.Count == 0 && noArtistSearchTrack && !string.IsNullOrEmpty(track.ArtistName))
+        {
+            searchText = $"{track.TrackTitle}";
+            var necCond2 = new FileConditions(necessaryCond);
+            necCond2.LengthTolerance = Math.Min(necCond2.LengthTolerance, 1);
+            necCond2.StrictArtist = true;
+            searchOptions = getSearchOptions(Math.Min(5000, searchTimeout), necCond2);
+            
+            RefreshOrPrint(progress, 0, $"Searching (no artist name): {searchText}");
+            await RunSearches(searchText, searchOptions, responseHandlerUncapped, cts.Token);
+        }
+
+        if (results.Count == 0 && artistSearchTrack && !string.IsNullOrEmpty(track.ArtistName))
+        {
+            searchText = $"{track.ArtistName}";
+            var necCond2 = new FileConditions(necessaryCond);
+            necCond2.StrictTitle = true;
+            searchOptions = getSearchOptions(Math.Min(6000, searchTimeout), necCond2);
+
+            RefreshOrPrint(progress, 0, $"Searching (artist name): {searchText}");
+            await RunSearches(searchText, searchOptions, responseHandlerUncapped, cts.Token);
+        }
 
         lock (downloadingLocker) { }
+        searches.TryRemove(track, out _);
 
         bool notFound = false;
-        if (!downloading && responses.Count == 0 && !useYtdlp)
-        {
+        if (!downloading && results.Count == 0 && !useYtdlp)
             notFound = true;
-        }
         else if (downloading)
         {
-            try
-            {
-                await downloadTask;
-            }
+            try { await downloadTask; }
             catch
             {
                 saveFilePath = "";
@@ -903,30 +1010,52 @@ class Program
             }
         }
 
-        if (!downloading && responses.Count > 0)
+        cts.Dispose();
+
+        if (debugDisableDownload && results.Count == 0)
         {
-            var fileResponses = responses
-                .SelectMany(kvp => kvp.Value.Files.Select(file => (response: kvp.Value, file)))
-                .OrderByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
+            Console.WriteLine("No results");
+            return "";
+        }
+        else if (!downloading && results.Count > 0)
+        {
+            var random = new Random();
+            var fileResponses = results
+                .Select(kvp => (response: kvp.Value.Item1, file: kvp.Value.Item2))
+                .OrderByDescending(x => preferredCond.StrictTitleSatisfies(x.file.Filename, track.TrackTitle))
+                .ThenByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => preferredCond.BitrateSatisfies(x.file))
+                .ThenByDescending(x => preferredCond.FormatSatisfies(x.file.Filename))
                 .ThenByDescending(x => preferredCond.FileSatisfies(x.file, track))
+                .ThenByDescending(x => !printResultsFull || necessaryCond.FileSatisfies(x.file, track))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
-                .ThenByDescending(x => x.response.UploadSpeed / 200)
-                .ThenByDescending(x => x.file.Filename.Contains(track.TrackTitle, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+                .ThenByDescending(x => x.response.UploadSpeed / 400)
+                .ThenByDescending(x => (x.file.BitRate ?? 0) / 70)
+                .ThenByDescending(x => FileConditions.StrictString(GetFileNameWithoutExtSlsk(x.file.Filename), track.TrackTitle))
+                .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.ArtistName))
+                .ThenBy(x => random.Next());
+
+            if (debugDisableDownload)
+            {
+                foreach (var x in fileResponses)
+                    Console.WriteLine(DisplayString(track, x.file, x.response.Username,
+                        (printResultsFull ? necessaryCond : null), preferredCond, printResultsFull));
+                WriteLine($"Total: {fileResponses.Count()}\n", ConsoleColor.Yellow);
+                return "";
+            }
 
             foreach (var x in fileResponses)
             {
                 bool pref = preferredCond.FileSatisfies(x.file, track);
                 if (skipIfPrefFailed && attemptedDownloadPref && !pref)
                 {
-                    SafeRefresh(progress, 0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping");
+                    RefreshOrPrint(progress, 0, $"Pref. version of the file exists, but couldn't be downloaded: {track}, skipping", true);
                     var failedDownloadInfo = $"{track} [Pref. version of the file exists, but couldn't be downloaded]";
                     WriteLineOutputFile(failedDownloadInfo);
                     return "";
                 }
 
-                saveFilePath = GetSavePath(x.file, track);
+                saveFilePath = GetSavePath(x.file.Filename, track);
 
                 try
                 {
@@ -939,9 +1068,9 @@ class Program
                 catch
                 {
                     downloading = false;
-                    if (--maxRetriesPerFile <= 0)
+                    if (--maxRetriesPerTrack <= 0)
                     {
-                        SafeRefresh(progress, 0, $"Out of download retries: {track}, skipping");
+                        RefreshOrPrint(progress, 0, $"Out of download retries: {track}, skipping", true);
                         var failedDownloadInfo = $"{track} [Out of download retries]";
                         WriteLineOutputFile(failedDownloadInfo);
                         return "";
@@ -954,16 +1083,17 @@ class Program
         {
             notFound = false;
             try {
-                SafeRefresh(progress, 0, $"Not found, searching with yt-dlp: {track}");
+                RefreshOrPrint(progress, 0, $"Not found, searching with yt-dlp: {track}", true);
                 downloading = true;
-                string fname = GetSaveName(track);
-                await YtdlpSearchAndDownload(track, necessaryCond, Path.Combine(outputFolder, fname), progress);
+                string saveFilePathNoExt = await YtdlpSearchAndDownload(track, progress);
+                string fname = GetFileNameWithoutExtSlsk(saveFilePathNoExt + ".m");
                 string[] files = System.IO.Directory.GetFiles(outputFolder, fname + ".*");
+
                 foreach (string file in files)
                 {
                     if (IsMusicFile(file))
                     {
-                        SafeRefresh(progress, 100, $"yt-dlp: Completed download for {track}");
+                        RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                         saveFilePath = file;
                         break;
                     }
@@ -971,12 +1101,12 @@ class Program
                 if (saveFilePath == "")
                     throw new Exception("yt-dlp download failed");
             }
-            catch (Exception e) { 
+            catch (Exception e) {
                 saveFilePath = "";
                 downloading = false;
                 if (e.Message.Contains("No matching files found"))
                     notFound = true;
-                SafeRefresh(progress, 0, $"{e.Message}");
+                RefreshOrPrint(progress, 0, $"{e.Message}", true);
             }
         }
 
@@ -984,26 +1114,55 @@ class Program
         {
             if (notFound)
             {
-                SafeRefresh(progress, 0, $"Not found: {track}, skipping");   
+                RefreshOrPrint(progress, 0, $"Not found: {track}, skipping", true);   
                 var failedDownloadInfo = $"{track} [No suitable file found]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
             else
             {
-                SafeRefresh(progress, 0, $"Failed to download: {track}, skipping");
+                RefreshOrPrint(progress, 0, $"Failed to download: {track}, skipping", true);
                 var failedDownloadInfo = $"{track} [All downloads failed]";
                 WriteLineOutputFile(failedDownloadInfo);
             }
             return "";
         }
 
+        if (nameFormat != "")
+            saveFilePath = ApplyNamingFormat(saveFilePath, nameFormat);
+
         return saveFilePath;
+    }
+
+    static async Task RunSearches(string search, SearchOptions opts, Action<SearchResponse> rHandler, CancellationToken ct)
+    {
+        try
+        {
+            var q = SearchQuery.FromText(search);
+            await WaitForInternetConnection();
+            var searchTasks = new List<Task>();
+            searchTasks.Add(client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler));
+
+            if (noDiacrSearch && search.RemoveDiacriticsIfExist(out string newSearch))
+            {
+                var searchQuery2 = SearchQuery.FromText(newSearch);
+                searchTasks.Add(client.SearchAsync(searchQuery2, options: opts, cancellationToken: ct, responseHandler: rHandler));
+            }
+            if (!string.IsNullOrEmpty(noRegexSearch) && search.RemoveRegexIfExist(noRegexSearch, out string newSearch2))
+            {
+                var searchQuery2 = SearchQuery.FromText(newSearch2);
+                searchTasks.Add(client.SearchAsync(searchQuery2, options: opts, cancellationToken: ct, responseHandler: rHandler));
+            }
+
+            await Task.WhenAll(searchTasks);
+        }
+        catch (OperationCanceledException ex) { }
     }
 
     static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource? searchCts = null)
     {
-        Trace.TraceInformation($"Downloading {file.Filename}");
-        logFile.Flush();
+        if (debugDisableDownload)
+            throw new Exception();
+
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(filePath));
 
         bool transferSet = false;
@@ -1023,8 +1182,8 @@ class Program
         using (var cts = new CancellationTokenSource())
         using (var outputStream = new FileStream(filePath, FileMode.Create))
         {
-            lock (downloads) 
-                downloads[file.Filename] = new DownloadWrapper(filePath, response, file, track, cts, progress);
+            lock (downloads)
+                downloads.TryAdd(file.Filename, new DownloadWrapper(filePath, response, file, track, cts, progress));
 
             try
             {
@@ -1067,6 +1226,7 @@ class Program
 
             if (!skipUpdate)
             {
+                // Debug.WriteLine($"Threads: {Process.GetCurrentProcess().Threads.Count}");
                 foreach (var (key, val) in searches)
                 {
                     if (val == null)
@@ -1083,15 +1243,13 @@ class Program
                             downloads.TryRemove(key, out _);
                         else if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > downloadMaxStaleTime)
                         {
-                            try { val.cts.Cancel(); }
-                            catch { }
+                            try { val.cts.Cancel(); } catch { }
                             val.stalled = true;
                             val.UpdateText();
                             downloads.TryRemove(key, out _);
                         }
                     }
-                    else
-                        downloads.TryRemove(key, out _);
+                    else downloads.TryRemove(key, out _);
                 }
             }
 
@@ -1099,40 +1257,23 @@ class Program
         }
     }
 
-    static string GetSavePath(Soulseek.File file, Track track)
-    {
-        if (!track.onlyTrackTitle)
-            return $"{GetSavePathNoExt(track)}{Path.GetExtension(file.Filename)}";
-        else
-            return $"{Path.Combine(outputFolder, RemoveInvalidChars(Path.GetFileName(file.Filename), " "))}";
-    }
-
-    static string GetSavePathNoExt(Track track)
-    {
-        return Path.Combine(outputFolder, $"{GetSaveName(track)}");
-    }
-
-    static string GetSaveName(Track track)
-    {
-        string name = $"{track.ArtistName} - {track.TrackTitle}";
-        return RemoveInvalidChars(name, " ");
-    }
-
-    static async Task YtdlpSearchAndDownload(Track track, FileConditions conditions, string savePathNoExt, ProgressBar progress)
+    static async Task<string> YtdlpSearchAndDownload(Track track, ProgressBar progress)
     {
         if (track.YtID != "")
         {
-            YtdlpDownload(track.YtID, savePathNoExt, progress);
-            return;
+            string videoTitle = (await YouTube.GetVideoInfo(track.YtID)).title;
+            string saveFilePathNoExt = GetSavePathNoExt(videoTitle, track);
+            await YtdlpDownload(track.YtID, saveFilePathNoExt, progress);
+            return saveFilePathNoExt;
         }
 
         Process process = new Process();
         ProcessStartInfo startInfo = new ProcessStartInfo();
 
         startInfo.FileName = "yt-dlp";
-        string search = $"{track.ArtistName} - {track.TrackTitle}";
-        startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%H:%M:%S)s ¦¦ %(id)s ¦¦ %(title)s\"";
-        SafeRefresh(progress, 0, $"{startInfo.FileName} {startInfo.Arguments}");
+        string search = track.ArtistName != "" ? $"{track.ArtistName} - {track.TrackTitle}" : track.TrackTitle;
+        startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%s)s === %(id)s === %(title)s\"";
+        RefreshOrPrint(progress, 0, $"{startInfo.FileName} \"ytsearch3:{search}\"");
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1146,19 +1287,16 @@ class Program
 
         List<(int, string, string)> results = new List<(int, string, string)>();
         string output;
-        Regex regex = new Regex(@"^(\d+):(\d+):(\d+) ¦¦ ([\w-]+) ¦¦ (.+)$");
+        Regex regex = new Regex(@"^(\d+) === ([\w-]+) === (.+)$");
         while ((output = process.StandardOutput.ReadLine()) != null)
         {
             Match match = regex.Match(output);
             if (match.Success)
             {
-                int hours = int.Parse(match.Groups[1].Value);
-                int minutes = int.Parse(match.Groups[2].Value);
-                int seconds = int.Parse(match.Groups[3].Value);
-                int totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds;
-                string id = match.Groups[4].Value;
-                string title = match.Groups[5].Value;
-                results.Add((totalSeconds, id, title));
+                int seconds = int.Parse(match.Groups[1].Value);
+                string id = match.Groups[2].Value;
+                string title = match.Groups[3].Value;
+                results.Add((seconds, id, title));
             }
         }
 
@@ -1166,11 +1304,12 @@ class Program
 
         foreach (var res in results)
         {
-            bool possibleMatch = false;
-            if (conditions.LengthToleranceSatisfies(track, res.Item1))
+            if (necessaryCond.LengthToleranceSatisfies(track, res.Item1))
             {
-                YtdlpDownload(res.Item2, savePathNoExt, progress);
-                return;
+                string videoTitle = (await YouTube.GetVideoInfo(res.Item2)).title;
+                string saveFilePathNoExt = GetSavePathNoExt(videoTitle, track);
+                await YtdlpDownload(res.Item2, saveFilePathNoExt, progress);
+                return saveFilePathNoExt;
             }
         }
 
@@ -1184,7 +1323,7 @@ class Program
 
         startInfo.FileName = "yt-dlp";
         startInfo.Arguments = $"\"{id}\" -f {ytdlpFormat} -ci -o \"{savePathNoExt}.%(ext)s\" -x";
-        SafeRefresh(progress, 0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x");
+        RefreshOrPrint(progress, 0, $"yt-dlp \"{id}\" -f {ytdlpFormat} -ci -o \"{Path.GetFileNameWithoutExtension(savePathNoExt + ".m")}.%(ext)s\" -x", true);
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -1218,6 +1357,8 @@ class Program
         private DateTime lastChangeTime = DateTime.Now;
         private TransferStates? prevTransferState = null;
         private long prevBytesTransferred = 0;
+        private bool updatedTextDownload = false;
+        private bool updatedTextSuccess = false;
 
         public DownloadWrapper(string savePath, SearchResponse response, Soulseek.File file, Track track, CancellationTokenSource cts, ProgressBar progress)
         {
@@ -1226,17 +1367,14 @@ class Program
             this.file = file;
             this.cts = cts;
             this.track = track;
-            string sampleRate = file.SampleRate.HasValue ? $"/{file.SampleRate}Hz" : "";
-            string bitRate = file.BitRate.HasValue ? $"/{file.BitRate}kbps" : "";
-            string fileSize = $"{file.Size / (float)(1024 * 1024):F1}MB";
-            displayText = $"{response.Username}\\..\\{file.Filename.Split('\\').Last()} " +
-                $"[{file.Length}s{sampleRate}{bitRate}/{fileSize}]";
-
             this.progress = progress;
-            SafeRefresh(progress, 0, displayText);
+            this.displayText = DisplayString(track, file, response.Username);
+
+            RefreshOrPrint(progress, 0, "Initialize: " + displayText, true);
+            RefreshOrPrint(progress, 0, displayText, false);
         }
 
-        public string UpdateText()
+        public void UpdateText()
         {
             char[] bars = { '/', '|', '\\', '―' };
             downloadRotatingBarState++;
@@ -1246,6 +1384,7 @@ class Program
             string percText = percentage < 0.1 ? $"0{percentage:P}" : $"{percentage:P}";
             queued = transfer?.State.ToString().Contains("Queued") ?? false;
             string state = "NullState";
+            bool downloading = false;
 
             if (stalled)
             {
@@ -1254,23 +1393,29 @@ class Program
             }
             else if (transfer != null)
             {
+                state = transfer.State.ToString();
+
                 if (queued)
                     state = "Queued";
-                else if (transfer.State.ToString().Contains("Completed, "))
-                    state = transfer.State.ToString().Replace("Completed, ", "");
-                else
-                    state = transfer.State.ToString();
+                else if (state.Contains("Completed, "))
+                    state = state.Replace("Completed, ", "");
+                else if (state.Contains("Initializing"))
+                    state = "Initialize";
             }
 
             if (state == "Succeeded")
                 success = true;
+            if (state == "InProgress")
+                downloading = true;
 
             string txt = $"{bar}{state}:".PadRight(14, ' ');
+            bool needSimplePrintUpdate = (downloading && !updatedTextDownload) || (success && !updatedTextSuccess);
+            updatedTextDownload |= downloading;
+            updatedTextSuccess |= success;
 
             Console.ResetColor();
-            SafeRefresh(progress, (int)((percentage ?? 0) * 100), $"{txt} {displayText}");
+            RefreshOrPrint(progress, (int)((percentage ?? 0) * 100), $"{txt} {displayText}", needSimplePrintUpdate);
 
-            return progress.Line1 + "\n" + progress.Line2;
         }
 
         public DateTime UpdateLastChangeTime()
@@ -1286,57 +1431,69 @@ class Program
 
     class SearchInfo
     {
-        public SearchQuery query;
-        public SearchOptions searchOptions;
-        public ConcurrentDictionary<string, SearchResponse> responses;
+        public ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results;
         public ProgressBar progress;
 
-        public SearchInfo(SearchQuery query, ConcurrentDictionary<string, SearchResponse> responses, SearchOptions searchOptions, ProgressBar progress)
+        public SearchInfo(ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results, ProgressBar progress)
         {
-            this.query = query;
-            this.responses = responses;
-            this.searchOptions = searchOptions; 
+            this.results = results;
             this.progress = progress;
         }
     }
 
     class FileConditions
     {
-        public string Format { get; set; } = "";
-        public int LengthTolerance { get; set; } = -1;
-        public int MinBitrate { get; set; } = -1;
-        public int MaxBitrate { get; set; } = -1;
-        public int MaxSampleRate { get; set; } = -1;
-        public string[] dangerWords = { "mix", "dj ", " edit", "cover" };
+        public int LengthTolerance = -1;
+        public int MinBitrate = -1;
+        public int MaxBitrate = -1;
+        public int MaxSampleRate = -1;
+        public bool StrictTitle = false;
+        public bool StrictArtist = false;
+        public string[] DangerWords = { };
+        public string[] Formats = { };
+        public string StrictStringRegexRemove = "";
+        public bool StricStringDiacrRemove = false;
+
+        public FileConditions() { }
+
+        public FileConditions(FileConditions other)
+        {
+            other.Formats.CopyTo(Formats, 0);
+            LengthTolerance = other.LengthTolerance;
+            MinBitrate = other.MinBitrate;
+            MaxBitrate = other.MaxBitrate;
+            MaxSampleRate = other.MaxSampleRate;
+            DangerWords = other.DangerWords.ToArray();
+        }
 
         public bool FileSatisfies(Soulseek.File file, Track track)
         {
-            string fname = Path.GetFileNameWithoutExtension(file.Filename);
-
-            return NameSatisfies(fname, track.TrackTitle) && FormatSatisfies(file.Filename) && LengthToleranceSatisfies(file, track.Length) 
-                && BitrateSatisfies(file) && SampleRateSatisfies(file);
+            return DangerWordSatisfies(file.Filename, track.TrackTitle) && FormatSatisfies(file.Filename) && LengthToleranceSatisfies(file, track.Length) 
+                && BitrateSatisfies(file) && SampleRateSatisfies(file) && StrictTitleSatisfies(file.Filename, track.TrackTitle)
+                && StrictArtistSatisfies(file.Filename, track.ArtistName);
         }
 
         public bool FileSatisfies(TagLib.File file, Track track)
         {
-            string fname = Path.GetFileNameWithoutExtension(file.Name);
-
-            return NameSatisfies(fname, track.TrackTitle) && FormatSatisfies(file.Name) && LengthToleranceSatisfies(file, track.Length) 
-                && BitrateSatisfies(file) && SampleRateSatisfies(file);
+            return DangerWordSatisfies(file.Name, track.TrackTitle) && FormatSatisfies(file.Name) && LengthToleranceSatisfies(file, track.Length) 
+                && BitrateSatisfies(file) && SampleRateSatisfies(file) && StrictTitleSatisfies(file.Name, track.TrackTitle) 
+                && StrictArtistSatisfies(file.Name, track.ArtistName);
         }
 
-        public bool NameSatisfies(string fname, string tname)
+        public bool DangerWordSatisfies(string fname, string tname)
         {
             if (string.IsNullOrEmpty(tname))
-                return false;
-            tname = tname.Split('-', StringSplitOptions.RemoveEmptyEntries).Last();
+                return true;
 
-            foreach (var word in dangerWords)
+            fname = GetFileNameWithoutExtSlsk(fname).ToLower();
+            tname = tname.Split('-', StringSplitOptions.RemoveEmptyEntries).Last().ToLower();
+
+            foreach (var word in DangerWords)
             {
-                if (fname.Contains(word, StringComparison.OrdinalIgnoreCase) ^ tname.Contains(word, StringComparison.OrdinalIgnoreCase))
+                if (fname.Contains(word) ^ tname.Contains(word))
                 {
                     if (word == "mix")
-                        return fname.Contains("original mix", StringComparison.OrdinalIgnoreCase) || tname.Contains("original mix", StringComparison.OrdinalIgnoreCase);
+                        return fname.Contains("original mix") || tname.Contains("original mix");
                     else
                         return false;
                 }
@@ -1345,9 +1502,46 @@ class Program
             return true;
         }
 
-        public bool FormatSatisfies(string filename)
+        public bool StrictTitleSatisfies(string fname, string tname, bool noPath = true)
         {
-            return string.IsNullOrEmpty(Format) || filename.EndsWith(Format, StringComparison.OrdinalIgnoreCase);
+            if (!StrictTitle)
+                return true;
+
+            fname = noPath ? GetFileNameWithoutExtSlsk(fname) : fname;
+            return StrictString(fname, tname, StrictStringRegexRemove, StricStringDiacrRemove);
+        }
+
+        public bool StrictArtistSatisfies(string fname, string aname)
+        {
+            if (!StrictArtist)
+                return true;
+
+            return StrictString(fname, aname, StrictStringRegexRemove, StricStringDiacrRemove);
+        }
+
+        public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = false)
+        {
+            if (string.IsNullOrEmpty(tname))
+                return true;
+
+            var seps = new string[] { " ", "_", "-" };
+            fname = RemoveInvalidChars(fname.Replace(seps, ""), "");
+            fname = regexRemove != "" ? Regex.Replace(fname, regexRemove, "") : fname;
+            fname = diacrRemove ? fname.RemoveDiacritics() : fname;
+            tname = RemoveInvalidChars(tname.Replace(seps, ""), "");
+            tname = regexRemove != "" ? Regex.Replace(tname, regexRemove, "") : tname;
+            tname = diacrRemove ? tname.RemoveDiacritics() : tname;
+
+            if (string.IsNullOrEmpty(fname) || string.IsNullOrEmpty(tname))
+                return false;
+
+            return fname.Contains(tname, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public bool FormatSatisfies(string fname)
+        {
+            string ext = Path.GetExtension(fname).Trim('.').ToLower();
+            return Formats.Length == 0 || (ext != "" && Formats.Any(f => f == ext));
         }
 
         public bool LengthToleranceSatisfies(Soulseek.File file, int actualLength)
@@ -1409,9 +1603,29 @@ class Program
         {
             return MaxSampleRate < 0 || file.Properties.AudioSampleRate <= MaxSampleRate;
         }
+
+        public string GetNotSatisfiedName(Soulseek.File file, Track track)
+        {
+            if (!DangerWordSatisfies(file.Filename, track.TrackTitle))
+                return "DangerWord fails";
+            if (!FormatSatisfies(file.Filename))
+                return "Format fails";
+            if (!LengthToleranceSatisfies(file, track.Length))
+                return "Length fails";
+            if (!BitrateSatisfies(file))
+                return "Bitrate fails";
+            if (!SampleRateSatisfies(file))
+                return "SampleRate fails";
+            if (!StrictTitleSatisfies(file.Filename, track.TrackTitle))
+                return "StrictTitle fails";
+            if (!StrictArtistSatisfies(file.Filename, track.ArtistName))
+                return "StrictArtist fails";
+
+            return "Satisfied";                               
+        }
     }
 
-    static async Task<(string?, List<Track>)> GetSpotifyPlaylist(string url, string id, string secret, bool login, StringEdit stringEdit)
+    static async Task<(string?, List<Track>)> GetSpotifyPlaylist(string url, string id, string secret, bool login, int max=int.MaxValue, int offset=0)
     {
         var spotify = new Spotify(id, secret);
         if (login)
@@ -1423,72 +1637,127 @@ class Program
             await spotify.Authorize();
 
         Console.WriteLine("Loading Spotify tracks");
-        (string? name, var res) = await spotify.GetPlaylist(url, stringEdit);
+        (string? name, var res) = await spotify.GetPlaylist(url, max, offset);
         return (name, res);
     }
 
-    static async Task<List<Track>> GetSpotifyLikes(string id, string secret, StringEdit stringEdit)
+    static async Task<List<Track>> GetSpotifyLikes(string id, string secret, int max = int.MaxValue, int offset = 0)
     {
         var spotify = new Spotify(id, secret);
         await spotify.AuthorizeLogin();
         await spotify.IsClientReady();
 
         Console.WriteLine("Loading Spotify tracks");
-        var res = await spotify.GetLikes(stringEdit);
+        var res = await spotify.GetLikes(max, offset);
         return res;
     }
 
-    static async Task<List<Track>> ParseCsvIntoTrackInfo(string path, StringEdit stringEdit, string artistCol = "", string trackCol = "", 
-        string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string timeUnit = "s", bool ytParse = false)
+    static async Task<List<Track>> ParseCsvIntoTrackInfo(string path, string? artistCol = "", string? trackCol = "", 
+        string? lengthCol = "", string? albumCol = "", string? descCol = "", string? ytIdCol = "", string timeUnit = "", bool ytParse = false)
     {
         var tracks = new List<Track>();
 
         using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
         {
-            var header = reader.ReadLine();
+            var header = reader.ReadLine().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-            string[] cols = { artistCol, albumCol, trackCol, descCol, ytIdCol, lengthCol };
+            string?[] cols = { artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol };
+            string[][] aliases = {
+                new[] { "artist", "artist name", "artists", "artist names" },
+                new[] { "album", "album name", "album title" },
+                new[] { "track", "title", "song", "track title", "track name", "song name" },
+                new[] { "length", "duration", "track length", "track duration", "song length", "song duration" },
+                new[] { "description" },
+                new[] { "youtube id" }
+            };
+
+            string usingColumns = "";
             for (int i = 0; i < cols.Length; i++)
             {
-                if (!string.IsNullOrEmpty(cols[i]) && Array.IndexOf(header.Split(','), cols[i]) == -1)
-                    throw new Exception($"Column \"{cols[i]}\" not found in CSV file");
+                if (string.IsNullOrEmpty(cols[i]))
+                {
+                    string? res = header.FirstOrDefault(h => Regex.Replace(h, @"\(.*?\)", "").EqualsAny(aliases[i], StringComparison.OrdinalIgnoreCase));
+                    if (!string.IsNullOrEmpty(res))
+                    {
+                        cols[i] = res;
+                        usingColumns += $"{aliases[i][0]}:\"{res}\", ";
+                    }
+                }
+                else if (!string.IsNullOrEmpty(cols[i]))
+                {
+                    if (Array.IndexOf(header, cols[i]) == -1)
+                        throw new Exception($"Column \"{cols[i]}\" not found in CSV file");
+                    usingColumns += $"{aliases[i][0]}:\"{cols[i]}\", ";
+                }
             }
 
-            var artistIndex = string.IsNullOrEmpty(artistCol) ? -1 : Array.IndexOf(header.Split(','), artistCol);
-            var albumIndex = string.IsNullOrEmpty(albumCol) ? -1 : Array.IndexOf(header.Split(','), albumCol);
-            var trackIndex = string.IsNullOrEmpty(trackCol) ? -1 : Array.IndexOf(header.Split(','), trackCol);
-            var descIndex = string.IsNullOrEmpty(descCol) ? -1 : Array.IndexOf(header.Split(','), descCol);
-            var ytIdIndex = string.IsNullOrEmpty(ytIdCol) ? -1 : Array.IndexOf(header.Split(','), ytIdCol);
-            var lengthIndex = string.IsNullOrEmpty(lengthCol) ? -1 : Array.IndexOf(header.Split(','), lengthCol);
+            if (!string.IsNullOrEmpty(usingColumns))
+                Console.WriteLine($"Using columns: {usingColumns.TrimEnd(' ', ',')}.");
+
+            if (cols[0] == "")
+                WriteLine($"Warning: No artist column specified, results may be imprecise", ConsoleColor.DarkYellow);
+            if (cols[2] == "")
+                throw new Exception($"No track name column specified");
+            if (cols[3] == "")
+                WriteLine($"Warning: No artist column specified, results may be imprecise", ConsoleColor.DarkYellow);
+
+            var artistIndex = string.IsNullOrEmpty(cols[0]) ? -1 : Array.IndexOf(header, cols[0]);
+            var albumIndex = string.IsNullOrEmpty(cols[1]) ? -1 : Array.IndexOf(header, cols[1]);
+            var trackIndex = string.IsNullOrEmpty(cols[2]) ? -1 : Array.IndexOf(header, cols[2]);
+            var lengthIndex = string.IsNullOrEmpty(cols[3]) ? -1 : Array.IndexOf(header, cols[3]);
+            var descIndex = string.IsNullOrEmpty(cols[4]) ? -1 : Array.IndexOf(header, cols[4]);
+            var ytIdIndex = string.IsNullOrEmpty(cols[5]) ? -1 : Array.IndexOf(header, cols[5]);
 
             var regex = new Regex(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)"); // thank you, ChatGPT.
 
+            int probablyMsIndex = -1;
             while (!reader.EndOfStream)
             {
                 var line = reader.ReadLine();
                 var values = regex.Split(line);
+                if (!values.Any(t => !string.IsNullOrEmpty(t.Trim())))
+                    continue;
+
                 var desc = "";
                 var id = "";
 
                 var track = new Track();
                 if (artistIndex >= 0) track.ArtistName = values[artistIndex].Trim('"').Split(',').First().Trim(' ');
-                if (trackIndex >= 0) track.TrackTitle = stringEdit.Edit(values[trackIndex].Trim('"'));
+                if (trackIndex >= 0) track.TrackTitle = values[trackIndex].Trim('"');
                 if (albumIndex >= 0) track.Album = values[albumIndex].Trim('"');
                 if (descIndex >= 0) desc = values[descIndex].Trim('"');
                 if (ytIdIndex >= 0) id = values[ytIdIndex].Trim('"');
-                if (lengthIndex >= 0 && int.TryParse(values[lengthIndex], out int result) && result > 0)
+                if (lengthIndex >= 0)
                 {
-                    if (timeUnit == "ms")
-                        track.Length = result / 1000;
-                    else
+                    int result = ParseTrackLength(values[lengthIndex]);
+                    if (timeUnit == "s" || probablyMsIndex != -1)
                         track.Length = result;
+                    else if (timeUnit == "ms")
+                        track.Length = result / 1000;
+                    else if (string.IsNullOrEmpty(timeUnit) && result > 10000)
+                        probablyMsIndex = tracks.Count;
+                    else if (string.IsNullOrEmpty(timeUnit))
+                        track.Length = result;
+                    else
+                        throw new Exception($"Invalid timeunit \'{timeUnit}\', only ms or s.");
                 }
 
                 if (ytParse)
                     track = await YouTube.ParseTrackInfo(track.TrackTitle, track.ArtistName, id, track.Length, true, desc);
 
                 if (track.TrackTitle != "") tracks.Add(track);
+            }
+
+            if (probablyMsIndex != -1)
+            {
+                Console.WriteLine($"Track length values seem large, probably in ms (specify --time-unit to override)");
+                for (int i = 0; i < tracks.Count; i++)
+                {
+                    var t = tracks[i];
+                    t.Length /= 1000;
+                    tracks[i] = t;
+                }
             }
         }
 
@@ -1500,22 +1769,112 @@ class Program
 
     static bool IsMusicFile(string fileName)
     {
-        var musicExtensions = new string[] { ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma", ".m4a", ".alac", ".ape", ".dsd", ".dff", ".dsf", ".opus" };
+        var musicExtensions = new string[] { ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma", ".m4a", ".alac", ".ape", ".opus" };
         var extension = Path.GetExtension(fileName).ToLower();
         return musicExtensions.Contains(extension);
     }
 
-    static bool TrackExistsInCollection(Track track, FileConditions conditions, IEnumerable<string> collection, out string? foundPath)
+    static string GetSavePath(string sourceFname, Track track)
+    {
+        return $"{GetSavePathNoExt(sourceFname, track)}{Path.GetExtension(sourceFname)}";
+    }
+
+    static string GetSavePathNoExt(string sourceFname, Track track)
+    {
+        return Path.Combine(outputFolder, $"{GetSaveName(sourceFname, track)}");
+    }
+
+    static string GetSaveName(string sourceFname, Track track)
+    {
+        string name = GetFileNameWithoutExtSlsk(sourceFname);
+        return RemoveInvalidChars(name, " ");
+    }
+
+    static string GetFileNameSlsk(string fname)
+    {
+        fname = fname.Replace('\\', Path.DirectorySeparatorChar);
+        return Path.GetFileName(fname);
+    }
+
+    static string GetFileNameWithoutExtSlsk(string fname)
+    {
+        fname = fname.Replace('\\', Path.DirectorySeparatorChar);
+        return Path.GetFileNameWithoutExtension(fname);
+    }
+
+    static string GetDirectoryNameSlsk(string fname)
+    {
+        fname = fname.Replace('\\', Path.DirectorySeparatorChar);
+        return Path.GetDirectoryName(fname);
+    }
+
+    static string ApplyNamingFormat(string filepath, string format)
+    {
+        try
+        {
+            var file = TagLib.File.Create(filepath);
+            string newName = format;
+
+            newName = newName.Replace("{artist}", file.Tag.FirstPerformer ?? "")
+                             .Replace("{artists}", string.Join(" & ", file.Tag.Performers))
+                             .Replace("{album_artist}", file.Tag.FirstAlbumArtist ?? "")
+                             .Replace("{album_artists}", string.Join(" & ", file.Tag.AlbumArtists))
+                             .Replace("{title}", file.Tag.Title ?? "")
+                             .Replace("{album}", file.Tag.Album ?? "")
+                             .Replace("{year}", file.Tag.Year.ToString() ?? "")
+                             .Replace("{track}", file.Tag.Track.ToString("D2") ?? "")
+                             .Replace("{disc}", file.Tag.Disc.ToString() ?? "");
+
+            if (newName != format)
+            {
+                string directory = Path.GetDirectoryName(filepath);
+                string extension = Path.GetExtension(filepath);
+                string newFilePath = Path.Combine(directory, RemoveInvalidChars(newName, " ") + extension);
+                System.IO.File.Move(filepath, newFilePath);
+                return newFilePath;
+            }
+        }
+        catch { }
+
+        return filepath;
+    }
+
+    static bool TrackMatchesFilename(Track track, string filename)
     {
         string[] ignore = new string[] { " ", "_", "-", ".", "(", ")" };
         string searchName = track.TrackTitle.Replace(ignore, "");
-        if (string.IsNullOrEmpty(searchName))
-            searchName = track.TrackTitle;
+        searchName = searchName.RemoveInvalidChars("").RemoveFt();
+        searchName = string.IsNullOrEmpty(searchName) ? track.TrackTitle : searchName;
 
-        searchName = RemoveInvalidChars(searchName, "");
+        filename = Path.GetFileNameWithoutExtension(filename);
+        filename = filename.RemoveInvalidChars("");
+        filename = filename.Replace(ignore, "");
 
-        var matchingFiles = collection
-            .Where(fileName => fileName.Replace(ignore, "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (filename.Contains(searchName, StringComparison.OrdinalIgnoreCase))
+            return true;
+        else if ((track.ArtistMaybeWrong || string.IsNullOrEmpty(track.ArtistName)) && track.TrackTitle.Count(c => c == '-') == 1)
+        {
+            searchName = track.TrackTitle.Split('-', StringSplitOptions.RemoveEmptyEntries)[1].Replace(ignore, "");
+            searchName = searchName.RemoveInvalidChars("").RemoveFt();
+            if (!string.IsNullOrEmpty(searchName))
+            {
+                if (filename.Contains(searchName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    static bool TrackExistsInCollection(Track track, FileConditions conditions, IEnumerable<string> collection, out string? foundPath, bool precise)
+    {
+        var matchingFiles = collection.Where(fileName => TrackMatchesFilename(track, fileName)).ToArray();
+
+        if (!precise && matchingFiles.Any())
+        {
+            foundPath = matchingFiles.First();
+            return true;
+        }
 
         foreach (var p in matchingFiles)
         {
@@ -1530,28 +1889,87 @@ class Program
             }
         }
 
-        if (searchName.Count(c => c == '-') == 1)
+        foundPath = null;
+        return false;
+    }
+
+    static bool TrackExistsInCollection(Track track, FileConditions conditions, IEnumerable<TagLib.File> collection, out string? foundPath, bool precise)
+    {
+        var matchingFiles = collection.Where(f => conditions.FileSatisfies(f, track)).ToArray();
+        string artist = track.ArtistName.ToLower().Replace(" ", "").RemoveFt();
+        string title = track.TrackTitle.ToLower().Replace(" ", "").RemoveFt();
+
+        foreach (var f in collection)
         {
-            searchName = searchName.Split('-')[1];
-            matchingFiles = collection
-                .Where(fileName => fileName.Replace(ignore, "").Contains(searchName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            foundPath = f.Name;
 
-            foreach (var p in matchingFiles)
+            if (string.IsNullOrEmpty(f.Tag.Title))
             {
-                TagLib.File f;
-                try { f = TagLib.File.Create(p); }
-                catch { continue; }
-
-                if (conditions.FileSatisfies(f, track))
-                {
-                    foundPath = p;
+                if (TrackMatchesFilename(track, f.Name))
                     return true;
-                }
+                continue;
+            }
+
+            string fileArtist = f.Tag.FirstPerformer.ToLower().Replace(" ", "").RemoveFt();
+            string fileTitle = f.Tag.Title.ToLower().Replace(" ", "").RemoveFt();
+
+            if (precise && !conditions.FileSatisfies(f, track))
+                continue;
+
+            bool durCheck = conditions.LengthToleranceSatisfies(f, track.Length);
+            bool check1 = (artist.Contains(fileArtist) || title.Contains(fileArtist)) && (!precise || durCheck);
+            bool check2 = !precise && fileTitle.Length >= 6 && durCheck;
+
+            //if (fileTitle.Contains("wolves") && title.Contains("wolves"))
+            //    Console.WriteLine($"{durCheck}, {check1}, {check2}, {conditions.DangerWordSatisfies(fileTitle, title)}, {title.Contains(fileTitle)}, {fileTitle}");
+
+            if ((check1 || check2) &&  (precise || conditions.DangerWordSatisfies(fileTitle, title)))
+            {
+                if (title.Contains(fileTitle))
+                    return true;
             }
         }
 
         foundPath = null;
         return false;
+    }
+
+    static Dictionary<Track, string> RemoveTracksIfExist(List<Track> tracks, string dir, FileConditions necessaryCond, bool useTags, bool precise)
+    {
+        var existing = new Dictionary<Track, string>();
+        var files = System.IO.Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+        var musicFiles = files.Where(filename => IsMusicFile(filename)).ToArray();
+
+        if (!useTags)
+        {
+            tracks.RemoveAll(x =>
+            {
+                bool exists = TrackExistsInCollection(x, necessaryCond, musicFiles, out string? path, precise);
+                if (exists) existing.Add(x, path);
+                return exists;
+            });
+        }
+        else
+        {
+            var musicIndex = new List<TagLib.File>();
+
+            foreach (var p in musicFiles)
+            {
+                TagLib.File f;
+                try { f = TagLib.File.Create(p); }
+                catch { continue; }
+                musicIndex.Add(f);
+            }
+
+            tracks.RemoveAll(x =>
+            {
+                bool exists = TrackExistsInCollection(x, necessaryCond, musicIndex, out string? path, precise);
+                if (exists) existing.Add(x, path);
+                return exists;
+            });
+        }
+
+        return existing;
     }
 
     static void WriteLineOutputFile(string line)
@@ -1590,30 +2008,187 @@ class Program
             args[i] = matches[i].Value.Trim('"');
         return args;
     }
-    static string RemoveInvalidChars(string str, string replaceStr)
+
+    static Track ParseTrackArg(string input)
+    {
+        input = input.Trim();
+        Track track = new Track();
+        List<string> keys = new List<string> { "title", "artist", "duration", "length", "album", "artistMaybeWrong" };
+
+        if (!keys.Any(p => input.Replace(" ", "").Contains(p + "=")))
+            track.TrackTitle = input;
+        else
+        {
+            (int, int) getNextKeyIndices(int start)
+            {
+                int commaIndex = start;
+                int equalsIndex = input.IndexOf('=', commaIndex);
+
+                if (equalsIndex == -1)
+                    return (-1, -1);
+                if (start == 0)
+                    return keys.Any(k => k == input.Substring(0, equalsIndex).Trim()) ? (0, equalsIndex) : (-1, -1);
+
+                while (start < input.Length)
+                {
+                    commaIndex = input.IndexOf(',', start);
+                    equalsIndex = commaIndex != -1 ? input.IndexOf('=', commaIndex) : -1;
+
+                    if (commaIndex == -1 || equalsIndex == -1)
+                        return (-1, -1);
+
+                    if (keys.Any(k => k == input.Substring(commaIndex + 1, equalsIndex - commaIndex - 1).Trim()))
+                        return (commaIndex + 1, equalsIndex);
+
+                    start = commaIndex + 1;
+                }
+
+                return (-1, -1);
+            }
+
+            (int start, int end) = getNextKeyIndices(0);
+            (int prevStart, int prevEnd) = (0, 0);
+
+            while (true)
+            {
+                if (prevEnd != 0)
+                {
+                    string key = input.Substring(prevStart, prevEnd - prevStart);
+                    int valEnd = start != -1 ? start - 1 : input.Length;
+                    string val = input.Substring(prevEnd + 1, valEnd - prevEnd - 1);
+                    switch (key)
+                    {
+                        case "title":
+                            track.TrackTitle = val;
+                            break;
+                        case "artist":
+                            track.ArtistName = val;
+                            break;
+                        case "duration":
+                        case "length":
+                            track.Length = ParseTrackLength(val);
+                            break;
+                        case "album":
+                            track.Album = val;
+                            break;
+                        case "artistMaybeWrong":
+                            if (val == "true")
+                                track.ArtistMaybeWrong = true;
+                            break;
+                    }
+                }
+
+                if (end == -1)
+                    break;
+
+                (prevStart, prevEnd) = (start, end);
+                (start, end) = getNextKeyIndices(end);
+            }
+        }
+
+        return track;
+    }
+
+    static int ParseTrackLength(string lengthString)
+    {
+        string[] parts = lengthString.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 1)
+        {
+            if (float.TryParse(parts[0], out float seconds))
+                return (int)seconds;
+        }
+        else if (parts.Length == 2)
+        {
+            if (int.TryParse(parts[0], out int minutes) && float.TryParse(parts[1], out float seconds))
+                return minutes * 60 + (int)seconds;
+        }
+        else if (parts.Length == 3)
+        {
+            if (int.TryParse(parts[0], out int hours) && int.TryParse(parts[1], out int minutes) && float.TryParse(parts[2], out float seconds))
+                return hours * 3600 + minutes * 60 + (int)seconds;
+        }
+
+        throw new ArgumentException("Invalid track length format", nameof(lengthString));
+    }
+
+    static string RemoveInvalidChars(this string str, string replaceStr)
     {
         char[] invalidChars = Path.GetInvalidFileNameChars();
         foreach (char c in invalidChars)
             str = str.Replace(c.ToString(), replaceStr);
-        return str;
+        return str.Replace("\\", replaceStr).Replace("/", replaceStr);
     }
 
-    static void PrintTracks(List<Track> tracks, int number = -1)
+    static string DisplayString(Track t, Soulseek.File? file=null, string username="", FileConditions? nec=null, 
+        FileConditions? pref=null, bool fullpath=false)
     {
-        number = number == -1 ? tracks.Count : Math.Min(tracks.Count, number);
+        if (file == null)
+            return t.ToString();
+
+        string sampleRate = file.SampleRate.HasValue ? $"/{file.SampleRate}Hz" : "";
+        string bitRate = file.BitRate.HasValue ? $"/{file.BitRate}kbps" : "";
+        string fileSize = $"{file.Size / (float)(1024 * 1024):F1}MB";
+        string fname = fullpath ? "\\" + file.Filename : "\\..\\" + GetFileNameSlsk(file.Filename);
+        string displayText = $"{username}{fname} [{file.Length}s{sampleRate}{bitRate}/{fileSize}]";
+
+        string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(file, t)}, " : "";
+        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(file, t)}" : "";
+        string cond = "";
+        if (nec != null || pref != null)
+            cond = $" ({(necStr + prefStr).TrimEnd(' ', ',')})";
+
+        return displayText + cond;
+    }
+
+    static void PrintTracks(List<Track> tracks, int number = int.MaxValue)
+    {
+        number = Math.Min(tracks.Count, number);
         for (int i = 0; i < number; i++)
         {
             Console.WriteLine($"  {tracks[i]}");
         }
-        if (number != tracks.Count)
-            Console.WriteLine("  ...");
-        Console.WriteLine($"Track count: {tracks.Count}");
+
+        if (number < tracks.Count)
+            Console.WriteLine($"  ... (etc)");
     }
 
-    static void SafeRefresh(ProgressBar progress, int current, string item)
+    static void RefreshOrPrint(ProgressBar? progress, int current, string item, bool print = false)
+    {
+        if (progress != null)
+        {
+            try { progress.Refresh(current, item); }
+            catch { }
+        }
+        else if (displayStyle == "simple" && print)
+            Console.WriteLine(item);
+    }
+
+    public static void WriteLine(string value, ConsoleColor color)
+    {
+        Console.ForegroundColor = color;
+        Console.WriteLine(value);
+        Console.ResetColor();
+    }
+
+    private static ProgressBar? GetProgressBar(string style)
     {
         lock (consoleLock)
-            progress.Refresh(current, item);
+        {
+#if WINDOWS
+            if (!debugDisableDownload && debugPrintTracks)
+            {
+                try { Console.BufferHeight = Math.Max(Console.BufferHeight + 2, 4000); }
+                catch { }
+            }
+#endif
+            ProgressBar? progress = null;
+            if (style == "double")
+                progress = new ProgressBar(PbStyle.DoubleLine, 100, Console.WindowWidth - 40, character: '―');
+            else if (style != "simple")
+                progress = new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
+            return progress;
+        }
     }
 
     public static async Task WaitForInternetConnection()
@@ -1638,56 +2213,6 @@ class Program
     }
 }
 
-public class StringEdit
-{
-    public string[] stringsToRemove = { };
-    string[] ftStrings = { "ft.", "feat." };
-    public bool removeFt = false;
-
-    public StringEdit(string[]? stringsToRemove = null, bool removeFt = false)
-    {
-        if (stringsToRemove != null)
-            this.stringsToRemove = stringsToRemove;
-
-        this.removeFt = removeFt;
-    }
-
-    public string Edit(string str)
-    {
-        foreach (string s in stringsToRemove)
-        {
-            var t = str;
-            str = Regex.Replace(str, Regex.Escape(s), "", RegexOptions.IgnoreCase);
-            if (t == str)
-            {
-                if (str.Contains("["))
-                {
-                    string s2 = s.Replace("[", "(").Replace("]", ")");
-                    str = Regex.Replace(str, Regex.Escape(s2), "", RegexOptions.IgnoreCase);
-                }
-                else if (str.Contains("("))
-                {
-                    string s2 = s.Replace("(", "[").Replace(")", "]");
-                    str = Regex.Replace(str, Regex.Escape(s2), "", RegexOptions.IgnoreCase);
-                }
-            }
-        }
-
-        if (removeFt)
-        {
-            foreach (string ftStr in ftStrings)
-            {
-                int ftIndex = str.IndexOf(ftStr, StringComparison.OrdinalIgnoreCase);
-
-                if (ftIndex != -1)
-                    str = str.Substring(0, ftIndex - 1);
-            }
-        }
-
-        return str.Trim();
-    }
-}
-
 public struct Track
 {
     public string TrackTitle = "";
@@ -1696,14 +2221,13 @@ public struct Track
     public string YtID = "";
     public int Length = -1;
     public bool ArtistMaybeWrong = false;
-    public bool onlyTrackTitle = false;
 
     public Track() { }
 
     public override string ToString()
     {
         var length = Length > 0 ? $" ({Length}s)" : "";
-        if (!onlyTrackTitle)
+        if (!string.IsNullOrEmpty(ArtistName))
             return $"{ArtistName} - {TrackTitle}{length}";
         else
             return $"{TrackTitle}{length}";
@@ -1712,6 +2236,16 @@ public struct Track
 
 public static class ExtensionMethods
 {
+    public static bool EqualsAny(this string input, string[] values, StringComparison comparison = StringComparison.Ordinal)
+    {
+        foreach (var value in values)
+        {
+            if (input.Equals(value, comparison))
+                return true;
+        }
+        return false;
+    }
+
     public static string Replace(this string s, string[] separators, string newVal)
     {
         string[] temp;
@@ -1719,9 +2253,28 @@ public static class ExtensionMethods
         return String.Join(newVal, temp);
     }
 
+    public static string RemoveFt(this string str)
+    {
+        string[] ftStrings = { "ft.", "feat." };
+        foreach (string ftStr in ftStrings)
+        {
+            int ftIndex = str.IndexOf(ftStr, StringComparison.OrdinalIgnoreCase);
+
+            if (ftIndex != -1)
+                str = str.Substring(0, ftIndex - 1);
+        }
+        return str.Trim();
+    }
+
     public static bool RemoveDiacriticsIfExist(this string s, out string res)
     {
         res = s.RemoveDiacritics();
+        return res != s;
+    }
+
+    public static bool RemoveRegexIfExist(this string s, string reg, out string res)
+    {
+        res = Regex.Replace(s, reg, string.Empty);
         return res != s;
     }
 

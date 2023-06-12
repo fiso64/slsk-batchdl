@@ -71,14 +71,13 @@ public class Spotify
         return true;
     }
 
-    public async Task<List<Track>> GetLikes(StringEdit stringEdit)
+    public async Task<List<Track>> GetLikes(int max = int.MaxValue, int offset = 0)
     {
         if (!loggedIn)
             throw new Exception("Can't get liked music, not logged in");
 
         List<Track> res = new List<Track>();
-        int offset = 0;
-        int limit = 50;
+        int limit = Math.Min(max, 50);
 
         while (true)
         {
@@ -88,30 +87,30 @@ public class Spotify
             {
                 string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
                 string artist = artists[0];
-                string name = stringEdit.Edit((string)track.Track.ReadProperty("name"));
+                string name = (string)track.Track.ReadProperty("name");
                 string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                 int duration = (int)track.Track.ReadProperty("durationMs");
                 res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });
             }
 
-            if (tracks.Items.Count < limit)
+            if (tracks.Items.Count < limit || res.Count >= max)
                 break;
 
             offset += limit;
+            limit = Math.Min(max - res.Count, 50);
         }
 
         return res;
     }
 
 
-    public async Task<(string?, List<Track>)> GetPlaylist(string url, StringEdit stringEdit)
+    public async Task<(string?, List<Track>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
     {
         var playlistId = GetPlaylistIdFromUrl(url);
         var p = await _client.Playlists.Get(playlistId);
 
         List<Track> res = new List<Track>();
-        int offset = 0;
-        int limit = 100;
+        int limit = Math.Min(max, 100);
 
         while (true)
         {
@@ -121,16 +120,17 @@ public class Spotify
             {
                 string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
                 string artist = artists[0];
-                string name = stringEdit.Edit((string)track.Track.ReadProperty("name"));
+                string name = (string)track.Track.ReadProperty("name");
                 string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                 int duration = (int)track.Track.ReadProperty("durationMs");
                 res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });
             }
 
-            if (tracks.Items.Count < limit)
+            if (tracks.Items.Count < limit || res.Count >= max)
                 break;
 
             offset += limit;
+            limit = Math.Min(max - res.Count, 100);
         }
 
         return (p.Name, res);

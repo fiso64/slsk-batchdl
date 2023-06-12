@@ -11,7 +11,7 @@ public static class YouTube
     private static YouTubeService? youtubeService = null;
     public static string apiKey = "";
 
-    public static async Task<(string, List<Track>)> GetTracksApi(string url, StringEdit strEdit)
+    public static async Task<(string, List<Track>)> GetTracksApi(string url, int max = int.MaxValue, int offset = 0)
     {
         StartService();
 
@@ -25,38 +25,28 @@ public static class YouTube
 
         var playlistItemsRequest = youtubeService.PlaylistItems.List("snippet,contentDetails");
         playlistItemsRequest.PlaylistId = playlistId;
-        playlistItemsRequest.MaxResults = 100;
+        playlistItemsRequest.MaxResults = Math.Min(max, 100);
 
-        var tracksDict = await GetDictYtExplode(url, strEdit);
+        var tracksDict = await GetDictYtExplode(url, max, offset);
         var tracks = new List<Track>();
+        int count = 0;
 
-        while (playlistItemsRequest != null)
+        while (playlistItemsRequest != null && count < max + offset)
         {
             var playlistItemsResponse = playlistItemsRequest.Execute();
-
             foreach (var playlistItem in playlistItemsResponse.Items)
             {
-                if (tracksDict.ContainsKey(playlistItem.Snippet.ResourceId.VideoId)) 
+                if (count >= offset)
                 {
-                    tracks.Add(tracksDict[playlistItem.Snippet.ResourceId.VideoId]);
-                }
-                else
-                {
-                    var title = "";
-                    var uploader = "";
-                    var length = 0;
-                    var desc = "";
-                    
-                    try
+                    if (tracksDict.ContainsKey(playlistItem.Snippet.ResourceId.VideoId))
+                        tracks.Add(tracksDict[playlistItem.Snippet.ResourceId.VideoId]);
+                    else
                     {
-                        var video = await youtube.Videos.GetAsync(playlistItem.Snippet.ResourceId.VideoId);
-                        title = video.Title;
-                        uploader = video.Author.Title;
-                        length = (int)video.Duration.Value.TotalSeconds;
-                        desc = video.Description;
-                    }
-                    catch
-                    {
+                        var title = "";
+                        var uploader = "";
+                        var length = 0;
+                        var desc = "";
+
                         var videoRequest = youtubeService.Videos.List("contentDetails,snippet");
                         videoRequest.Id = playlistItem.Snippet.ResourceId.VideoId;
                         var videoResponse = videoRequest.Execute();
@@ -67,11 +57,14 @@ public static class YouTube
                         uploader = videoResponse.Items[0].Snippet.ChannelTitle;
                         length = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
                         desc = videoResponse.Items[0].Snippet.Description;
-                    }
 
-                    Track track = await ParseTrackInfo(strEdit.Edit(title), uploader, playlistItem.Snippet.ResourceId.VideoId, length, false, desc);
-                    tracks.Add(track);
+                        Track track = await ParseTrackInfo(title, uploader, playlistItem.Snippet.ResourceId.VideoId, length, false, desc);
+                        tracks.Add(track);
+                    }
                 }
+
+                if (++count >= max + offset)
+                    break;
             }
 
             if (tracksDict.Count >= 200)
@@ -81,10 +74,10 @@ public static class YouTube
             }
 
             playlistItemsRequest.PageToken = playlistItemsResponse.NextPageToken;
-            if (playlistItemsRequest.PageToken == null)
-            {
+            if (playlistItemsRequest.PageToken == null || count >= max + offset)
                 playlistItemsRequest = null;
-            }
+            else
+                playlistItemsRequest.MaxResults = Math.Min(offset + max - count, 100);
         }
 
         Console.WriteLine();
@@ -236,54 +229,68 @@ public static class YouTube
 
     public static void StopService()
     {
-        //try { youtubeService.Dispose(); }
-        //catch { }
         youtubeService = null;
     }
 
-    public static async Task<Dictionary<string, Track>> GetDictYtExplode(string url, StringEdit strEdit)
+    public static async Task<Dictionary<string, Track>> GetDictYtExplode(string url, int max = int.MaxValue, int offset = 0)
     {
         var youtube = new YoutubeClient();
         var playlist = await youtube.Playlists.GetAsync(url);
 
         var tracks = new Dictionary<string, Track>();
+        int count = 0;
 
         await foreach (var video in youtube.Playlists.GetVideosAsync(playlist.Id))
         {
-            var title = strEdit.Edit(video.Title);
-            var uploader = video.Author.Title;
-            var ytId = video.Id.Value;
-            var length = (int)video.Duration.Value.TotalSeconds;
+            if (count >= offset && count < offset + max)
+            {
+                var title = video.Title;
+                var uploader = video.Author.Title;
+                var ytId = video.Id.Value;
+                var length = (int)video.Duration.Value.TotalSeconds;
 
-            var track = await ParseTrackInfo(title, uploader, ytId, length, true);
+                var track = await ParseTrackInfo(title, uploader, ytId, length, true);
 
-            tracks[ytId] = track;
+                tracks[ytId] = track;
+            }
+
+            if (count++ >= offset + max)
+                break;
         }
 
         return tracks;
     }
 
-    public static async Task<(string, List<Track>)> GetTracksYtExplode(string url, StringEdit strEdit)
+    public static async Task<(string, List<Track>)> GetTracksYtExplode(string url, int max = int.MaxValue, int offset = 0)
     {
+        var youtube = new YoutubeClient();
         var playlist = await youtube.Playlists.GetAsync(url);
 
         var playlistTitle = playlist.Title;
         var tracks = new List<Track>();
+        int count = 0;
 
         await foreach (var video in youtube.Playlists.GetVideosAsync(playlist.Id))
         {
-            var title = strEdit.Edit(video.Title);
-            var uploader = video.Author.Title;
-            var ytId = video.Id.Value;
-            var length = (int)video.Duration.Value.TotalSeconds;
+            if (count >= offset && count < offset + max)
+            {
+                var title = video.Title;
+                var uploader = video.Author.Title;
+                var ytId = video.Id.Value;
+                var length = (int)video.Duration.Value.TotalSeconds;
 
-            var track = await ParseTrackInfo(title, uploader, ytId, length, true);
+                var track = await ParseTrackInfo(title, uploader, ytId, length, true);
 
-            tracks.Add(track);
+                tracks.Add(track);
+            }
+
+            if (count++ >= offset + max)
+                break;
         }
 
         return (playlistTitle, tracks);
     }
+
 
     public static async Task<string> UrlToId(string url)
     {
