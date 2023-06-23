@@ -6,7 +6,7 @@ A batch downloader for Soulseek using Soulseek.NET. Accepts CSV files, Spotify &
 ```
 slsk-batchdl --csv test.csv --artist-col "Artist Name(s)" --track-col "Track Name" --length-col "Duration (ms)" --time-unit ms
 ```  
-You can omit the column names provided they are named predictably (like in this example). Use `--print-tracks` before downloading to check if everything has been parsed correctly.
+You can omit the column names if they are named predictably (like in this example). Use `--print-tracks` before downloading to check if everything has been parsed correctly.
 
 - Download spotify likes while skipping existing songs, and create an m3u file:
 ```
@@ -59,6 +59,7 @@ Options:
   -n --number <maxtracks>        Download at most n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
   --reverse                      Download tracks in reverse order
+  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --m3u                          Create an m3u8 playlist file
 
@@ -131,3 +132,4 @@ Supports .conf files: Create a file named `slsk-batchdl.conf` in the same direct
 ### Notes:
 - The CSV file must be saved with `,` as field delimiter and `"` as string delimiter, encoded with UTF8
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue. In my testing on Windows, the terminal app seems to be affected by this (unlike the old command prompt).
+- Why didn't I just use Python?

@@ -89,7 +89,7 @@ public static class YouTube
     {
         (string title, string uploader, int length, string desc) info = ("", "", -1, "");
         var track = new Track();
-        track.YtID = id;
+        track.URI = id;
 
         title = title.Replace("–", "-");
 

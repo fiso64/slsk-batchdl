@@ -1,10 +1,13 @@
-﻿using Konsole;
+﻿using AngleSharp.Dom;
+using Konsole;
 using Soulseek;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
+using YoutubeExplode.Playlists;
 
 static class Program
 {
@@ -56,6 +59,7 @@ static class Program
     static bool createM3u = false;
     static bool m3uOnly = false;
     static bool useTagsCheckExisting = false;
+    static bool removeTracksFromSource = false;
     static int maxTracks = int.MaxValue;
     static int offset = 0;
     
@@ -84,6 +88,8 @@ static class Program
 
     static string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
 
+    static string playlistUri = "";
+    static Spotify? spotifyClient = null;
     static string ytdlpFormat = "bestaudio/best";
     static int downloadMaxStaleTime = 50000;
     static int updateDelay = 100;
@@ -140,6 +146,7 @@ static class Program
                             "\n  -n --number <maxtracks>        Download at most n tracks of a playlist" +
                             "\n  -o --offset <offset>           Skip a specified number of tracks" +
                             "\n  --reverse                      Download tracks in reverse order" +
+                            "\n  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)" +
                             "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
                             "\n  --m3u                          Create an m3u8 playlist file" +
                             "\n" +
@@ -210,7 +217,7 @@ static class Program
         try
         {
             if (Console.BufferHeight <= 50)
-                WriteLine("You may be using the windows terminal app. Recommended to use command prompt to avoid printing issues.", ConsoleColor.DarkYellow);
+                WriteLine("Recommended to use the command prompt instead of terminal app to avoid printing issues.", ConsoleColor.DarkYellow);
         }
         catch { }
 #endif
@@ -345,6 +352,9 @@ static class Program
                     break;
                 case "--skip-not-found":
                     skipNotFound = true;
+                    break;
+                case "--remove-from-playlist":
+                    removeTracksFromSource = true;
                     break;
                 case "--remove-ft":
                     removeFt = true;
@@ -486,53 +496,67 @@ static class Program
 
         int max = reverse ? int.MaxValue : maxTracks;
         int off = reverse ? 0 : offset;
+
         if (spotifyUrl != "")
         {
+            string? playlistName;
             bool usedDefaultId = false;
+            bool login = spotifyUrl == "likes" || removeTracksFromSource;
+
+            void readSpotifyCreds()
+            {
+                Console.Write("Spotify client ID:");
+                spotifyId = Console.ReadLine();
+                Console.Write("Spotify client secret:");
+                spotifySecret = Console.ReadLine();
+                Console.WriteLine();
+            }
+
             if (spotifyId == "" || spotifySecret == "")
             {
-                spotifyId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId));
-                spotifySecret = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret));
-                usedDefaultId = true;
+                if (login)
+                    readSpotifyCreds();
+                else
+                {
+                    spotifyId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId));
+                    spotifySecret = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret));
+                    usedDefaultId = true;
+                }
             }
-            string? playlistName;
+
+            spotifyClient = new Spotify(spotifyId, spotifySecret);
+            await spotifyClient.Authorize(login, removeTracksFromSource);
+
             if (spotifyUrl == "likes")
             {
+                Console.WriteLine("Loading Spotify likes");
+                tracks = await spotifyClient.GetLikes(max, off);
                 playlistName = "Spotify Likes";
-                if (usedDefaultId)
-                {
-                    Console.Write("Spotify client ID:");
-                    spotifyId = Console.ReadLine();
-                    Console.Write("Spotify client secret:");
-                    spotifySecret = Console.ReadLine();
-                    Console.WriteLine();
-                }
-                tracks = await GetSpotifyLikes(spotifyId, spotifySecret, max, off);
             }
             else
             {
                 try
                 {
-                    (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, false, max, off);
+                    Console.WriteLine("Loading Spotify tracks");
+                    (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(spotifyUrl, max, off);
                 }
                 catch (SpotifyAPI.Web.APIException)
                 {
-                    Console.WriteLine("Spotify playlist not found. It may be set to private. Login? [Y/n]");
-                    string answer = Console.ReadLine();
-                    if (answer.ToLower() == "y")
+                    if (!login)
                     {
-                        if (usedDefaultId)
+                        Console.WriteLine("Spotify playlist not found. It may be set to private. Login? [Y/n]");
+                        string answer = Console.ReadLine();
+                        if (answer.ToLower() == "y")
                         {
-                            Console.Write("Spotify client ID:");
-                            spotifyId = Console.ReadLine();
-                            Console.Write("Spotify client secret:");
-                            spotifySecret = Console.ReadLine();
-                            Console.WriteLine();
+                            if (usedDefaultId)
+                                readSpotifyCreds();
+                            await spotifyClient.Authorize(true);
+                            Console.WriteLine("Loading Spotify tracks");
+                            (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(spotifyUrl, max, off);
                         }
-                        (playlistName, tracks) = await GetSpotifyPlaylist(spotifyUrl, spotifyId, spotifySecret, true, max, off);
+                        else return;
                     }
-                    else
-                        return;
+                    else throw;
                 }
             }
             if (folderName == "")
@@ -561,7 +585,7 @@ static class Program
         else if (tracksCsv != "")
         {
             if (!System.IO.File.Exists(tracksCsv))
-                throw new Exception("csv file not found");
+                throw new Exception("CSV file not found");
 
             tracks = await ParseCsvIntoTrackInfo(tracksCsv, artistCol, trackCol, lengthCol, albumCol, descCol, ytIdCol, timeUnit, ytParse);
             tracks = tracks.Skip(off).Take(max).ToList();
@@ -761,8 +785,14 @@ static class Program
                 if (savedFilePath != "")
                 {
                     Interlocked.Increment(ref successCount);
-                    m3uLines[tracksStart.IndexOf(track)] = Path.GetFileName(savedFilePath);
 
+                    if (removeTracksFromSource)
+                    {
+                        if (!string.IsNullOrEmpty(spotifyUrl))
+                            spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+                    }
+
+                    m3uLines[tracksStart.IndexOf(track)] = Path.GetFileName(savedFilePath);
                     if (createM3u)
                     {
                         using (var fileStream = new FileStream(m3uFilePath, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
@@ -1259,11 +1289,11 @@ static class Program
 
     static async Task<string> YtdlpSearchAndDownload(Track track, ProgressBar progress)
     {
-        if (track.YtID != "")
+        if (track.URI != "")
         {
-            string videoTitle = (await YouTube.GetVideoInfo(track.YtID)).title;
+            string videoTitle = (await YouTube.GetVideoInfo(track.URI)).title;
             string saveFilePathNoExt = GetSavePathNoExt(videoTitle, track);
-            await YtdlpDownload(track.YtID, saveFilePathNoExt, progress);
+            await YtdlpDownload(track.URI, saveFilePathNoExt, progress);
             return saveFilePathNoExt;
         }
 
@@ -1625,33 +1655,6 @@ static class Program
         }
     }
 
-    static async Task<(string?, List<Track>)> GetSpotifyPlaylist(string url, string id, string secret, bool login, int max=int.MaxValue, int offset=0)
-    {
-        var spotify = new Spotify(id, secret);
-        if (login)
-        {
-            await spotify.AuthorizeLogin();
-            await spotify.IsClientReady();
-        }
-        else
-            await spotify.Authorize();
-
-        Console.WriteLine("Loading Spotify tracks");
-        (string? name, var res) = await spotify.GetPlaylist(url, max, offset);
-        return (name, res);
-    }
-
-    static async Task<List<Track>> GetSpotifyLikes(string id, string secret, int max = int.MaxValue, int offset = 0)
-    {
-        var spotify = new Spotify(id, secret);
-        await spotify.AuthorizeLogin();
-        await spotify.IsClientReady();
-
-        Console.WriteLine("Loading Spotify tracks");
-        var res = await spotify.GetLikes(max, offset);
-        return res;
-    }
-
     static async Task<List<Track>> ParseCsvIntoTrackInfo(string path, string? artistCol = "", string? trackCol = "", 
         string? lengthCol = "", string? albumCol = "", string? descCol = "", string? ytIdCol = "", string timeUnit = "", bool ytParse = false)
     {
@@ -1693,7 +1696,7 @@ static class Program
             }
 
             if (!string.IsNullOrEmpty(usingColumns))
-                Console.WriteLine($"Using columns: {usingColumns.TrimEnd(' ', ',')}.");
+                Console.WriteLine($"Using inferred columns: {usingColumns.TrimEnd(' ', ',')}.");
 
             if (cols[0] == "")
                 WriteLine($"Warning: No artist column specified, results may be imprecise", ConsoleColor.DarkYellow);
@@ -2218,7 +2221,7 @@ public struct Track
     public string TrackTitle = "";
     public string ArtistName = "";
     public string Album = "";
-    public string YtID = "";
+    public string URI = "";
     public int Length = -1;
     public bool ArtistMaybeWrong = false;
 

@@ -16,31 +16,42 @@ public class Spotify
         _clientSecret = clientSecret;
     }
 
-    public async Task Authorize()
+    public async Task Authorize(bool login = false, bool needModify = false)
     {
-        var config = SpotifyClientConfig.CreateDefault();
-
-        var request = new ClientCredentialsRequest(_clientId, _clientSecret);
-        var response = await new OAuthClient(config).RequestToken(request);
-
-        _client = new SpotifyClient(config.WithToken(response.AccessToken));
-    }
-
-    public async Task AuthorizeLogin()
-    {
-        Swan.Logging.Logger.NoLogging();
-        _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
-        await _server.Start();
-
-        _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
-        _server.ErrorReceived += OnErrorReceived;
-
-        var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code)
+        if (!login)
         {
-            Scope = new List<string> { Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate }
-        };
+            var config = SpotifyClientConfig.CreateDefault();
 
-        BrowserUtil.Open(request.ToUri());
+            var request = new ClientCredentialsRequest(_clientId, _clientSecret);
+            var response = await new OAuthClient(config).RequestToken(request);
+
+            _client = new SpotifyClient(config.WithToken(response.AccessToken));
+        }
+        else
+        {
+            Swan.Logging.Logger.NoLogging();
+            _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
+            await _server.Start();
+
+            _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
+            _server.ErrorReceived += OnErrorReceived;
+
+            var scope = new List<string> { 
+                Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate, Scopes.PlaylistReadCollaborative
+            };
+
+            if (needModify)
+            {
+                scope.Add(Scopes.PlaylistModifyPublic);
+                scope.Add(Scopes.PlaylistModifyPrivate);
+            }
+
+            var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code) { Scope = scope };
+
+            BrowserUtil.Open(request.ToUri());
+
+            await IsClientReady();
+        }
     }
 
     private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
@@ -103,8 +114,16 @@ public class Spotify
         return res;
     }
 
+    public async Task RemoveTrackFromPlaylist(string playlistId, string trackUri)
+    {
+        var item = new PlaylistRemoveItemsRequest.Item { Uri = trackUri };
+        var pr = new PlaylistRemoveItemsRequest();
+        pr.Tracks = new List<PlaylistRemoveItemsRequest.Item>() { item };
+        try { await _client.Playlists.RemoveItems(playlistId, pr); }
+        catch { }
+    }
 
-    public async Task<(string?, List<Track>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
+    public async Task<(string?, string?, List<Track>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
     {
         var playlistId = GetPlaylistIdFromUrl(url);
         var p = await _client.Playlists.Get(playlistId);
@@ -122,8 +141,10 @@ public class Spotify
                 string artist = artists[0];
                 string name = (string)track.Track.ReadProperty("name");
                 string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
+                string uri = (string)track.Track.ReadProperty("uri");
                 int duration = (int)track.Track.ReadProperty("durationMs");
-                res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000 });
+
+                res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000, URI = uri });
             }
 
             if (tracks.Items.Count < limit || res.Count >= max)
@@ -133,7 +154,7 @@ public class Spotify
             limit = Math.Min(max - res.Count, 100);
         }
 
-        return (p.Name, res);
+        return (p.Name, p.Id, res);
     }
 
     private string GetPlaylistIdFromUrl(string url)
