@@ -48,11 +48,10 @@ Usage: slsk-batchdl -i <input> [OPTIONS]
                                  Title, Album, Length. Only the title column is required, but
                                  any extra info improves search results.
 
-                                 Search string for the track, album, or artist to search for:
-                                 Can either be any typical search text like "{artist} - {title}"
-                                 or a comma-separated list like
-                                 "title=Song Name,artist=Artist Name,length=215". Allowed
-                                 properties are; title, artist, album, length (in seconds).
+                                 String for the track, album, or artist to search for:
+                                 Can either be any typical search text like "Artist - Title"
+                                 or a comma-separated list like "title=Song,artist=Artist"
+                                 Available fields: title, artist, album, length (in seconds).
 
 Options:
   --user <username>              Soulseek username
