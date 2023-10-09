@@ -2,30 +2,30 @@
 
 A batch downloader for Soulseek using Soulseek.NET. Accepts CSV files and Spotify or YouTube urls.
 
-- Download tracks from a csv file:
+##### Download tracks from a csv file:
 ```
 slsk-batchdl -i test.csv
 ```  
-Use `--print tracks` before downloading to check if everything has been parsed correctly. The names of the columns should be: Artist, Title, Album, Length. Only the title column is required, but any additional info improves search.
+Use `--print tracks` before downloading to check if everything has been parsed correctly. The names of the columns should be: `Artist`, `Title`, `Album`, `Length`. Only the title column is required, but any additional info improves search.
 
-- Download spotify likes while skipping existing songs and create an m3u file:
+##### Download spotify likes while skipping existing songs and creating an m3u file:
 ```
 slsk-batchdl -i spotify-likes --m3u --skip-existing
 ```
 You might need to provide an id and secret when using spotify (e.g when downloading a private playlist), which you can get here https://developer.spotify.com/dashboard/applications. Create an app, then select it and add `http://localhost:48721/callback` as a redirect url in the settings.  
   
-- Download the first 10 songs of a youtube playlist:
+##### Download the first 10 songs of a youtube playlist:
 ```
 slsk-batchdl -n 10 -i "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
 ```
 To include unavailable videos, you will need to provide an api key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.  
 
-- Search & download a specific song, preferring high quality:
+##### Search & download a specific song, preferring high quality:
 ```
 slsk-batchdl -i "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
   
-- Find music by an artist which isn't in your library:
+##### Find an artist's songs which aren't in your library:
 ```
 slsk-batchdl -i "artist=MC MENTAL" -a --print tracks --skip-existing --music-dir "path\to\music"
 ```
@@ -67,11 +67,12 @@ Options:
 
   --csv                          Input is a path to a local CSV (override automatic parsing)
   --time-format <format>         Time format in Length column of the csv file (e.g h:m:s.ms
-                                 for durations like 1:04:35.123). Default: s
+                                 for durations like 1:04:35.123). Default: s (seconds)
   --yt-parse                     Enable if the csv file contains YouTube video titles and
                                  channel names; attempt to parse them into proper title and
                                  artist. If the the csv contains an "ID", "URL", or
-                                 "Description" column then they will be used for parsing too
+                                 "Description" column then those will be used for parsing as
+                                 well.
 
   --string                       Input is a search string (override automatic parsing)
   -a --aggregate                 Instead of downloading a single track matching the search
@@ -83,12 +84,12 @@ Options:
                                  significantly reduce false positives, but may introduce false
                                  negatives. Default: 1
 
-  -p --path <path>               Download folder
-  -f --folder <name>             Subfolder name (default: playlist/csv name)
+  -p --path <path>               Where to place downloaded files
+  -f --folder <name>             Subfolder name
   -n --number <maxtracks>        Download the first n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
   --reverse                      Download tracks in reverse order
-  --remove-from-playlist         Remove downloaded tracks from playlist (for spotify only)
+  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --m3u                          Create an m3u8 playlist file
 
@@ -115,14 +116,15 @@ Options:
                                  both search result and track title or in neither of the
                                  two.
 
-  -s --skip-existing                Skip if a track matching file conditions is found in the
+  -s --skip-existing             Skip if a track matching file conditions is found in the
                                  output folder or your music library (if provided)
-  --skip-mode <mode>             name: Use only filenames to check if a track exists
+  --skip-mode <mode>             Sets the way the program checks if a track exists
+                                 name: Use only filenames
                                  name-precise (default): Use filenames and check conditions
                                  tag: Use file tags (slower)
                                  tag-precise: Use file tags and check file conditions
   --music-dir <path>             Specify to skip downloading tracks found in a music library
-                                 Use with --skip-existing
+                                 use with --skip-existing
   --skip-not-found               Skip searching for tracks that weren't found on Soulseek
                                  during the last run.
   --remove-ft                    Remove "ft." or "feat." and everything after from the
@@ -133,9 +135,9 @@ Options:
                                  found. Only use for sources such as youtube or soundcloud
                                  where the "artist" could just be an uploader.
   --artist-search                Also try to find track by searching for the artist only
-  --no-regex-search <reg>        Also perform a search without a regex pattern
-  --no-diacr-search              Also perform a search without diacritics
-  -d --desperate                 Equivalent to enabling all additional searches. Slower.
+  --no-regex-search <reg>        Perform an additional search without a regex pattern
+  --no-diacr-search              Perform an additional search without diacritics
+  -d --desperate                 Equivalent to enabling all additional searches, slower.
   --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                  Soulseek. yt-dlp must be available from the command line.
 
@@ -146,7 +148,7 @@ Options:
   --display <option>             Changes how searches and downloads are displayed.
                                  single (default): Show transfer state and percentage.
                                  double: Also show a progress bar.
-                                 simple: No download bar
+                                 simple: Only printing
 
   --print <option>               Only print tracks or results instead of downloading.
                                  tracks: Print all tracks to be downloaded
@@ -155,9 +157,9 @@ Options:
                                  results-full: Print search results including full paths
 ```
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (disable it by setting it to 99999).  
-Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it to download high quality files if they exist, while not preventing low quality files from being downloaded.
+Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it download high quality files if they exist and only download low quality files if there's nothing else.
   
-Supports .conf files: Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
+Configuration files: Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
 ```
 --username "fakename"
 --password "fakepass"
