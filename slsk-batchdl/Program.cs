@@ -780,13 +780,13 @@ static class Program
             {
                 Console.WriteLine($"Checking if tracks exist in output folder");
                 var d = RemoveTracksIfExist(tracks, outputFolder, necessaryCond, useTagsCheckExisting, preciseSkip);
-                d.ToList().ForEach(x => existing.Add(x.Key, x.Value));
+                d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
             }
             if (musicDir != "" && System.IO.Directory.Exists(musicDir))
             {
                 Console.WriteLine($"Checking if tracks exist in library");
                 var d = RemoveTracksIfExist(tracks, musicDir, necessaryCond, useTagsCheckExisting, preciseSkip);
-                d.ToList().ForEach(x => existing.Add(x.Key, x.Value));
+                d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
             }
 
             foreach (var x in existing)
@@ -2256,7 +2256,7 @@ static class Program
             tracks.RemoveAll(x =>
             {
                 bool exists = TrackExistsInCollection(x, necessaryCond, musicFiles, out string? path, precise);
-                if (exists) existing.Add(x, path);
+                if (exists) existing.TryAdd(x, path);
                 return exists;
             });
         }
@@ -2275,7 +2275,7 @@ static class Program
             tracks.RemoveAll(x =>
             {
                 bool exists = TrackExistsInCollection(x, necessaryCond, musicIndex, out string? path, precise);
-                if (exists) existing.Add(x, path);
+                if (exists) existing.TryAdd(x, path);
                 return exists;
             });
         }
