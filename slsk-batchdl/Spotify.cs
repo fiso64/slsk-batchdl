@@ -85,7 +85,7 @@ public class Spotify
     public async Task<List<Track>> GetLikes(int max = int.MaxValue, int offset = 0)
     {
         if (!loggedIn)
-            throw new Exception("Can't get liked music, not logged in");
+            throw new Exception("Can't get liked music as user is not logged in");
 
         List<Track> res = new List<Track>();
         int limit = Math.Min(max, 50);

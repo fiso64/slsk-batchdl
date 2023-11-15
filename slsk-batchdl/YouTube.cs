@@ -3,7 +3,12 @@ using Google.Apis.Services;
 using System.Xml;
 using YoutubeExplode;
 using System.Text.RegularExpressions;
-
+using YoutubeExplode.Common;
+using System.Diagnostics;
+using HtmlAgilityPack;
+using System.Text;
+using System.Threading.Channels;
+using System.Collections.Concurrent;
 
 public static class YouTube
 {
@@ -67,10 +72,10 @@ public static class YouTube
                     break;
             }
 
-            if (tracksDict.Count >= 200)
+            if (tracksDict.Count >= 200 && !Console.IsOutputRedirected)
             {
                 Console.SetCursorPosition(0, Console.CursorTop);
-                Console.Write(tracks.Count);
+                Console.Write($"Loaded: {tracks.Count}");
             }
 
             playlistItemsRequest.PageToken = playlistItemsResponse.NextPageToken;
@@ -92,30 +97,6 @@ public static class YouTube
         track.URI = id;
 
         title = title.Replace("–", "-");
-
-        var stringsToRemove = new string[] { "(Official music video)", "(Official video)", "(Official audio)",
-                    "(Lyrics)", "(Official)", "(Lyric Video)", "(Official Lyric Video)", "(Official HD Video)",
-                    "(Official 4K Video)", "(Video)", "[HD]", "[4K]", "(Original Mix)", "(Lyric)", "(Music Video)", 
-                    "(Visualizer)", "(Audio)", "Official Lyrics" };
-
-        foreach (string s in stringsToRemove)
-        {
-            var t = title;
-            title = Regex.Replace(title, Regex.Escape(s), "", RegexOptions.IgnoreCase);
-            if (t == title)
-            {
-                if (s.Contains("["))
-                {
-                    string s2 = s.Replace("[", "(").Replace("]", ")");
-                    title = Regex.Replace(title, Regex.Escape(s2), "", RegexOptions.IgnoreCase);
-                }
-                else if (s.Contains("("))
-                {
-                    string s2 = s.Replace("(", "[").Replace(")", "]");
-                    title = Regex.Replace(title, Regex.Escape(s2), "", RegexOptions.IgnoreCase);
-                }
-            }
-        }
 
         var trackTitle = title.Trim();
         trackTitle = Regex.Replace(trackTitle, @"\s+", " ");
@@ -296,5 +277,160 @@ public static class YouTube
     {
         var playlist = await youtube.Playlists.GetAsync(url);
         return playlist.Id.ToString();
+    }
+
+    public class YouTubeArchiveRetriever
+    {
+        private HttpClient _client;
+
+        public YouTubeArchiveRetriever()
+        {
+            _client = new HttpClient();
+            _client.Timeout = TimeSpan.FromSeconds(10);
+        }
+
+        public async Task<List<Track>> RetrieveDeleted(string url)
+        {
+            var deletedVideoUrls = new BlockingCollection<string>();
+            var tracks = new ConcurrentBag<Track>();
+
+            var process = new Process()
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "yt-dlp",
+                    Arguments = $"--ignore-no-formats-error --no-warn --match-filter \"!uploader\" --print webpage_url {url}",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                }
+            };
+            process.EnableRaisingEvents = true;
+            bool ok = false;
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!ok) { Console.WriteLine("Got first video"); ok = true; }
+                deletedVideoUrls.Add(e.Data);
+            };
+            process.Exited += (sender, e) =>
+            {
+                deletedVideoUrls.CompleteAdding();
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+
+            List<Task> workers = new List<Task>();
+            int workerCount = 4;
+            for (int i = 0; i < workerCount; i++)
+            {
+                workers.Add(Task.Run(async () =>
+                {
+                    foreach (var videoUrl in deletedVideoUrls.GetConsumingEnumerable())
+                    {
+                        var waybackUrl = await GetOldestArchiveUrl(videoUrl);
+                        if (!string.IsNullOrEmpty(waybackUrl))
+                        {
+                            var x = await GetVideoDetails(waybackUrl);
+                            if (!string.IsNullOrEmpty(x.title))
+                            {
+                                var track = await ParseTrackInfo(x.title, x.uploader, waybackUrl, x.duration, false);
+                                tracks.Add(track);
+                                if (!Console.IsOutputRedirected)
+                                {
+                                    Console.SetCursorPosition(0, Console.CursorTop);
+                                    Console.Write($"Deleted videos processed: {tracks.Count}");
+                                }
+                            }
+                        }
+                    }
+                }));
+            }
+
+            await Task.WhenAll(workers);
+            process.WaitForExit();
+            deletedVideoUrls.CompleteAdding();
+            Console.WriteLine();
+            return tracks.ToList();
+        }
+
+        private async Task<string> GetOldestArchiveUrl(string url)
+        {
+            var url2 = $"http://web.archive.org/cdx/search/cdx?url={url}&fl=timestamp,original&filter=statuscode:200&sort=timestamp:asc&limit=1";
+            HttpResponseMessage response = null;
+            for (int i = 0; i < 3; i++)
+            {
+                try {
+                    response = await _client.GetAsync(url2);
+                    break;
+                }
+                catch (Exception e) { }
+            }
+            if (response == null) return null;
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                var lines = content.Split("\n").Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+                if (lines.Any())
+                {
+                    var parts = lines[0].Split(" ");
+                    var timestamp = parts[0];
+                    var originalUrl = parts[1];
+                    var oldestArchive = $"http://web.archive.org/web/{timestamp}/{originalUrl}";
+                    return oldestArchive;
+                }
+            }
+            return null;
+        }
+
+        public async Task<(string title, string uploader, int duration)> GetVideoDetails(string url)
+        {
+            var web = new HtmlWeb();
+            var doc = await web.LoadFromWebAsync(url);
+
+            var titlePatterns = new[]
+            {
+                "//h1[@id='video_title']",
+                "//meta[@name='title']",
+            };
+
+            var usernamePatterns = new[]
+            {
+                "//div[@id='userInfoDiv']/b/a",
+                "//a[contains(@class, 'contributor')]",
+                "//a[@id='watch-username']",
+                "//a[contains(@class, 'author')]",
+                "//div[@class='yt-user-info']/a",
+                "//div[@id='upload-info']//yt-formatted-string/a",
+                "//span[@itemprop='author']//link[@itemprop='name']",
+                "//a[contains(@class, 'yt-user-name')]",
+            };
+
+            string getItem(string[] patterns)
+            {
+                foreach (var pattern in patterns)
+                {
+                    var node = doc.DocumentNode.SelectSingleNode(pattern);
+                    var res = "";
+                    if (node != null)
+                    {
+                        if (pattern.StartsWith("//meta") || pattern.Contains("@itemprop"))
+                            res = node.GetAttributeValue("content", "");
+                        else
+                            res = node.InnerText;
+                        if (!string.IsNullOrEmpty(res)) return res;
+                    }
+                }
+                return "";
+            }
+
+            int duration = -1;
+            var node = doc.DocumentNode.SelectSingleNode("//meta[@itemprop='duration']");
+            if (node != null)
+                duration = (int)XmlConvert.ToTimeSpan(node.GetAttributeValue("content", "")).TotalSeconds;
+                
+            return (getItem(titlePatterns), getItem(usernamePatterns), duration);
+        }
     }
 }
