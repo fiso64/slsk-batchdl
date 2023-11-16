@@ -36,7 +36,7 @@ static class Program
         MaxSampleRate = 96000,
         StrictTitle = true,
         StrictArtist = false,
-        DangerWords = new string[] { "mix", "dj ", " edit", "cover", "official audio", "official music video", "(lyrics)" },
+        DangerWords = new string[] { "mix", "dj ", " edit", "cover" },
         BannedUsers = { },
         AcceptNoLength = false,
     };
