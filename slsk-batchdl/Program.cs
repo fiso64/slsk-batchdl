@@ -186,7 +186,7 @@ static class Program
                             "\n  -n --number <maxtracks>        Download the first n tracks of a playlist" +
                             "\n  -o --offset <offset>           Skip a specified number of tracks" +
                             "\n  --reverse                      Download tracks in reverse order" +
-                            "\n  --remove-from-playlist         Remove downloaded tracks from playlist (for spotify only)" +
+                            "\n  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)" +
                             "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
                             "\n  --m3u                          Create an m3u8 playlist file" +
                             "\n" +
@@ -210,7 +210,7 @@ static class Program
                             "\n  --pref-banned-users <list>     Comma-separated list of users to deprioritize" +
                             "\n  --pref-danger-words <list>     Comma-separated list of words that should appear in either" +
                             "\n                                 both search result and track title or in neither of the" +
-                            "\n                                 two. (default: see github)" +
+                            "\n                                 two. (default: \"mix,dj , edit,cover\")" +
                             "\n" +
                             "\n  -s --skip-existing             Skip if a track matching file conditions is found in the" +
                             "\n                                 output folder or your music library (if provided)" +
@@ -224,7 +224,7 @@ static class Program
                             "\n                                 during the last run." +
                             "\n  --remove-ft                    Remove \"ft.\" or \"feat.\" and everything after from the" +
                             "\n                                 track names before searching" +
-                            "\n  --remove-regex <regex>         Remove a regex from all track names and artist names " +
+                            "\n  --remove-regex <regex>         Remove a regex from all track titles and artist names" +
                             "\n  --no-artist-search             Perform a search without artist name if nothing was" +
                             "\n                                 found. Only use for sources such as youtube or soundcloud" +
                             "\n                                 where the \"artist\" could just be an uploader." +
@@ -234,7 +234,7 @@ static class Program
                             "\n  --yt-dlp                       Use yt-dlp to download tracks that weren't found on" +
                             "\n                                 Soulseek. yt-dlp must be available from the command line." +
                             "\n" +
-                            "\n  --config <path>                Specify config file location" +
+                            "\n  --config <path>                Manually specify config file location" +
                             "\n  --search-timeout <ms>          Max search time in ms (default: 6000)" +
                             "\n  --max-stale-time <ms>          Max download time without progress in ms (default: 50000)" +
                             "\n  --concurrent-downloads <num>   Max concurrent searches & downloads (default: 2)" +
@@ -786,7 +786,7 @@ static class Program
                 var d = RemoveTracksIfExist(tracks, musicDir, necessaryCond, useTagsCheckExisting, preciseSkip);
                 d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
             }
-            else if (!System.IO.Directory.Exists(musicDir))
+            else if (musicDir != "" && !System.IO.Directory.Exists(musicDir))
                 Console.WriteLine($"Path does not exist: {musicDir}");
 
             foreach (var x in existing)
@@ -1932,9 +1932,8 @@ static class Program
 
 
     static async Task<List<Track>> ParseCsvIntoTrackInfo(string path, string? artistCol = "", string? trackCol = "", 
-        string? lengthCol = "", string? albumCol = "", string? descCol = "", string? ytIdCol = "", string timeUnit = "", bool ytParse = false)
+        string? lengthCol = "", string? albumCol = "", string? descCol = "", string? ytIdCol = "", string timeUnit = "s", bool ytParse = false)
     {
-        if (timeUnit == "") timeUnit = "s";
         var tracks = new List<Track>();
 
         using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -1993,7 +1992,7 @@ static class Program
             var descIndex = string.IsNullOrEmpty(cols[4]) ? -1 : Array.IndexOf(header, cols[4]);
             var ytIdIndex = string.IsNullOrEmpty(cols[5]) ? -1 : Array.IndexOf(header, cols[5]);
 
-            var regex = new Regex($"{Regex.Escape(d)}(?=(?:[^\"']*\"[^\"']*\")*[^\"']*$)"); // thank you, ChatGPT.
+            var regex = new Regex($"{Regex.Escape(d)}(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
 
             while (!reader.EndOfStream)
             {
@@ -2005,7 +2004,7 @@ static class Program
                 var desc = "";
 
                 var track = new Track();
-                if (artistIndex >= 0) track.ArtistName = values[artistIndex].Trim('"').Split(',').First().Trim(' ');
+                if (artistIndex >= 0) track.ArtistName = values[artistIndex].Trim('"');
                 if (trackIndex >= 0) track.TrackTitle = values[trackIndex].Trim('"');
                 if (albumIndex >= 0) track.Album = values[albumIndex].Trim('"');
                 if (descIndex >= 0) desc = values[descIndex].Trim('"');
