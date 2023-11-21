@@ -789,8 +789,10 @@ static class Program
             else if (musicDir != "" && !System.IO.Directory.Exists(musicDir))
                 Console.WriteLine($"Path does not exist: {musicDir}");
 
-            foreach (var x in existing)
-                m3uEditor.WriteSuccess(x.Value, x.Key, false);
+            if (createM3u && !debugDisableDownload && !debugPrintTracks) {
+                foreach (var x in existing)
+                    m3uEditor.WriteSuccess(x.Value, x.Key, false);
+            }
         }
 
         if (m3uOnly)
