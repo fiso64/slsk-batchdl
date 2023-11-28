@@ -1356,11 +1356,10 @@ static class Program
         {
             var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value), 1);
             result = equivalentFiles
-                .SelectMany(t => t.Item2, (t, f) => new { t.Item1, f.response.Username, f.file.Filename })
-                .GroupBy(x => $"{x.Username}\\{x.Filename}")
+                .SelectMany(t => t.Item2, (t, f) => new { t.Item1, f.response.Username, f.file.Filename, Count = t.Item2.Count() })
                 .ToSafeDictionary(
-                    g => g.Key,
-                    g => (g.First().Item1, g.Count()));
+                    x => $"{x.Username}\\{x.Filename}",
+                    x => (x.Item1, x.Count));
         }
 
         var infTrack = (string fname, string uname) => {
