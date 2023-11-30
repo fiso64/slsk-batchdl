@@ -42,7 +42,6 @@ static class Program
         MaxSampleRate = 96000,
         StrictTitle = true,
         StrictArtist = false,
-        DangerWords = new string[] { "mix", " edit", "cover", "karaoke" },
         BannedUsers = { },
         AcceptNoLength = false,
     };
@@ -55,7 +54,6 @@ static class Program
         MaxSampleRate = -1,
         StrictTitle = false,
         StrictArtist = false,
-        DangerWords = new string[] { "remix", " edit", "cover", "karaoke" },
         BannedUsers = { },
         AcceptNoLength = true,
     };
@@ -119,7 +117,6 @@ static class Program
     static int maxConcurrentProcesses = 2;
     static int maxRetriesPerTrack = 30;
     static int maxResultsPerUser = 30;
-    static double levenshteinWeight = 0.5;
     static bool slowConsoleOutput = false;
 
     static object consoleLock = new object();
@@ -146,6 +143,7 @@ static class Program
         // --no-modify-share-count, --max-retries, --max-results-per-user, --album-search
         // --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col
         // --remove-brackets, --spotify, --csv, --string, --youtube, --random-login
+        // --danger-words, --pref-danger-words
         Console.WriteLine("Usage: slsk-batchdl <input> [OPTIONS]" +
                             "\n" +
                             "\n  <input>                        <input> is one of the following:" +
@@ -210,9 +208,7 @@ static class Program
                             "\n  --strict-title                 Only download if filename contains track title" +
                             "\n  --strict-artist                Only download if filepath contains track artist" +
                             "\n  --banned-users <list>          Comma-separated list of users to ignore" +
-                            "\n  --danger-words <list>          Comma-separated list of words that must appear in either" +
-                            "\n                                 both search result and track title or in neither of the" +
-                            "\n                                 two. Case-insensitive. (default:\"remix, edit,cover\")" +
+                            "\n" +
                             "\n  --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)" +
                             "\n  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)" +
                             "\n  --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)" +
@@ -220,9 +216,6 @@ static class Program
                             "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)" +
                             "\n  --pref-strict-artist           Prefer download if filepath contains track artist" +
                             "\n  --pref-banned-users <list>     Comma-separated list of users to deprioritize" +
-                            "\n  --pref-danger-words <list>     Comma-separated list of words that should appear in either" +
-                            "\n                                 both search result and track title or in neither of the" +
-                            "\n                                 two. (default: \"mix,dj , edit,cover,(\")" +
                             "\n" +
                             "\n  -s --skip-existing             Skip if a track matching file conditions is found in the" +
                             "\n                                 output folder or your music library (if provided)" +
@@ -243,10 +236,6 @@ static class Program
                             "\n  --artist-search                Also try to find track by searching for the artist only" +
                             "\n  --no-diacr-search              Also perform a search without diacritics" +
                             "\n  --no-regex-search <regex>      Also perform a search without a regex pattern" +
-                            "\n  --levenshtein-weight <num>     Results are sorted by the distance between the filename" +
-                            "\n                                 and track title times the weight (among other things). 1" +
-                            "\n                                 means each differing character will downrank the result, 0" +
-                            "\n                                 disables this part of the sorting algorithm. (default: 0.5)" +
                             "\n  --yt-dlp                       Use yt-dlp to download tracks that weren't found on" +
                             "\n                                 Soulseek. yt-dlp must be available from the command line." +
                             "\n" +
@@ -550,9 +539,6 @@ static class Program
                         break;
                     case "--banned-users":
                         necessaryCond.BannedUsers = args[++i].Split(',');
-                        break;
-                    case "--levenshtein-weight":
-                        levenshteinWeight = double.Parse(args[++i]);
                         break;
                     case "--slow-output":
                         slowConsoleOutput = true;
@@ -1026,29 +1012,28 @@ static class Program
                         results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
                         if (++count >= maxPerUser) break;
                     }
-
-                    var f = r.Files.First();
-                    if (cond.FileSatisfies(f, track, r) && r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1)
-                    {
-                        lock (downloadingLocker)
-                        {
-                            if (!downloading)
-                            {
-                                downloading = true;
-                                saveFilePath = GetSavePath(f.Filename, track);
-                                downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
-                                downloadTask.ContinueWith(task => {
-                                    lock (downloadingLocker)
-                                    {
-                                        downloading = false;
-                                        saveFilePath = "";
-                                        results.TryRemove(r.Username + "\\" + f.Filename, out _);
-                                        badUsers.Add(r.Username);
-                                    }
-                                }, TaskContinuationOptions.OnlyOnFaulted);
-                            }
-                        }
-                    }
+                    //var f = r.Files.First();
+                    //if (r.HasFreeUploadSlot && r.UploadSpeed / 1000000 >= 1 && cond.FileSatisfies(f, track, r))
+                    //{
+                    //    lock (downloadingLocker)
+                    //    {
+                    //        if (!downloading)
+                    //        {
+                    //            downloading = true;
+                    //            saveFilePath = GetSavePath(f.Filename, track);
+                    //            downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
+                    //            downloadTask.ContinueWith(task => {
+                    //                lock (downloadingLocker)
+                    //                {
+                    //                    downloading = false;
+                    //                    saveFilePath = "";
+                    //                    results.TryRemove(r.Username + "\\" + f.Filename, out _);
+                    //                    badUsers.Add(r.Username);
+                    //                }
+                    //            }, TaskContinuationOptions.OnlyOnFaulted);
+                    //        }
+                    //    }
+                    //}
                 }
             };
         }
@@ -1362,44 +1347,48 @@ static class Program
                     x => (x.Item1, x.Count));
         }
 
-        var infTrack = (string fname, string uname) => {
-            string key = $"{uname}\\{fname}";
+        var infTrack = ((SearchResponse response, Soulseek.File file) x) => {
+            string key = $"{x.response.Username}\\{x.file.Filename}";
             if (result != null && result.ContainsKey(key))
                 return result[key];
             return (new Track(), 0);
         };
 
-        string t1 = track.TrackTitle.ReplaceInvalidChars("").Replace("—", "-").Replace("_", "").RemoveFt().RemoveDiacritics().Replace(" ", "").ToLower();
+        var bracketCheck = ((SearchResponse response, Soulseek.File file) x) => {
+            Track inferredTrack = infTrack(x).Item1;
+            string t1 = track.TrackTitle.RemoveFt().Replace('[', '(');
+            string t2 = inferredTrack.TrackTitle.RemoveFt().Replace('[', '(');
+            return track.ArtistMaybeWrong || t1.Contains('(') || !t2.Contains('(');
+        };
 
-        var value = (Track inferredTrack) => {
-            if (levenshteinWeight == 0)
-                return 100;
-            string t2 = inferredTrack.TrackTitle.ReplaceInvalidChars("").Replace("—", "-").Replace("_", "").RemoveFt().RemoveDiacritics().Replace(" ", "").ToLower();
-            int val = t2.Contains(t1) || track.ArtistMaybeWrong ? 100 : 50;
-            return (int)(val - Utils.Levenshtein(t1, t2) * levenshteinWeight);
+        var levenshtein = ((SearchResponse response, Soulseek.File file) x) => {
+            Track inferredTrack = infTrack(x).Item1;
+            string t1 = track.TrackTitle.ReplaceInvalidChars("").Replace(" ", "").Replace("_", "").RemoveFt().ToLower();
+            string t2 = inferredTrack.TrackTitle.ReplaceInvalidChars("").Replace(" ", "").Replace("_", "").RemoveFt().ToLower();
+            return Utils.Levenshtein(t1, t2);
         };
 
         var random = new Random();
         return results.Select(kvp => (response: kvp.Value.Item1, file: kvp.Value.Item2))
                 .OrderByDescending(x => !ignoreUsers.Contains(x.response.Username))
+                .ThenByDescending(x => necessaryCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || preferredCond.AcceptNoLength)
                 .ThenByDescending(x => preferredCond.BannedUsersSatisfies(x.response))
-                .ThenByDescending(x => value(infTrack(x.file.Filename, x.response.Username).Item1))
-                .ThenByDescending(x => preferredCond.DangerWordSatisfies(x.file.Filename, track.TrackTitle, track.ArtistName))
+                .ThenByDescending(x => bracketCheck(x))
                 .ThenByDescending(x => preferredCond.StrictTitleSatisfies(x.file.Filename, track.TrackTitle))
                 .ThenByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => preferredCond.BitrateSatisfies(x.file))
                 .ThenByDescending(x => preferredCond.FormatSatisfies(x.file.Filename))
                 .ThenByDescending(x => preferredCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
-                .ThenByDescending(x => necessaryCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.UploadSpeed / 600)
                 .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.TrackTitle))
                 .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.ArtistName))
+                .ThenByDescending(x => -(levenshtein(x) + 1) / 3)
                 .ThenByDescending(x => track.Length > 0 ? -Math.Max(Math.Abs(track.Length - (x.file.Length ?? -9999)) - 1, 0) / 3 : 0)
                 .ThenByDescending(x => x.response.UploadSpeed / 300)
                 .ThenByDescending(x => (x.file.BitRate ?? 0) / 70)
-                .ThenByDescending(x => infTrack(x.file.Filename, x.response.Username).Item2)
+                .ThenByDescending(x => infTrack(x).Item2)
                 .ThenByDescending(x => random.Next());
     }
 
@@ -1437,47 +1426,31 @@ static class Program
     static Track InferTrack(string filename, Track defaultTrack)
     {
         Track t = new Track(defaultTrack);
-
-        string artistName = t.ArtistName.Trim();
-        string trackName = t.TrackTitle.Trim();
-        string albumName = t.Album.Trim();
-
-        string aname = artistName, tname = trackName, alname = albumName;
-
-        string fpath = GetAsPathSlsk(filename);
-        string fname = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Trim();
-
-        var updateIfHelps = (ref string cont, ref string str, string newCont, string newStr) => {
-            if (!cont.Trim().ContainsIgnoreCase(str.Trim()) && newCont.Trim().ContainsIgnoreCase(newStr.Trim())) {
-                cont = newCont.Trim();
-                str = newStr.Trim();
-            }
-        };
-
-        fname = fname.Replace("_", " ").RemoveConsecutiveWs().Trim();
-        aname = aname.Replace("_", " ").RemoveConsecutiveWs().Trim();
-        alname = alname.Replace("_", " ").RemoveConsecutiveWs().Trim();
-
-        if (aname != "")
-            updateIfHelps(ref fname, ref aname, fname.ReplaceInvalidChars(""), aname.ReplaceInvalidChars(""));
-        if (tname != "")
-            updateIfHelps(ref fname, ref tname, fname.ReplaceInvalidChars(""), tname.ReplaceInvalidChars(""));
-        if (alname != "")
-            updateIfHelps(ref fname, ref alname, fname.ReplaceInvalidChars(""), alname.ReplaceInvalidChars(""));
-
-        bool maybeRemix = aname != "" && (fname.ContainsIgnoreCase($"{aname} edit") || fname.ContainsIgnoreCase($"{aname} remix"));
+        filename = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace("_", " ").RemoveConsecutiveWs().Trim();
 
         var trackNumStart = @"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)";
         var trackNumMiddle = @"(-\s*(\d-)?\d{2,3}|\d{2,3}\.?)\s+";
 
-        if (Regex.Match(fname, trackNumStart).Success || Regex.Match(fname, trackNumMiddle).Success)
-        {
-            fname = Regex.Replace(fname, trackNumStart, "").Trim();
-            fname = Regex.Replace(fname, trackNumMiddle, "").Trim();
-            if (fname.StartsWith("- ")) fname = fname.Substring(2).Trim();
-        }
+        filename = Regex.Replace(filename, trackNumStart, "").Trim();
+        filename = Regex.Replace(filename, trackNumMiddle, "").Trim();
+        if (filename.StartsWith("- ")) filename = filename.Substring(2).Trim();
 
-        string[] parts = fname.Split(new string[] { " - " }, StringSplitOptions.RemoveEmptyEntries);
+        string aname = t.ArtistName.Trim();
+        string tname = t.TrackTitle.Trim();
+        string alname = t.Album.Trim();
+        string fname = filename;
+
+        fname = fname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
+        tname = tname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
+        aname = aname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
+        alname = alname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
+
+        bool maybeRemix = aname != "" && Regex.IsMatch(fname, @$"\({Regex.Escape(aname)} .+\)", RegexOptions.IgnoreCase);
+        string[] parts = fname.Split(new string[] { " - " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] realParts = filename.Split(new string[] { " - " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length != realParts.Length)
+            realParts = parts;
 
         if (parts.Length == 1)
         {
@@ -1487,23 +1460,25 @@ static class Program
         }
         else if (parts.Length == 2)
         {
-            bool hasTitle = tname != "" && parts[1].ContainsIgnoreCase(tname);
-            bool hasArtist = aname != "" && (parts[0].ContainsIgnoreCase(aname)
-                || parts[1].ContainsIgnoreCase(aname + " remix") || parts[1].ContainsIgnoreCase(aname + " edit"));
+            t.ArtistName = realParts[0];
+            t.TrackTitle = realParts[1];
 
-            if (!hasArtist && !hasTitle)
+            if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
             {
                 t.ArtistMaybeWrong = true;
+                if (!maybeRemix && parts[0].ContainsIgnoreCase(tname) && parts[1].ContainsIgnoreCase(aname))
+                {
+                    t.ArtistName = realParts[1];
+                    t.TrackTitle = realParts[0];
+                }
             }
-
-            t.ArtistName = parts[0];
-            t.TrackTitle = parts[1];
+            
         }
         else if (parts.Length == 3)
         {
             bool hasTitle = tname != "" && parts[2].ContainsIgnoreCase(tname);
             if (hasTitle)
-                t.TrackTitle = parts[2];
+                t.TrackTitle = realParts[2];
 
             int artistPos = -1;
             if (aname != "")
@@ -1528,18 +1503,16 @@ static class Program
                 artistPos = 0;
                 albumPos = 1;
             }
-            if (artistPos == -1)
+            if (artistPos == -1 && maybeRemix)
             {
-                if (aname != "" && parts[2].ContainsIgnoreCase(aname + " remix") || parts[2].ContainsIgnoreCase(aname + " edit"))
-                {
-                    artistPos = 0;
-                    albumPos = 1;
-                }
+                t.ArtistMaybeWrong = true;
+                artistPos = 0;
+                albumPos = 1;
             }
             if (artistPos == -1 && albumPos == -1)
             {
                 t.ArtistMaybeWrong = true;
-                t.ArtistName = parts[0] + " - " + parts[1];
+                t.ArtistName = realParts[0] + " - " + realParts[1];
             }
             else if (artistPos >= 0)
             {
@@ -1888,6 +1861,9 @@ static class Program
             MaxSampleRate = other.MaxSampleRate;
             DangerWords = other.DangerWords.ToArray();
             BannedUsers = other.BannedUsers.ToArray();
+            AcceptNoLength = other.AcceptNoLength;
+            StrictArtist = other.StrictArtist;
+            StrictTitle = other.StrictTitle;
         }
 
         public bool FileSatisfies(Soulseek.File file, Track track, SearchResponse? response)

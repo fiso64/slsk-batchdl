@@ -96,9 +96,7 @@ Options:
   --strict-title                 Only download if filename contains track title
   --strict-artist                Only download if filepath contains track artist
   --banned-users <list>          Comma-separated list of users to ignore
-  --danger-words <list>          Comma-separated list of words that must appear in either
-                                 both search result and track title or in neither of the
-                                 two. Case-insensitive. (default:"remix, edit,cover")
+
   --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)
   --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)
   --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
@@ -106,9 +104,6 @@ Options:
   --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)
   --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
-  --pref-danger-words <list>     Comma-separated list of words that should appear in either
-                                 both search result and track title or in neither of the
-                                 two. (default: "mix,dj , edit,cover,(")
 
   -s --skip-existing             Skip if a track matching file conditions is found in the
                                  output folder or your music library (if provided)
@@ -129,10 +124,6 @@ Options:
   --artist-search                Also try to find track by searching for the artist only
   --no-diacr-search              Also perform a search without diacritics
   --no-regex-search <regex>      Also perform a search without a regex pattern
-  --levenshtein-weight <num>     Results are sorted by the distance between the filename
-                                 and track title times the weight (among other things). 1
-                                 means each differing character will downrank the result, 0
-                                 disables this part of the sorting algorithm. (default: 0.5)
   --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                  Soulseek. yt-dlp must be available from the command line.
 
