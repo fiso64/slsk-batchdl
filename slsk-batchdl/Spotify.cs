@@ -137,14 +137,21 @@ public class Spotify
 
             foreach (var track in tracks.Items)
             {
-                string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
-                string artist = artists[0];
-                string name = (string)track.Track.ReadProperty("name");
-                string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
-                string uri = (string)track.Track.ReadProperty("uri");
-                int duration = (int)track.Track.ReadProperty("durationMs");
+                try
+                {
+                    string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
+                    string artist = artists[0];
+                    string name = (string)track.Track.ReadProperty("name");
+                    string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
+                    string uri = (string)track.Track.ReadProperty("uri");
+                    int duration = (int)track.Track.ReadProperty("durationMs");
 
-                res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000, URI = uri });
+                    res.Add(new Track { Album = album, ArtistName = artist, TrackTitle = name, Length = duration / 1000, URI = uri });
+                }
+                catch
+                {
+                    continue;
+                }
             }
 
             if (tracks.Items.Count < limit || res.Count >= max)

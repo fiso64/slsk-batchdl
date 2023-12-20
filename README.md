@@ -139,6 +139,7 @@ Options:
                                  single (default): Show transfer state and percentage
                                  double: Transfer state and a large progress bar
                                  simple: No download bars or changing percentages
+  --listen-port <port>           Port for incoming connections (default: 50000)
 
   --print <option>               Print tracks or search results instead of downloading:
                                  tracks: Print all tracks to be downloaded

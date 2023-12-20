@@ -25,7 +25,7 @@ using ProgressBar = Konsole.ProgressBar;
 
 static class Program
 {
-    static SoulseekClient client = new SoulseekClient();
+    static SoulseekClient? client = null;
     static ConcurrentDictionary<Track, SearchInfo> searches = new ConcurrentDictionary<Track, SearchInfo>();
     static ConcurrentDictionary<string, DownloadWrapper> downloads = new ConcurrentDictionary<string, DownloadWrapper>();
     static List<Track> tracks = new List<Track>();
@@ -117,6 +117,7 @@ static class Program
     static int maxConcurrentProcesses = 2;
     static int maxRetriesPerTrack = 30;
     static int maxResultsPerUser = 30;
+    static int listenPort = 50000;
     static bool slowConsoleOutput = false;
 
     static object consoleLock = new object();
@@ -251,6 +252,7 @@ static class Program
                             "\n                                 single (default): Show transfer state and percentage" +
                             "\n                                 double: Transfer state and a large progress bar " +
                             "\n                                 simple: No download bars or changing percentages" +
+                            "\n  --listen-port <port>           Port for incoming connections (default: 50000)" +
                             "\n" +
                             "\n  --print <option>               Print tracks or search results instead of downloading:" +
                             "\n                                 tracks: Print all tracks to be downloaded" +
@@ -465,6 +467,9 @@ static class Program
                     case "--m3u-only":
                         m3uOnly = true;
                         break;
+                    case "--listen-port":
+                        listenPort = int.Parse(args[++i]);
+                        break;
                     case "--search-timeout":
                         searchTimeout = int.Parse(args[++i]);
                         break;
@@ -595,9 +600,11 @@ static class Program
                 if (input == "")
                     input = args[i];
                 else
-                    throw new ArgumentException();
+                    throw new ArgumentException($"Invalid argument \"{input}\"");
             }
         }
+
+        client = new SoulseekClient(new SoulseekClientOptions(listenPort: listenPort));
 
         if (input == "")
             throw new ArgumentException($"No input provided");
