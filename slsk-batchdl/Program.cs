@@ -1257,9 +1257,9 @@ static class Program
                 },
                 fileFilter: (file) => {
                     return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track, null)
-                        && (relax || FileConditions.StrictString(file.Filename, track.ArtistName, ignoreCase: true)
-                                    && FileConditions.StrictString(file.Filename, track.TrackTitle, ignoreCase: true)
-                                    && FileConditions.StrictString(file.Filename, track.Album, ignoreCase: true));
+                        && FileConditions.StrictString(file.Filename, track.ArtistName, ignoreCase: true)
+                        && FileConditions.StrictString(file.Filename, track.TrackTitle, ignoreCase: true)
+                        && FileConditions.StrictString(file.Filename, track.Album, ignoreCase: true);
         });
         Action<SearchResponse> handler = (r) => {
             if (r.Files.Count() > 0)
@@ -1288,7 +1288,17 @@ static class Program
 
         var fileResponses = results.Select(x => x.Value);
 
-        var equivalentFiles = EquivalentFiles(track, fileResponses);
+        var equivalentFiles = EquivalentFiles(track, fileResponses).ToList();
+
+        if (!relax)
+        {
+            equivalentFiles = equivalentFiles
+                .Where(x => FileConditions.StrictString(x.Item1.TrackTitle, track.TrackTitle, ignoreCase: true)
+                        && (FileConditions.StrictString(x.Item1.ArtistName, track.ArtistName, ignoreCase: true) 
+                            || FileConditions.StrictString(x.Item1.TrackTitle, track.ArtistName, ignoreCase: true)
+                                && x.Item1.TrackTitle.ContainsInBrackets(track.ArtistName, ignoreCase: true)))
+                .ToList();
+        }
 
         var tracks = equivalentFiles
             .Select(kvp => {
@@ -1449,12 +1459,16 @@ static class Program
         Track t = new Track(defaultTrack);
         filename = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace("_", " ").RemoveConsecutiveWs().Trim();
 
-        var trackNumStart = @"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)";
-        var trackNumMiddle = @"(-\s*(\d-)?\d{2,3}|\d{2,3}\.?)\s+";
+        var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
+        var trackNumMiddle = new Regex(@"(?<=- )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
 
-        filename = Regex.Replace(filename, trackNumStart, "").Trim();
-        filename = Regex.Replace(filename, trackNumMiddle, "").Trim();
-        if (filename.StartsWith("- ")) filename = filename.Substring(2).Trim();
+        if (trackNumStart.IsMatch(filename))
+            filename = trackNumStart.Replace(filename, "", 1).Trim();
+        else
+            filename = trackNumMiddle.Replace(filename, "", 1).Trim();
+
+        if (filename.StartsWith("- ")) 
+            filename = filename.Substring(2).Trim();
 
         string aname = t.ArtistName.Trim();
         string tname = t.TrackTitle.Trim();
@@ -1487,11 +1501,11 @@ static class Program
             if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
             {
                 t.ArtistMaybeWrong = true;
-                if (!maybeRemix && parts[0].ContainsIgnoreCase(tname) && parts[1].ContainsIgnoreCase(aname))
-                {
-                    t.ArtistName = realParts[1];
-                    t.TrackTitle = realParts[0];
-                }
+                //if (!maybeRemix && parts[0].ContainsIgnoreCase(tname) && parts[1].ContainsIgnoreCase(aname))
+                //{
+                //    t.ArtistName = realParts[1];
+                //    t.TrackTitle = realParts[0];
+                //}
             }
             
         }
@@ -2958,6 +2972,21 @@ public static class Utils
         string pattern = $"(?<={boundaryChars}){Regex.Escape(value)}(?={boundaryChars})";
         RegexOptions options = ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None;
         return Regex.IsMatch(str, pattern, options);
+    }
+
+    public static bool ContainsInBrackets(this string str, string searchTerm, bool ignoreCase=false)
+    {
+        var regex = new Regex(@"\[(.*?)\]|\((.*?)\)");
+        var matches = regex.Matches(str);
+        var comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        foreach (Match match in matches)
+        {
+            if (match.Value.Contains(searchTerm, comp))
+                return true;
+        }
+
+        return false;
     }
 
     public static bool RemoveRegexIfExist(this string s, string reg, out string res)
