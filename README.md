@@ -27,7 +27,7 @@ slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
   
 #### Find an artist's songs which aren't in your library:
 ```
-slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks --skip-existing --music-dir "path\to\music"
+slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
 
 ### Options:
