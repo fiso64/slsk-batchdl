@@ -101,8 +101,10 @@ static class Program
     static bool useTagsCheckExisting = false;
     static bool removeTracksFromSource = false;
     static bool getDeleted = false;
+    static bool removeSingleCharacterSearchTerms = false;
     static int maxTracks = int.MaxValue;
     static int minUsersAggregate = 2;
+    static bool relax = false;
     static int offset = 0;
 
     static string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
@@ -191,12 +193,14 @@ static class Program
                             "\n                                 downloaded in aggregate mode. Setting it to higher values" +
                             "\n                                 will significantly reduce false positives, but may introduce" +
                             "\n                                 false negatives. Default: 2" +
+                            "\n  --relax                        Slightly relax file filtering in aggregate mode to include" +
+                            "\n                                 more results" +
                             "\n" +
                             "\n  -p --path <path>               Download folder" +
                             "\n  -f --folder <name>             Subfolder name (default: playlist/csv name)" +
                             "\n  -n --number <maxtracks>        Download the first n tracks of a playlist" +
                             "\n  -o --offset <offset>           Skip a specified number of tracks" +
-                            "\n  --reverse                      Download tracks in reverse order" +
+                            "\n  -r --reverse                   Download tracks in reverse order" +
                             "\n  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)" +
                             "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
                             "\n  --m3u                          Create an m3u8 playlist file" +
@@ -231,8 +235,8 @@ static class Program
                             "\n  --remove-ft                    Remove \"ft.\" or \"feat.\" and everything after from the" +
                             "\n                                 track names before searching" +
                             "\n  --remove-regex <regex>         Remove a regex from all track titles and artist names" +
-                            "\n  --no-artist-search             Perform a search without artist name if nothing was" +
-                            "\n                                 found. Only use for sources such as youtube or soundcloud" +
+                            "\n  --no-artist-search             Perform an additional search without artist name if nothing" +
+                            "\n                                 was found. Useful for sources such as youtube or soundcloud" +
                             "\n                                 where the \"artist\" could just be an uploader." +
                             "\n  --artist-search                Also try to find track by searching for the artist only" +
                             "\n  --no-diacr-search              Also perform a search without diacritics" +
@@ -339,6 +343,9 @@ static class Program
                         break;
                     case "--min-users-aggregate":
                         minUsersAggregate = int.Parse(args[++i]);
+                        break;
+                    case "--relax":
+                        relax = true;
                         break;
                     case "--no-artist-search":
                         noArtistSearchTrack = true;
@@ -458,6 +465,7 @@ static class Program
                     case "--no-regex-search":
                         noRegexSearch = args[++i];
                         break;
+                    case "-r":
                     case "--reverse":
                         reverse = true;
                         break;
@@ -741,14 +749,16 @@ static class Program
         {
             searchStr = input;
             inputType = "string";
+            var music = ParseTrackArg(searchStr);
+            removeSingleCharacterSearchTerms = music.TrackTitle.Length != 1 && music.ArtistName.Length != 1;
 
             if (!aggregate) 
-                tracks.Add(ParseTrackArg(searchStr));
+                tracks.Add(music);
             else
             {
+                removeSingleCharacterSearchTerms = music.ArtistName == "" && music.TrackTitle.Length > 1;
                 if (folderName == "")
                     folderName = ReplaceInvalidChars(searchStr, " ");
-                var music = ParseTrackArg(searchStr);
 
                 await Login();
 
@@ -995,7 +1005,7 @@ static class Program
 
         RefreshOrPrint(progress, 0, $"Waiting: {track}", false);
 
-        var title = track.ArtistName != "" ? $"{track.ArtistName} - {track.TrackTitle}" : $"{track.TrackTitle}";
+        var title = $"{track.ArtistName} {track.TrackTitle}".Trim();
         string searchText = $"{title}";
         var removeChars = new string[] { " ", "_", "-" };
 
@@ -1051,6 +1061,7 @@ static class Program
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
                 searchTimeout: searchTimeout,
+                removeSingleCharacterSearchTerms: removeSingleCharacterSearchTerms,
                 responseFilter: (response) => {
                     return response.UploadSpeed > 0
                             && cond.BannedUsersSatisfies(response);
@@ -1238,13 +1249,17 @@ static class Program
         var opts = new SearchOptions(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
+                removeSingleCharacterSearchTerms: removeSingleCharacterSearchTerms,
                 searchTimeout: searchTimeout,
                 responseFilter: (response) => {
                     return response.UploadSpeed > 0
                             && necessaryCond.BannedUsersSatisfies(response);
                 },
                 fileFilter: (file) => {
-                    return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track, null);
+                    return IsMusicFile(file.Filename) && necessaryCond.FileSatisfies(file, track, null)
+                        && (relax || FileConditions.StrictString(file.Filename, track.ArtistName, ignoreCase: true)
+                                    && FileConditions.StrictString(file.Filename, track.TrackTitle, ignoreCase: true)
+                                    && FileConditions.StrictString(file.Filename, track.Album, ignoreCase: true));
         });
         Action<SearchResponse> handler = (r) => {
             if (r.Files.Count() > 0)
@@ -1263,7 +1278,7 @@ static class Program
         if (track.ArtistName != "" && search == "")
             search = track.ArtistName;
         else if (track.ArtistName != "")
-            search = track.ArtistName + " - " + search;
+            search = track.ArtistName + " " + search;
 
         await RunSearches(search, opts, handler, cts.Token);
 
@@ -1446,10 +1461,10 @@ static class Program
         string alname = t.Album.Trim();
         string fname = filename;
 
-        fname = fname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
-        tname = tname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
-        aname = aname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
-        alname = alname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("").RemoveFt().RemoveConsecutiveWs().Trim();
+        fname = fname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
+        tname = tname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
+        aname = aname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
+        alname = alname.Replace("—", "-").Replace("_", " ").Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
 
         bool maybeRemix = aname != "" && Regex.IsMatch(fname, @$"\({Regex.Escape(aname)} .+\)", RegexOptions.IgnoreCase);
         string[] parts = fname.Split(new string[] { " - " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1929,25 +1944,21 @@ static class Program
             return StrictString(fname, aname, StrictStringRegexRemove, StrictStringDiacrRemove);
         }
 
-        public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = true)
+        public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = true, bool ignoreCase = false)
         {
             if (string.IsNullOrEmpty(tname))
                 return true;
 
-            fname = fname.Replace("_", " ").ReplaceInvalidChars("");
+            fname = fname.Replace("_", " ").ReplaceInvalidChars(" ", true, false);
             fname = regexRemove != "" ? Regex.Replace(fname, regexRemove, "") : fname;
             fname = diacrRemove ? fname.RemoveDiacritics() : fname;
             fname = fname.Trim();
-            tname = tname.Replace("_", " ").ReplaceInvalidChars("");
+            tname = tname.Replace("_", " ").ReplaceInvalidChars(" ", true, false);
             tname = regexRemove != "" ? Regex.Replace(tname, regexRemove, "") : tname;
             tname = diacrRemove ? tname.RemoveDiacritics() : tname;
             tname = tname.Trim();
 
-            if (string.IsNullOrEmpty(fname) || string.IsNullOrEmpty(tname))
-                return false;
-
-            string pattern = $@"(?i:(?<=[. -\/\\]|^){Regex.Escape(tname)}(?=[. -\/\\]|$))";
-            return Regex.IsMatch(fname, pattern);
+            return fname.ContainsWithBoundary(tname, ignoreCase);
         }
 
         public bool FormatSatisfies(string fname)
@@ -2513,9 +2524,13 @@ static class Program
         return totalSeconds;
     }
 
-    static string ReplaceInvalidChars(this string str, string replaceStr)
+    static string ReplaceInvalidChars(this string str, string replaceStr, bool windows = false, bool removeSlash = true)
     {
         char[] invalidChars = Path.GetInvalidFileNameChars();
+        if (windows)
+            invalidChars = new char[] { ':', '|', '?', '>', '<', '*', '"', '/', '\\' };
+        if (!removeSlash)
+            invalidChars = invalidChars.Where(c => c != '/' && c != '\\').ToArray();
         foreach (char c in invalidChars)
             str = str.Replace(c.ToString(), replaceStr);
         return str.Replace("\\", replaceStr).Replace("/", replaceStr);
@@ -2935,6 +2950,14 @@ public static class Utils
     public static bool ContainsIgnoreCase(this string s, string other)
     {
         return s.Contains(other, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool ContainsWithBoundary(this string str, string value, bool ignoreCase = false)
+    {
+        string boundaryChars = @"\s|-|\.|\\|\/|^|$|_|—|\(|\)|\[|\]|,";
+        string pattern = $"(?<={boundaryChars}){Regex.Escape(value)}(?={boundaryChars})";
+        RegexOptions options = ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None;
+        return Regex.IsMatch(str, pattern, options);
     }
 
     public static bool RemoveRegexIfExist(this string s, string reg, out string res)
