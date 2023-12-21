@@ -78,12 +78,14 @@ Options:
                                  downloaded in aggregate mode. Setting it to higher values
                                  will significantly reduce false positives, but may introduce
                                  false negatives. Default: 2
+  --relax                        Slightly relax file filtering in aggregate mode to include
+                                 more results
 
   -p --path <path>               Download folder
   -f --folder <name>             Subfolder name (default: playlist/csv name)
   -n --number <maxtracks>        Download the first n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
-  --reverse                      Download tracks in reverse order
+  -r --reverse                   Download tracks in reverse order
   --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --m3u                          Create an m3u8 playlist file
@@ -118,8 +120,8 @@ Options:
   --remove-ft                    Remove "ft." or "feat." and everything after from the
                                  track names before searching
   --remove-regex <regex>         Remove a regex from all track titles and artist names
-  --no-artist-search             Perform a search without artist name if nothing was
-                                 found. Only use for sources such as youtube or soundcloud
+  --no-artist-search             Perform an additional search without artist name if nothing
+                                 was found. Useful for sources such as youtube or soundcloud
                                  where the "artist" could just be an uploader.
   --artist-search                Also try to find track by searching for the artist only
   --no-diacr-search              Also perform a search without diacritics
