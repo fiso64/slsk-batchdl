@@ -2251,10 +2251,10 @@ static class Program
             if (format.Contains("{title}") && string.IsNullOrEmpty(file.Tag.Title))
                 return filepath;
 
-            newName = newName.Replace("{artist}", file.Tag.FirstPerformer ?? "")
-                             .Replace("{artists}", string.Join(" & ", file.Tag.Performers))
-                             .Replace("{album_artist}", file.Tag.FirstAlbumArtist ?? "")
-                             .Replace("{album_artists}", string.Join(" & ", file.Tag.AlbumArtists))
+            newName = newName.Replace("{artist}", (file.Tag.FirstPerformer ?? "").RemoveFt())
+                             .Replace("{artists}", string.Join(" & ", file.Tag.Performers).RemoveFt())
+                             .Replace("{album_artist}", (file.Tag.FirstAlbumArtist ?? "").RemoveFt())
+                             .Replace("{album_artists}", string.Join(" & ", file.Tag.AlbumArtists).RemoveFt())
                              .Replace("{title}", file.Tag.Title ?? "")
                              .Replace("{album}", file.Tag.Album ?? "")
                              .Replace("{year}", file.Tag.Year.ToString() ?? "")
@@ -2264,8 +2264,13 @@ static class Program
             if (newName != format)
             {
                 string directory = Path.GetDirectoryName(filepath);
+                string dirsep = Path.DirectorySeparatorChar.ToString();
                 string extension = Path.GetExtension(filepath);
-                string newFilePath = Path.Combine(directory, ReplaceInvalidChars(newName, " ") + extension);
+                newName = newName.Replace(new string[] { "/", "\\" }, dirsep);
+                var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
+                newName = string.Join(dirsep, x.Select(x => ReplaceInvalidChars(x, " ")));
+                string newFilePath = Path.Combine(directory, newName + extension);
+                System.IO.Directory.CreateDirectory(Path.GetDirectoryName(newFilePath));
                 System.IO.File.Move(filepath, newFilePath);
                 return newFilePath;
             }
