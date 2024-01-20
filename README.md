@@ -1,13 +1,13 @@
 # slsk-batchdl
 
-A batch downloader for Soulseek using Soulseek.NET. Accepts CSV files and Spotify or YouTube urls.
+A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Spotify and YouTube urls.
 
 #### Download tracks from a csv file:
 ```
 slsk-batchdl test.csv
 ```  
-Use `--print tracks` before downloading to check if everything has been parsed correctly. The names of the columns should be: `Artist`, `Title`, `Album`, `Length`. Only the title column is required, but any additional info improves search.
-
+Use `--print tracks` before downloading to check if everything has been parsed correctly. The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternative names are sometimes inferred as well. Only the title column is required, but any additional info improves search results.  
+  
 #### Download spotify likes while skipping existing songs:
 ```
 slsk-batchdl spotify-likes --skip-existing
@@ -25,7 +25,7 @@ Playlists are retrieved using the YoutubeExplode library which unfortunately doe
 slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
   
-#### Find an artist's songs which aren't in your library:
+#### See which songs by an artist are missing in your library:
 ```
 slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
@@ -159,7 +159,8 @@ Configuration files: Create a file named `slsk-batchdl.conf` in the same directo
 --pref-format "flac"
 ```  
   
-### Notes:
-- The CSV file must use `"` as string delimiter and be encoded with UTF8
+### Notes:  
+- For Mac you can use publish.sh to build the app.
+- The CSV file must use `"` as string delimiter and be encoded with UTF8.
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
 - The server will ban you for 30 minutes if too many searches are performed within a short timespan. Adjust `--searches-per-time` and `--searches-time` in case it happens. By default it's configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
