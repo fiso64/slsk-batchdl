@@ -803,7 +803,7 @@ static class Program
             }
         }
 
-        folderName = ReplaceInvalidChars(folderName, " ");
+        folderName = ReplaceInvalidChars(folderName, " ").Trim();
 
         outputFolder = Path.Combine(parentFolder, folderName);
 
@@ -1170,7 +1170,7 @@ static class Program
                     await DownloadFile(x.response, x.file, saveFilePath, track, progress);
                     break;
                 }
-                catch
+                catch (Exception e)
                 {
                     downloading = false;
                     if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
@@ -1179,6 +1179,7 @@ static class Program
                     if (--maxRetriesPerTrack <= 0)
                     {
                         RefreshOrPrint(progress, 0, $"Out of download retries: {track}, skipping", true);
+                        WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow, true);
                         throw new SearchAndDownloadException("Out of download retries");
                     }
                 }
