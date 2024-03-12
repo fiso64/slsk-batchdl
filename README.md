@@ -24,19 +24,24 @@ Playlists are retrieved using the YoutubeExplode library which unfortunately doe
 ```
 slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
+
+#### Interactive album download:
+```
+slsk-batchdl "album=Some Album" --interactive
+```  
   
 #### See which songs by an artist are missing in your library:
 ```
 slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
 
-### Options:
+### Options
 ```
 Usage: slsk-batchdl <input> [OPTIONS]
 
   <input>                        <input> is one of the following:
 
-                                 Spotify playlist url or "spotify-likes": Download a spotify
+                                 Spotify playlist url or 'spotify-likes': Download a spotify
                                  playlist or your liked songs. --spotify-id and
                                  --spotify-secret may be required in addition.
 
@@ -50,12 +55,28 @@ Usage: slsk-batchdl <input> [OPTIONS]
 
                                  Name of the track, album, or artist to search for:
                                  Can either be any typical search string or a comma-separated
-                                 list like "title=Song Name,artist=Artist Name,length=215"
+                                 list like 'title=Song Name,artist=Artist Name,length=215'
                                  Allowed properties are: title, artist, album, length (sec)
+                                 Specify artist and album only to download an album.
 
 Options:
   --user <username>              Soulseek username
   --pass <password>              Soulseek password
+
+  -p --path <path>               Download folder
+  -f --folder <name>             Subfolder name. Set to '.' to output directly to the
+                                 download folder (default: playlist/csv name)
+  -n --number <maxtracks>        Download the first n tracks of a playlist
+  -o --offset <offset>           Skip a specified number of tracks
+  -r --reverse                   Download tracks in reverse order
+  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
+  --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
+  --fast-search                  Begin downloading as soon as a file satisfying the preferred
+                                 conditions is found. Increases chance to download bad files.
+  --m3u <option>                 Create an m3u8 playlist file
+                                 'none': Do not create a playlist file
+                                 'fails' (default): Write only failed downloads to the m3u
+                                 'all': Write successes + fails as comments
 
   --spotify-id <id>              spotify client ID
   --spotify-secret <secret>      spotify client secret
@@ -69,26 +90,6 @@ Options:
   --yt-parse                     Enable if the csv file contains YouTube video titles and
                                  channel names; attempt to parse them into title and artist
                                  names.
-
-  -a --aggregate                 When input is a string: Instead of downloading a single
-                                 track matching the search string, find and download all
-                                 distinct songs associated with the provided artist, album,
-                                 or track title. Input string must be a list of properties.
-  --min-users-aggregate <num>    Minimum number of users sharing a track before it is
-                                 downloaded in aggregate mode. Setting it to higher values
-                                 will significantly reduce false positives, but may introduce
-                                 false negatives. Default: 2
-  --relax                        Slightly relax file filtering in aggregate mode to include
-                                 more results
-
-  -p --path <path>               Download folder
-  -f --folder <name>             Subfolder name (default: playlist/csv name)
-  -n --number <maxtracks>        Download the first n tracks of a playlist
-  -o --offset <offset>           Skip a specified number of tracks
-  -r --reverse                   Download tracks in reverse order
-  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
-  --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
-  --m3u                          Create an m3u8 playlist file
 
   --format <format>              Accepted file format(s), comma-separated
   --length-tol <sec>             Length tolerance in seconds (default: 3)
@@ -107,35 +108,63 @@ Options:
   --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
 
+  -a --aggregate                 When input is a string: Instead of downloading a single
+                                 track matching the search string, find and download all
+                                 distinct songs associated with the provided artist or track
+                                 title. The input string must be a list of properties.
+  --min-users-aggregate <num>    Minimum number of users sharing a track before it is
+                                 downloaded in aggregate mode. Setting it to higher values
+                                 will significantly reduce false positives, but may introduce
+                                 false negatives. Default: 2
+  --relax                        Slightly relax file filtering in aggregate mode to include
+                                 more results
+
+  --interactive                  When downloading albums: Allows to select the wanted album
+  --album-track-count <num>      Specify the exact number of tracks in the album. Folders
+                                 with a different number of tracks will be ignored. Append
+                                 a '+' or '-' to the number for the inequalities >= and <=.
+  --album-ignore-fails           When downloading an album and one of the files fails, do not
+                                 skip to the next source and do not delete all successfully
+                                 downloaded files
+  --album-art <option>           When downloading albums, optionally retrieve album images
+                                 from another location:
+                                 'default': Download from the same folder as the music
+                                 'largest': Download from the folder with the largest image
+                                 'most': Download from the folder containing the most images
+
   -s --skip-existing             Skip if a track matching file conditions is found in the
                                  output folder or your music library (if provided)
-  --skip-mode <mode>             name: Use only filenames to check if a track exists
-                                 name-precise (default): Use filenames and check conditions
-                                 tag: Use file tags (slower)
-                                 tag-precise: Use file tags and check file conditions
+  --skip-mode <mode>             'name': Use only filenames to check if a track exists
+                                 'name-precise' (default): Use filenames and check conditions
+                                 'tag': Use file tags (slower)
+                                 'tag-precise': Use file tags and check file conditions
   --music-dir <path>             Specify to skip downloading tracks found in a music library
                                  Use with --skip-existing
   --skip-not-found               Skip searching for tracks that weren't found on Soulseek
-                                 during the last run.
-  --remove-ft                    Remove "ft." or "feat." and everything after from the
-                                 track names before searching
-  --remove-regex <regex>         Remove a regex from all track titles and artist names
-  --no-artist-search             Perform an additional search without artist name if nothing
-                                 was found. Useful for sources such as youtube or soundcloud
-                                 where the "artist" could just be an uploader.
-  --artist-search                Also try to find track by searching for the artist only
-  --no-diacr-search              Also perform a search without diacritics
-  --no-regex-search <regex>      Also perform a search without a regex pattern
+                                 during the last run. Fails are read from the m3u file.
+
+  --no-remove-special-chars      Do not remove special characters before searching
+  --remove-ft                    Remove 'feat.' and everything after before searching
+  --remove-brackets              Remove square brackets and their contents before searching
+  --regex <regex>                Remove a regexp from all track titles and artist names.
+                                 Optionally specify the replacement regex after a semicolon
+  --artist-maybe-wrong           Performs an additional search without the artist name.
+                                 Useful for sources like SoundCloud where the "artist"
+                                 could just be an uploader. Note that when downloading a
+                                 YouTube playlist via url, this option is set automatically
+                                 on a per track basis, so it is best kept off in that case.
+  -d --desperate                 Tries harder to find the desired track by searching for the
+                                 artist/album/title only, then filtering the results.
   --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                  Soulseek. yt-dlp must be available from the command line.
 
   --config <path>                Manually specify config file location
-  --search-timeout <ms>          Max search time in ms (default: 6000)
+  --search-timeout <ms>          Max search time in ms (default: 5000)
   --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
   --concurrent-downloads <num>   Max concurrent downloads (default: 2)
   --searches-per-time <num>      Max searches per time interval. Higher values may cause
                                  30-minute bans. (default: 34)
-  --searches-time <sec>          Controls how often available searches are replenished.
+  --searches-renew-time <sec>    Controls how often available searches are replenished.
                                  Lower values may cause 30-minute bans. (default: 220)
   --display <option>             Changes how searches and downloads are displayed:
                                  single (default): Show transfer state and percentage
@@ -144,23 +173,32 @@ Options:
   --listen-port <port>           Port for incoming connections (default: 50000)
 
   --print <option>               Print tracks or search results instead of downloading:
-                                 tracks: Print all tracks to be downloaded
-                                 tracks-full: Print extended information about all tracks
-                                 results: Print search results satisfying file conditions
-                                 results-full: Print search results including full paths
+                                 'tracks': Print all tracks to be downloaded
+                                 'tracks-full': Print extended information about all tracks
+                                 'results': Print search results satisfying file conditions
+                                 'results-full': Print search results including full paths
 ```
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (disable it by setting it to 99999).  
 Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it download high quality files if they exist and only download low quality files if there's nothing else.
-  
-Configuration files: Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
+
+#### Name format:
+Available tags are: artist, artists, album_artist, album_artists, title, album, year, track, disc, filename, default_foldername. Name format supports subdirectories as well as conditional expressions: `{str1|str2}` – If any tags in str1 are null, choose str2. String literals enclosed in parentheses are ignored in the null check.
+```
+{artist( - )title|album_artist( - )title|filename}
+{album(/)}{track(. )}{artist|(unknown artist)} - {title|(unknown title)}
+```
+
+### Configuration files  
+Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
 ```
 --username "fakename"
 --password "fakepass"
 --pref-format "flac"
 ```  
   
-### Notes:  
+### Notes
 - For Mac you can use publish.sh to build the app.
 - The CSV file must use `"` as string delimiter and be encoded with UTF8.
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
-- The server will ban you for 30 minutes if too many searches are performed within a short timespan. Adjust `--searches-per-time` and `--searches-time` in case it happens. By default it's configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
+- The server will ban you for 30 minutes if too many searches are performed within a short timespan. Adjust `--searches-per-time` and `--searches-renew-time` in case it happens. By default it's configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
+- An issue I've not been able to resolve is audio files not appearing in the search results, even though they exist in the shown folders. This happens in soulseek clients as well; search for "AD PIANO IV Monochrome". You will find a few users whose folders only contain non-audio files. However, when you browse their shares, you can see that they do have audio in those exact folders. If you know why this is happening, please open an issue.

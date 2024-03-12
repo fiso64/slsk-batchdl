@@ -161,7 +161,7 @@ public static class YouTube
     public static async Task<(string title, string uploader, int length, string desc)> GetVideoInfo(string id)
     {
         (string title, string uploader, int length, string desc) o = ("", "", -1, "");
-
+        
         try
         {
             var vid = await youtube.Videos.GetAsync(id);
@@ -432,5 +432,71 @@ public static class YouTube
                 
             return (getItem(titlePatterns), getItem(usernamePatterns), duration);
         }
+    }
+
+    public static async Task<List<(int length, string id, string title)>> YtdlpSearch(Track track)
+    {
+        Process process = new Process();
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+
+        startInfo.FileName = "yt-dlp";
+        string search = track.ArtistName != "" ? $"{track.ArtistName} - {track.TrackTitle}" : track.TrackTitle;
+        startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%s)s === %(id)s === %(title)s\"";
+
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.UseShellExecute = false;
+        process.StartInfo = startInfo;
+        process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+        process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+
+        process.Start();
+
+        List<(int, string, string)> results = new List<(int, string, string)>();
+        string output;
+        Regex regex = new Regex(@"^(\d+) === ([\w-]+) === (.+)$");
+        while ((output = process.StandardOutput.ReadLine()) != null)
+        {
+            Match match = regex.Match(output);
+            if (match.Success)
+            {
+                int seconds = int.Parse(match.Groups[1].Value);
+                string id = match.Groups[2].Value;
+                string title = match.Groups[3].Value;
+                results.Add((seconds, id, title));
+            }
+        }
+
+        process.WaitForExit();
+        return results;
+    }
+
+    public static async Task<string> YtdlpDownload(string id, string savePathNoExt)
+    {
+        Process process = new Process();
+        ProcessStartInfo startInfo = new ProcessStartInfo();
+
+        startInfo.FileName = "yt-dlp";
+        startInfo.Arguments = $"\"{id}\" -f bestaudio/best -ci -o \"{savePathNoExt}.%(ext)s\" -x";
+
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.UseShellExecute = false;
+        process.StartInfo = startInfo;
+        process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+        process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+
+        process.Start();
+        process.WaitForExit();
+
+        string[] files = Directory.GetFiles(Path.GetDirectoryName(savePathNoExt), Path.GetFileName(savePathNoExt + ".ext") + ".*");
+
+        foreach (string file in files)
+        {
+            if (Utils.IsMusicFile(file))
+                return file;
+        }
+
+        return "";
     }
 }
