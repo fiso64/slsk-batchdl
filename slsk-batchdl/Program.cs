@@ -16,7 +16,6 @@ using Directory = System.IO.Directory;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 
-
 static class Program
 {
     static SoulseekClient? client = null;
@@ -114,6 +113,7 @@ static class Program
     static int maxTracks = int.MaxValue;
     static int minUsersAggregate = 2;
     static bool relax = false;
+    static bool debugInfo = false;
     static int offset = 0;
 
     static string confPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf");
@@ -295,16 +295,17 @@ static class Program
                             "\n  --searches-renew-time <sec>    Controls how often available searches are replenished." +
                             "\n                                 Lower values may cause 30-minute bans. (default: 220)" +
                             "\n  --display <option>             Changes how searches and downloads are displayed:" +
-                            "\n                                 single (default): Show transfer state and percentage" +
-                            "\n                                 double: Transfer state and a large progress bar " +
-                            "\n                                 simple: No download bars or changing percentages" +
+                            "\n                                 'single' (default): Show transfer state and percentage" +
+                            "\n                                 'double': Transfer state and a large progress bar " +
+                            "\n                                 'simple': No download bars or changing percentages" +
                             "\n  --listen-port <port>           Port for incoming connections (default: 50000)" +
                             "\n" +
                             "\n  --print <option>               Print tracks or search results instead of downloading:" +
                             "\n                                 'tracks': Print all tracks to be downloaded" +
                             "\n                                 'tracks-full': Print extended information about all tracks" +
                             "\n                                 'results': Print search results satisfying file conditions" +
-                            "\n                                 'results-full': Print search results including full paths");
+                            "\n                                 'results-full': Print search results including full paths" +
+                            "\n  --debug                        Print extra debug info");
     }
 
     static async Task Main(string[] args)
@@ -659,6 +660,9 @@ static class Program
                     case "--fast-search":
                         fastSearch = true;
                         break;
+                    case "--debug":
+                        debugInfo = true;
+                        break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
                 }
@@ -690,6 +694,7 @@ static class Program
 
         if (inputType == "youtube" || (inputType == "" && input.StartsWith("http") && input.Contains("youtu")))
         {
+            WriteLine("Youtube download", debugOnly: true);
             ytUrl = input;
             inputType = "youtube";
 
@@ -723,6 +728,7 @@ static class Program
         }
         else if (inputType == "spotify" || (inputType == "" && (input.StartsWith("http") && input.Contains("spotify")) || input == "spotify-likes"))
         {
+            WriteLine("Spotify download", debugOnly: true);
             spotifyUrl = input;
             inputType = "spotify";
 
@@ -790,6 +796,7 @@ static class Program
         }
         else if (inputType == "csv" || (inputType == "" && Path.GetExtension(input).Equals(".csv", StringComparison.OrdinalIgnoreCase)))
         {
+            WriteLine("CSV download", debugOnly: true);
             csvPath = input;
             inputType = "csv";
 
@@ -804,6 +811,7 @@ static class Program
         }
         else
         {
+            WriteLine("String download", debugOnly: true);
             searchStr = input;
             inputType = "string";
             var music = ParseTrackArg(searchStr);
@@ -874,6 +882,8 @@ static class Program
                     defaultFolderName = ".";
             }
         }
+
+        WriteLine("Got tracks", debugOnly: true);
 
         if (reverse)
         {
@@ -999,9 +1009,13 @@ static class Program
         if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
             await Login(useRandomLogin);
 
+        WriteLine("Logged in", debugOnly: true);
 
         var UpdateTask = Task.Run(() => Update());
+        WriteLine("Update started", debugOnly: true);
+
         await MainLoop();
+        WriteLine("Mainloop done", debugOnly: true);
 
 
         if (album && downloadedFiles.Count > 0)
@@ -1024,6 +1038,7 @@ static class Program
 
     static async Task MainLoop()
     {
+        WriteLine("Main loop", debugOnly: true);
         while (true)
         {
             bool albumDlFailed = false;
@@ -1231,6 +1246,7 @@ static class Program
 
     static async Task Login(bool random=false, int tries=3)
     {
+        WriteLine($"Login {username}", debugOnly: true);
         string user = username, pass = password;
         if (random)
         {
@@ -2904,7 +2920,7 @@ static class Program
 
     static string[] ParseCommand(string cmd)
     {
-        Debug.WriteLine(cmd);
+        WriteLine(cmd, debugOnly: true);
         string pattern = @"(""[^""]*""|\S+)";
         MatchCollection matches = Regex.Matches(cmd, pattern);
         var args = new string[matches.Count];
@@ -3148,8 +3164,10 @@ static class Program
             Console.WriteLine(item);
     }
 
-    public static void WriteLine(string value, ConsoleColor color=ConsoleColor.Gray, bool safe = false)
+    public static void WriteLine(string value, ConsoleColor color=ConsoleColor.Gray, bool safe=false, bool debugOnly=false)
     {
+        if (debugOnly && !debugInfo)
+            return;
         if (!safe)
         {
             Console.ForegroundColor = color;
@@ -3212,6 +3230,7 @@ static class Program
 
     public static async Task WaitForNetworkAndLogin()
     {
+        WriteLine("Wait for network and login", debugOnly: true);
         await WaitForInternetConnection();
 
         while (true)

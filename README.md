@@ -177,6 +177,7 @@ Options:
                                  'tracks-full': Print extended information about all tracks
                                  'results': Print search results satisfying file conditions
                                  'results-full': Print search results including full paths
+  --debug						 Print extra debug info
 ```
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (disable it by setting it to 99999).  
 Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it download high quality files if they exist and only download low quality files if there's nothing else.
