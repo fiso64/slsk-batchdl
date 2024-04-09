@@ -137,6 +137,7 @@ static class Program
     static bool printResultsFull = false;
     static bool debugPrintTracksFull = false;
     static bool useRandomLogin = false;
+    static bool noWaitForInternet = false;
 
     static int searchesPerTime = 34;
     static int searchResetTime = 220;
@@ -164,7 +165,7 @@ static class Program
         // undocumented options:
         // --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col
         // --remove-brackets, --spotify, --csv, --string, --youtube, --random-login
-        // --danger-words, --pref-danger-words, --no-modify-share-count
+        // --danger-words, --pref-danger-words, --no-modify-share-count, --no-wait-for-internet
         Console.WriteLine("Usage: slsk-batchdl <input> [OPTIONS]" +
                             "\n" +
                             "\n  <input>                        <input> is one of the following:" +
@@ -316,7 +317,7 @@ static class Program
 #if WINDOWS
         try
         {
-            if (Console.BufferHeight <= 50)
+            if (Console.BufferHeight <= 50 && displayStyle != "simple")
                 WriteLine("Windows: Recommended to use the command prompt instead of terminal app to avoid printing issues.");
         }
         catch { }
@@ -662,6 +663,9 @@ static class Program
                         break;
                     case "--debug":
                         debugInfo = true;
+                        break;
+                    case "--no-wait-for-internet":
+                        noWaitForInternet = true;
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
@@ -1009,8 +1013,6 @@ static class Program
         if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
             await Login(useRandomLogin);
 
-        WriteLine("Logged in", debugOnly: true);
-
         var UpdateTask = Task.Run(() => Update());
         WriteLine("Update started", debugOnly: true);
 
@@ -1246,7 +1248,6 @@ static class Program
 
     static async Task Login(bool random=false, int tries=3)
     {
-        WriteLine($"Login {username}", debugOnly: true);
         string user = username, pass = password;
         if (random)
         {
@@ -1255,22 +1256,29 @@ static class Program
             user = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
             pass = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
         }
+        WriteLine($"Login {user}", debugOnly: true);
 
         while (true)
         {
             try
             {
                 await WaitForInternetConnection();
+                WriteLine($"Connecting {user}", debugOnly: true);
                 await client.ConnectAsync(user, pass);
-                if (!noModifyShareCount)
+                if (!noModifyShareCount) {
+                    WriteLine($"Setting share count", debugOnly: true);
                     await client.SetSharedCountsAsync(10, 50);
+                }
                 break;
             }
-            catch {
-                if (--tries == 0)
-                    throw;
+            catch (Exception e) {
+                WriteLine($"Exception while logging in: {e}", debugOnly: true);
+                if (--tries == 0) throw;
             }
+            WriteLine($"Retry login {user}", debugOnly: true);
         }
+
+        WriteLine($"Logged in {user}", debugOnly: true);
     }
 
 
@@ -2144,7 +2152,7 @@ static class Program
                         try { await Login(useRandomLogin); }
                         catch (Exception ex)
                         {
-                            string banMsg = useRandomLogin ? "" : " (likely a 30-minute ban caused by frequent searches)";
+                            string banMsg = useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
                             WriteLine($"{ex.Message}{banMsg}", ConsoleColor.DarkYellow, true);
                         }
                     }
@@ -3209,8 +3217,11 @@ static class Program
 
     public static async Task WaitForInternetConnection()
     {
+        if (noWaitForInternet)
+            return;
         while (true)
         {
+            WriteLine("Wait for internet", debugOnly: true);
             if (NetworkInterface.GetIsNetworkAvailable())
             {
                 try
@@ -3230,11 +3241,11 @@ static class Program
 
     public static async Task WaitForNetworkAndLogin()
     {
-        WriteLine("Wait for network and login", debugOnly: true);
         await WaitForInternetConnection();
 
         while (true)
         {
+            WriteLine("Wait for login", debugOnly: true);
             if (client.State.HasFlag(SoulseekClientStates.LoggedIn))
                 break;
             await Task.Delay(500);     
