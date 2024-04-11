@@ -3,8 +3,6 @@ using Konsole;
 using Soulseek;
 using System.Collections.Concurrent;
 using System.Data;
-using System.Diagnostics;
-using System.Net.NetworkInformation;
 using System.Text.RegularExpressions;
 
 using ProgressBar = Konsole.ProgressBar;
@@ -15,6 +13,38 @@ using File = System.IO.File;
 using Directory = System.IO.Directory;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
+
+// todo: --get-parents: When not downloading albums, --get-parents will make the program retrieve and download
+//       all parent folders for every track (parent of parent if parent is a disc folder).
+//       Implementation: handle it under one download so that downloads for other tracks may continue
+//       simultaneously. However the downloads of a parent folder must continue after fails, unless that fail
+//       is the original track itself (jump to the next track + parent folder in that case).
+//       The result should be RefreshOrPrinted in the same progress bar: E.g if
+//       all parent tracks have been successfully downloaded, the progress bar should read
+//       "Succeeded (10/10 parent files): original track filepath", if 1 or more of the files failed to download
+//       "Succeeded with fails (02/10 parent files): original track filepath, (Failed: track1.mp3, track2.mp3)"
+//       Note that the success file count should always be 1 or more since the original track should always be a success,
+//       otherwise it should select another source for that track and download the files from the new parent.
+//       The original track should always be the first to be downloaded regardless of its order in the parent folder.
+//       Maybe create a new function GetParent(SlResponse, SlFile, ProgressBar, bool notThisFile=true) that will request the parent folder and download the files
+//       while properly updating the progress bar. The original track can be downloaded in SearchAndDownload (skipping to the next as usual on fail)
+//       and if successful, run GetParent to dl all files from the parent that arent the original track. The default resulting save file paths should be the same
+//       as the parent, e.g if parent folder is someuser\music\artist\album and one of the tracks is someuser\music\artist\disc 1\track.mp3 then we save
+//       it as outputFolder/album/disc 1/track.mp3.
+//       Note: It's possible that the parent folder downloads will contain a track that also appears in the track list later. We can check for this in the following
+//       way: Save a list/dict of all downloaded tracks together with the their key = username + "\\" + filename (check if one of the existing dicts/bags I define
+//       below can already be used for that as well). Then when performing a search for a particular track, we check if one of the results has been downloaded already
+//       AND satisfies the preferred conditions. If that is the case, we skip the track and refresh the progress bar with "Succeeded". If all results only satisfy nec
+//       conditions and a downloaded file also satisfies nec conditions, do the same.
+//
+// todo: --get-all
+//
+// todo: make --interactive work for non-albums as well, allowing the user to specify the desired file and to 
+//       skip downloading a track. Important for --get-parents to avoid large numbers of unwanted files. When --get-parents is active,
+//       interactive should also print the list of files in the parent folder that are about to be downloaded, and there should be an
+//       additional option "Only Source Track [t]" which will make it only download the original track and not all the files in the parent.
+//
+// todo: --pref-users <list>
 
 static class Program
 {
@@ -137,7 +167,6 @@ static class Program
     static bool printResultsFull = false;
     static bool debugPrintTracksFull = false;
     static bool useRandomLogin = false;
-    static bool noWaitForInternet = false;
 
     static int searchesPerTime = 34;
     static int searchResetTime = 220;
@@ -664,9 +693,6 @@ static class Program
                     case "--debug":
                         debugInfo = true;
                         break;
-                    case "--no-wait-for-internet":
-                        noWaitForInternet = true;
-                        break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
                 }
@@ -1054,10 +1080,11 @@ static class Program
                     await semaphore.WaitAsync(mainLoopCts.Token);
                     int tries = 2;
                 retry:
-                    await WaitForNetworkAndLogin();
+                    await WaitForLogin();
                     mainLoopCts.Token.ThrowIfCancellationRequested();
                     try
                     {
+                        WriteLine($"SearchAndDownload {track}", debugOnly: true);
                         var savedFilePath = await SearchAndDownload(track);
                         var curSet = downloadingImages ? downloadedImages : downloadedFiles;
                         curSet.TryAdd(savedFilePath, char.MinValue);
@@ -1069,16 +1096,17 @@ static class Program
                     }
                     catch (Exception ex)
                     {
-                        if (ex is SearchAndDownloadException)
+                        WriteLine($"Exception thrown: {ex}", debugOnly: true);
+                        if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
+                        {
+                            goto retry;
+                        }
+                        else if (ex is SearchAndDownloadException)
                         {
                             Interlocked.Increment(ref failCount);
                             if (m3uOption == "fails" || m3uOption == "all" && !debugDisableDownload && inputType != "string" && !album)
                                 m3uEditor.WriteFail(ex.Message, track);
                             failedDownloads.Add((track, ex.Message));
-                        }
-                        else if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
-                        {
-                            goto retry;
                         }
                         else
                         {
@@ -1114,6 +1142,7 @@ static class Program
             }
             catch (OperationCanceledException)
             {
+                WriteLine("Mainloop operation cancelled", debugOnly: true);
                 if (album && !albumIgnoreFails)
                 {
                     albumDlFailed = true;
@@ -1262,7 +1291,6 @@ static class Program
         {
             try
             {
-                await WaitForInternetConnection();
                 WriteLine($"Connecting {user}", debugOnly: true);
                 await client.ConnectAsync(user, pass);
                 if (!noModifyShareCount) {
@@ -1273,8 +1301,10 @@ static class Program
             }
             catch (Exception e) {
                 WriteLine($"Exception while logging in: {e}", debugOnly: true);
-                if (--tries == 0) throw;
+                if (!(e is Soulseek.AddressException) && --tries == 0)
+                    throw;
             }
+            await Task.Delay(500);
             WriteLine($"Retry login {user}", debugOnly: true);
         }
 
@@ -1880,7 +1910,6 @@ static class Program
     static async Task Search(string search, SearchOptions opts, Action<SearchResponse> rHandler, CancellationToken ct, Action? onSearch = null)
     {
         await searchSemaphore.WaitAsync();
-        await WaitForInternetConnection();
         try
         {
             search = CleanSearchString(search);
@@ -2058,6 +2087,7 @@ static class Program
         if (debugDisableDownload)
             throw new Exception();
 
+        await WaitForLogin();
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(filePath));
         string origPath = filePath;
         filePath = filePath + ".incomplete";
@@ -2083,7 +2113,6 @@ static class Program
             {
                 lock (downloads)
                     downloads.TryAdd(file.Filename, new DownloadWrapper(origPath, response, file, track, cts, progress));
-                await WaitForInternetConnection();
                 await client.DownloadAsync(response.Username, file.Filename, () => Task.FromResult((Stream)outputStream), file.Size, options: transferOptions, cancellationToken: cts.Token);
             }
         }
@@ -3215,40 +3244,14 @@ static class Program
         }
     }
 
-    public static async Task WaitForInternetConnection()
+    public static async Task WaitForLogin()
     {
-        if (noWaitForInternet)
-            return;
         while (true)
         {
-            WriteLine("Wait for internet", debugOnly: true);
-            if (NetworkInterface.GetIsNetworkAvailable())
-            {
-                try
-                {
-                    using (var client = new System.Net.WebClient())
-                    using (var stream = client.OpenRead("https://www.google.com"))
-                    {
-                        return;
-                    }
-                }
-                catch { }
-            }
-
-            await Task.Delay(500);
-        }
-    }
-
-    public static async Task WaitForNetworkAndLogin()
-    {
-        await WaitForInternetConnection();
-
-        while (true)
-        {
-            WriteLine("Wait for login", debugOnly: true);
+            WriteLine($"Wait for login, state: {client.State}", debugOnly: true);
             if (client.State.HasFlag(SoulseekClientStates.LoggedIn))
                 break;
-            await Task.Delay(500);     
+            await Task.Delay(500);
         }
     }
 
