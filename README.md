@@ -2,40 +2,42 @@
 
 A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Spotify and YouTube urls.
 
-#### Download tracks from a csv file:
+## Examples
+
+### Download tracks from a csv file:
 ```
 slsk-batchdl test.csv
 ```  
-Use `--print tracks` before downloading to check if everything has been parsed correctly. The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternative names are sometimes inferred as well. Only the title column is required, but any additional info improves search results.  
+The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternatives can sometimes be inferred as well. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title column is required, but any additional info improves search results.  
   
-#### Download spotify likes while skipping existing songs:
+### Download spotify likes while skipping existing songs:
 ```
 slsk-batchdl spotify-likes --skip-existing
 ```
 To download private playlists or liked songs you will need to provide a client id and secret, which you can get here https://developer.spotify.com/dashboard/applications. Create an app and add `http://localhost:48721/callback` as a redirect url in its settings.  
   
-#### Download youtube playlist (with fallback to yt-dlp), including deleted videos:
+### Download from youtube playlist (w. yt-dlp fallback), including deleted videos:
 ```
 slsk-batchdl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
 ```
 Playlists are retrieved using the YoutubeExplode library which unfortunately doesn't always return all videos. You can use the official API by providing a key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.  
 
-#### Search & download a specific song:
+### Search & download a specific song:
 ```
 slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
 
-#### Interactive album download:
+### Interactive album download:
 ```
 slsk-batchdl "album=Some Album" --interactive
 ```  
   
-#### See which songs by an artist are missing in your library:
+### Find an artist's songs that aren't in your library:
 ```
 slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
 
-### Options
+## Options
 ```
 Usage: slsk-batchdl <input> [OPTIONS]
 
@@ -107,6 +109,9 @@ Options:
   --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)
   --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
+  --strict                       Skip files with missing properties instead of accepting by
+                                 default; if --min-bitrate is set, ignores any files with
+                                 unknown bitrate.
 
   -a --aggregate                 When input is a string: Instead of downloading a single
                                  track matching the search string, find and download all
@@ -122,7 +127,7 @@ Options:
   --interactive                  When downloading albums: Allows to select the wanted album
   --album-track-count <num>      Specify the exact number of tracks in the album. Folders
                                  with a different number of tracks will be ignored. Append
-                                 a '+' or '-' to the number for the inequalities >= and <=.
+                                 a '+' or '-' after the number for the inequalities >= and <=
   --album-ignore-fails           When downloading an album and one of the files fails, do not
                                  skip to the next source and do not delete all successfully
                                  downloaded files
@@ -179,17 +184,18 @@ Options:
                                  'results-full': Print search results including full paths
   --debug                        Print extra debug info
 ```
+### File conditions:
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (disable it by setting it to 99999).  
 Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it download high quality files if they exist and only download low quality files if there's nothing else.
 
-#### Name format:
+### Name format:
 Available tags are: artist, artists, album_artist, album_artists, title, album, year, track, disc, filename, default_foldername. Name format supports subdirectories as well as conditional expressions: `{str1|str2}` – If any tags in str1 are null, choose str2. String literals enclosed in parentheses are ignored in the null check.
 ```
 {artist( - )title|album_artist( - )title|filename}
 {album(/)}{track(. )}{artist|(unknown artist)} - {title|(unknown title)}
 ```
 
-### Configuration files  
+## Configuration files  
 Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
 ```
 --username "fakename"
@@ -197,7 +203,7 @@ Create a file named `slsk-batchdl.conf` in the same directory as the executable 
 --pref-format "flac"
 ```  
   
-### Notes
+## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`
 - The CSV file must use `"` as string delimiter and be encoded with UTF8.
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.

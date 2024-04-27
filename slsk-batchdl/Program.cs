@@ -4,6 +4,7 @@ using Soulseek;
 using System.Collections.Concurrent;
 using System.Data;
 using System.Text.RegularExpressions;
+using TagLib;
 
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
@@ -159,7 +160,6 @@ static class Program
 
     static object consoleLock = new object();
 
-    static DateTime lastUpdate;
     static bool skipUpdate = false;
     static bool debugDisableDownload = false;
     static bool debugPrintTracks = false;
@@ -265,6 +265,9 @@ static class Program
                             "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)" +
                             "\n  --pref-strict-artist           Prefer download if filepath contains track artist" +
                             "\n  --pref-banned-users <list>     Comma-separated list of users to deprioritize" +
+                            "\n  --strict                       Skip files with missing properties instead of accepting by" +
+                            "\n                                 default; if --min-bitrate is set, ignores any files with" +
+                            "\n                                 unknown bitrate." +
                             "\n" +
                             "\n  -a --aggregate                 When input is a string: Instead of downloading a single" +
                             "\n                                 track matching the search string, find and download all" +
@@ -280,7 +283,7 @@ static class Program
                             "\n  --interactive                  When downloading albums: Allows to select the wanted album" +
                             "\n  --album-track-count <num>      Specify the exact number of tracks in the album. Folders" +
                             "\n                                 with a different number of tracks will be ignored. Append" +
-                            "\n                                 a '+' or '-' to the number for the inequalities >= and <=." +
+                            "\n                                 a '+' or '-' after the number for the inequalities >= and <=" +
                             "\n  --album-ignore-fails           When downloading an album and one of the files fails, do not" +
                             "\n                                 skip to the next source and do not delete all successfully" +
                             "\n                                 downloaded files" +
@@ -359,7 +362,7 @@ static class Program
         }
 
         bool confPathChanged = false;
-        int idx = Array.IndexOf(args, "--config");
+        int idx = Array.LastIndexOf(args, "--config");
         if (idx != -1)
         {
             confPath = args[idx + 1];
@@ -373,6 +376,18 @@ static class Program
             finalArgs.AddRange(ParseCommand(confArgs));
             finalArgs.AddRange(args);
             args = finalArgs.ToArray();
+        }
+
+        if (args.Contains("--strict"))
+        {
+            preferredCond.AcceptMissingProps = false;
+            necessaryCond.AcceptMissingProps = false;
+            preferredCond.MaxBitrate = -1;
+            necessaryCond.MaxBitrate = -1;
+            preferredCond.MinBitrate = -1;
+            necessaryCond.MinBitrate = -1;
+            preferredCond.MaxSampleRate = -1;
+            necessaryCond.MaxSampleRate = -1;
         }
 
         for (int i = 0; i < args.Length; i++)
@@ -692,6 +707,10 @@ static class Program
                         break;
                     case "--debug":
                         debugInfo = true;
+                        break;
+                    case "--strict":
+                        preferredCond.AcceptMissingProps = false;
+                        necessaryCond.AcceptMissingProps = false;
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
@@ -1475,7 +1494,7 @@ static class Program
                 {
                     foreach (var res in ytResults)
                     {
-                        if (necessaryCond.LengthToleranceSatisfies(track, res.length))
+                        if (necessaryCond.LengthToleranceSatisfies(res.length, track.Length))
                         {
                             string saveFilePathNoExt = GetSavePathNoExt(res.title, track);
                             downloading = true;
@@ -1802,9 +1821,9 @@ static class Program
                 .ThenByDescending(x => preferredCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
                 .ThenByDescending(x => x.response.UploadSpeed / 600)
-                .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.TrackTitle))
-                .ThenByDescending(x => !albumMode || FileConditions.StrictString(GetDirectoryNameSlsk(x.file.Filename), track.Album))
-                .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.ArtistName))
+                .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.TrackTitle, ignoreCase: true))
+                .ThenByDescending(x => !albumMode || FileConditions.StrictString(GetDirectoryNameSlsk(x.file.Filename), track.Album, ignoreCase: true))
+                .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.ArtistName, ignoreCase: true))
                 .ThenByDescending(x => !useLevenshtein || levenshtein(x) <= 5)
                 .ThenByDescending(x => x.response.UploadSpeed / 300)
                 .ThenByDescending(x => (x.file.BitRate ?? 0) / 70)
@@ -2140,8 +2159,6 @@ static class Program
     {
         while (true)
         {
-            lastUpdate = DateTime.Now;
-
             if (!skipUpdate)
             {
                 try
@@ -2329,6 +2346,7 @@ static class Program
         public string StrictStringRegexRemove = "";
         public bool StrictStringDiacrRemove = true;
         public bool AcceptNoLength = false;
+        public bool AcceptMissingProps = true;
 
         public FileConditions() { }
 
@@ -2394,7 +2412,7 @@ static class Program
                 return true;
 
             fname = noPath ? GetFileNameWithoutExtSlsk(fname) : fname;
-            return StrictString(fname, tname, StrictStringRegexRemove, StrictStringDiacrRemove);
+            return StrictString(fname, tname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true);
         }
 
         public bool StrictArtistSatisfies(string fname, string aname)
@@ -2402,7 +2420,7 @@ static class Program
             if (!StrictArtist || aname == "")
                 return true;
 
-            return StrictString(fname, aname, StrictStringRegexRemove, StrictStringDiacrRemove);
+            return StrictString(fname, aname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true);
         }
 
         public bool StrictAlbumSatisfies(string fname, string alname)
@@ -2410,10 +2428,10 @@ static class Program
             if (!StrictAlbum || alname == "")
                 return true;
 
-            return StrictString(GetDirectoryNameSlsk(fname), alname, StrictStringRegexRemove, StrictStringDiacrRemove);
+            return StrictString(GetDirectoryNameSlsk(fname), alname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true);
         }
 
-        public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = true, bool ignoreCase = false)
+        public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = true, bool ignoreCase = true)
         {
             if (string.IsNullOrEmpty(tname))
                 return true;
@@ -2436,66 +2454,65 @@ static class Program
             return Formats.Length == 0 || (ext != "" && Formats.Any(f => f == ext));
         }
 
-        public bool LengthToleranceSatisfies(Soulseek.File file, int actualLength)
+        public bool LengthToleranceSatisfies(Soulseek.File file, int wantedLength)
         {
-            if (LengthTolerance < 0 || actualLength < 0)
-                return true;
-            if (file.Length == null)
-                return AcceptNoLength;
-            return Math.Abs((int)file.Length - actualLength) <= LengthTolerance;
+            return LengthToleranceSatisfies(file.Length, wantedLength);
         }
 
-        public bool LengthToleranceSatisfies(TagLib.File file, int actualLength)
+        public bool LengthToleranceSatisfies(TagLib.File file, int wantedLength)
         {
-            if (LengthTolerance < 0 || actualLength < 0)
-                return true;
-            int fileLength = (int)file.Properties.Duration.TotalSeconds;
-            if (Math.Abs(fileLength - actualLength) <= LengthTolerance)
-                return true;
-            return false;
+            return LengthToleranceSatisfies((int)file.Properties.Duration.TotalSeconds, wantedLength);
         }
 
-        public bool LengthToleranceSatisfies(Track track, int actualLength)
+        public bool LengthToleranceSatisfies(int? length, int wantedLength)
         {
-            if (LengthTolerance < 0 || actualLength < 0 || track.Length < 0)
+            if (LengthTolerance < 0 || wantedLength < 0)
                 return true;
-            if (Math.Abs(track.Length - actualLength) <= LengthTolerance)
-                return true;
-            return false;
+            if (length == null || length < 0)
+                return AcceptNoLength && AcceptMissingProps;
+            return Math.Abs((int)length - wantedLength) <= LengthTolerance;
         }
 
         public bool BitrateSatisfies(Soulseek.File file)
         {
-            if ((MinBitrate < 0 && MaxBitrate < 0) || file.BitRate == null)
-                return true;
-            if (MinBitrate >= 0 && file.BitRate.Value < MinBitrate)
-                return false;
-            if (MaxBitrate >= 0 && file.BitRate.Value > MaxBitrate)
-                return false;
-
-            return true;
+            return BitrateSatisfies(file.BitRate);
         }
 
         public bool BitrateSatisfies(TagLib.File file)
         {
-            if ((MinBitrate < 0 && MaxBitrate < 0) || file.Properties.AudioBitrate <= 0)
-                return true;
-            if (MinBitrate >= 0 && file.Properties.AudioBitrate < MinBitrate)
-                return false;
-            if (MaxBitrate >= 0 && file.Properties.AudioBitrate > MaxBitrate)
-                return false;
+            return BitrateSatisfies(file.Properties.AudioBitrate);
+        }
 
+        public bool BitrateSatisfies(int? bitrate)
+        {
+            if (MinBitrate < 0 && MaxBitrate < 0)
+                return true;
+            if (bitrate == null || bitrate < 0)
+                return AcceptMissingProps;
+            if (MinBitrate >= 0 && bitrate < MinBitrate)
+                return false;
+            if (MaxBitrate >= 0 && bitrate > MaxBitrate)
+                return false;
             return true;
         }
 
         public bool SampleRateSatisfies(Soulseek.File file)
         {
-            return MaxSampleRate < 0 || file.SampleRate == null || file.SampleRate.Value <= MaxSampleRate;
+            return SampleRateSatisfies(file.SampleRate);
         }
 
         public bool SampleRateSatisfies(TagLib.File file)
         {
-            return MaxSampleRate < 0 || file.Properties.AudioSampleRate <= MaxSampleRate;
+            return SampleRateSatisfies(file.Properties.AudioSampleRate);
+        }
+
+        public bool SampleRateSatisfies(int? sampleRate)
+        {
+            if (MaxSampleRate < 0)
+                return true;
+            if (sampleRate == null || sampleRate < 0)
+                return AcceptMissingProps;
+            return sampleRate <= MaxSampleRate;
         }
 
         public bool BannedUsersSatisfies(SearchResponse? response)
