@@ -32,10 +32,18 @@ slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 slsk-batchdl "album=Some Album" --interactive
 ```  
   
-### Find an artist's songs that aren't in your library:
+### Find an artist's songs which are not in your library:
 ```
 slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
+
+## Download Modes
+
+Depending on the provided input, the download behaviour changes:
+
+- Normal download: When the song title is set (in the CSV row, or in the string input), the program will download a single file for every entry.
+- Album download: When the album name is set and the song title is NOT set, the program will search for the album and download the entire folder.
+- Aggregate download: With `--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above).
 
 ## Options
 ```
