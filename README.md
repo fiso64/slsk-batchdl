@@ -97,7 +97,10 @@ Options:
   --length-tol <sec>             Length tolerance in seconds (default: 3)
   --min-bitrate <rate>           Minimum file bitrate
   --max-bitrate <rate>           Maximum file bitrate
+  --min-samplerate <rate>        Minimum file sample rate
   --max-samplerate <rate>        Maximum file sample rate
+  --min-bitdepth <depth>         Minimum bit depth
+  --max-bitdepth <depth>         Maximum bit depth
   --strict-title                 Only download if filename contains track title
   --strict-artist                Only download if filepath contains track artist
   --banned-users <list>          Comma-separated list of users to ignore
@@ -106,7 +109,10 @@ Options:
   --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)
   --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
   --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)
+  --pref-min-samplerate <rate>   Preferred minimum sample rate
   --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)
+  --pref-min-bitdepth <depth>    Preferred minimum bit depth
+  --pref-max-bitdepth <depth>    Preferred maximum bit depth
   --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
   --strict                       Skip files with missing properties instead of accepting by
@@ -195,7 +201,7 @@ Available tags are: artist, artists, album_artist, album_artists, title, album, 
 {album(/)}{track(. )}{artist|(unknown artist)} - {title|(unknown title)}
 ```
 
-## Configuration files  
+## Configuration  
 Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
 ```
 --username "fakename"
@@ -205,7 +211,6 @@ Create a file named `slsk-batchdl.conf` in the same directory as the executable 
   
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`
-- The CSV file must use `"` as string delimiter and be encoded with UTF8.
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
 - The server will ban you for 30 minutes if too many searches are performed within a short timespan. Adjust `--searches-per-time` and `--searches-renew-time` in case it happens. By default it's configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
 - An issue I've not been able to resolve is audio files not appearing in the search results, even though they exist in the shown folders. This happens in soulseek clients as well; search for "AD PIANO IV Monochrome". You will find a few users whose folders only contain non-audio files. However, when you browse their shares, you can see that they do have audio in those exact folders. If you know why this is happening, please open an issue.
