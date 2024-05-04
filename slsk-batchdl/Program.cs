@@ -627,6 +627,9 @@ static class Program
                     case "--pref-max-samplerate":
                         preferredCond.MaxSampleRate = int.Parse(args[++i]);
                         break;
+                    case "--pref-min-samplerate":
+                        preferredCond.MinSampleRate = int.Parse(args[++i]);
+                        break;
                     case "--pref-danger-words":
                         preferredCond.DangerWords = args[++i].Split(',');
                         break;
@@ -638,6 +641,12 @@ static class Program
                         break;
                     case "--pref-banned-users":
                         preferredCond.BannedUsers = args[++i].Split(',');
+                        break;
+                    case "--pref-min-bitdepth":
+                        preferredCond.MinBitDepth = int.Parse(args[++i]);
+                        break;
+                    case "--pref-max-bitdepth":
+                        preferredCond.MaxBitDepth = int.Parse(args[++i]);
                         break;
                     case "--format":
                         necessaryCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries);
@@ -653,6 +662,15 @@ static class Program
                         break;
                     case "--max-samplerate":
                         necessaryCond.MaxSampleRate = int.Parse(args[++i]);
+                        break;
+                    case "--min-samplerate":
+                        necessaryCond.MinSampleRate = int.Parse(args[++i]);
+                        break;
+                    case "--min-bitdepth":
+                        necessaryCond.MinBitDepth = int.Parse(args[++i]);
+                        break;
+                    case "--max-bitdepth":
+                        necessaryCond.MaxBitDepth = int.Parse(args[++i]);
                         break;
                     case "--danger-words":
                         necessaryCond.DangerWords = args[++i].Split(',');
