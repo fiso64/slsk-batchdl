@@ -209,8 +209,8 @@ static class Program
                             "\n" +
                             "\n                                 Path to a local CSV file: Use a csv file containing track" +
                             "\n                                 info to download. The names of the columns should be Artist, " +
-                            "\n                                 Title, Album, Length. Only the title column is required, but" +
-                            "\n                                 any extra info improves search results." +
+                            "\n                                 Title, Album, Length. Only the title or album column is" +
+                            "\n                                 required, but extra info may improve search results." +
                             "\n" +
                             "\n                                 Name of the track, album, or artist to search for:" +
                             "\n                                 Can either be any typical search string or a comma-separated" +
@@ -276,10 +276,9 @@ static class Program
                             "\n                                 default; if --min-bitrate is set, ignores any files with" +
                             "\n                                 unknown bitrate." +
                             "\n" +
-                            "\n  -a --aggregate                 When input is a string: Instead of downloading a single" +
-                            "\n                                 track matching the search string, find and download all" +
-                            "\n                                 distinct songs associated with the provided artist or track" +
-                            "\n                                 title. The input string must be a list of properties." +
+                            "\n  -a --aggregate                 Instead of downloading a single track matching the input," +
+                            "\n                                 find and download all distinct songs associated with the" +
+                            "\n                                 provided artist, album, or track title." +
                             "\n  --min-users-aggregate <num>    Minimum number of users sharing a track before it is" +
                             "\n                                 downloaded in aggregate mode. Setting it to higher values" +
                             "\n                                 will significantly reduce false positives, but may introduce" +

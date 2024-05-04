@@ -8,7 +8,7 @@ A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Sp
 ```
 slsk-batchdl test.csv
 ```  
-The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternatives can sometimes be inferred as well. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title column is required, but any additional info improves search results.  
+The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternatives can sometimes be inferred as well. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title or album column is required, but additional info may improve search results.  
   
 ### Download spotify likes while skipping existing songs:
 ```
@@ -52,8 +52,8 @@ Usage: slsk-batchdl <input> [OPTIONS]
 
                                  Path to a local CSV file: Use a csv file containing track
                                  info to download. The names of the columns should be Artist,
-                                 Title, Album, Length. Only the title column is required, but
-                                 any extra info improves search results.
+                                 Title, Album, Length. Only the title or album column is
+                                 required, but extra info may improve search results.
 
                                  Name of the track, album, or artist to search for:
                                  Can either be any typical search string or a comma-separated
@@ -119,10 +119,9 @@ Options:
                                  default; if --min-bitrate is set, ignores any files with
                                  unknown bitrate.
 
-  -a --aggregate                 When input is a string: Instead of downloading a single
-                                 track matching the search string, find and download all
-                                 distinct songs associated with the provided artist or track
-                                 title. The input string must be a list of properties.
+  -a --aggregate                 Instead of downloading a single track matching the input,
+                                 find and download all distinct songs associated with the
+                                 provided artist, album, or track title.
   --min-users-aggregate <num>    Minimum number of users sharing a track before it is
                                  downloaded in aggregate mode. Setting it to higher values
                                  will significantly reduce false positives, but may introduce
