@@ -4,35 +4,46 @@ A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Sp
 
 ## Examples
 
-### Download tracks from a csv file:
+Download tracks from a csv file:
 ```
 slsk-batchdl test.csv
 ```  
-The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`, though alternatives can sometimes be inferred as well. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title or album column is required, but additional info may improve search results.  
-  
-### Download spotify likes while skipping existing songs:
+The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`. Some alternatives are also accepted. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title or album column is required, but additional info may improve search results.  
+
+<br>
+
+Download spotify likes while skipping songs that already exist in the output folder:
 ```
 slsk-batchdl spotify-likes --skip-existing
 ```
 To download private playlists or liked songs you will need to provide a client id and secret, which you can get here https://developer.spotify.com/dashboard/applications. Create an app and add `http://localhost:48721/callback` as a redirect url in its settings.  
-  
-### Download from youtube playlist (w. yt-dlp fallback), including deleted videos:
+
+<br>
+
+Download from a youtube playlist with fallback to yt-dlp in case it is not found on soulseek, and retrieve deleted video titles from wayback machine:
 ```
 slsk-batchdl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
 ```
-Playlists are retrieved using the YoutubeExplode library which unfortunately doesn't always return all videos. You can use the official API by providing a key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.  
+Playlists are retrieved using the YoutubeExplode library which unfortunately doesn't always return all videos. You can use the official API by providing a key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.
+Also note that due the high number of music videos in the above example playlist, it may be better to remove all text in parentheses and disable song duration checking: `--regex "[\[\(].*?[\]\)]" --length-tol -1 --pref-length-tol -1`.
 
-### Search & download a specific song:
+<br>
+
+Search & download a specific song, preferring lossless:
 ```
 slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
 
-### Interactive album download:
+<br>
+
+Interactive album download:
 ```
 slsk-batchdl "album=Some Album" --interactive
 ```  
   
-### Find an artist's songs which are not in your library:
+<br>
+
+Print all songs by an artist which are not in your library:
 ```
 slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
 ```
@@ -79,7 +90,6 @@ Options:
   -n --number <maxtracks>        Download the first n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
   -r --reverse                   Download tracks in reverse order
-  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --fast-search                  Begin downloading as soon as a file satisfying the preferred
                                  conditions is found. Increases chance to download bad files.
@@ -90,6 +100,7 @@ Options:
 
   --spotify-id <id>              spotify client ID
   --spotify-secret <secret>      spotify client secret
+  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
 
   --youtube-key <key>            Youtube data API key
   --get-deleted                  Attempt to retrieve titles of deleted videos from wayback
@@ -123,6 +134,7 @@ Options:
   --pref-max-bitdepth <depth>    Preferred maximum bit depth
   --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
+
   --strict                       Skip files with missing properties instead of accepting by
                                  default; if --min-bitrate is set, ignores any files with
                                  unknown bitrate.
@@ -172,7 +184,7 @@ Options:
                                  YouTube playlist via url, this option is set automatically
                                  on a per track basis, so it is best kept off in that case.
   -d --desperate                 Tries harder to find the desired track by searching for the
-                                 artist/album/title only, then filtering the results.
+                                 artist/album/title only, then filtering. (slower search)
   --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                  Soulseek. yt-dlp must be available from the command line.
 
@@ -197,16 +209,27 @@ Options:
                                  'results-full': Print search results including full paths
   --debug                        Print extra debug info
 ```
-### File conditions:
-Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (disable it by setting it to 99999).  
-Files satisfying `pref-` conditions will be preferred. For example, setting `--pref-format "flac,wav"` will make it download high quality files if they exist and only download low quality files if there's nothing else.
+### File conditions
+Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (can be disabled by setting it to -1).  
+Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`.\
+**Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict`. (As a consequence, if `--strict` and `--min-bitrate` is set then any files shared by users with the default client will be ignored)
 
-### Name format:
+### Name format
 Available tags are: artist, artists, album_artist, album_artists, title, album, year, track, disc, filename, default_foldername. Name format supports subdirectories as well as conditional expressions: `{str1|str2}` – If any tags in str1 are null, choose str2. String literals enclosed in parentheses are ignored in the null check.
 ```
 {artist( - )title|album_artist( - )title|filename}
+```
+```
 {album(/)}{track(. )}{artist|(unknown artist)} - {title|(unknown title)}
 ```
+Here `{album(/)}` will conditionally put the download into a subfolder; if the album tag is null, then the slash won't be added to the path. An alternative is `{album|(missing album)}/` which will save all songs with unknown album under `missing album`.
+
+### Speed vs Quality
+The following options will make it go faster, but may decrease search result quality or cause instability:
+- `--fast-search` skips waiting until the search completes and downloads as soon as a matching file is found
+- `--concurrent-downloads` -  set it to 4 or more
+- `--max-stale-time` is set to 50 seconds by default, so it will wait a long time before giving up on a file
+- `--searches-per-time` increase at the risk of ban, see the notes section for details.
 
 ## Configuration  
 Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
@@ -219,5 +242,4 @@ Create a file named `slsk-batchdl.conf` in the same directory as the executable 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
-- The server will ban you for 30 minutes if too many searches are performed within a short timespan. Adjust `--searches-per-time` and `--searches-renew-time` in case it happens. By default it's configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
-- An issue I've not been able to resolve is audio files not appearing in the search results, even though they exist in the shown folders. This happens in soulseek clients as well; search for "AD PIANO IV Monochrome". You will find a few users whose folders only contain non-audio files. However, when you browse their shares, you can see that they do have audio in those exact folders. If you know why this is happening, please open an issue.
+- The server will ban you for 30 minutes if too many searches are performed within a short timespan. The program has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when limit is reached, the status of the downloads will be "Waiting"). By default it is configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect. You can also use `--random-login` to re-login with a random username and password automatically.
