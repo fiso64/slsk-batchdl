@@ -29,9 +29,12 @@ public static class Utils
 
     public static void Move(string sourceFilePath, string destinationFilePath)
     {
-        if (File.Exists(destinationFilePath))
-            File.Delete(destinationFilePath);
-        File.Move(sourceFilePath, destinationFilePath);
+        if (File.Exists(sourceFilePath))
+        {
+            if (File.Exists(destinationFilePath))
+                File.Delete(destinationFilePath);
+            File.Move(sourceFilePath, destinationFilePath);
+        }
     }
 
     public static bool EqualsAny(this string input, string[] values, StringComparison comparison = StringComparison.Ordinal)

@@ -559,6 +559,8 @@ static class Program
                     case "--max-stale-time":
                         downloadMaxStaleTime = int.Parse(args[++i]);
                         break;
+                    case "--processes":
+                    case "--concurrent-processes":
                     case "--concurrent-downloads":
                         maxConcurrentProcesses = int.Parse(args[++i]);
                         break;
@@ -1167,7 +1169,7 @@ static class Program
         if (tracks.Count > 0)
         {
             bool showAll = type != TrackLists.ListType.Normal || debugPrintTracks;
-            PrintTracks(tracks, showAll ? int.MaxValue : 10, debugPrintTracksFull);
+            PrintTracks(tracks, showAll ? int.MaxValue : 10, debugPrintTracksFull, infoFirst: debugPrintTracks);
             if (debugPrintTracksFull && (existing.Count > 0 || notFound.Count > 0))
                 Console.WriteLine("\n-----------------------------------------------\n");
         }
@@ -1177,12 +1179,12 @@ static class Program
             if (existing.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks already exist:");
-                PrintTracks(existing, fullInfo: debugPrintTracksFull);
+                PrintTracks(existing, fullInfo: debugPrintTracksFull, infoFirst: debugPrintTracks);
             }
             if (notFound.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks were not found during the last run:");
-                PrintTracks(notFound, fullInfo: debugPrintTracksFull);
+                PrintTracks(notFound, fullInfo: debugPrintTracksFull, infoFirst: debugPrintTracks);
             }
         }
     }
@@ -1203,7 +1205,7 @@ static class Program
             d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
         }
         else if (musicDir != "" && !System.IO.Directory.Exists(musicDir))
-            if (print) Console.WriteLine($"Path does not exist: {musicDir}");
+            if (print) Console.WriteLine($"Musid dir does not exist: {musicDir}");
 
         return existing.Select(x => x.Key).ToList();
     }
@@ -1233,7 +1235,8 @@ static class Program
     {
         SemaphoreSlim semaphore = new SemaphoreSlim(maxConcurrentProcesses);
 
-        var downloadTasks = tracks.Select(async (track, index) =>
+        var copy = new List<Track>(tracks);
+        var downloadTasks = copy.Select(async (track, index) =>
         {
             if (track.TrackState == Track.State.Exists || track.TrackState == Track.State.NotFoundLastTime)
                 return;
@@ -1294,10 +1297,11 @@ static class Program
             mainLoopCts = new CancellationTokenSource();
             albumCommonPath = Utils.GreatestCommonPath(tracks.SelectMany(x => x.Downloads.Select(y => y.Value.Item2.Filename)), dirsep: '\\');
             SemaphoreSlim semaphore = new SemaphoreSlim(maxConcurrentProcesses);
+            var copy = new List<Track>(tracks);
 
             try
             {
-                var downloadTasks = tracks.Select(async (track, index) =>
+                var downloadTasks = copy.Select(async (track, index) =>
                 {
                     if (track.TrackState == Track.State.Exists || track.TrackState == Track.State.NotFoundLastTime)
                         return;
@@ -1627,7 +1631,7 @@ static class Program
             {
                 foreach (var (response, file) in fileResponses) {
                     Console.WriteLine(DisplayString(track, file, response,
-                        (printResultsFull ? necessaryCond : null), (printResultsFull ? preferredCond : null), printResultsFull));
+                        (printResultsFull ? necessaryCond : null), (printResultsFull ? preferredCond : null), printResultsFull, infoFirst: true));
                 }
                 WriteLine($"Total: {fileResponses.Count()}\n", ConsoleColor.Yellow);
                 return "";
@@ -2200,7 +2204,9 @@ static class Program
         filename = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace("_", " ").RemoveConsecutiveWs().Trim();
 
         var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
-        var trackNumMiddle = new Regex(@"(?<=- )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
+        //var trackNumMiddle = new Regex(@"\s+-\s+(\d{2,3})(?: -|\.|)\s+|\s+-(\d{2,3})-\s+");
+        var trackNumMiddle = new Regex(@"(?<= - )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
+        var trackNumMiddleAlt = new Regex(@"\s+-(\d{2,3})-\s+");
 
         if (trackNumStart.IsMatch(filename))
         {
@@ -2210,9 +2216,13 @@ static class Program
         }
         else
         {
-            filename = trackNumMiddle.Replace(filename, "<<tracknum>>", 1).Trim();
-            filename = Regex.Replace(filename, @"-\s*<<tracknum>>\s*-", "-");
-            filename = filename.Replace("<<tracknum>>", "");
+            var reg = trackNumMiddle.IsMatch(filename) ? trackNumMiddle : (trackNumMiddleAlt.IsMatch(filename) ? trackNumMiddleAlt : null);
+            if (reg != null && !reg.IsMatch(defaultTrack.ToString(noInfo: true)))
+            {
+                filename = reg.Replace(filename, "<<tracknum>>", 1).Trim();
+                filename = Regex.Replace(filename, @"-\s*<<tracknum>>\s*-", "-");
+                filename = filename.Replace("<<tracknum>>", "");
+            }
         }
 
         string aname = t.ArtistName.Trim();
@@ -2376,7 +2386,7 @@ static class Program
                 {
                     if (client.State.HasFlag(SoulseekClientStates.LoggedIn))
                     {
-                        foreach (var (key, val) in searches)
+                        foreach (var (key, val) in searches) // shouldn't this give "collection was modified" errors? whatever..
                         {
                             if (val == null) 
                                 searches.TryRemove(key, out _);
@@ -3465,17 +3475,27 @@ static class Program
     }
 
     static string DisplayString(Track t, Soulseek.File? file=null, SearchResponse? response=null, FileConditions? nec=null, 
-        FileConditions? pref=null, bool fullpath=false, string customPath="")
+        FileConditions? pref=null, bool fullpath=false, string customPath="", bool infoFirst=false)
     {
         if (file == null)
             return t.ToString();
 
-        string sampleRate = file.SampleRate.HasValue ? $"{file.SampleRate}Hz/" : "";
-        string bitRate = file.BitRate.HasValue ? $"{file.BitRate}kbps/" : "";
+        string sampleRate = file.SampleRate.HasValue ? $"{file.SampleRate}Hz" : "";
+        string bitRate = file.BitRate.HasValue ? $"{file.BitRate}kbps" : "";
         string fileSize = $"{file.Size / (float)(1024 * 1024):F1}MB";
         string fname = fullpath ? "\\" + file.Filename : "\\..\\" + (customPath == "" ? GetFileNameSlsk(file.Filename) : customPath);
-        string length = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s/" : ""; 
-        string displayText = $"{response?.Username ?? ""}{fname} [{length}{sampleRate}{bitRate}{fileSize}]";
+        string length = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
+        string displayText;
+        if (!infoFirst)
+        {
+            string info = string.Join('/', new string[] { length, sampleRate+bitRate, fileSize }.Where(value => value!=""));
+            displayText = $"{response?.Username ?? ""}{fname} [{info}]";
+        }
+        else
+        {
+            string info = string.Join('/', new string[] { length.PadRight(4), (sampleRate+bitRate).PadRight(8), fileSize.PadLeft(6) });
+            displayText = $"[{info}] {response?.Username ?? ""}{fname}";
+        }
 
         string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(file, t, response)}, " : "";
         string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(file, t, response)}" : "";
@@ -3486,7 +3506,7 @@ static class Program
         return displayText + cond;
     }
 
-    static void PrintTracks(List<Track> tracks, int number = int.MaxValue, bool fullInfo=false, bool pathsOnly=false, bool showAncestors=false)
+    static void PrintTracks(List<Track> tracks, int number = int.MaxValue, bool fullInfo=false, bool pathsOnly=false, bool showAncestors=false, bool infoFirst=false)
     {
         number = Math.Min(tracks.Count, number);
 
@@ -3502,9 +3522,9 @@ static class Program
                 foreach (var x in tracks[i].Downloads)
                 {
                     if (ancestor == "")
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1));
+                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst));
                     else
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, "")));
+                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst));
                 }
             }
         }
@@ -3535,9 +3555,9 @@ static class Program
                         Console.WriteLine($"  Shares:             {tracks[i].Downloads.Count}");
                         foreach (var x in tracks[i].Downloads) {
                             if (ancestor == "")
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1));
+                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst));
                             else
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, "")));
+                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst));
                         }
                         if (tracks[i].Downloads?.Count > 0) Console.WriteLine();
                     }
@@ -3548,9 +3568,9 @@ static class Program
                     Console.WriteLine($"  Shares:             {tracks[i].Downloads.Count}");
                     foreach (var x in tracks[i].Downloads) {
                         if (ancestor == "")
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1));
+                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst));
                         else
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, "")));
+                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst));
                     }
                     Console.WriteLine();
                 }
@@ -3941,7 +3961,7 @@ public class M3UEditor
                 var value = lastBracketIndex != line.Length ? line.Substring(lastBracketIndex + 1).Trim().TrimEnd(']') : "";
                 return new { Key = key, Value = value };
             })
-            .ToDictionary(pair => pair.Key, pair => pair.Value);
+            .ToSafeDictionary(pair => pair.Key, pair => pair.Value);
     }
 
     public void Update()
