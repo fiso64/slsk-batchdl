@@ -471,13 +471,16 @@ public static class YouTube
         return results;
     }
 
-    public static async Task<string> YtdlpDownload(string id, string savePathNoExt)
+    public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument="")
     {
         Process process = new Process();
         ProcessStartInfo startInfo = new ProcessStartInfo();
 
+        if (ytdlpArgument == "")
+            ytdlpArgument = "\"{id}\" -f bestaudio/best -ci -o \"{savepath-noext}.%(ext)s\" -x";
+
         startInfo.FileName = "yt-dlp";
-        startInfo.Arguments = $"\"{id}\" -f bestaudio/best -ci -o \"{savePathNoExt}.%(ext)s\" -x";
+        startInfo.Arguments = ytdlpArgument.Replace("{id}", id).Replace("{savepath-noext}", savePathNoExt);
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -489,13 +492,15 @@ public static class YouTube
         process.Start();
         process.WaitForExit();
 
-        string[] files = Directory.GetFiles(Path.GetDirectoryName(savePathNoExt), Path.GetFileName(savePathNoExt + ".ext") + ".*");
+        if (File.Exists(savePathNoExt + ".opus"))
+            return savePathNoExt + ".opus";
 
-        foreach (string file in files)
-        {
-            if (Utils.IsMusicFile(file))
-                return file;
-        }
+        string parentDirectory = Path.GetDirectoryName(savePathNoExt);
+        string[] musicFiles = Directory.GetFiles(parentDirectory, "*", SearchOption.TopDirectoryOnly)
+                                        .Where(file => Utils.IsMusicFile(file))
+                                        .ToArray();
+        if (musicFiles.Length > 0)
+            return musicFiles[0];
 
         return "";
     }

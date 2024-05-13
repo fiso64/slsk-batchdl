@@ -139,6 +139,7 @@ static class Program
     static bool removeBrackets = false;
     static bool reverse = false;
     static bool useYtdlp = false;
+    static string ytdlpArgument = "";
     static bool skipExisting = false;
     static string m3uOption = "fails";
     static bool useTagsCheckExisting = false;
@@ -186,7 +187,7 @@ static class Program
         // undocumented options:
         // --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col
         // --remove-brackets, --spotify, --csv, --string, --youtube, --random-login
-        // --danger-words, --pref-danger-words, --no-modify-share-count
+        // --danger-words, --pref-danger-words, --no-modify-share-count, --yt-dlp-argument
         Console.WriteLine("Usage: slsk-batchdl <input> [OPTIONS]" +
                             "\n" +
                             "\n  <input>                        <input> is one of the following:" +
@@ -751,6 +752,9 @@ static class Program
                     case "--strict":
                         preferredCond.AcceptMissingProps = false;
                         necessaryCond.AcceptMissingProps = false;
+                        break;
+                    case "--yt-dlp-argument":
+                        ytdlpArgument = args[++i];
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
@@ -1427,6 +1431,7 @@ static class Program
         }
     }
 
+
     static List<Track> InteractiveModeAlbum(List<List<Track>> list)
     {
         int aidx = 0;
@@ -1685,7 +1690,7 @@ static class Program
                             string saveFilePathNoExt = GetSavePathNoExt(title);
                             downloading = true;
                             RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
-                            saveFilePath = await YouTube.YtdlpDownload(id, saveFilePathNoExt);
+                            saveFilePath = await YouTube.YtdlpDownload(id, saveFilePathNoExt, ytdlpArgument);
                             RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;
                         }
