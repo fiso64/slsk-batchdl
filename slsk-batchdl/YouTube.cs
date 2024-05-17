@@ -480,14 +480,17 @@ public static class YouTube
             ytdlpArgument = "\"{id}\" -f bestaudio/best -ci -o \"{savepath-noext}.%(ext)s\" -x";
 
         startInfo.FileName = "yt-dlp";
-        startInfo.Arguments = ytdlpArgument.Replace("{id}", id).Replace("{savepath-noext}", savePathNoExt);
+        startInfo.Arguments = ytdlpArgument
+            .Replace("{id}", id)
+            .Replace("{savepath-noext}", savePathNoExt)
+            .Replace("{savedir}", Path.GetDirectoryName(savePathNoExt));
 
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
         startInfo.UseShellExecute = false;
         process.StartInfo = startInfo;
-        process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
-        process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+        //process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+        //process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
 
         process.Start();
         process.WaitForExit();

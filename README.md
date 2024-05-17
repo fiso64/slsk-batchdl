@@ -7,8 +7,13 @@ A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Sp
 Download tracks from a csv file:
 ```
 slsk-batchdl test.csv
-```  
+```
+<details>
+  <summary>CSV details</summary>
+  
 The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Length`. Some alternatives are also accepted. You can use `--print tracks` before downloading to check if everything has been parsed correctly. Only the title or album column is required, but additional info may improve search results.  
+
+</details> 
 
 <br>
 
@@ -16,7 +21,12 @@ Download spotify likes while skipping songs that already exist in the output fol
 ```
 slsk-batchdl spotify-likes --skip-existing
 ```
+<details>
+  <summary>Spotify details</summary>
+
 To download private playlists or liked songs you will need to provide a client id and secret, which you can get here https://developer.spotify.com/dashboard/applications. Create an app and add `http://localhost:48721/callback` as a redirect url in its settings.  
+
+</details> 
 
 <br>
 
@@ -24,8 +34,13 @@ Download from a youtube playlist with fallback to yt-dlp in case it is not found
 ```
 slsk-batchdl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
 ```
+<details>
+  <summary>YouTube details</summary>
+
 Playlists are retrieved using the YoutubeExplode library which unfortunately doesn't always return all videos. You can use the official API by providing a key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.
 Also note that due the high number of music videos in the above example playlist, it may be better to remove all text in parentheses and disable song duration checking: `--regex "[\[\(].*?[\]\)]" --length-tol -1 --pref-length-tol -1`.
+
+</details> 
 
 <br>
 
@@ -54,7 +69,7 @@ Depending on the provided input, the download behaviour changes:
 
 - Normal download: When the song title is set (in the CSV row, or in the string input), the program will download a single file for every entry.
 - Album download: When the album name is set and the song title is NOT set, the program will search for the album and download the entire folder.
-- Aggregate download: With `--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above).
+- Aggregate download: With `--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above), finding remixes of a song, etc. Note that it is not 100% reliable, which is why `--min-users-aggregate` is set to 2 by default, i.e. any song that is shared by only one person will be ignored. Enabling `--relax` will give even more results.
 
 ## Options
 ```
@@ -90,8 +105,8 @@ Options:
   -n --number <maxtracks>        Download the first n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
   -r --reverse                   Download tracks in reverse order
-  --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
-  --fast-search                  Begin downloading as soon as a file satisfying the preferred
+  --nf --name-format <format>    Name format for downloaded tracks, e.g "{artist} - {title}"
+  --fs --fast-search             Begin downloading as soon as a file satisfying the preferred
                                  conditions is found. Increases chance to download bad files.
   --m3u <option>                 Create an m3u8 playlist file
                                  'none': Do not create a playlist file
@@ -161,6 +176,7 @@ Options:
                                  'default': Download from the same folder as the music
                                  'largest': Download from the folder with the largest image
                                  'most': Download from the folder containing the most images
+ --album-art-only                Only download album art for the provided album
 
   -s --skip-existing             Skip if a track matching file conditions is found in the
                                  output folder or your music library (if provided)
@@ -212,6 +228,7 @@ Options:
 ### File conditions
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (can be disabled by setting it to -1).  
 Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`.\
+
 **Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict`. (As a consequence, if `--strict` and `--min-bitrate` is set then any files shared by users with the default client will be ignored)
 
 ### Name format
