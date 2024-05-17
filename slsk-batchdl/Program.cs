@@ -365,14 +365,20 @@ static class Program
 
         bool confPathChanged = false;
         int idx = Array.LastIndexOf(args, "--config");
+        int idx2 = Array.LastIndexOf(args, "--conf");
+        idx = idx > -1 ? idx : idx2;
         if (idx != -1)
         {
             confPath = args[idx + 1];
             confPathChanged = true;
         }
 
-        if (System.IO.File.Exists(confPath) || confPathChanged)
+        if ((File.Exists(confPath) || confPathChanged) && confPath != "none")
         {
+            if (confPathChanged && !File.Exists(confPath))
+            {
+                confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
+            }
             string confArgs = System.IO.File.ReadAllText(confPath);
             List<string> finalArgs = new List<string>();
             finalArgs.AddRange(ParseCommand(confArgs));
@@ -418,6 +424,7 @@ static class Program
                     case "--path":
                         parentFolder = args[++i];
                         break;
+                    case "--conf":
                     case "--config":
                         confPath = args[++i];
                         break;
@@ -580,6 +587,7 @@ static class Program
                         downloadMaxStaleTime = int.Parse(args[++i]);
                         break;
                     case "--cp":
+                    case "--cd":
                     case "--processes":
                     case "--concurrent-processes":
                     case "--concurrent-downloads":
