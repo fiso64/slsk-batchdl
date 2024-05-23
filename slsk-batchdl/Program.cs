@@ -1152,6 +1152,8 @@ static class Program
                     maxAlbumTrackCount = n;
                 }
             }
+
+            defaultFolderName = ReplaceInvalidChars(track.ToString(true), " ").Trim();
         }
         else
         {
@@ -1160,6 +1162,8 @@ static class Program
             //var timeParts = doc.DocumentNode.SelectSingleNode("//span[@class='time_total']").InnerText.Trim().Split(':');
             var track = new Track() { Artist=artist, Title=name, Album=album };
             trackLists.AddEntry(track);
+
+            defaultFolderName = ".";
         }
     }
 
