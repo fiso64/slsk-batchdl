@@ -6,7 +6,7 @@ A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Sp
 
 Download tracks from a csv file:
 ```
-slsk-batchdl test.csv
+sldl test.csv
 ```
 <details>
   <summary>CSV details</summary>
@@ -19,7 +19,7 @@ The names of the columns in the csv should be: `Artist`, `Title`, `Album`, `Leng
 
 Download spotify likes while skipping songs that already exist in the output folder:
 ```
-slsk-batchdl spotify-likes --skip-existing
+sldl spotify-likes --skip-existing
 ```
 <details>
   <summary>Spotify details</summary>
@@ -32,7 +32,7 @@ To download private playlists or liked songs you will need to provide a client i
 
 Download from a youtube playlist with fallback to yt-dlp in case it is not found on soulseek, and retrieve deleted video titles from wayback machine:
 ```
-slsk-batchdl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
+sldl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
 ```
 <details>
   <summary>YouTube details</summary>
@@ -46,34 +46,48 @@ Also note that due the high number of music videos in the above example playlist
 
 Search & download a specific song, preferring lossless:
 ```
-slsk-batchdl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
+sldl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 ```  
+<details>
+  <summary>String details</summary>
+
+  The shorthand `sldl "Artist - Title"` is equivalent to `sldl "artist=Artist,title=Title"`.
+
+</details> 
 
 <br>
 
 Interactive album download:
 ```
-slsk-batchdl "album=Some Album" --interactive
-```  
+sldl "album=Some Album" --interactive
+```
+<details>
+  <summary>Album details</summary>
+
+  The shorthand `sldl "Artist - Album" -a` is equivalent to `sldl "artist=Artist,album=Album"`. It's often helpful to restrict to folders which have two or more tracks: `--atc 2+`.
+
+</details> 
   
 <br>
 
 Print all songs by an artist which are not in your library:
 ```
-slsk-batchdl "artist=MC MENTAL" --aggregate --print tracks-full --skip-existing --music-dir "path\to\music"
+sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" --print tracks-full
 ```
 
 ## Download Modes
 
 Depending on the provided input, the download behaviour changes:
 
-- Normal download: When the song title is set (in the CSV row, or in the string input), the program will download a single file for every entry.
-- Album download: When the album name is set and the song title is NOT set, the program will search for the album and download the entire folder.
-- Aggregate download: With `--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above), finding remixes of a song, etc. Note that it is not 100% reliable, which is why `--min-users-aggregate` is set to 2 by default, i.e. any song that is shared by only one person will be ignored. Enabling `--relax` will give even more results.
+- Normal download: The program will download a single file for every input entry.
+- Album download: The program will search for the album and download an entire folder including non-audio files. Activated when the input is a link to a spotify or bandcamp album, or when the input is a string with unset track title, or when `-a`/`--album` is enabled. Downloading multiple albums from a CSV is also supported.
+- Aggregate download: With `-g`/`--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above), finding remixes of a song, etc. Note that it is not 100% reliable, which is why `--min-users-aggregate` is set to 2 by default, i.e. any song that is shared by only one person will be ignored. Enable `--relax-filtering` to make the file filtering less aggressive.
 
 ## Options
+
+Acronyms of two- and --three-word-arguments are also accepted, e.g. --twa
 ```
-Usage: slsk-batchdl <input> [OPTIONS]
+Usage: sldl <input> [OPTIONS]
 
   <input>                        <input> is one of the following:
 
@@ -99,14 +113,14 @@ Options:
   --user <username>              Soulseek username
   --pass <password>              Soulseek password
 
-  -p --path <path>               Download folder
+  -p --path <path>               Download directory
   -f --folder <name>             Subfolder name. Set to '.' to output directly to the
                                  download folder (default: playlist/csv name)
   -n --number <maxtracks>        Download the first n tracks of a playlist
   -o --offset <offset>           Skip a specified number of tracks
   -r --reverse                   Download tracks in reverse order
-  --nf --name-format <format>    Name format for downloaded tracks, e.g "{artist} - {title}"
-  --fs --fast-search             Begin downloading as soon as a file satisfying the preferred
+  --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
+  --fast-search                  Begin downloading as soon as a file satisfying the preferred
                                  conditions is found. Increases chance to download bad files.
   --m3u <option>                 Create an m3u8 playlist file
                                  'none': Do not create a playlist file
@@ -135,8 +149,6 @@ Options:
   --max-samplerate <rate>        Maximum file sample rate
   --min-bitdepth <depth>         Minimum bit depth
   --max-bitdepth <depth>         Maximum bit depth
-  --strict-title                 Only download if filename contains track title
-  --strict-artist                Only download if filepath contains track artist
   --banned-users <list>          Comma-separated list of users to ignore
 
   --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)
@@ -147,36 +159,34 @@ Options:
   --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)
   --pref-min-bitdepth <depth>    Preferred minimum bit depth
   --pref-max-bitdepth <depth>    Preferred maximum bit depth
-  --pref-strict-artist           Prefer download if filepath contains track artist
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
 
-  --strict                       Skip files with missing properties instead of accepting by
+  --strict-conditions            Skip files with missing properties instead of accepting by
                                  default; if --min-bitrate is set, ignores any files with
                                  unknown bitrate.
 
-  -a --aggregate                 Instead of downloading a single track matching the input,
-                                 find and download all distinct songs associated with the
-                                 provided artist, album, or track title.
-  --min-users-aggregate <num>    Minimum number of users sharing a track before it is
-                                 downloaded in aggregate mode. Setting it to higher values
-                                 will significantly reduce false positives, but may introduce
-                                 false negatives. Default: 2
-  --relax                        Slightly relax file filtering in aggregate mode to include
-                                 more results
-
-  --interactive                  When downloading albums: Allows to select the wanted album
+  -a --album                     Album download mode
+  -t --interactive               When downloading albums: Allows to select the wanted album
   --album-track-count <num>      Specify the exact number of tracks in the album. Folders
                                  with a different number of tracks will be ignored. Append
                                  a '+' or '-' after the number for the inequalities >= and <=
   --album-ignore-fails           When downloading an album and one of the files fails, do not
                                  skip to the next source and do not delete all successfully
                                  downloaded files
-  --album-art <option>           When downloading albums, optionally retrieve album images
-                                 from another location:
-                                 'default': Download from the same folder as the music
+  --album-art <option>           Retrieve additional images after downloading the album:
                                  'largest': Download from the folder with the largest image
                                  'most': Download from the folder containing the most images
- --album-art-only                Only download album art for the provided album
+  --album-art-only               Only download album art for the provided album
+
+  -g --aggregate                 Instead of downloading a single track matching the input,
+                                 find and download all distinct songs associated with the
+                                 provided artist, album, or track title.
+  --min-users-aggregate <num>    Minimum number of users sharing a track before it is
+                                 downloaded in aggregate mode. Setting it to higher values
+                                 will significantly reduce false positives, but also cause it
+                                 to ignore rarer songs. Default: 2
+  --relax-filtering              Slightly relax file filtering in aggregate mode to include
+                                 more results
 
   -s --skip-existing             Skip if a track matching file conditions is found in the
                                  output folder or your music library (if provided)
@@ -184,8 +194,8 @@ Options:
                                  'name-precise' (default): Use filenames and check conditions
                                  'tag': Use file tags (slower)
                                  'tag-precise': Use file tags and check file conditions
-  --music-dir <path>             Specify to skip downloading tracks found in a music library
-                                 Use with --skip-existing
+  --music-dir <path>             Specify to also skip downloading tracks found in a music
+                                 library. Use with --skip-existing
   --skip-not-found               Skip searching for tracks that weren't found on Soulseek
                                  during the last run. Fails are read from the m3u file.
 
@@ -198,13 +208,18 @@ Options:
                                  Useful for sources like SoundCloud where the "artist"
                                  could just be an uploader. Note that when downloading a
                                  YouTube playlist via url, this option is set automatically
-                                 on a per track basis, so it is best kept off in that case.
+                                 on a per-track basis, so it is best kept off in that case.
   -d --desperate                 Tries harder to find the desired track by searching for the
                                  artist/album/title only, then filtering. (slower search)
   --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                  Soulseek. yt-dlp must be available from the command line.
+  --yt-dlp-argument <str>        The command line arguments when running yt-dlp. Default:
+                                 "{id}" -f bestaudio/best -cix -o "{savepath}.%(ext)s"
+                                 Available vars are: {id}, {savedir}, {savepath} (w/o ext).
+                                 Note that with -x, yt-dlp will download webms in case
+                                 ffmpeg is unavailable.
 
-  --config <path>                Manually specify config file location
+  -c --config <path>             Set config file location
   --search-timeout <ms>          Max search time in ms (default: 5000)
   --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
   --concurrent-downloads <num>   Max concurrent downloads (default: 2)
@@ -212,7 +227,7 @@ Options:
                                  30-minute bans. (default: 34)
   --searches-renew-time <sec>    Controls how often available searches are replenished.
                                  Lower values may cause 30-minute bans. (default: 220)
-  --display <option>             Changes how searches and downloads are displayed:
+  --display-mode <option>        Changes how searches and downloads are displayed:
                                  'single' (default): Show transfer state and percentage
                                  'double': Transfer state and a large progress bar
                                  'simple': No download bars or changing percentages
@@ -225,11 +240,12 @@ Options:
                                  'results-full': Print search results including full paths
   --debug                        Print extra debug info
 ```
+
 ### File conditions
 Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (can be disabled by setting it to -1).  
-Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`.\
+Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`. See the start of `Program.cs` for the default file conditions.
 
-**Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict`. (As a consequence, if `--strict` and `--min-bitrate` is set then any files shared by users with the default client will be ignored)
+**Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict-conditions`. (As a consequence, if `--min-bitrate` is also set then any files shared by users with the default client will be ignored)
 
 ### Name format
 Available tags are: artist, artists, album_artist, album_artists, title, album, year, track, disc, filename, default_foldername. Name format supports subdirectories as well as conditional expressions: `{str1|str2}` – If any tags in str1 are null, choose str2. String literals enclosed in parentheses are ignored in the null check.
@@ -249,11 +265,12 @@ The following options will make it go faster, but may decrease search result qua
 - `--searches-per-time` increase at the risk of ban, see the notes section for details.
 
 ## Configuration  
-Create a file named `slsk-batchdl.conf` in the same directory as the executable and write your arguments there, e.g:
-```
---username "fakename"
---password "fakepass"
---pref-format "flac"
+Create a file named `sldl.conf` in the same directory as the executable and write your arguments there, e.g:
+```bash
+username="fakename"
+password="fakepass"
+pref-format="flac"
+fast-search="true"
 ```  
   
 ## Notes

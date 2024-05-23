@@ -9,6 +9,7 @@ using HtmlAgilityPack;
 using System.Text;
 using System.Threading.Channels;
 using System.Collections.Concurrent;
+using System;
 
 public static class YouTube
 {
@@ -63,7 +64,7 @@ public static class YouTube
                         length = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
                         desc = videoResponse.Items[0].Snippet.Description;
 
-                        Track track = await ParseTrackInfo(title, uploader, playlistItem.Snippet.ResourceId.VideoId, length, false, desc);
+                        Track track = await ParseTrackInfo(title, uploader, playlistItem.Snippet.ResourceId.VideoId, length, desc);
                         tracks.Add(track);
                     }
                 }
@@ -90,19 +91,20 @@ public static class YouTube
         return (playlistName, tracks);
     }
 
-    public static async Task<Track> ParseTrackInfo(string title, string uploader, string id, int length, bool requestInfoIfNeeded, string desc = "")
+    // requestInfoIfNeeded=true is way too slow
+    public static async Task<Track> ParseTrackInfo(string title, string uploader, string id, int length, string desc = "", bool requestInfoIfNeeded=false)
     {
         (string title, string uploader, int length, string desc) info = ("", "", -1, "");
         var track = new Track();
         track.URI = id;
 
-        title = title.Replace("–", "-");
+        uploader = Regex.Replace(uploader.Replace("–", "-").Trim(), @"\s+", " ");
+        title = Regex.Replace(title.Replace("–", "-").Trim(), @"\s+", " ");
 
-        var trackTitle = title.Trim();
-        trackTitle = Regex.Replace(trackTitle, @"\s+", " ");
-        var artist = uploader.Trim();
+        var artist = uploader;
+        var trackTitle = title;
 
-        if (artist.EndsWith("- Topic"))
+        if (artist.EndsWith(" - Topic"))
         {
             artist = artist.Substring(0, artist.Length - 7).Trim();
             trackTitle = title;
@@ -127,16 +129,30 @@ public static class YouTube
         }
         else
         {
-            int idx = title.IndexOf('-');
-            var split = title.Split(new[] { '-' }, 2);
-            if (idx > 0 && idx < title.Length - 1 && (title[idx - 1] == ' ' || title[idx + 1] == ' ') && split[0].Trim() != "" && split[1].Trim() != "")
+            track.ArtistMaybeWrong = !title.ContainsWithBoundary(artist, true) && !desc.ContainsWithBoundary(artist, true);
+
+            var split = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (split.Length == 2)
             {
-                artist = title.Split(new[] { '-' }, 2)[0].Trim();
-                trackTitle = title.Split(new[] { '-' }, 2)[1].Trim();
+                artist = split[0];
+                trackTitle = split[1];
+                track.ArtistMaybeWrong = false;
             }
-            else
+            else if (split.Length > 2)
             {
-                track.ArtistMaybeWrong = true;
+                int index = Array.FindIndex(split, s => s.ContainsWithBoundary(artist, true));
+                if (index != -1 && index < split.Length - 1)
+                {
+                    artist = split[index];
+                    trackTitle = String.Join(" - ", split[(index + 1)..]);
+                    track.ArtistMaybeWrong = false;
+                }
+            }
+
+            if (track.ArtistMaybeWrong && requestInfoIfNeeded && desc == "")
+            {
+                info = await GetVideoInfo(id);
+                track.ArtistMaybeWrong = !info.desc.ContainsWithBoundary(artist, true);
             }
         }
 
@@ -152,8 +168,8 @@ public static class YouTube
         }
 
         track.Length = length;
-        track.ArtistName = artist;
-        track.TrackTitle = trackTitle;
+        track.Artist = artist;
+        track.Title = trackTitle;
 
         return track;
     }
@@ -230,7 +246,7 @@ public static class YouTube
                 var ytId = video.Id.Value;
                 var length = (int)video.Duration.Value.TotalSeconds;
 
-                var track = await ParseTrackInfo(title, uploader, ytId, length, true);
+                var track = await ParseTrackInfo(title, uploader, ytId, length);
 
                 tracks[ytId] = track;
             }
@@ -260,7 +276,7 @@ public static class YouTube
                 var ytId = video.Id.Value;
                 var length = (int)video.Duration.Value.TotalSeconds;
 
-                var track = await ParseTrackInfo(title, uploader, ytId, length, true);
+                var track = await ParseTrackInfo(title, uploader, ytId, length);
 
                 tracks.Add(track);
             }
@@ -334,7 +350,7 @@ public static class YouTube
                             var x = await GetVideoDetails(waybackUrl);
                             if (!string.IsNullOrEmpty(x.title))
                             {
-                                var track = await ParseTrackInfo(x.title, x.uploader, waybackUrl, x.duration, false);
+                                var track = await ParseTrackInfo(x.title, x.uploader, waybackUrl, x.duration);
                                 tracks.Add(track);
                                 if (!Console.IsOutputRedirected)
                                 {
@@ -440,7 +456,7 @@ public static class YouTube
         ProcessStartInfo startInfo = new ProcessStartInfo();
 
         startInfo.FileName = "yt-dlp";
-        string search = track.ArtistName != "" ? $"{track.ArtistName} - {track.TrackTitle}" : track.TrackTitle;
+        string search = track.Artist != "" ? $"{track.Artist} - {track.Title}" : track.Title;
         startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%s)s === %(id)s === %(title)s\"";
 
         startInfo.RedirectStandardOutput = true;
@@ -482,6 +498,7 @@ public static class YouTube
         startInfo.FileName = "yt-dlp";
         startInfo.Arguments = ytdlpArgument
             .Replace("{id}", id)
+            .Replace("{savepath}", savePathNoExt)
             .Replace("{savepath-noext}", savePathNoExt)
             .Replace("{savedir}", Path.GetDirectoryName(savePathNoExt));
 

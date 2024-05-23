@@ -1,10 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyName>sldl</AssemblyName>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -26,7 +27,7 @@
     <PackageReference Include="SpotifyAPI.Web" Version="7.0.2" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.0.2" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="YoutubeExplode" Version="6.3.14" />
+    <PackageReference Include="YoutubeExplode" Version="6.3.16" />
   </ItemGroup>
 
 </Project>

@@ -1,9 +1,16 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Net;
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 public static class Utils
 {
     public static string[] musicExtensions = new string[] { ".mp3", ".wav", ".flac", ".ogg", ".aac", ".wma", ".m4a", ".alac", ".ape", ".opus" };
     public static string[] imageExtensions = new string[] { ".jpg", ".jpeg", ".png" };
+    
+    public static bool IsMusicExtension(string extension)
+    {
+        return musicExtensions.Contains(('.' + extension.TrimStart('.')).ToLower());
+    }
 
     public static bool IsMusicFile(string fileName)
     {
@@ -13,6 +20,11 @@ public static class Utils
     public static bool IsImageFile(string fileName)
     {
         return imageExtensions.Contains(Path.GetExtension(fileName).ToLower());
+    }
+
+    public static decimal Normalize(this double value)
+    {
+        return ((decimal)value) / 1.000000000000000000000000000000000m;
     }
 
     public static int GetRecursiveFileCount(string directory)
@@ -52,6 +64,17 @@ public static class Utils
         string[] temp;
         temp = s.Split(separators, StringSplitOptions.RemoveEmptyEntries);
         return String.Join(newVal, temp);
+    }
+
+    public static string UnHtmlString(this string s)
+    {
+        s = WebUtility.HtmlDecode(s);
+        string[] zeroWidthChars = { "\u200B", "\u200C", "\u200D", "\u00AD", "\u200E", "\u200F" };
+        foreach (var zwChar in zeroWidthChars)
+            s = s.Replace(zwChar, "");
+
+        s = s.Replace('\u00A0', ' ');
+        return s;
     }
 
     public static string RemoveFt(this string str, bool removeParentheses = true, bool onlyIfNonempty = true)
@@ -108,13 +131,34 @@ public static class Utils
         return s.Contains(other, StringComparison.OrdinalIgnoreCase);
     }
 
+    static char[] boundaryChars = { '-', '|', '.', '\\', '/', '_', '—', '(', ')', '[', ']', ',', '?', '!', ';',
+            '@', ':', '*', '=', '+', '{', '}', '|', '\'', '"', '$', '^', '&', '#', '`', '~', '%', '<', '>' };
+    static string boundaryPattern = "^|$|" + string.Join("|", boundaryChars.Select(c => Regex.Escape(c.ToString())));
+
     public static bool ContainsWithBoundary(this string str, string value, bool ignoreCase = false)
     {
-        string boundaryChars = @"\s|-|\.|\\|\/|^|$|_|—|\(|\)|\[|\]|,";
-        string pattern = $"(?<={boundaryChars}){Regex.Escape(value)}(?={boundaryChars})";
+        if (value == "")
+            return true;
+        if (str == "")
+            return false;
+        string bound = boundaryPattern + "|\\s";
+        string pattern = $@"({bound}){Regex.Escape(value)}({bound})";
         RegexOptions options = ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None;
         return Regex.IsMatch(str, pattern, options);
     }
+
+    public static bool ContainsWithBoundaryIgnoreWs(this string str, string value, bool ignoreCase = false, bool acceptLeftDigit = false)
+    {
+        if (value == "")
+            return true;
+        if (str == "")
+            return false;
+        string patternLeft = acceptLeftDigit ? boundaryPattern + @"|\d\s+" : boundaryPattern;
+        string pattern = $@"({patternLeft})\s*{Regex.Escape(value)}\s*({boundaryPattern})";
+        RegexOptions options = ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None;
+        return Regex.IsMatch(str, pattern, options);
+    }
+
 
     public static bool ContainsInBrackets(this string str, string searchTerm, bool ignoreCase = false)
     {
@@ -156,6 +200,39 @@ public static class Utils
                 d.Add(keySelector(element), valSelector(element));
         }
         return d;
+    }
+
+    // https://stackoverflow.com/a/35462350/13157140
+    public static T ArgMax<T, K>(this IEnumerable<T> source, Func<T, K> map, IComparer<K> comparer = null)
+    {
+        if (Object.ReferenceEquals(null, source))
+            throw new ArgumentNullException("source");
+        else if (Object.ReferenceEquals(null, map))
+            throw new ArgumentNullException("map");
+
+        T result = default(T);
+        K maxKey = default(K);
+        Boolean first = true;
+
+        if (null == comparer)
+            comparer = Comparer<K>.Default;
+
+        foreach (var item in source)
+        {
+            K key = map(item);
+
+            if (first || comparer.Compare(key, maxKey) > 0)
+            {
+                first = false;
+                maxKey = key;
+                result = item;
+            }
+        }
+
+        if (!first)
+            return result;
+        else
+            throw new ArgumentException("Can't compute ArgMax on empty sequence.", "source");
     }
 
     public static int Levenshtein(string source, string target)
