@@ -5,8 +5,8 @@ using System.Collections.Concurrent;
 using System.Data;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
-using System.Diagnostics;
 using AngleSharp.Text;
+using System.Diagnostics;
 
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
@@ -15,8 +15,6 @@ using SlFile = Soulseek.File;
 using File = System.IO.File;
 using Directory = System.IO.Directory;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
-using System.Linq;
-using System.IO;
 
 
 // todo
@@ -45,7 +43,7 @@ static class Program
         LengthTolerance = 2,
         MinBitrate = 200,
         MaxBitrate = 2500,
-        MaxSampleRate = 95999,
+        MaxSampleRate = 48000,
         StrictTitle = true,
         StrictAlbum = true,
         AcceptNoLength = false,
@@ -225,7 +223,7 @@ static class Program
                             "\n  --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)" +
                             "\n  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)" +
                             "\n  --pref-min-samplerate <rate>   Preferred minimum sample rate" +
-                            "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)" +
+                            "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 48000)" +
                             "\n  --pref-min-bitdepth <depth>    Preferred minimum bit depth" +
                             "\n  --pref-max-bitdepth <depth>    Preferred maximum bit depth" +
                             "\n  --pref-banned-users <list>     Comma-separated list of users to deprioritize" +
@@ -1190,7 +1188,7 @@ static class Program
     {
         searchStr = input;
         inputType = "string";
-        var music = ParseTrackArg(searchStr, true, album);
+        var music = ParseTrackArg(searchStr, album);
         bool isAlbum = false;
 
         if (album)
@@ -3849,123 +3847,97 @@ static class Program
     }
 
 
-    static Track ParseTrackArg(string input, bool parseSingleString, bool isAlbum) // more complicated than it needs to be
+    static Track ParseTrackArg(string input, bool isAlbum)
     {
         input = input.Trim();
-        Track track = new Track();
-        List<string> keys = new List<string> { "title", "artist", "duration", "length", "album", "artist-maybe-wrong" };
+        var track = new Track();
+        var keys = new string[] { "title", "artist", "duration", "length", "album", "artist-maybe-wrong" };
 
-        if (!keys.Any(p => input.Replace(" ", "").Contains(p + "=")))
+        track.IsAlbum = isAlbum;
+
+        var parts = input.Split(',');
+        var other = "";
+        var lastkeyval = true;
+
+        for (int i = 0; i < parts.Length; i++)
         {
-            input = input.Replace(" — ", " - ");
-            if (!parseSingleString || !input.Contains(" - "))
+            var x = parts[i];
+            bool keyval = false;
+
+            if (x.Contains('='))
             {
-                track.Title = input;
-            }
-            else
-            {
-                var parts = input.Split(" - ", 3, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-                string artist = "", album = "", title = "";
-                if (parts.Length <= 1)
+                var lr = x.Split('=', 2, StringSplitOptions.TrimEntries);
+                if (lr.Length == 2 && lr[1] != "" && keys.Contains(lr[0]))
                 {
-                    title = input;
-                    album = input;
-                }
-                else if (parts.Length == 2)
-                {
-                    artist = parts[0];
-                    album = parts[1];
-                    title = parts[1];
-                }
-                else
-                {
-                    artist = parts[0];
-                    album = parts[1];
-                    title = parts[2];
-                }
-
-                track.Artist = artist;
-                if (isAlbum)
-                {
-                    track.Album = album;
-                    track.IsAlbum = true;
-                }
-                else
-                {
-                    track.Title = title;
-                    if (input.Length == 3)
-                        track.Album = album;
-                }
-            }
-        }
-        else
-        {
-            (int, int) getNextKeyIndices(int start)
-            {
-                int commaIndex = start;
-                int equalsIndex = input.IndexOf('=', commaIndex);
-
-                if (equalsIndex == -1)
-                    return (-1, -1);
-                if (start == 0)
-                    return keys.Any(k => k == input.Substring(0, equalsIndex).Trim()) ? (0, equalsIndex) : (-1, -1);
-
-                while (start < input.Length)
-                {
-                    commaIndex = input.IndexOf(',', start);
-                    equalsIndex = commaIndex != -1 ? input.IndexOf('=', commaIndex) : -1;
-
-                    if (commaIndex == -1 || equalsIndex == -1)
-                        return (-1, -1);
-
-                    if (keys.Any(k => k == input.Substring(commaIndex + 1, equalsIndex - commaIndex - 1).Trim()))
-                        return (commaIndex + 1, equalsIndex);
-
-                    start = commaIndex + 1;
-                }
-
-                return (-1, -1);
-            }
-
-            (int start, int end) = getNextKeyIndices(0);
-            (int prevStart, int prevEnd) = (0, 0);
-
-            while (true)
-            {
-                if (prevEnd != 0)
-                {
-                    string key = input.Substring(prevStart, prevEnd - prevStart);
-                    int valEnd = start != -1 ? start - 1 : input.Length;
-                    string val = input.Substring(prevEnd + 1, valEnd - prevEnd - 1);
-                    switch (key)
+                    keyval = true;
+                    switch (lr[0])
                     {
                         case "title":
-                            track.Title = val;
+                            track.Title = lr[1];
                             break;
                         case "artist":
-                            track.Artist = val;
+                            track.Artist = lr[1];
                             break;
                         case "duration":
                         case "length":
-                            track.Length = (int)ParseTrackLength(val, "s");
+                            track.Length = int.Parse(lr[1]);
                             break;
                         case "album":
-                            track.Album = val;
+                            track.Album = lr[1];
                             break;
                         case "artist-maybe-wrong":
-                            if (val == "true")
+                            if (lr[1] == "true")
                                 track.ArtistMaybeWrong = true;
                             break;
                     }
                 }
+            }
 
-                if (end == -1)
-                    break;
-
-                (prevStart, prevEnd) = (start, end);
-                (start, end) = getNextKeyIndices(end);
+            if (!keyval)
+            {
+                if (!lastkeyval)
+                    other += ',';
+                other += x;
+                lastkeyval = false;
+            }
+            else
+            {
+                lastkeyval = true;
             }
         }
+
+        string artist = "", album = "", title = "";
+        string splitBy = other.Contains(" -- ") ? " -- " : " - ";
+        parts = other.Split(splitBy, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1 || parts.Length > 3)
+        {
+            if (isAlbum) 
+                album = other.Trim();
+            else 
+                title = other.Trim();
+        }
+        else if (parts.Length == 2)
+        {
+            artist = parts[0];
+
+            if (isAlbum)
+                album = parts[1];
+            else
+                title = parts[1];
+        }
+        else if (parts.Length == 3)
+        {
+            artist = parts[0];
+            album = parts[1];
+            title = parts[2];
+        }
+
+        if (track.Artist == "")
+            track.Artist = artist;
+        if (track.Album == "")
+            track.Album = album;
+        if (track.Title == "")
+            track.Title = title;
 
         if (track.Title == "" && track.Album == "" && track.Artist == "")
             throw new ArgumentException("Track string must contain title, album or artist.");
@@ -4436,10 +4408,10 @@ public struct Track
         {
             if (str != "")
                 str += " - ";
-            if (Title != "")
-                str += Title;
-            else if (IsAlbum)
+            if (IsAlbum)
                 str += Album;
+            else if (Title != "")
+                str += Title;
             if (!noInfo)
             {
                 if (Length > 0)

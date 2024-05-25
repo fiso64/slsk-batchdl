@@ -1,6 +1,6 @@
 # slsk-batchdl
 
-A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files or Spotify and YouTube urls.
+A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files and Spotify or YouTube urls.
 
 ## Examples
 
@@ -156,7 +156,7 @@ Options:
   --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
   --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)
   --pref-min-samplerate <rate>   Preferred minimum sample rate
-  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 96000)
+  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 48000)
   --pref-min-bitdepth <depth>    Preferred minimum bit depth
   --pref-max-bitdepth <depth>    Preferred maximum bit depth
   --pref-banned-users <list>     Comma-separated list of users to deprioritize
