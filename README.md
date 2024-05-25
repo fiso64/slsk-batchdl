@@ -32,7 +32,7 @@ To download private playlists or liked songs you will need to provide a client i
 
 Download from a youtube playlist with fallback to yt-dlp in case it is not found on soulseek, and retrieve deleted video titles from wayback machine:
 ```
-sldl --get-deleted --yt-dlp "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX"
+sldl "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX" --get-deleted --yt-dlp
 ```
 <details>
   <summary>YouTube details</summary>
