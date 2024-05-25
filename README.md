@@ -80,7 +80,7 @@ sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" 
 Depending on the provided input, the download behaviour changes:
 
 - Normal download: The program will download a single file for every input entry.
-- Album download: The program will search for the album and download an entire folder including non-audio files. Activated when the input is a link to a spotify or bandcamp album, or when the input is a string with unset track title, or when `-a`/`--album` is enabled. Downloading multiple albums from a CSV is also supported.
+- Album download: The program will search for the album and download an entire folder including non-audio files. Activated when the input is a link to a spotify or bandcamp album, when the input string or csv row has no track title, and when `-a`/`--album` is enabled.
 - Aggregate download: With `-g`/`--aggregate`, the program will first perform an ordinary search for the input, then attempt to group the results into distinct songs and download one of each kind. This can be used to download an artist's entire discography (or simply printing it, like in the example above), finding remixes of a song, etc. Note that it is not 100% reliable, which is why `--min-users-aggregate` is set to 2 by default, i.e. any song that is shared by only one person will be ignored. Enable `--relax-filtering` to make the file filtering less aggressive.
 
 ## Options
