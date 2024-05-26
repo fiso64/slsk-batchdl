@@ -154,7 +154,7 @@ Options:
   --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)
   --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)
   --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
-  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)
+  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2500)
   --pref-min-samplerate <rate>   Preferred minimum sample rate
   --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 48000)
   --pref-min-bitdepth <depth>    Preferred minimum bit depth
@@ -274,6 +274,6 @@ fast-search="true"
 ```  
   
 ## Notes
-- For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`
+- For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
 - The server will ban you for 30 minutes if too many searches are performed within a short timespan. The program has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when limit is reached, the status of the downloads will be "Waiting"). By default it is configured to allow up to 34 searches every 220 seconds. These values were determined through experimentation as unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect.
