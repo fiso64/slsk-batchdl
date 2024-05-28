@@ -257,12 +257,15 @@ Available tags are: artist, artists, album_artist, album_artists, title, album, 
 ```
 Here `{album(/)}` will conditionally put the download into a subfolder; if the album tag is null, then the slash won't be added to the path. An alternative is `{album|(missing album)}/` which will save all songs with unknown album under `missing album`.
 
-### Speed vs Quality
+### Quality vs Speed
 The following options will make it go faster, but may decrease search result quality or cause instability:
 - `--fast-search` skips waiting until the search completes and downloads as soon as a matching file is found
 - `--concurrent-downloads` -  set it to 4 or more
 - `--max-stale-time` is set to 50 seconds by default, so it will wait a long time before giving up on a file
 - `--searches-per-time` increase at the risk of ban, see the notes section for details.
+
+### Quality vs Quantity
+The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that does not contain the title/artist/album in the filename (ignoring case, bounded by boundary chars). Since by default such files will be ranked lower anyways and may actually be correct, these options are only recommended when you want to minimize false downloads as much as possible.
 
 ## Configuration  
 Create a file named `sldl.conf` in the same directory as the executable and write your arguments there, e.g:
