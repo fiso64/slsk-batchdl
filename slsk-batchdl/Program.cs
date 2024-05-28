@@ -114,6 +114,7 @@ static class Program
     static bool useTagsCheckExisting = false;
     static bool removeTracksFromSource = false;
     static bool getDeleted = false;
+    static bool deletedOnly = false;
     static bool removeSingleCharacterSearchTerms = false;
     static int maxTracks = int.MaxValue;
     static int minUsersAggregate = 2;
@@ -201,6 +202,8 @@ static class Program
                             "\n  --youtube-key <key>            Youtube data API key" +
                             "\n  --get-deleted                  Attempt to retrieve titles of deleted videos from wayback" +
                             "\n                                 machine. Requires yt-dlp." +
+                            "\n  --deleted-only                 Only retrieve & download deleted music. Combine with --print" +
+                            "\n                                 tracks-full to display a list of all deleted titles & urls." +
                             "\n" +
                             "\n  --time-format <format>         Time format in Length column of the csv file (e.g h:m:s.ms" +
                             "\n                                 for durations like 1:04:35.123). Default: s" +
@@ -221,7 +224,7 @@ static class Program
                             "\n  --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)" +
                             "\n  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)" +
                             "\n  --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)" +
-                            "\n  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2200)" +
+                            "\n  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2500)" +
                             "\n  --pref-min-samplerate <rate>   Preferred minimum sample rate" +
                             "\n  --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 48000)" +
                             "\n  --pref-min-bitdepth <depth>    Preferred minimum bit depth" +
@@ -565,6 +568,11 @@ static class Program
                     case "--gd":
                     case "--get-deleted":
                         getDeleted = true;
+                        break;
+                    case "--do":
+                    case "--deleted-only":
+                        getDeleted = true;
+                        deletedOnly = true;
                         break;
                     case "--re":
                     case "--regex":
@@ -992,23 +1000,30 @@ static class Program
 
         string name;
         List<Track>? deleted = null;
-        List<Track> tracks;
+        List<Track> tracks = new();
 
         if (getDeleted)
         {
             Console.WriteLine("Getting deleted videos..");
             var archive = new YouTube.YouTubeArchiveRetriever();
-            deleted = await archive.RetrieveDeleted(ytUrl);
+            deleted = await archive.RetrieveDeleted(ytUrl, printFailed: deletedOnly);
         }
-        if (YouTube.apiKey != "")
+        if (!deletedOnly)
         {
-            Console.WriteLine("Loading YouTube playlist (API)");
-            (name, tracks) = await YouTube.GetTracksApi(ytUrl, max, off);
+            if (YouTube.apiKey != "")
+            {
+                Console.WriteLine("Loading YouTube playlist (API)");
+                (name, tracks) = await YouTube.GetTracksApi(ytUrl, max, off);
+            }
+            else
+            {
+                Console.WriteLine("Loading YouTube playlist");
+                (name, tracks) = await YouTube.GetTracksYtExplode(ytUrl, max, off);
+            }
         }
         else
         {
-            Console.WriteLine("Loading YouTube playlist");
-            (name, tracks) = await YouTube.GetTracksYtExplode(ytUrl, max, off);
+            name = await YouTube.GetPlaylistTitle(ytUrl);
         }
         if (deleted != null)
         {
@@ -2582,7 +2597,7 @@ static class Program
         if (!noRemoveSpecialChars)
         {
             old = str;
-            str = str.ReplaceSpecialChars(" ").RemoveConsecutiveWs().Trim();
+            str = str.ReplaceSpecialChars(" ").Trim().RemoveConsecutiveWs();
             if (str == "") str = old;
         }
         foreach (var banned in bannedTerms)
@@ -2602,7 +2617,7 @@ static class Program
     public static Track InferTrack(string filename, Track defaultTrack)
     {
         Track t = new Track(defaultTrack);
-        filename = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace("_", " ").RemoveConsecutiveWs().Trim();
+        filename = GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace("_", " ").Trim().RemoveConsecutiveWs();
 
         var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
         //var trackNumMiddle = new Regex(@"\s+-\s+(\d{2,3})(?: -|\.|)\s+|\s+-(\d{2,3})-\s+");
@@ -3131,11 +3146,11 @@ static class Program
             fname = fname.Replace("_", " ").ReplaceInvalidChars(" ", true, false);
             fname = regexRemove != "" ? Regex.Replace(fname, regexRemove, "") : fname;
             fname = diacrRemove ? fname.RemoveDiacritics() : fname;
-            fname = fname.Trim();
+            fname = fname.Trim().RemoveConsecutiveWs();
             tname = tname.Replace("_", " ").ReplaceInvalidChars(" ", true, false);
             tname = regexRemove != "" ? Regex.Replace(tname, regexRemove, "") : tname;
             tname = diacrRemove ? tname.RemoveDiacritics() : tname;
-            tname = tname.Trim();
+            tname = tname.Trim().RemoveConsecutiveWs();
 
             if (boundarySkipWs)
                 return fname.ContainsWithBoundaryIgnoreWs(tname, ignoreCase, acceptLeftDigit: true);
@@ -4073,6 +4088,8 @@ static class Program
                         Console.WriteLine($"  Album:              {tracks[i].Album}");
                     if (!string.IsNullOrEmpty(tracks[i].URI))
                         Console.WriteLine($"  URL/ID:             {tracks[i].URI}");
+                    if (!string.IsNullOrEmpty(tracks[i].Other))
+                        Console.WriteLine($"  Other:              {tracks[i].Other}");
                     if (tracks[i].ArtistMaybeWrong)
                         Console.WriteLine($"  Artist maybe wrong: {tracks[i].ArtistMaybeWrong}");    
                     if (tracks[i].Downloads != null) {
@@ -4358,6 +4375,7 @@ public struct Track
     public bool IsNotAudio = false;
     public string FailureReason = "";
     public string DownloadPath = "";
+    public string Other = "";
     public State TrackState = State.Initial;
 
     public SlDictionary? Downloads = null;
@@ -4387,6 +4405,7 @@ public struct Track
         TrackState = other.TrackState;
         FailureReason = other.FailureReason;
         DownloadPath = other.DownloadPath;
+        Other = other.Other;
     }
 
     public override readonly string ToString()

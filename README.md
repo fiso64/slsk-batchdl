@@ -134,6 +134,8 @@ Options:
   --youtube-key <key>            Youtube data API key
   --get-deleted                  Attempt to retrieve titles of deleted videos from wayback
                                  machine. Requires yt-dlp.
+  --deleted-only                 Only retrieve & download deleted music. Combine with --print
+                                 tracks-full to display a list of all deleted titles & urls.
 
   --time-format <format>         Time format in Length column of the csv file (e.g h:m:s.ms
                                  for durations like 1:04:35.123). Default: s

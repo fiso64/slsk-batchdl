@@ -6,10 +6,7 @@ using System.Text.RegularExpressions;
 using YoutubeExplode.Common;
 using System.Diagnostics;
 using HtmlAgilityPack;
-using System.Text;
-using System.Threading.Channels;
 using System.Collections.Concurrent;
-using System;
 
 public static class YouTube
 {
@@ -98,8 +95,8 @@ public static class YouTube
         var track = new Track();
         track.URI = id;
 
-        uploader = Regex.Replace(uploader.Replace("–", "-").Trim(), @"\s+", " ");
-        title = Regex.Replace(title.Replace("–", "-").Trim(), @"\s+", " ");
+        uploader = uploader.Replace("–", "-").Trim().RemoveConsecutiveWs();
+        title = title.Replace("–", "-").Replace(" -- ", " - ").Trim().RemoveConsecutiveWs();
 
         var artist = uploader;
         var trackTitle = title;
@@ -258,6 +255,13 @@ public static class YouTube
         return tracks;
     }
 
+    public static async Task<string> GetPlaylistTitle(string url)
+    {
+        var youtube = new YoutubeClient();
+        var playlist = await youtube.Playlists.GetAsync(url);
+        return playlist.Title;
+    }
+
     public static async Task<(string, List<Track>)> GetTracksYtExplode(string url, int max = int.MaxValue, int offset = 0)
     {
         var youtube = new YoutubeClient();
@@ -305,12 +309,34 @@ public static class YouTube
             _client.Timeout = TimeSpan.FromSeconds(10);
         }
 
-        public async Task<List<Track>> RetrieveDeleted(string url)
+        public async Task<List<Track>> RetrieveDeleted(string url, bool printFailed = true)
         {
             var deletedVideoUrls = new BlockingCollection<string>();
-            var tracks = new ConcurrentBag<Track>();
 
-            var process = new Process()
+            int totalCount = 0;
+            int archivedCount = 0;
+            var tracks = new ConcurrentBag<Track>();
+            var noArchive = new ConcurrentBag<string>();
+            var failRetrieve = new ConcurrentBag<string>();
+
+            int workerCount = 4;
+            var workers = new List<Task>();
+            var consoleLock = new object();
+
+            void updateInfo()
+            {
+                lock (consoleLock)
+                {
+                    if (!Console.IsOutputRedirected)
+                    {
+                        string info = "Deleted metadata total/archived/retrieved: ";
+                        Console.SetCursorPosition(0, Console.CursorTop);
+                        Console.Write($"{info}{totalCount}/{archivedCount}/{tracks.Count}");
+                    }
+                }
+            }
+
+            var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
@@ -319,14 +345,17 @@ public static class YouTube
                     RedirectStandardOutput = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                }
+                },
+                EnableRaisingEvents = true
             };
-            process.EnableRaisingEvents = true;
-            bool ok = false;
             process.OutputDataReceived += (sender, e) =>
             {
-                if (!ok) { Console.WriteLine("Got first video"); ok = true; }
-                deletedVideoUrls.Add(e.Data);
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                {
+                    deletedVideoUrls.Add(e.Data);
+                    Interlocked.Increment(ref totalCount);
+                    updateInfo();
+                }
             };
             process.Exited += (sender, e) =>
             {
@@ -336,29 +365,42 @@ public static class YouTube
             process.Start();
             process.BeginOutputReadLine();
 
-            List<Task> workers = new List<Task>();
-            int workerCount = 4;
             for (int i = 0; i < workerCount; i++)
             {
                 workers.Add(Task.Run(async () =>
                 {
                     foreach (var videoUrl in deletedVideoUrls.GetConsumingEnumerable())
                     {
-                        var waybackUrl = await GetOldestArchiveUrl(videoUrl);
-                        if (!string.IsNullOrEmpty(waybackUrl))
+                        var waybackUrls = await GetOldestArchiveUrls(videoUrl, limit: 2);
+                        if (waybackUrls != null && waybackUrls.Count > 0)
                         {
-                            var x = await GetVideoDetails(waybackUrl);
-                            if (!string.IsNullOrEmpty(x.title))
+                            Interlocked.Increment(ref archivedCount);
+
+                            bool good = false;
+                            foreach (var waybackUrl in waybackUrls)
                             {
-                                var track = await ParseTrackInfo(x.title, x.uploader, waybackUrl, x.duration);
-                                tracks.Add(track);
-                                if (!Console.IsOutputRedirected)
+                                var (title, uploader, duration) = await GetVideoDetails(waybackUrl);
+                                if (!string.IsNullOrWhiteSpace(title))
                                 {
-                                    Console.SetCursorPosition(0, Console.CursorTop);
-                                    Console.Write($"Deleted videos processed: {tracks.Count}");
+                                    var track = await ParseTrackInfo(title, uploader, waybackUrl, duration);
+                                    track.Other = $"{{\"t\":\"{title.Trim()}\",\"u\":\"{uploader.Trim()}\"}}";
+                                    tracks.Add(track);
+                                    good = true;
+                                    break;
                                 }
                             }
+
+                            if (!good)
+                            {
+                                failRetrieve.Add(waybackUrls[0]);
+                            }
                         }
+                        else
+                        {
+                            noArchive.Add(videoUrl);
+                        }
+
+                        updateInfo();
                     }
                 }));
             }
@@ -367,12 +409,32 @@ public static class YouTube
             process.WaitForExit();
             deletedVideoUrls.CompleteAdding();
             Console.WriteLine();
+
+            if (printFailed)
+            {
+                if (archivedCount < totalCount)
+                {
+                    Console.WriteLine("No archived version found for the following:");
+                    foreach (var x in noArchive)
+                        Console.WriteLine($"  {x}");
+                    Console.WriteLine();
+                    
+                }
+                if (tracks.Count < archivedCount)
+                {
+                    Console.WriteLine("Failed to parse archived version for the following:");
+                    foreach (var x in failRetrieve)
+                        Console.WriteLine($"  {x}");
+                    Console.WriteLine();
+                }
+            }
+
             return tracks.ToList();
         }
 
-        private async Task<string> GetOldestArchiveUrl(string url)
+        private async Task<List<string>> GetOldestArchiveUrls(string url, int limit)
         {
-            var url2 = $"http://web.archive.org/cdx/search/cdx?url={url}&fl=timestamp,original&filter=statuscode:200&sort=timestamp:asc&limit=1";
+            var url2 = $"http://web.archive.org/cdx/search/cdx?url={url}&fl=timestamp,original&filter=statuscode:200&sort=timestamp:asc&limit={limit}";
             HttpResponseMessage response = null;
             for (int i = 0; i < 3; i++)
             {
@@ -388,13 +450,16 @@ public static class YouTube
             {
                 var content = await response.Content.ReadAsStringAsync();
                 var lines = content.Split("\n").Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
-                if (lines.Any())
+                if (lines.Count > 0)
                 {
-                    var parts = lines[0].Split(" ");
-                    var timestamp = parts[0];
-                    var originalUrl = parts[1];
-                    var oldestArchive = $"http://web.archive.org/web/{timestamp}/{originalUrl}";
-                    return oldestArchive;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        var parts = lines[i].Split(" ");
+                        var timestamp = parts[0];
+                        var originalUrl = parts[1];
+                        lines[i] = $"http://web.archive.org/web/{timestamp}/{originalUrl}";
+                    }
+                    return lines;
                 }
             }
             return null;
@@ -428,25 +493,43 @@ public static class YouTube
                 foreach (var pattern in patterns)
                 {
                     var node = doc.DocumentNode.SelectSingleNode(pattern);
-                    var res = "";
                     if (node != null)
                     {
+                        var res = "";
                         if (pattern.StartsWith("//meta") || pattern.Contains("@itemprop"))
                             res = node.GetAttributeValue("content", "");
                         else
                             res = node.InnerText;
-                        if (!string.IsNullOrEmpty(res)) return res;
+                        if (!string.IsNullOrEmpty(res)) 
+                            return Utils.UnHtmlString(res);
                     }
                 }
                 return "";
             }
 
+            var title = getItem(titlePatterns);
+            if (string.IsNullOrEmpty(title))
+            {
+                var pattern = @"document\.title\s*=\s*""(.+?) - YouTube"";";
+                var match = Regex.Match(doc.Text, pattern);
+                if (match.Success)
+                    title = match.Groups[1].Value;
+            }
+
+            var username = getItem(usernamePatterns);
+
             int duration = -1;
             var node = doc.DocumentNode.SelectSingleNode("//meta[@itemprop='duration']");
             if (node != null)
-                duration = (int)XmlConvert.ToTimeSpan(node.GetAttributeValue("content", "")).TotalSeconds;
+            {
+                try
+                {
+                    duration = (int)XmlConvert.ToTimeSpan(node.GetAttributeValue("content", "")).TotalSeconds;
+                }
+                catch { }
+            }
                 
-            return (getItem(titlePatterns), getItem(usernamePatterns), duration);
+            return (title, username, duration);
         }
     }
 

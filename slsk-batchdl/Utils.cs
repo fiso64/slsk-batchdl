@@ -1,6 +1,5 @@
 ﻿using System.Net;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 
 public static class Utils
 {
@@ -112,7 +111,7 @@ public static class Utils
 
     public static string RemoveConsecutiveWs(this string input)
     {
-        return Regex.Replace(input, @"\s+", " ");
+        return string.Join(' ', input.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
     }
 
     public static string RemoveSquareBrackets(this string str)
