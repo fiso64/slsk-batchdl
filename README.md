@@ -250,14 +250,9 @@ Files satisfying `pref-` conditions will be preferred; setting `--pref-format "f
 **Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict-conditions`. (As a consequence, if `--min-bitrate` is also set then any files shared by users with the default client will be ignored)
 
 ### Name format
-Available tags are: artist, artists, album_artist, album_artists, title, album, year, track, disc, filename, default_foldername. Name format supports subdirectories as well as conditional expressions: `{str1|str2}` – If any tags in str1 are null, choose str2. String literals enclosed in parentheses are ignored in the null check.
-```
-{artist( - )title|album_artist( - )title|filename}
-```
-```
-{album(/)}{track(. )}{artist|(unknown artist)} - {title|(unknown title)}
-```
-Here `{album(/)}` will conditionally put the download into a subfolder; if the album tag is null, then the slash won't be added to the path. An alternative is `{album|(missing album)}/` which will save all songs with unknown album under `missing album`.
+Variables enclosed in {} will be replaced by the corresponding file tag value. Available variables are: artist, sartist, artists, albumartist, albumartists, title, stitle, album, salbum, year, track, disc, filename, foldername. The variables sartist, stitle and salbum will be replaced by the source artist, title and album respectively (i.e what is shown in spotify/youtube/csv file) instead of the tag values of the downloaded file. Name format supports subdirectories as well as conditional expressions like `{tag1|tag2}` – If tag1 is null, choose tag2. String literals enclosed in parentheses are ignored in the null check. Examples:
+- `{artist} - {title}`: Always name it 'Artist - Title'. Because some files on Soulseek do not have tags, the second example is preferred:
+- `{artist( - )title|filename}`: If artist and title is not null, name it 'Artist - Title', otherwise use the original filename.
 
 ### Quality vs Speed
 The following options will make it go faster, but may decrease search result quality or cause instability:

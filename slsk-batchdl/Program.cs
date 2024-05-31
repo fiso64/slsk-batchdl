@@ -23,7 +23,7 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 
 // undocumented options
 // --on-complete
-// --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col
+// --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col, --album-track-count-col
 // --input-type, --login, --random-login, --no-modify-share-count --fast-search-delay,
 // --fails-to-deprioritize (=1), --fails-to-ignore (=2)
 // --cond, --pref, --danger-words, --pref-danger-words, --strict-title, --strict-artist, --strict-album
@@ -77,6 +77,7 @@ static class Program
     static string trackCol = "";
     static string ytIdCol = "";
     static string descCol = "";
+    static string trackCountCol = "";
     static string lengthCol = "";
     static bool aggregate = false;
     static bool album = false;
@@ -470,6 +471,9 @@ static class Program
                     case "--yt-desc-col":
                         descCol = args[++i];
                         break;
+                    case "--album-track-count-col":
+                        trackCountCol = args[++i];
+                        break;
                     case "--yt-id-col":
                         ytIdCol = args[++i];
                         break;
@@ -630,10 +634,19 @@ static class Program
                     case "--atc":
                     case "--album-track-count":
                         string a = args[++i];
-                        if (a.Last() == '-')
+                        if (a == "-1")
+                        {
+                            minAlbumTrackCount = -1;
+                            maxAlbumTrackCount = -1;
+                        }
+                        else if (a.Last() == '-')
+                        {
                             maxAlbumTrackCount = int.Parse(a.Substring(0, a.Length - 1));
+                        }
                         else if (a.Last() == '+')
+                        {
                             minAlbumTrackCount = int.Parse(a.Substring(0, a.Length - 1));
+                        }
                         else
                         {
                             minAlbumTrackCount = int.Parse(a);
@@ -917,7 +930,7 @@ static class Program
         if (debugDisableDownload)
             maxConcurrentProcesses = 1;
 
-        ignoreOn = ignoreOn > deprioritizeOn ? deprioritizeOn : ignoreOn;
+        ignoreOn = Math.Min(ignoreOn, deprioritizeOn);
 
         if (inputType == "youtube" || (inputType == "" && input.StartsWith("http") && input.Contains("youtu")))
         {
@@ -1192,7 +1205,7 @@ static class Program
         if (!File.Exists(csvPath))
             throw new FileNotFoundException("CSV file not found");
 
-        var tracks = await ParseCsvIntoTrackInfo(csvPath, artistCol, trackCol, lengthCol, albumCol, descCol, ytIdCol, timeUnit, ytParse);
+        var tracks = await ParseCsvIntoTrackInfo(csvPath, artistCol, trackCol, lengthCol, albumCol, descCol, ytIdCol, trackCountCol, timeUnit, ytParse);
         tracks = tracks.Skip(off).Take(max).ToList();
         trackLists = TrackLists.FromFlatList(tracks, aggregate, album);
         defaultFolderName = Path.GetFileNameWithoutExtension(csvPath);
@@ -2125,7 +2138,7 @@ static class Program
         }
 
         if (nameFormat != "" && !useYtdlp)
-            saveFilePath = ApplyNamingFormat(saveFilePath);
+            saveFilePath = ApplyNamingFormat(saveFilePath, track);
 
         return saveFilePath;
     }
@@ -2238,10 +2251,22 @@ static class Program
             x.Item2.Count(x => Utils.IsMusicFile(x.file.Filename))
         ).ToList();
 
-        bool countIsGood(int count, int min, int max) => count >= min && (max == -1 || count <= max);
+        int min, max;
+        if (track.MinAlbumTrackCount != -1 || track.MaxAlbumTrackCount != -1)
+        {
+            min = track.MinAlbumTrackCount;
+            max = track.MaxAlbumTrackCount;
+        }
+        else
+        {
+            min = minAlbumTrackCount;
+            max = maxAlbumTrackCount;
+        }
+
+        bool countIsGood(int count) => count >= min && (max == -1 || count <= max);
 
         var result = musicFolders
-            .Where(x => countIsGood(x.Item2.Count(rf => Utils.IsMusicFile(rf.file.Filename)), minAlbumTrackCount, maxAlbumTrackCount))
+            .Where(x => countIsGood(x.Item2.Count(rf => Utils.IsMusicFile(rf.file.Filename))))
             .Select(ls => ls.Item2.Select(x => {
                 var t = new Track
                 {
@@ -3291,7 +3316,7 @@ static class Program
 
 
     static async Task<List<Track>> ParseCsvIntoTrackInfo(string path, string artistCol = "", string trackCol = "",
-        string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string timeUnit = "s", bool ytParse = false)
+        string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string trackCountCol = "", string timeUnit = "s", bool ytParse = false)
     {
         var tracks = new List<Track>();
         using var sr = new StreamReader(path, System.Text.Encoding.UTF8);
@@ -3301,14 +3326,15 @@ static class Program
         while (header == null || header.Count == 0 || !header.Any(t => t.Trim() != ""))
             header = parser.ReadNextRow();
 
-        string[] cols = { artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol };
+        string[] cols = { artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol, trackCountCol };
         string[][] aliases = {
             new[] { "artist", "artist name", "artists", "artist names" },
             new[] { "album", "album name", "album title" },
             new[] { "title", "song", "track title", "track name", "song name", "track" },
             new[] { "length", "duration", "track length", "track duration", "song length", "song duration" },
             new[] { "description", "youtube description" },
-            new[] { "id", "youtube id", "url" }
+            new[] { "url", "id", "youtube id" },
+            new[] { "track count", "album track count" }
         };
 
         string usingColumns = "";
@@ -3338,8 +3364,8 @@ static class Program
             throw new Exception("No columns specified and couldn't determine automatically");
 
         int[] indices = cols.Select(col => col == "" ? -1 : header.IndexOf(col)).ToArray();
-        int artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex;
-        (artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex) = (indices[0], indices[1], indices[2], indices[3], indices[4], indices[5]);
+        int artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex, trackCountIndex;
+        (artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex, trackCountIndex) = (indices[0], indices[1], indices[2], indices[3], indices[4], indices[5], indices[6]);
 
         while (true)
         {
@@ -3359,6 +3385,28 @@ static class Program
             if (albumIndex >= 0) track.Album = values[albumIndex];
             if (descIndex >= 0) desc = values[descIndex];
             if (ytIdIndex >= 0) track.URI = values[ytIdIndex];
+            if (trackCountIndex >= 0)
+            {
+                string a = values[trackCountIndex].Trim();
+                if (a == "-1")
+                {
+                    track.MinAlbumTrackCount = -1;
+                    track.MaxAlbumTrackCount = -1;
+                }
+                else if (a.Last() == '-' && int.TryParse(a.AsSpan(0, a.Length - 1), out int n))
+                {
+                    track.MaxAlbumTrackCount = n;
+                }
+                else if (a.Last() == '+' && int.TryParse(a.AsSpan(0, a.Length - 1), out n))
+                {
+                    track.MinAlbumTrackCount = n;
+                }
+                else if (int.TryParse(a, out n))
+                {
+                    track.MinAlbumTrackCount = n;
+                    track.MaxAlbumTrackCount = n;
+                }
+            }
             if (lengthIndex >= 0)
             {
                 try
@@ -3469,13 +3517,13 @@ static class Program
         }
     }
 
-    static string ApplyNamingFormat(string filepath)
+    static string ApplyNamingFormat(string filepath, Track track)
     {
         if (nameFormat == "" || !Utils.IsMusicFile(filepath))
             return filepath;
 
         string add = Path.GetRelativePath(outputFolder, Path.GetDirectoryName(filepath));
-        string newFilePath = NamingFormat(filepath, nameFormat);
+        string newFilePath = NamingFormat(filepath, nameFormat, track);
         if (filepath != newFilePath)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(newFilePath));
@@ -3487,7 +3535,7 @@ static class Program
         return newFilePath;
     }
 
-    static string NamingFormat(string filepath, string format)
+    static string NamingFormat(string filepath, string format, Track track)
     {
         string newName = format;
         TagLib.File? file = null;
@@ -3511,7 +3559,7 @@ static class Program
                 {
                     string[] parts = Regex.Split(opt, @"\([^\)]*\)");
                     string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => GetTagValue(file, x) != "")) {
+                    if (result.All(x => GetVarValue(x, file, track) != "")) {
                         chosenOpt = opt;
                         break;
                     }
@@ -3522,7 +3570,7 @@ static class Program
                     if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
                         return match.Value.Substring(1, match.Value.Length-2);
                     else
-                        return GetTagValue(file, match.Value);
+                        return GetVarValue(match.Value, file, track);
                 });
                 string old = match.Groups[1].Value;
                 old = old.StartsWith("{{") ? old.Substring(1) : old;
@@ -3548,22 +3596,29 @@ static class Program
         return filepath;
     }
 
-    static string GetTagValue(TagLib.File file, string tag)
+    static string GetVarValue(string x, TagLib.File file, Track track)
     {
-        switch (tag)
+        switch (x)
         {
             case "artist":
-                return (file.Tag.FirstPerformer ?? "").RemoveFt();
+                return file.Tag.FirstPerformer ?? "";
             case "artists":
-                return string.Join(" & ", file.Tag.Performers).RemoveFt();
-            case "album_artist":
-                return (file.Tag.FirstAlbumArtist ?? "").RemoveFt();
-            case "album_artists":
-                return string.Join(" & ", file.Tag.AlbumArtists).RemoveFt();
+                return string.Join(" & ", file.Tag.Performers);
+            case "albumartist":
+                return file.Tag.FirstAlbumArtist ?? "";
+            case "albumartists":
+                return string.Join(" & ", file.Tag.AlbumArtists);
             case "title":
                 return file.Tag.Title ?? "";
             case "album":
                 return file.Tag.Album ?? "";
+            case "sartist":
+            case "sartists":
+                return track.Artist;
+            case "stitle":
+                return track.Title;
+            case "salbum":
+                return track.Album;
             case "year":
                 return file.Tag.Year.ToString() ?? "";
             case "track":
@@ -3572,7 +3627,7 @@ static class Program
                 return file.Tag.Disc.ToString() ?? "";
             case "filename":
                 return Path.GetFileNameWithoutExtension(file.Name);
-            case "default_foldername":
+            case "foldername":
                 return defaultFolderName;
             default:
                 return "";
@@ -3581,34 +3636,66 @@ static class Program
 
     static bool TrackMatchesFilename(Track track, string filename)
     {
-        string[] ignore = new string[] { " ", "_", "-", ".", "(", ")" };
-        string searchName = track.Title.Replace(ignore, "").ToLower();
-        searchName = searchName.ReplaceInvalidChars("").RemoveFt().RemoveSquareBrackets();
-        searchName = searchName == "" ? track.Title : searchName;
+        if (track.Title.Trim() == "" || filename.Trim() == "")
+            return false;
 
-        string searchName2 = ""; 
-        if (searchName.Length <= 3) {
-            searchName2 = track.Artist.Replace(ignore, "").ToLower();
-            searchName2 = searchName2.ReplaceInvalidChars("").RemoveFt().RemoveSquareBrackets();
-            searchName2 = searchName2 == "" ? track.Artist : searchName2;
+        string[] ignore = new string[] { " ", "_", "-", ".", "(", ")", "[", "]" };
+
+        string preprocess1(string s, bool removeSlash = true)
+        {
+            s = s.ReplaceInvalidChars("", false, removeSlash).Replace(ignore, "").ToLower();
+            s = s.RemoveFt().RemoveDiacritics();
+            return s;
         }
 
-        string fullpath = filename;
-        filename = Path.GetFileNameWithoutExtension(filename);
-        filename = filename.ReplaceInvalidChars("");
-        filename = filename.Replace(ignore, "").ToLower();
+        string preprocess2(string s, bool removeSlash = true)
+        {
+            s = s.ReplaceInvalidChars("", false, removeSlash).ToLower().RemoveDiacritics();
+            return s;
+        }
 
-        if (filename.Contains(searchName) && FileConditions.StrictString(fullpath, searchName2, ignoreCase:true, boundarySkipWs:true))
+        string preprocess3(string s)
+        {
+            s = s.ToLower().RemoveDiacritics();
+            return s;
+        }
+
+        string title = preprocess1(track.Title);
+        string artist = preprocess1(track.Artist);
+        string fname = preprocess1(Path.GetFileNameWithoutExtension(filename));
+        string path = preprocess1(filename, false);
+
+        if (title == "" || fname == "")
+        {
+            title = preprocess2(track.Title);
+            artist = preprocess2(track.Artist);
+            fname = preprocess2(Path.GetFileNameWithoutExtension(filename));
+            path = preprocess2(filename, false);
+
+            if (title == "" || fname == "")
+            {
+                title = preprocess3(track.Title);
+                artist = preprocess3(track.Artist);
+                fname = preprocess3(Path.GetFileNameWithoutExtension(filename));
+                path = preprocess3(filename);
+
+                if (title == "" || fname == "")
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (fname.Contains(title) && path.Contains(artist))
         {
             return true;
         }
         else if ((track.ArtistMaybeWrong || track.Artist == "") && track.Title.Contains(" - "))
         {
-            searchName = track.Title.Substring(track.Title.IndexOf(" - ") + 3).Replace(ignore, "").ToLower();
-            searchName = searchName.ReplaceInvalidChars("").RemoveFt().RemoveSquareBrackets();
-            if (searchName != "")
+            title = preprocess1(track.Title.Substring(track.Title.IndexOf(" - ") + 3));
+            if (title != "")
             {
-                if (filename.Contains(searchName))
+                if (preprocess1(filename, false).Contains(title))
                     return true;
             }
         }
@@ -4372,6 +4459,8 @@ public struct Track
     public int Length = -1;
     public bool ArtistMaybeWrong = false;
     public bool IsAlbum = false;
+    public int MinAlbumTrackCount = -1;
+    public int MaxAlbumTrackCount = -1;
     public bool IsNotAudio = false;
     public string FailureReason = "";
     public string DownloadPath = "";
@@ -4406,6 +4495,8 @@ public struct Track
         FailureReason = other.FailureReason;
         DownloadPath = other.DownloadPath;
         Other = other.Other;
+        MinAlbumTrackCount = other.MinAlbumTrackCount;
+        MaxAlbumTrackCount = other.MaxAlbumTrackCount;
     }
 
     public override readonly string ToString()
