@@ -3843,6 +3843,9 @@ static class Program
             if (arg.StartsWith('='))
                 arg = arg.Substring(1).TrimStart();
 
+            if (arg.Length > 0 && arg[0] == '"' && arg[arg.Length - 1] == '"')
+                arg = arg.Substring(1, arg.Length - 2);
+
             if (arg == "false") continue;
 
             if (!opt.StartsWith('-'))
@@ -3854,13 +3857,9 @@ static class Program
             }
 
             res.Add(opt);
-            
+
             if (arg.Length > 0 && arg != "true")
-            {
-                if (arg[0] == '"' && arg[arg.Length - 1] == '"')
-                    arg = arg.Substring(1, arg.Length - 2);
                 res.Add(arg);
-            }
         }
         return res;
     }
