@@ -144,7 +144,7 @@ Options:
                                  names.
 
   --format <format>              Accepted file format(s), comma-separated
-  --length-tol <sec>             Length tolerance in seconds (default: 3)
+  --length-tol <sec>             Length tolerance in seconds
   --min-bitrate <rate>           Minimum file bitrate
   --max-bitrate <rate>           Maximum file bitrate
   --min-samplerate <rate>        Minimum file sample rate
@@ -154,7 +154,7 @@ Options:
   --banned-users <list>          Comma-separated list of users to ignore
 
   --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)
-  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)
+  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 3)
   --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
   --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2500)
   --pref-min-samplerate <rate>   Preferred minimum sample rate
@@ -244,8 +244,7 @@ Options:
 ```
 
 ### File conditions
-Files not satisfying the conditions will not be downloaded. For example, `--length-tol` is set to 3 by default, meaning that files whose duration differs from the supplied duration by more than 3 seconds will not be downloaded (can be disabled by setting it to -1).  
-Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`. See the start of `Program.cs` for the default file conditions.
+Files not satisfying the conditions will not be downloaded. Files satisfying `pref-` conditions will be preferred; setting `--pref-format "flac,wav"` will make it download high quality files if they exist, and only download low quality files if there's nothing else. Conditions can also be supplied as a semicolon-delimited string to `--cond` and `--pref`, e.g `--cond "br>=320;f=mp3,ogg;sr<96000"`. See the start of `Program.cs` for the default file conditions.
 
 **Important note**: Some info may be unavailable depending on the client used by the peer. For example, the default Soulseek client does not share the file bitrate. By default, if `--min-bitrate` is set, then files with unknown bitrate will still be downloaded. You can configure it to reject all files where one of the checked properties is unavailable by enabling `--strict-conditions`. (As a consequence, if `--min-bitrate` is also set then any files shared by users with the default client will be ignored)
 
@@ -262,7 +261,7 @@ The following options will make it go faster, but may decrease search result qua
 - `--searches-per-time` increase at the risk of ban, see the notes section for details.
 
 ### Quality vs Quantity
-The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that does not contain the title/artist/album in the filename (ignoring case, bounded by boundary chars). Since by default such files will be ranked lower anyways and may actually be correct, these options are only recommended when you want to minimize false downloads as much as possible.
+The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that does not contain the title/artist/album in the filename (ignoring case, bounded by boundary chars). Since by default such files will be ranked lower anyways and may actually be correct, these options are only recommended when you want to minimize false downloads as much as possible. Another way to prevent false downloads is to set `--length-tol` to 3 or less to make it ignore any songs that differ from the input by more than 3 seconds. 
 
 ## Configuration  
 Create a file named `sldl.conf` in the same directory as the executable and write your arguments there, e.g:

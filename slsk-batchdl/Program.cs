@@ -15,16 +15,18 @@ using SlFile = Soulseek.File;
 using File = System.IO.File;
 using Directory = System.IO.Directory;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
+using System.Runtime.CompilerServices;
 
 
 // todo
 // - Why does it use so much CPU and memory?
 // - Very slow startup time on linux
+// - Uses more threads than allowed after a hundred or so downloads
 
 // undocumented options
 // --on-complete
 // --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col, --album-track-count-col
-// --input-type, --login, --random-login, --no-modify-share-count --fast-search-delay,
+// --input-type, --login, --random-login, --no-modify-share-count, --unknown-error-retries
 // --fails-to-deprioritize (=1), --fails-to-ignore (=2), --invalid-replace-str
 // --cond, --pref, --danger-words, --pref-danger-words, --strict-title, --strict-artist, --strict-album
 // --fast-search-delay, --fast-search-min-up-speed
@@ -34,13 +36,13 @@ static class Program
 {
     static FileConditions necessaryCond = new()
     {
-        LengthTolerance = 3,
+
     };
 
     static FileConditions preferredCond = new()
     {
         Formats = new string[] { "mp3" },
-        LengthTolerance = 2,
+        LengthTolerance = 3,
         MinBitrate = 200,
         MaxBitrate = 2500,
         MaxSampleRate = 48000,
@@ -133,6 +135,7 @@ static class Program
     static int updateDelay = 100;
     static int searchTimeout = 5000;
     static int maxConcurrentProcesses = 2;
+    static int unknownErrorRetries = 2;
     static int maxRetriesPerTrack = 30;
     static int listenPort = 50000;
 
@@ -214,7 +217,7 @@ static class Program
                             "\n                                 names." +
                             "\n" +
                             "\n  --format <format>              Accepted file format(s), comma-separated" +
-                            "\n  --length-tol <sec>             Length tolerance in seconds (default: 3)" +
+                            "\n  --length-tol <sec>             Length tolerance in seconds" +
                             "\n  --min-bitrate <rate>           Minimum file bitrate" +
                             "\n  --max-bitrate <rate>           Maximum file bitrate" +
                             "\n  --min-samplerate <rate>        Minimum file sample rate" +
@@ -224,7 +227,7 @@ static class Program
                             "\n  --banned-users <list>          Comma-separated list of users to ignore" +
                             "\n" +
                             "\n  --pref-format <format>         Preferred file format(s), comma-separated (default: mp3)" +
-                            "\n  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 2)" +
+                            "\n  --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 3)" +
                             "\n  --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)" +
                             "\n  --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2500)" +
                             "\n  --pref-min-samplerate <rate>   Preferred minimum sample rate" +
@@ -914,6 +917,9 @@ static class Program
                     case "--fails-to-ignore":
                         ignoreOn = -int.Parse(args[++i]);
                         break;
+                    case "--unknown-error-retries":
+                        unknownErrorRetries = int.Parse(args[++i]);
+                        break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
                 }
@@ -1515,39 +1521,57 @@ static class Program
         {
             if (track.TrackState == Track.State.Exists || track.TrackState == Track.State.NotFoundLastTime)
                 return;
+
             await semaphore.WaitAsync();
-            int tries = 2;
-        retry:
-            await WaitForLogin();
 
-            try
+            int tries = unknownErrorRetries;
+            string savedFilePath = "";
+
+            while (tries > 0)
             {
-                WriteLine($"Search and download {track}", debugOnly: true);
-                var savedFilePath = await SearchAndDownload(track);
-                lock (trackLists) { tracks[index] = new Track(track) { TrackState=Track.State.Downloaded, DownloadPath=savedFilePath }; }
+                await WaitForLogin();
 
-                if (removeTracksFromSource && !string.IsNullOrEmpty(spotifyUrl))
-                    spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+                try
+                {
+                    WriteLine($"Search and download {track}", debugOnly: true);
+                    savedFilePath = await SearchAndDownload(track);
+                }
+                catch (Exception ex)
+                {
+                    WriteLine($"Exception thrown: {ex}", debugOnly: true);
+                    if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
+                    {
+                        continue;
+                    }
+                    else if (ex is SearchAndDownloadException)
+                    {
+                        lock (trackLists) { tracks[index] = new Track(track) { TrackState = Track.State.Failed, FailureReason = ex.Message }; }
+                    }
+                    else
+                    {
+                        WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
+                        tries--;
+                        continue;
+                    }
+                }
+
+                break;
             }
-            catch (Exception ex)
+
+            if (savedFilePath != "")
             {
-                WriteLine($"Exception thrown: {ex}", debugOnly: true);
-                if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
+                try
                 {
-                    goto retry;
+                    lock (trackLists) { tracks[index] = new Track(track) { TrackState = Track.State.Downloaded, DownloadPath = savedFilePath }; }
+
+                    if (removeTracksFromSource && !string.IsNullOrEmpty(spotifyUrl))
+                        spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
                 }
-                else if (ex is SearchAndDownloadException)
-                {
-                    lock (trackLists) { tracks[index] = new Track(track) { TrackState = Track.State.Failed, FailureReason = ex.Message }; }
-                }
-                else
+                catch (Exception ex) 
                 {
                     WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
-                    if (tries-- > 0)
-                        goto retry;
                 }
             }
-            finally { semaphore.Release(); }
 
             m3uEditor.Update();
 
@@ -1555,6 +1579,8 @@ static class Program
             {
                 OnComplete(onComplete, tracks[index]);
             }
+
+            semaphore.Release();
         });
 
         await Task.WhenAll(downloadTasks);
@@ -1634,15 +1660,62 @@ static class Program
                         return;
 
                     await semaphore.WaitAsync(mainLoopCts.Token);
-                    int tries = 2;
+                    
+                    int tries = unknownErrorRetries;
+                    string savedFilePath = "";
 
-                retry:
-                    await WaitForLogin();
-                    mainLoopCts.Token.ThrowIfCancellationRequested();
-
-                    try
+                    while (tries > 0)
                     {
-                        var savedFilePath = await SearchAndDownload(track);
+                        await WaitForLogin();
+                        mainLoopCts.Token.ThrowIfCancellationRequested();
+
+                        try
+                        {
+                            savedFilePath = await SearchAndDownload(track);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
+                            {
+                                continue;
+                            }
+                            else if (ex is SearchAndDownloadException)
+                            {
+                                lock (trackLists)
+                                {
+                                    tracks[index] = new Track(track) { TrackState = Track.State.Failed, FailureReason = ex.Message };
+                                    if (downloadingImages)
+                                        ReplaceTrack(listRef, track, tracks[index]); // shitty shortcut
+                                }
+
+                                if (!albumIgnoreFails)
+                                {
+                                    mainLoopCts.Cancel();
+                                    foreach (var (key, dl) in downloads)
+                                    {
+                                        lock (dl)
+                                        {
+                                            dl.cts.Cancel();
+                                            if (File.Exists(dl.savePath)) File.Delete(dl.savePath);
+                                            downloads.TryRemove(key, out _);
+                                        }
+                                    }
+                                    throw new OperationCanceledException();
+                                }
+                            }
+                            else
+                            {
+                                WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
+                                tries--;
+                                continue;
+                            }
+                        }
+
+                        break;
+                    } 
+
+                    if (savedFilePath != "")
+                    {
                         dlFiles.TryAdd(savedFilePath, true);
 
                         lock (trackLists)
@@ -1655,48 +1728,13 @@ static class Program
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        if (!client.State.HasFlag(SoulseekClientStates.LoggedIn))
-                        {
-                            goto retry;
-                        }
-                        else if (ex is SearchAndDownloadException)
-                        {
-                            lock (trackLists)
-                            {
-                                tracks[index] = new Track(track) { TrackState = Track.State.Failed, FailureReason = ex.Message };
-                                if (downloadingImages)
-                                    ReplaceTrack(listRef, track, tracks[index]); // shitty shortcut
-                            }
-                        }
-                        else
-                        {
-                            WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
-                            if (tries-- > 0)
-                                goto retry;
-                        }
-
-                        if (!albumIgnoreFails)
-                        {
-                            mainLoopCts.Cancel();
-                            lock (downloads)
-                            {
-                                foreach (var (key, dl) in downloads)
-                                {
-                                    dl.cts.Cancel();
-                                    if (File.Exists(dl.savePath)) File.Delete(dl.savePath);
-                                }
-                            }
-                            throw new OperationCanceledException();
-                        }
-                    }
-                    finally { semaphore.Release(); }
 
                     if (onComplete != "")
                     {
                         OnComplete(onComplete, tracks[index]);
                     }
+
+                    semaphore.Release();
                 });
 
                 await Task.WhenAll(downloadTasks);
@@ -2472,10 +2510,13 @@ static class Program
                 .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || preferredCond.AcceptNoLength)
                 .ThenByDescending(x => !useBracketCheck || BracketCheck(track, inferredTrack(x).Item1)) // deprioritize result if it contains '(' or '[' and the title does not (avoid remixes)
                 .ThenByDescending(x => preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
+                .ThenByDescending(x => preferredCond.StrictArtistSatisfies(x.file.Filename, track.Title))
                 .ThenByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => preferredCond.FormatSatisfies(x.file.Filename))
                 .ThenByDescending(x => preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
                 .ThenByDescending(x => preferredCond.BitrateSatisfies(x.file))
+                .ThenByDescending(x => preferredCond.SampleRateSatisfies(x.file))
+                .ThenByDescending(x => preferredCond.BitDepthSatisfies(x.file))
                 .ThenByDescending(x => preferredCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
                 .ThenByDescending(x => x.response.UploadSpeed / 1024 / 650)
@@ -2498,14 +2539,6 @@ static class Program
 
         string t2 = other.Title.RemoveFt().Replace('[', '(');
         if (!t2.Contains('('))
-            return true;
-
-        string ar = track.Artist.Replace('[', '(');
-        if (ar.Contains('(') && !t2.Replace(ar, "").Contains('('))
-            return true;
-
-        string al = track.Album.Replace('[', '(');
-        if (al.Contains('(') && !t2.Replace(al, "").Contains('('))
             return true;
 
         return false;
@@ -2842,21 +2875,20 @@ static class Program
             throw new Exception();
 
         await WaitForLogin();
-        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath));
         string origPath = filePath;
         filePath += ".incomplete";
 
-        bool transferSet = false;
         var transferOptions = new TransferOptions(
             stateChanged: (state) =>
             {
-                if (downloads.ContainsKey(file.Filename) && !transferSet)
-                    downloads[file.Filename].transfer = state.Transfer;
+                if (downloads.TryGetValue(file.Filename, out var x))
+                    x.transfer = state.Transfer;
             },
             progressUpdated: (progress) =>
             {
-                if (downloads.ContainsKey(file.Filename))
-                    downloads[file.Filename].bytesTransferred = progress.PreviousBytesTransferred;
+                if (downloads.TryGetValue(file.Filename, out var x))
+                    x.bytesTransferred = progress.PreviousBytesTransferred;
             }
         );
 
@@ -2869,21 +2901,29 @@ static class Program
         }
         catch
         {
-            if (System.IO.File.Exists(filePath))
-                try { System.IO.File.Delete(filePath); } catch { }
-            if (downloads.ContainsKey(file.Filename))
-                downloads[file.Filename].UpdateText();
-            downloads.TryRemove(file.Filename, out _);
+            if (File.Exists(filePath))
+                try { File.Delete(filePath); } catch { }
+            downloads.TryRemove(file.Filename, out var d);
+            if (d != null)
+                lock (d) { d.UpdateText(); }
             throw;
         }
 
         try { searchCts?.Cancel(); }
         catch { }
-        try { System.IO.File.Move(filePath, origPath, true); }
+
+        try { Utils.Move(filePath, origPath); }
         catch (IOException) { WriteLine($"Failed to rename .incomplete file", ConsoleColor.DarkYellow, true); }
-        downloads[file.Filename].success = true;
-        downloads[file.Filename].UpdateText();
-        downloads.TryRemove(file.Filename, out _);
+
+        downloads.TryRemove(file.Filename, out var x);
+        if (x != null)
+        {
+            lock (x)
+            {
+                x.success = true;
+                x.UpdateText();
+            }
+        }
     }
 
 
@@ -2897,25 +2937,30 @@ static class Program
                 {
                     if (client.State.HasFlag(SoulseekClientStates.LoggedIn))
                     {
-                        foreach (var (key, val) in searches) // shouldn't this give "collection was modified" errors? whatever..
+                        foreach (var (key, val) in searches)
                         {
-                            if (val == null) 
-                                searches.TryRemove(key, out _);
+                            if (val == null)
+                                searches.TryRemove(key, out _); // reminder: removing from a dict in a foreach is allowed in newer .net versions
                         }
 
                         foreach (var (key, val) in downloads)
                         {
                             if (val != null)
                             {
-                                val.UpdateText();
-
-                                if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > downloadMaxStaleTime)
+                                lock (val)
                                 {
-                                    val.stalled = true;
-                                    val.UpdateText();
+                                    if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > downloadMaxStaleTime)
+                                    {
+                                        val.stalled = true;
+                                        val.UpdateText();
 
-                                    try { val.cts.Cancel(); } catch { }
-                                    downloads.TryRemove(key, out _);
+                                        try { val.cts.Cancel(); } catch { }
+                                        downloads.TryRemove(key, out _);
+                                    }
+                                    else
+                                    {
+                                        val.UpdateText();
+                                    }
                                 }
                             }
                             else
@@ -3592,14 +3637,27 @@ static class Program
         if (nameFormat == "" || !Utils.IsMusicFile(filepath))
             return filepath;
 
-        string add = Path.GetRelativePath(outputFolder, Path.GetDirectoryName(filepath));
+        string dir = Path.GetDirectoryName(filepath) ?? "";
+        string add = dir != "" ? Path.GetRelativePath(outputFolder, dir) : "";
         string newFilePath = NamingFormat(filepath, nameFormat, track);
+
         if (filepath != newFilePath)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(newFilePath));
-            Utils.Move(filepath, newFilePath);
+            dir = Path.GetDirectoryName(newFilePath) ?? "";
+            if (dir != "") Directory.CreateDirectory(dir);
+
+            try
+            {
+                Utils.Move(filepath, newFilePath);
+            }
+            catch (Exception ex)
+            {
+                WriteLine($"\nFailed to move: {ex.Message}\n", ConsoleColor.DarkYellow, true);
+                return filepath;
+            }
+
             if (add != "" && add != "." && Utils.GetRecursiveFileCount(Path.Join(outputFolder, add)) == 0)
-                Directory.Delete(Path.Join(outputFolder, add), true);
+                try { Directory.Delete(Path.Join(outputFolder, add), true); } catch { }
         }
 
         return newFilePath;
@@ -3659,7 +3717,7 @@ static class Program
             char dirsep = Path.DirectorySeparatorChar;
             newName = newName.Replace('/', dirsep);
             var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(invalidReplaceStr)));
+            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(invalidReplaceStr).Trim(' ', '.')));
             string newFilePath = Path.Combine(directory, newName + extension);
             return newFilePath;
         }
@@ -4790,7 +4848,10 @@ class RateLimitedSemaphore
             var currentTime = DateTimeOffset.UtcNow;
             if (currentTime.UtcTicks > Interlocked.Read(ref this.nextResetTimeTicks))
             {
-                this.semaphore.Release(this.maxCount - this.semaphore.CurrentCount);
+                int releaseCount = this.maxCount - this.semaphore.CurrentCount;
+                if (releaseCount > 0)
+                    this.semaphore.Release(releaseCount);
+
                 var newResetTimeTicks = (currentTime + this.resetTimeSpan).UtcTicks;
                 Interlocked.Exchange(ref this.nextResetTimeTicks, newResetTimeTicks);
             }
