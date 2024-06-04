@@ -20,7 +20,6 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 // todo
 // - Why does it use so much CPU and memory?
 // - Very slow startup time on linux
-// - Uses more threads than allowed after a hundred or so downloads
 
 // undocumented options
 // --on-complete
