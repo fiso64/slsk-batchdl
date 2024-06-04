@@ -121,7 +121,7 @@ Options:
   -r --reverse                   Download tracks in reverse order
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --fast-search                  Begin downloading as soon as a file satisfying the preferred
-                                 conditions is found. Increases chance to download bad files.
+                                 conditions is found. Higher chance to download wrong files.
   --m3u <option>                 Create an m3u8 playlist file
                                  'none': Do not create a playlist file
                                  'fails' (default): Write only failed downloads to the m3u

@@ -25,7 +25,7 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 // --on-complete
 // --artist-col, --title-col, --album-col, --length-col, --yt-desc-col, --yt-id-col, --album-track-count-col
 // --input-type, --login, --random-login, --no-modify-share-count --fast-search-delay,
-// --fails-to-deprioritize (=1), --fails-to-ignore (=2)
+// --fails-to-deprioritize (=1), --fails-to-ignore (=2), --invalid-replace-str
 // --cond, --pref, --danger-words, --pref-danger-words, --strict-title, --strict-artist, --strict-album
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count
@@ -97,6 +97,7 @@ static class Program
     static string input = "";
     static bool preciseSkip = true;
     static string nameFormat = "";
+    static string invalidReplaceStr = " ";
     static bool skipNotFound = false;
     static bool desperateSearch = false;
     static bool noRemoveSpecialChars = false;
@@ -168,7 +169,7 @@ static class Program
                             "\n                                 Provide a --youtube-key to include unavailabe uploads." +
                             "\n" +
                             "\n                                 Path to a local CSV file: Use a csv file containing track" +
-                            "\n                                 info to download. The names of the columns should be Artist, " +
+                            "\n                                 info to download. The names of the columns should be Artist," +
                             "\n                                 Title, Album, Length. Only the title or album column is" +
                             "\n                                 required, but extra info may improve search results." +
                             "\n" +
@@ -190,7 +191,7 @@ static class Program
                             "\n  -r --reverse                   Download tracks in reverse order" +
                             "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
                             "\n  --fast-search                  Begin downloading as soon as a file satisfying the preferred" +
-                            "\n                                 conditions is found. Increases chance to download bad files." +
+                            "\n                                 conditions is found. Higher chance to download wrong files." +
                             "\n  --m3u <option>                 Create an m3u8 playlist file" +
                             "\n                                 'none': Do not create a playlist file" +
                             "\n                                 'fails' (default): Write only failed downloads to the m3u" +
@@ -489,6 +490,9 @@ static class Program
                     case "--name-format":
                         nameFormat = args[++i];
                         break;
+                    case "--invalid-replace-str":
+                        invalidReplaceStr = args[++i];
+                        break;
                     case "--p":
                     case "--print":
                         string opt = args[++i];
@@ -705,7 +709,9 @@ static class Program
                         preferredCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--plt":
+                    case "--pref-tolerance":
                     case "--pref-length-tol":
+                    case "--pref-length-tolerance":
                         preferredCond.LengthTolerance = int.Parse(args[++i]);
                         break;
                     case "--pmbr":
@@ -758,7 +764,9 @@ static class Program
                         necessaryCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--lt":
+                    case "--tolerance":
                     case "--length-tol":
+                    case "--length-tolerance":
                         necessaryCond.LengthTolerance = int.Parse(args[++i]);
                         break;
                     case "--mbr":
@@ -973,7 +981,7 @@ static class Program
         if (folderName == ".")
             folderName = "";
         folderName = folderName.Replace("\\", "/");
-        folderName = String.Join('/', folderName.Split("/").Select(x => ReplaceInvalidChars(x, " ").Trim()));
+        folderName = String.Join('/', folderName.Split("/").Select(x => x.ReplaceInvalidChars(invalidReplaceStr).Trim()));
         folderName = folderName.Replace('/', Path.DirectorySeparatorChar);
 
         outputFolder = Path.Combine(parentFolder, folderName);
@@ -1049,7 +1057,7 @@ static class Program
         if (album || aggregate)
             trackLists = TrackLists.FromFlatList(trackLists.Flattened().ToList(), aggregate, album);
 
-        defaultFolderName = ReplaceInvalidChars(name, " ");
+        defaultFolderName = name.ReplaceInvalidChars(invalidReplaceStr);
     }
 
 
@@ -1144,7 +1152,7 @@ static class Program
         }
 
 
-        defaultFolderName = ReplaceInvalidChars(playlistName, " ");
+        defaultFolderName = playlistName.ReplaceInvalidChars(invalidReplaceStr);
     }
 
 
@@ -1179,7 +1187,7 @@ static class Program
                 }
             }
 
-            defaultFolderName = ReplaceInvalidChars(track.ToString(true), " ").Trim();
+            defaultFolderName = track.ToString(true).ReplaceInvalidChars(invalidReplaceStr).Trim();
         }
         else
         {
@@ -1243,7 +1251,7 @@ static class Program
         }
 
         if (aggregate || isAlbum || album)
-            defaultFolderName = ReplaceInvalidChars(music.ToString(true), " ").Trim();
+            defaultFolderName = music.ToString(true).ReplaceInvalidChars(invalidReplaceStr).Trim();
         else
             defaultFolderName = ".";
     }
@@ -1255,8 +1263,8 @@ static class Program
         {
             var (list, type, source) = trackLists.lists[i];
 
-            List<Track> existing = new List<Track>();
-            List<Track> notFound = new List<Track>();
+            var existing = new List<Track>();
+            var notFound = new List<Track>();
 
             if (skipNotFound)
             { 
@@ -1382,6 +1390,11 @@ static class Program
         {
             track.ArtistMaybeWrong = true;
         }
+
+        track.Artist = track.Artist.Trim();
+        track.Album = track.Album.Trim();
+        track.Title = track.Title.Trim();
+
         return track;
     }
 
@@ -1936,7 +1949,7 @@ static class Program
                 if (downloading == 0 && !searchEnded)
                 {
                     downloading = 1;
-                    var (r, f) = fsResults.ArgMax(x => x.Value.Item1.UploadSpeed).Value;
+                    var (r, f) = fsResults.MaxBy(x => x.Value.Item1.UploadSpeed).Value;
                     saveFilePath = GetSavePath(f.Filename);
                     fsUser = r.Username;
                     fsFile = f.Filename;
@@ -1955,7 +1968,9 @@ static class Program
                 if (fastSearch && !debugDisableDownload && userSuccessCount.GetValueOrDefault(r.Username, 0) > deprioritizeOn)
                 {
                     var f = r.Files.First();
-                    if (r.HasFreeUploadSlot && r.UploadSpeed/1024.0/1024.0 >= fastSearchMinUpSpeed && preferredCond.FileSatisfies(f, track, r))
+
+                    if (r.HasFreeUploadSlot && r.UploadSpeed/1024.0/1024.0 >= fastSearchMinUpSpeed 
+                        && BracketCheck(track, InferTrack(f.Filename, track)) && preferredCond.FileSatisfies(f, track, r))
                     {
                         fsResults.TryAdd(r.Username + "\\" + f.Filename, (r, f));
                         if (Interlocked.Exchange(ref fsResultsStarted, 1) == 0)
@@ -2030,9 +2045,11 @@ static class Program
             if (debugDisableDownload)
             {
                 int count = 0;
+                Console.WriteLine();
                 foreach (var (response, file) in orderedResults) {
                     Console.WriteLine(DisplayString(track, file, response,
-                        (printResultsFull ? necessaryCond : null), (printResultsFull ? preferredCond : null), printResultsFull, infoFirst: true));
+                        printResultsFull ? necessaryCond : null, printResultsFull ? preferredCond : null, 
+                        fullpath: printResultsFull, infoFirst: true, showSpeed: printResultsFull));
                     count += 1;
                 }
                 WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
@@ -2137,7 +2154,7 @@ static class Program
             }
         }
 
-        if (nameFormat != "" && !useYtdlp)
+        if (nameFormat != "")
             saveFilePath = ApplyNamingFormat(saveFilePath, track);
 
         return saveFilePath;
@@ -2186,10 +2203,12 @@ static class Program
 
         if (debugDisableDownload && !debugPrintTracks)
         {
+            Console.WriteLine();
             foreach (var (response, file) in orderedResults)
             {
                 Console.WriteLine(DisplayString(track, file, response,
-                    (printResultsFull ? necessaryCond : null), (printResultsFull ? preferredCond : null), printResultsFull, infoFirst: true));
+                        printResultsFull ? necessaryCond : null, printResultsFull ? preferredCond : null,
+                        fullpath: printResultsFull, infoFirst: true, showSpeed: printResultsFull));
             }
             WriteLine($"Total: {orderedResults.Count()}\n", ConsoleColor.Yellow);
             return default;
@@ -2419,38 +2438,28 @@ static class Program
             useInfer = false;
         }
 
-        Dictionary<string, (Track, int)>? result = null;
+        Dictionary<string, (Track, int)>? infTracksAndCounts = null;
         if (useInfer)
         {
             var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value), 1);
-            result = equivalentFiles
+            infTracksAndCounts = equivalentFiles
                 .SelectMany(t => t.Item2, (t, f) => new { t.Item1, f.response.Username, f.file.Filename, Count = t.Item2.Count() })
-                .ToSafeDictionary(
-                    x => $"{x.Username}\\{x.Filename}",
-                    x => (x.Item1, x.Count));
+                .ToSafeDictionary(x => $"{x.Username}\\{x.Filename}", y => (y.Item1, y.Count));
         }
 
-        (Track, int) infTrack((SearchResponse response, Soulseek.File file) x)
+        (Track, int) inferredTrack((SearchResponse response, Soulseek.File file) x)
         {
             string key = $"{x.response.Username}\\{x.file.Filename}";
-            if (result != null && result.ContainsKey(key))
-                return result[key];
+            if (infTracksAndCounts != null && infTracksAndCounts.ContainsKey(key))
+                return infTracksAndCounts[key];
             return (new Track(), 0);
-        }
-
-        bool bracketCheck((SearchResponse response, Soulseek.File file) x)
-        {
-            Track inferredTrack = infTrack(x).Item1;
-            string t1 = track.Title.RemoveFt().Replace('[', '(');
-            string t2 = inferredTrack.Title.RemoveFt().Replace('[', '(');
-            return track.ArtistMaybeWrong || t1.Contains('(') || !t2.Contains('(');
         }
 
         int levenshtein((SearchResponse response, Soulseek.File file) x)
         {
-            Track inferredTrack = infTrack(x).Item1;
-            string t1 = track.Title.ReplaceInvalidChars("").Replace(" ", "").Replace("_", "").RemoveFt().ToLower();
-            string t2 = inferredTrack.Title.ReplaceInvalidChars("").Replace(" ", "").Replace("_", "").RemoveFt().ToLower();
+            Track t = inferredTrack(x).Item1;
+            string t1 = track.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
+            string t2 = t.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
             return Utils.Levenshtein(t1, t2);
         }
 
@@ -2461,7 +2470,7 @@ static class Program
                 .ThenByDescending(x => necessaryCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => preferredCond.BannedUsersSatisfies(x.response))
                 .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || preferredCond.AcceptNoLength)
-                .ThenByDescending(x => !useBracketCheck || bracketCheck(x)) // deprioritize result if it contains '(' or '[' and the title does not (avoid remixes)
+                .ThenByDescending(x => !useBracketCheck || BracketCheck(track, inferredTrack(x).Item1)) // deprioritize result if it contains '(' or '[' and the title does not (avoid remixes)
                 .ThenByDescending(x => preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
                 .ThenByDescending(x => preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => preferredCond.FormatSatisfies(x.file.Filename))
@@ -2473,11 +2482,33 @@ static class Program
                 .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.Title))
                 .ThenByDescending(x => !albumMode || FileConditions.StrictString(GetDirectoryNameSlsk(x.file.Filename), track.Album))
                 .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.Artist, boundarySkipWs: false))
-                .ThenByDescending(x => !useLevenshtein || levenshtein(x) <= 5) // sorts by the distance between the track title and the inferred title of the search result
-                .ThenByDescending(x => x.response.UploadSpeed / 1024 / 300)
-                .ThenByDescending(x => (x.file.BitRate ?? 0) / 70)
-                .ThenByDescending(x => useInfer ? infTrack(x).Item2 : 0) // sorts by the number of occurences of this track
+                .ThenByDescending(x => useInfer ? inferredTrack(x).Item2 : 0) // sorts by the number of occurences of this track
+                .ThenByDescending(x => x.response.UploadSpeed / 1024 / 350)
+                .ThenByDescending(x => (x.file.BitRate ?? 0) / 80)
+                .ThenByDescending(x => useLevenshtein ? levenshtein(x) / 5 : 0) // sorts by the distance between the track title and the inferred title of the search result
                 .ThenByDescending(x => random.Next());
+    }
+
+
+    static bool BracketCheck(Track track, Track other)
+    {
+        string t1 = track.Title.RemoveFt().Replace('[', '(');
+        if (t1.Contains('('))
+            return true;
+
+        string t2 = other.Title.RemoveFt().Replace('[', '(');
+        if (!t2.Contains('('))
+            return true;
+
+        string ar = track.Artist.Replace('[', '(');
+        if (ar.Contains('(') && !t2.Replace(ar, "").Contains('('))
+            return true;
+
+        string al = track.Album.Replace('[', '(');
+        if (al.Contains('(') && !t2.Replace(al, "").Contains('('))
+            return true;
+
+        return false;
     }
 
 
@@ -2697,13 +2728,7 @@ static class Program
             if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
             {
                 t.ArtistMaybeWrong = true;
-                //if (!maybeRemix && parts[0].ContainsIgnoreCase(tname) && parts[1].ContainsIgnoreCase(aname))
-                //{
-                //    t.ArtistName = realParts[1];
-                //    t.TrackTitle = realParts[0];
-                //}
             }
-            
         }
         else if (parts.Length == 3)
         {
@@ -2752,11 +2777,56 @@ static class Program
 
             t.Title = parts[2];
         }
+        else
+        {
+            int artistPos = -1, titlePos = -1;
+
+            if (aname != "")
+            {
+                var s = parts.Select((p, i) => (p, i)).Where(x => x.p.ContainsIgnoreCase(aname));
+                if (s.Any())
+                {
+                    artistPos = s.MinBy(x => Math.Abs(x.p.Length - aname.Length)).i;
+                    if (artistPos != -1)
+                        t.Artist = parts[artistPos];
+                }
+            }
+            if (tname != "")
+            {
+                var ss = parts.Select((p, i) => (p, i)).Where(x => x.i != artistPos && x.p.ContainsIgnoreCase(tname));
+                if (ss.Any())
+                {
+                    titlePos = ss.MinBy(x => Math.Abs(x.p.Length - tname.Length)).i;
+                    if (titlePos != -1)
+                        t.Title = parts[titlePos];
+                }
+            }
+        }
 
         if (t.Title == "")
         {
             t.Title = fname;
             t.ArtistMaybeWrong = true;
+        }
+        else if (t.Artist != "" && !t.Title.ContainsIgnoreCase(defaultTrack.Title) && !t.Artist.ContainsIgnoreCase(defaultTrack.Artist))
+        {
+            string[] x = { t.Artist, t.Album, t.Title };
+
+            var perm = (0, 1, 2);
+            (int, int, int)[] permutations = { (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0) };
+
+            foreach (var p in permutations)
+            {
+                if (x[p.Item1].ContainsIgnoreCase(defaultTrack.Artist) && x[p.Item3].ContainsIgnoreCase(defaultTrack.Title))
+                {
+                    perm = p;
+                    break;
+                }
+            }
+
+            t.Artist = x[perm.Item1];
+            t.Album = x[perm.Item2];
+            t.Title = x[perm.Item3];
         }
 
         t.Title = t.Title.RemoveFt();
@@ -3172,7 +3242,7 @@ static class Program
             fname = regexRemove != "" ? Regex.Replace(fname, regexRemove, "") : fname;
             fname = diacrRemove ? fname.RemoveDiacritics() : fname;
             fname = fname.Trim().RemoveConsecutiveWs();
-            tname = tname.Replace("_", " ").ReplaceInvalidChars(" ", true, false);
+            tname = tname.Replace("_", " ").ReplaceInvalidChars(" ", true, true);
             tname = regexRemove != "" ? Regex.Replace(tname, regexRemove, "") : tname;
             tname = diacrRemove ? tname.RemoveDiacritics() : tname;
             tname = tname.Trim().RemoveConsecutiveWs();
@@ -3451,7 +3521,7 @@ static class Program
     static string GetSaveName(string sourceFname)
     {
         string name = GetFileNameWithoutExtSlsk(sourceFname);
-        return ReplaceInvalidChars(name, " ");
+        return name.ReplaceInvalidChars(invalidReplaceStr);
     }
 
     static string GetAsPathSlsk(string fname)
@@ -3541,7 +3611,7 @@ static class Program
         TagLib.File? file = null;
 
         try { file = TagLib.File.Create(filepath); }
-        catch { return filepath; }
+        catch { }
 
         Regex regex = new Regex(@"(\{(?:\{??[^\{]*?\}))");
         MatchCollection matches = regex.Matches(newName);
@@ -3550,7 +3620,8 @@ static class Program
         {
             foreach (Match match in matches.Cast<Match>())
             {
-                string inner = match.Groups[1].Value.Trim('{').Trim('}');
+                string inner = match.Groups[1].Value;
+                inner = inner.Substring(1, inner.Length - 2);
 
                 var options = inner.Split('|');
                 string chosenOpt = "";
@@ -3559,7 +3630,7 @@ static class Program
                 {
                     string[] parts = Regex.Split(opt, @"\([^\)]*\)");
                     string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => GetVarValue(x, file, track) != "")) {
+                    if (result.All(x => GetVarValue(x, file, filepath, track) != "")) {
                         chosenOpt = opt;
                         break;
                     }
@@ -3568,10 +3639,11 @@ static class Program
                 chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", match =>
                 {
                     if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
-                        return match.Value.Substring(1, match.Value.Length-2);
+                        return match.Value.Substring(1, match.Value.Length-2).ReplaceInvalidChars(invalidReplaceStr, removeSlash: false);
                     else
-                        return GetVarValue(match.Value, file, track);
+                        return GetVarValue(match.Value, file, filepath, track).ReplaceInvalidChars(invalidReplaceStr);
                 });
+
                 string old = match.Groups[1].Value;
                 old = old.StartsWith("{{") ? old.Substring(1) : old;
                 newName = newName.Replace(old, chosenOpt);
@@ -3580,15 +3652,14 @@ static class Program
             matches = regex.Matches(newName);
         }
 
-
         if (newName != format)
         {
-            string directory = Path.GetDirectoryName(filepath);
-            string dirsep = Path.DirectorySeparatorChar.ToString();
+            string directory = Path.GetDirectoryName(filepath) ?? "";
             string extension = Path.GetExtension(filepath);
-            newName = newName.Replace(new string[] { "/", "\\" }, dirsep);
+            char dirsep = Path.DirectorySeparatorChar;
+            newName = newName.Replace('/', dirsep);
             var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(x => ReplaceInvalidChars(x, " ")));
+            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(invalidReplaceStr)));
             string newFilePath = Path.Combine(directory, newName + extension);
             return newFilePath;
         }
@@ -3596,22 +3667,22 @@ static class Program
         return filepath;
     }
 
-    static string GetVarValue(string x, TagLib.File file, Track track)
+    static string GetVarValue(string x, TagLib.File? file, string filepath, Track track)
     {
         switch (x)
         {
             case "artist":
-                return file.Tag.FirstPerformer ?? "";
+                return file?.Tag.FirstPerformer ?? "";
             case "artists":
-                return string.Join(" & ", file.Tag.Performers);
+                return file != null ? string.Join(" & ", file.Tag.Performers) : "";
             case "albumartist":
-                return file.Tag.FirstAlbumArtist ?? "";
+                return file?.Tag.FirstAlbumArtist ?? "";
             case "albumartists":
-                return string.Join(" & ", file.Tag.AlbumArtists);
+                return file != null ? string.Join(" & ", file.Tag.AlbumArtists) : "";
             case "title":
-                return file.Tag.Title ?? "";
+                return file?.Tag.Title ?? "";
             case "album":
-                return file.Tag.Album ?? "";
+                return file?.Tag.Album ?? "";
             case "sartist":
             case "sartists":
                 return track.Artist;
@@ -3620,13 +3691,13 @@ static class Program
             case "salbum":
                 return track.Album;
             case "year":
-                return file.Tag.Year.ToString() ?? "";
+                return file?.Tag.Year.ToString() ?? "";
             case "track":
-                return file.Tag.Track.ToString("D2") ?? "";
+                return file?.Tag.Track.ToString("D2") ?? "";
             case "disc":
-                return file.Tag.Disc.ToString() ?? "";
+                return file?.Tag.Disc.ToString() ?? "";
             case "filename":
-                return Path.GetFileNameWithoutExtension(file.Name);
+                return Path.GetFileNameWithoutExtension(filepath);
             case "foldername":
                 return defaultFolderName;
             default:
@@ -4078,28 +4149,8 @@ static class Program
         return totalSeconds;
     }
 
-    static string ReplaceInvalidChars(this string str, string replaceStr, bool windows = false, bool removeSlash = true)
-    {
-        char[] invalidChars = Path.GetInvalidFileNameChars();
-        if (windows)
-            invalidChars = new char[] { ':', '|', '?', '>', '<', '*', '"', '/', '\\' };
-        if (!removeSlash)
-            invalidChars = invalidChars.Where(c => c != '/' && c != '\\').ToArray();
-        foreach (char c in invalidChars)
-            str = str.Replace(c.ToString(), replaceStr);
-        return str;
-    }
-
-    static string ReplaceSpecialChars(this string str, string replaceStr)
-    {
-        string special = ";:'\"|?!<>*/\\[]{}()-–—&%^$#@+=`~_";
-        foreach (char c in special)
-            str = str.Replace(c.ToString(), replaceStr);
-        return str;
-    }
-
     static string DisplayString(Track t, Soulseek.File? file=null, SearchResponse? response=null, FileConditions? nec=null, 
-        FileConditions? pref=null, bool fullpath=false, string customPath="", bool infoFirst=false, bool showUser=true)
+        FileConditions? pref=null, bool fullpath=false, string customPath="", bool infoFirst=false, bool showUser=true, bool showSpeed=false)
     {
         if (file == null)
             return t.ToString();
@@ -4108,18 +4159,19 @@ static class Program
         string bitRate = file.BitRate.HasValue ? $"{file.BitRate}kbps" : "";
         string fileSize = $"{file.Size / (float)(1024 * 1024):F1}MB";
         string user = showUser && response?.Username != null ? response.Username + "\\" : "";
+        string speed = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
         string fname = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath == "" ? GetFileNameSlsk(file.Filename) : customPath);
         string length = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
         string displayText;
         if (!infoFirst)
         {
             string info = string.Join('/', new string[] { length, sampleRate+bitRate, fileSize }.Where(value => value!=""));
-            displayText = $"{user}{fname} [{info}]";
+            displayText = $"{speed}{user}{fname} [{info}]";
         }
         else
         {
             string info = string.Join('/', new string[] { length.PadRight(4), (sampleRate+bitRate).PadRight(8), fileSize.PadLeft(6) });
-            displayText = $"[{info}] {user}{fname}";
+            displayText = $"[{info}] {speed}{user}{fname}";
         }
 
         string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(file, t, response)}, " : "";

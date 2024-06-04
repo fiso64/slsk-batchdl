@@ -76,6 +76,32 @@ public static class Utils
         return s;
     }
 
+    public static string ReplaceInvalidChars(this string str, string replaceStr, bool windows = false, bool removeSlash = true, bool alwaysRemoveSlash = false)
+    {
+        char[] invalidChars = Path.GetInvalidFileNameChars();
+        if (windows)
+            invalidChars = new char[] { ':', '|', '?', '>', '<', '*', '"', '/', '\\' };
+        if (!removeSlash && !alwaysRemoveSlash)
+            invalidChars = invalidChars.Where(c => c != '/' && c != '\\').ToArray();
+        if (alwaysRemoveSlash)
+        {
+            var x = invalidChars.ToList();
+            x.AddRange(new char[] { '/', '\\' });
+            invalidChars = x.ToArray();
+        }
+        foreach (char c in invalidChars)
+            str = str.Replace(c.ToString(), replaceStr);
+        return str;
+    }
+
+    public static string ReplaceSpecialChars(this string str, string replaceStr)
+    {
+        string special = ";:'\"|?!<>*/\\[]{}()-–—&%^$#@+=`~_";
+        foreach (char c in special)
+            str = str.Replace(c.ToString(), replaceStr);
+        return str;
+    }
+
     public static string RemoveFt(this string str, bool removeParentheses = true, bool onlyIfNonempty = true)
     {
         string[] ftStrings = { "feat.", "ft." };
@@ -199,39 +225,6 @@ public static class Utils
                 d.Add(keySelector(element), valSelector(element));
         }
         return d;
-    }
-
-    // https://stackoverflow.com/a/35462350/13157140
-    public static T ArgMax<T, K>(this IEnumerable<T> source, Func<T, K> map, IComparer<K> comparer = null)
-    {
-        if (Object.ReferenceEquals(null, source))
-            throw new ArgumentNullException("source");
-        else if (Object.ReferenceEquals(null, map))
-            throw new ArgumentNullException("map");
-
-        T result = default(T);
-        K maxKey = default(K);
-        Boolean first = true;
-
-        if (null == comparer)
-            comparer = Comparer<K>.Default;
-
-        foreach (var item in source)
-        {
-            K key = map(item);
-
-            if (first || comparer.Compare(key, maxKey) > 0)
-            {
-                first = false;
-                maxKey = key;
-                result = item;
-            }
-        }
-
-        if (!first)
-            return result;
-        else
-            throw new ArgumentException("Can't compute ArgMax on empty sequence.", "source");
     }
 
     public static int Levenshtein(string source, string target)
