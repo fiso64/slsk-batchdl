@@ -15,7 +15,6 @@ using SlFile = Soulseek.File;
 using File = System.IO.File;
 using Directory = System.IO.Directory;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
-using System.Runtime.CompilerServices;
 
 
 // todo
