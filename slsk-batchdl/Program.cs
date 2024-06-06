@@ -2434,7 +2434,7 @@ static class Program
                     {
                         int l1 = (int)sortedTracks[j].Item2.Length;
                         int l2 = (int)sortedTracks[i].Item2.Length;
-                        if (Math.Abs(l1 - l2) <= necessaryCond.LengthTolerance)
+                        if (necessaryCond.LengthTolerance == -1 || Math.Abs(l1 - l2) <= necessaryCond.LengthTolerance)
                         {
                             subGroup.Add(sortedTracks[j]);
                             j++;
