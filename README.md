@@ -38,7 +38,7 @@ sldl "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX" 
   <summary>YouTube details</summary>
 
 Playlists are retrieved using the YoutubeExplode library which unfortunately doesn't always return all videos. You can use the official API by providing a key with `--youtube-key`. Get it here https://console.cloud.google.com. Create a new project, click "Enable Api" and search for "youtube data", then follow the prompts.
-Also note that due the high number of music videos in the above example playlist, it may be better to remove all text in parentheses and disable song duration checking: `--regex "[\[\(].*?[\]\)]" --length-tol -1 --pref-length-tol -1`.
+Also note that due the high number of music videos in the above example playlist, it may be better to remove all text in parentheses and disable song duration checking: `--regex "[\[\(].*?[\]\)]" --pref-length-tol -1`.
 
 </details> 
 
@@ -261,15 +261,15 @@ The following options will make it go faster, but may decrease search result qua
 - `--searches-per-time` increase at the risk of ban, see the notes section for details.
 
 ### Quality vs Quantity
-The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that does not contain the title/artist/album in the filename (ignoring case, bounded by boundary chars). Since by default such files will be ranked lower anyways and may actually be correct, these options are only recommended when you want to minimize false downloads as much as possible. Another way to prevent false downloads is to set `--length-tol` to 3 or less to make it ignore any songs that differ from the input by more than 3 seconds. 
+The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that does not contain the title/artist/album in the filename (ignoring case, bounded by boundary chars). Another way to prevent false downloads is to set `--length-tol` to 3 or less to make it ignore any songs that differ from the input by more than 3 seconds. However, all 4 options are already enabled as 'preferred' conditions by default, meaning that such files will only be downloaded as a last resort even without enabling these. Hence it is only recommended to enable them if you need to minimize false downloads as much as possible.
 
 ## Configuration  
 Create a file named `sldl.conf` in the same directory as the executable and write your arguments there, e.g:
-```bash
-username="fakename"
-password="fakepass"
-pref-format="flac"
-fast-search="true"
+```
+username = fakename
+password = fakepass
+pref-format = flac
+fast-search = true
 ```  
   
 ## Notes
