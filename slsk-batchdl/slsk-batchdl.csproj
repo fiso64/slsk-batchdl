@@ -24,8 +24,8 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.11.54" />
     <PackageReference Include="SmallestCSVParser" Version="1.1.1" />
     <PackageReference Include="Soulseek" Version="6.4.1" />
-    <PackageReference Include="SpotifyAPI.Web" Version="7.0.2" />
-    <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.0.2" />
+    <PackageReference Include="SpotifyAPI.Web" Version="7.1.1" />
+    <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.1.1" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="YoutubeExplode" Version="6.3.16" />
   </ItemGroup>

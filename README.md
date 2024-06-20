@@ -122,6 +122,8 @@ Options:
   --name-format <format>         Name format for downloaded tracks, e.g "{artist} - {title}"
   --fast-search                  Begin downloading as soon as a file satisfying the preferred
                                  conditions is found. Higher chance to download wrong files.
+  --remove-from-source           Remove downloaded tracks from source playlist or CSV file
+                                 (spotify and CSV only)
   --m3u <option>                 Create an m3u8 playlist file
                                  'none': Do not create a playlist file
                                  'fails' (default): Write only failed downloads to the m3u
@@ -129,7 +131,6 @@ Options:
 
   --spotify-id <id>              spotify client ID
   --spotify-secret <secret>      spotify client secret
-  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)
 
   --youtube-key <key>            Youtube data API key
   --get-deleted                  Attempt to retrieve titles of deleted videos from wayback

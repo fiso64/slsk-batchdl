@@ -7,7 +7,7 @@ public class Spotify
     private EmbedIOAuthServer _server;
     private readonly string _clientId;
     private readonly string _clientSecret;
-    private SpotifyClient _client;
+    private SpotifyClient? _client;
     private bool loggedIn = false;
 
     // default spotify credentials (base64-encoded to keep the bots away)
@@ -15,7 +15,7 @@ public class Spotify
     public const string encodedSpotifySecret = "Y2JlM2QxYTE5MzJkNDQ2MmFiOGUy3shTuf4Y2JhY2M3ZDdjYWU=";
     public bool UsedDefaultCredentials { get; private set; }
 
-    public Spotify(string clientId, string clientSecret)
+    public Spotify(string clientId="", string clientSecret="")
     {
         _clientId = clientId;
         _clientSecret = clientSecret;
@@ -30,6 +30,8 @@ public class Spotify
 
     public async Task Authorize(bool login = false, bool needModify = false)
     {
+        _client = null;
+
         if (!login)
         {
             var config = SpotifyClientConfig.CreateDefault();

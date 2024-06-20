@@ -70,6 +70,7 @@ static class Program
     static string spotifySecret = "";
     static string ytKey = "";
     static string csvPath = "";
+    static int csvColumnCount = -1;
     static string username = "";
     static string password = "";
     static string artistCol = "";
@@ -138,6 +139,7 @@ static class Program
     static int listenPort = 50000;
 
     static object consoleLock = new object();
+    static object csvLock = new object();
 
     static bool skipUpdate = false;
     static bool debugDisableDownload = false;
@@ -154,7 +156,17 @@ static class Program
     private static M3UEditor? m3uEditor;
     private static CancellationTokenSource? mainLoopCts;
 
-    static string inputType = "";
+    static InputType inputType = InputType.None;
+
+    public enum InputType
+    {
+        None,
+        Spotify,
+        YouTube,
+        Bandcamp,
+        String,
+        CSV
+    };
 
     static void PrintHelp()
     {
@@ -193,6 +205,8 @@ static class Program
                             "\n  --name-format <format>         Name format for downloaded tracks, e.g \"{artist} - {title}\"" +
                             "\n  --fast-search                  Begin downloading as soon as a file satisfying the preferred" +
                             "\n                                 conditions is found. Higher chance to download wrong files." +
+                            "\n  --remove-from-source           Remove downloaded tracks from source playlist or CSV file " +
+                            "\n                                 (spotify and CSV only)" +
                             "\n  --m3u <option>                 Create an m3u8 playlist file" +
                             "\n                                 'none': Do not create a playlist file" +
                             "\n                                 'fails' (default): Write only failed downloads to the m3u" +
@@ -200,7 +214,6 @@ static class Program
                             "\n" +
                             "\n  --spotify-id <id>              spotify client ID" +
                             "\n  --spotify-secret <secret>      spotify client secret" +
-                            "\n  --remove-from-playlist         Remove downloaded tracks from playlist (spotify only)" +
                             "\n" +
                             "\n  --youtube-key <key>            Youtube data API key" +
                             "\n  --get-deleted                  Attempt to retrieve titles of deleted videos from wayback" +
@@ -399,7 +412,16 @@ static class Program
                         break;
                     case "--it":
                     case "--input-type":
-                        inputType = args[++i];
+                        inputType = args[++i].ToLower().Trim() switch
+                        {
+                            "none" => InputType.None,
+                            "csv" => InputType.CSV,
+                            "youtube" => InputType.YouTube,
+                            "spotify" => InputType.Spotify,
+                            "bandcamp" => InputType.Bandcamp,
+                            "string" => InputType.String,
+                            _ => throw new ArgumentException($"Invalid input type '{args[i]}'"),
+                        };
                         break;
                     case "-p":
                     case "--path":
@@ -563,6 +585,8 @@ static class Program
                         skipNotFound = true;
                         break;
                     case "--rfp":
+                    case "--rfs":
+                    case "--remove-from-source":
                     case "--remove-from-playlist":
                         removeTracksFromSource = true;
                         break;
@@ -925,7 +949,7 @@ static class Program
             else
             {
                 if (input == "")
-                    input = args[i];
+                    input = args[i].Trim();
                 else
                     throw new ArgumentException($"Invalid argument \'{args[i]}\'. Input is already set to \'{input}\'");
             }
@@ -933,8 +957,6 @@ static class Program
 
         if (input == "")
             throw new ArgumentException($"No input provided");
-        if (!(new string[] { "", "youtube", "spotify", "csv", "string", "bandcamp" }).Contains(inputType))
-            throw new ArgumentException($"Invalid input type '{inputType}'");
 
         if (ytKey != "")
             YouTube.apiKey = ytKey;
@@ -944,22 +966,22 @@ static class Program
 
         ignoreOn = Math.Min(ignoreOn, deprioritizeOn);
 
-        if (inputType == "youtube" || (inputType == "" && input.StartsWith("http") && input.Contains("youtu")))
+        if (inputType == InputType.YouTube || (inputType == InputType.None && input.StartsWith("http") && input.Contains("youtu")))
         {
             WriteLine("Youtube download", debugOnly: true);
             await YoutubeInput();
         }
-        else if (inputType == "spotify" || (inputType == "" && (input.StartsWith("http") && input.Contains("spotify")) || input == "spotify-likes"))
+        else if (inputType == InputType.Spotify || (inputType == InputType.None && (input.StartsWith("http") && input.Contains("spotify")) || input == "spotify-likes"))
         {
             WriteLine("Spotify download", debugOnly: true);
             await SpotifyInput();
         }
-        else if (inputType == "bandcamp" || (inputType == "" && input.StartsWith("http") && input.Contains("bandcamp")))
+        else if (inputType == InputType.Bandcamp || (inputType == InputType.None && input.StartsWith("http") && input.Contains("bandcamp")))
         {
             WriteLine("Bandcamp download", debugOnly: true);
             await BandcampInput();
         }
-        else if (inputType == "csv" || (inputType == "" && Path.GetExtension(input).Equals(".csv", StringComparison.OrdinalIgnoreCase)))
+        else if (inputType == InputType.CSV || (inputType == InputType.None && input.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)))
         {
             WriteLine("CSV download", debugOnly: true);
             await CsvInput();
@@ -1021,7 +1043,7 @@ static class Program
         int max = reverse ? int.MaxValue : maxTracks;
         int off = reverse ? 0 : offset;
         ytUrl = input;
-        inputType = "youtube";
+        inputType = InputType.YouTube;
 
         string name;
         List<Track>? deleted = null;
@@ -1071,10 +1093,9 @@ static class Program
         int off = reverse ? 0 : offset;
 
         spotifyUrl = input;
-        inputType = "spotify";
+        inputType = InputType.Spotify;
 
         string? playlistName;
-        bool usedDefaultId = false;
         bool needLogin = spotifyUrl == "spotify-likes" || removeTracksFromSource;
         List<Track> tracks;
 
@@ -1129,16 +1150,20 @@ static class Program
             }
             catch (SpotifyAPI.Web.APIException)
             {
-                if (!needLogin)
+                if (!needLogin && !spotifyClient.UsedDefaultCredentials)
+                {
+                    await spotifyClient.Authorize(true, removeTracksFromSource);
+                    (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(spotifyUrl, max, off);
+                }
+                else if (!needLogin)
                 {
                     Console.WriteLine("Spotify playlist not found. It may be set to private. Login? [Y/n]");
-                    string answer = Console.ReadLine();
-                    if (answer.ToLower() == "y")
+                    if (Console.ReadLine()?.ToLower().Trim() == "y")
                     {
-                        if (usedDefaultId)
-                            readSpotifyCreds();
-                        await spotifyClient.Authorize(true);
-                        Console.WriteLine("Loading Spotify tracks");
+                        readSpotifyCreds();
+                        spotifyClient = new Spotify(spotifyId, spotifySecret);
+                        await spotifyClient.Authorize(true, removeTracksFromSource);
+                        Console.WriteLine("Loading Spotify playlist");
                         (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(spotifyUrl, max, off);
                     }
                     else
@@ -1162,7 +1187,7 @@ static class Program
 
     static async Task BandcampInput()
     {
-        inputType = "bandcamp";
+        inputType = InputType.Bandcamp;
         bool isAlbum = !input.Contains("/track/");
 
         var web = new HtmlWeb();
@@ -1212,7 +1237,7 @@ static class Program
         int off = reverse ? 0 : offset;
 
         csvPath = input;
-        inputType = "csv";
+        inputType = InputType.CSV;
 
         if (!File.Exists(csvPath))
             throw new FileNotFoundException("CSV file not found");
@@ -1227,7 +1252,7 @@ static class Program
     static async Task StringInput()
     {
         searchStr = input;
-        inputType = "string";
+        inputType = InputType.String;
         var music = ParseTrackArg(searchStr, album);
         bool isAlbum = false;
 
@@ -1558,16 +1583,18 @@ static class Program
 
             if (savedFilePath != "")
             {
-                try
-                {
-                    lock (trackLists) { tracks[index] = new Track(track) { TrackState = Track.State.Downloaded, DownloadPath = savedFilePath }; }
+                lock (trackLists) { tracks[index] = new Track(track) { TrackState = Track.State.Downloaded, DownloadPath = savedFilePath }; }
 
-                    if (removeTracksFromSource && !string.IsNullOrEmpty(spotifyUrl))
-                        spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
-                }
-                catch (Exception ex) 
+                if (removeTracksFromSource)
                 {
-                    WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
+                    try
+                    {
+                        await RemoveTrackFromSource(track);
+                    }
+                    catch (Exception ex) 
+                    {
+                        WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
+                    }
                 }
             }
 
@@ -1908,6 +1935,28 @@ static class Program
         }
 
         return (gcp, res);
+    }
+
+
+    static async Task RemoveTrackFromSource(Track track)
+    {
+        if (inputType == InputType.Spotify && track.URI != "")
+        {
+            await spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+        }
+        else if (inputType == InputType.CSV && track.CsvRow != -1)
+        {
+            lock (csvLock)
+            {
+                string[] lines = File.ReadAllLines(csvPath, System.Text.Encoding.UTF8);
+
+                if (lines.Length > track.CsvRow)
+                {
+                    lines[track.CsvRow] = new string(',', Math.Max(0, csvColumnCount - 1));
+                    File.WriteAllLines(csvPath, lines, System.Text.Encoding.UTF8);
+                }
+            }
+        }
     }
 
 
@@ -3435,9 +3484,13 @@ static class Program
         using var sr = new StreamReader(path, System.Text.Encoding.UTF8);
         var parser = new SmallestCSV.SmallestCSVParser(sr);
 
+        int index = 0;
         var header = parser.ReadNextRow();
         while (header == null || header.Count == 0 || !header.Any(t => t.Trim() != ""))
+        {
+            index++;
             header = parser.ReadNextRow();
+        }
 
         string[] cols = { artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol, trackCountCol };
         string[][] aliases = {
@@ -3482,6 +3535,7 @@ static class Program
 
         while (true)
         {
+            index++;
             var values = parser.ReadNextRow();
             if (values == null)
                 break;
@@ -3490,9 +3544,12 @@ static class Program
             while (values.Count < foundCount)
                 values.Add("");
 
-            var desc = "";
+            if (csvColumnCount == -1)
+                csvColumnCount = values.Count;
 
-            var track = new Track();
+            var desc = "";
+            var track = new Track() { CsvRow = index };
+
             if (artistIndex >= 0) track.Artist = values[artistIndex];
             if (trackIndex >= 0) track.Title = values[trackIndex];
             if (albumIndex >= 0) track.Album = values[albumIndex];
@@ -4572,6 +4629,7 @@ public struct Track
     public string FailureReason = "";
     public string DownloadPath = "";
     public string Other = "";
+    public int CsvRow = -1; 
     public State TrackState = State.Initial;
 
     public SlDictionary? Downloads = null;
@@ -4604,6 +4662,7 @@ public struct Track
         Other = other.Other;
         MinAlbumTrackCount = other.MinAlbumTrackCount;
         MaxAlbumTrackCount = other.MaxAlbumTrackCount;
+        CsvRow = other.CsvRow;
     }
 
     public override readonly string ToString()
