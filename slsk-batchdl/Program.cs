@@ -96,7 +96,6 @@ static class Program
     static string timeUnit = "s";
     static string displayStyle = "single";
     static string input = "";
-    static bool preciseSkip = true;
     static string nameFormat = "";
     static string invalidReplaceStr = " ";
     static bool skipNotFound = false;
@@ -114,7 +113,6 @@ static class Program
     static string ytdlpArgument = "";
     static bool skipExisting = false;
     static string m3uOption = "fails";
-    static bool useTagsCheckExisting = false;
     static bool removeTracksFromSource = false;
     static bool getDeleted = false;
     static bool deletedOnly = false;
@@ -166,6 +164,17 @@ static class Program
         Bandcamp,
         String,
         CSV
+    };
+
+    static SkipMode skipMode = SkipMode.NamePrecise;
+
+    public enum SkipMode
+    {
+        Name,
+        NamePrecise,
+        Tag,
+        TagPrecise,
+        M3u,
     };
 
     static void PrintHelp()
@@ -280,6 +289,7 @@ static class Program
                             "\n                                 'name-precise' (default): Use filenames and check conditions" +
                             "\n                                 'tag': Use file tags (slower)" +
                             "\n                                 'tag-precise': Use file tags and check file conditions" +
+                            "\n                                 'm3u': Skip all tracks that don't have a fail entry in m3u" +
                             "\n  --music-dir <path>             Specify to also skip downloading tracks found in a music" +
                             "\n                                 library. Use with --skip-existing" +
                             "\n  --skip-not-found               Skip searching for tracks that weren't found on Soulseek" +
@@ -706,7 +716,7 @@ static class Program
                                 albumArtOption = "";
                                 break;
                             default:
-                                throw new ArgumentException($"Invalid album art download mode \'{args[i]}\'");
+                                throw new ArgumentException($"Invalid album art download mode '{args[i]}'");
                         }
                         break;
                     case "--aao":
@@ -852,11 +862,6 @@ static class Program
                     case "--no-modify-share-count":
                         noModifyShareCount = true;
                         break;
-                    case "--seut":
-                    case "--skip-existing-use-tags":
-                        skipExisting = true;
-                        useTagsCheckExisting = true;
-                        break;
                     case "-d":
                     case "--desperate":
                         desperateSearch = true;
@@ -872,23 +877,20 @@ static class Program
                                 displayStyle = args[i];
                                 break;
                             default:
-                                throw new ArgumentException($"Invalid display style \"{args[i]}\"");
+                                throw new ArgumentException($"Invalid display style '{args[i]}'");
                         }
                         break;
                     case "--sm":
                     case "--skip-mode":
-                        switch (args[++i])
+                        skipMode = args[++i].ToLower().Trim() switch
                         {
-                            case "name":
-                            case "name-precise":
-                            case "tag":
-                            case "tag-precise":
-                                useTagsCheckExisting = args[i].Contains("tag");
-                                preciseSkip = args[i].Contains("-precise");
-                                break;
-                            default:
-                                throw new ArgumentException($"Invalid skip mode \'{args[i]}\'");
-                        }
+                            "name" => SkipMode.Name,
+                            "name-precise" => SkipMode.NamePrecise,
+                            "tag" => SkipMode.Tag,
+                            "tag-precise" => SkipMode.TagPrecise,
+                            "m3u" => SkipMode.M3u,
+                            _ => throw new ArgumentException($"Invalid skip mode '{args[i]}'"),
+                        };
                         break;
                     case "--nrsc":
                     case "--no-remove-special-chars":
@@ -1497,19 +1499,27 @@ static class Program
     static List<Track> DoSkipExisting(List<Track> tracks, bool print, bool useCache)
     {
         var existing = new Dictionary<Track, string>();
-        if (!(musicDir != "" && outputFolder.StartsWith(musicDir, StringComparison.OrdinalIgnoreCase)) && System.IO.Directory.Exists(outputFolder))
+
+        if (skipMode == SkipMode.M3u)
         {
-            var d = SkipExisting(tracks, outputFolder, necessaryCond, useTagsCheckExisting, preciseSkip, useCache);
-            d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
+            existing = SkipExistingM3u(tracks);
         }
-        if (musicDir != "" && System.IO.Directory.Exists(musicDir))
+        else
         {
-            if (print) Console.WriteLine($"Checking if tracks exist in library..");
-            var d = SkipExisting(tracks, musicDir, necessaryCond, useTagsCheckExisting, preciseSkip, useCache);
-            d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
+            if (!(musicDir != "" && outputFolder.StartsWith(musicDir, StringComparison.OrdinalIgnoreCase)) && System.IO.Directory.Exists(outputFolder))
+            {
+                var d = SkipExisting(tracks, outputFolder, necessaryCond, skipMode, useCache);
+                d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
+            }
+            if (musicDir != "" && System.IO.Directory.Exists(musicDir))
+            {
+                if (print) Console.WriteLine($"Checking if tracks exist in library..");
+                var d = SkipExisting(tracks, musicDir, necessaryCond, skipMode, useCache);
+                d.ToList().ForEach(x => existing.TryAdd(x.Key, x.Value));
+            }
+            else if (musicDir != "" && !System.IO.Directory.Exists(musicDir))
+                if (print) Console.WriteLine($"Music dir does not exist: {musicDir}");
         }
-        else if (musicDir != "" && !System.IO.Directory.Exists(musicDir))
-            if (print) Console.WriteLine($"Musid dir does not exist: {musicDir}");
 
         return existing.Select(x => x.Key).ToList();
     }
@@ -3950,11 +3960,13 @@ static class Program
         return false;
     }
 
-    static Dictionary<Track, string> SkipExisting(List<Track> tracks, string dir, FileConditions necessaryCond, bool useTags, bool precise, bool useCache)
+    static Dictionary<Track, string> SkipExisting(List<Track> tracks, string dir, FileConditions necessaryCond, SkipMode mode, bool useCache)
     {
         var existing = new Dictionary<Track, string>();
         List<string> musicFiles;
         List<TagLib.File> musicIndex;
+        bool useTags = mode == SkipMode.Tag || mode == SkipMode.TagPrecise;
+        bool precise = mode == SkipMode.NamePrecise || mode == SkipMode.TagPrecise;
 
         if (useCache && MusicCache.TryGetValue(dir, out var cached))
         {
@@ -3985,6 +3997,22 @@ static class Program
             {
                 existing.TryAdd(tracks[i], path);
                 tracks[i] = new Track(tracks[i]) { TrackState = Track.State.Exists, DownloadPath = path };
+            }
+        }
+
+        return existing;
+    }
+
+    static Dictionary<Track, string> SkipExistingM3u(List<Track> tracks)
+    {
+        var existing = new Dictionary<Track, string>();
+
+        for (int i = 0; i < tracks.Count; i++)
+        {
+            if (!m3uEditor.HasFail(tracks[i], out _))
+            {
+                existing.TryAdd(tracks[i], "");
+                tracks[i] = new Track(tracks[i]) { TrackState = Track.State.Exists, DownloadPath = "" };
             }
         }
 
@@ -4761,18 +4789,18 @@ public class M3UEditor
         this.offset = offset;
         this.option = option;
         path = Path.GetFullPath(m3uPath);
-        m3uListLabels = false;/*trackLists.lists.Any(x => x.type != TrackLists.ListType.Normal);*/
-        fails = ReadAllLines()
-            .Where(x => x.StartsWith("# Failed: "))
+
+        var lines = ReadAllLines();
+        fails = lines.Where(x => x.StartsWith("# Failed: "))
             .Select(line =>
             {
                 var lastBracketIndex = line.LastIndexOf('[');
                 lastBracketIndex = lastBracketIndex == -1 ? line.Length : lastBracketIndex;
                 var key = line.Substring("# Failed: ".Length, lastBracketIndex - "# Failed: ".Length).Trim();
                 var value = lastBracketIndex != line.Length ? line.Substring(lastBracketIndex + 1).Trim().TrimEnd(']') : "";
-                return new { Key = key, Value = value };
+                return new { Key = key, Reason = value };
             })
-            .ToSafeDictionary(pair => pair.Key, pair => pair.Value);
+            .ToSafeDictionary(pair => pair.Key, pair => pair.Reason);
     }
 
     public void Update()
@@ -4829,6 +4857,12 @@ public class M3UEditor
                                 if (type != TrackLists.ListType.Normal)
                                     index++;
                             }
+                            else if (option == "fails" && track.TrackState == Track.State.Downloaded && index < lines.Count && lines[index].StartsWith($"# Failed: {track}"))
+                            {
+                                lines[index] = "";
+                                needUpdate = true;
+                            }
+
                             if (type == TrackLists.ListType.Normal)
                                 index++;
                         }

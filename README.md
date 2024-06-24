@@ -197,6 +197,7 @@ Options:
                                  'name-precise' (default): Use filenames and check conditions
                                  'tag': Use file tags (slower)
                                  'tag-precise': Use file tags and check file conditions
+                                 'm3u': Skip all tracks that don't have a fail entry in m3u
   --music-dir <path>             Specify to also skip downloading tracks found in a music
                                  library. Use with --skip-existing
   --skip-not-found               Skip searching for tracks that weren't found on Soulseek
