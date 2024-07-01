@@ -91,8 +91,8 @@ static class Program
     static bool setAlbumMinTrackCount = true;
     static bool setAlbumMaxTrackCount = false;
     static string albumCommonPath = "";
-    static string regexReplacePattern = "";
-    static string regexPatternToReplace = "";
+    static Track regexToReplace = new Track();
+    static Track regexReplaceBy = new Track();
     static string timeUnit = "s";
     static string displayStyle = "single";
     static string input = "";
@@ -299,7 +299,9 @@ static class Program
                             "\n  --remove-ft                    Remove 'feat.' and everything after before searching" +
                             "\n  --remove-brackets              Remove square brackets and their contents before searching" +
                             "\n  --regex <regex>                Remove a regexp from all track titles and artist names." +
-                            "\n                                 Optionally specify the replacement regex after a semicolon" +
+                            "\n                                 Optionally specify a replacement regex after a semicolon." +
+                            "\n                                 Add 'T:', 'A:' or 'L:' at the start to only apply this to" +
+                            "\n                                 the track title, artist, or album respectively." +
                             "\n  --artist-maybe-wrong           Performs an additional search without the artist name." +
                             "\n                                 Useful for sources like SoundCloud where the \"artist\"" +
                             "\n                                 could just be an uploader. Note that when downloading a" +
@@ -620,12 +622,33 @@ static class Program
                     case "--re":
                     case "--regex":
                         string s = args[++i].Replace("\\;", "<<semicol>>");
+                        string applyTo = "TAL";
+
+                        if (s.Length > 2 && s[1] == ':' && (s[0] == 'T' || s[0] == 'A' || s[0] == 'L'))
+                        {
+                            applyTo = s[0].ToString();
+                            s = s.Substring(2);
+                        }
+
                         var parts = s.Split(";").ToArray();
-                        regexPatternToReplace = parts[0];
-                        if (parts.Length > 1)
-                            regexReplacePattern = parts[1];
-                        regexPatternToReplace = regexPatternToReplace.Replace("<<semicol>>", ";");
-                        regexReplacePattern = regexReplacePattern.Replace("<<semicol>>", ";");
+                        string toReplace = parts[0].Replace("<<semicol>>", ";");
+                        string replaceBy = parts.Length > 1 ? parts[1].Replace("<<semicol>>", ";") : "";
+                        
+                        if (applyTo.Contains('T'))
+                        {
+                            regexToReplace.Title = toReplace;
+                            regexReplaceBy.Title = replaceBy;
+                        }
+                        if (applyTo.Contains('A'))
+                        {
+                            regexToReplace.Artist = toReplace;
+                            regexReplaceBy.Artist = replaceBy;
+                        }
+                        if (applyTo.Contains('L'))
+                        {
+                            regexToReplace.Album = toReplace;
+                            regexReplaceBy.Album = replaceBy;
+                        }
                         break;
                     case "-r":
                     case "--reverse":
@@ -1412,10 +1435,11 @@ static class Program
         {
             track.Title = track.Title.RemoveSquareBrackets();
         }
-        if (regexPatternToReplace != "")
+        if (regexToReplace.Title + regexToReplace.Artist + regexToReplace.Album != "")
         {
-            track.Title = Regex.Replace(track.Title, regexPatternToReplace, regexReplacePattern);
-            track.Artist = Regex.Replace(track.Artist, regexPatternToReplace, regexReplacePattern);
+            track.Title = Regex.Replace(track.Title, regexToReplace.Title, regexReplaceBy.Title);
+            track.Artist = Regex.Replace(track.Artist, regexToReplace.Artist, regexReplaceBy.Artist);
+            track.Album = Regex.Replace(track.Album, regexToReplace.Album, regexReplaceBy.Album);
         }
         if (artistMaybeWrong)
         {
@@ -2734,12 +2758,6 @@ static class Program
     public static string CleanSearchString(string str)
     {
         string old;
-        if (regexPatternToReplace != "")
-        {
-            old = str;
-            str = Regex.Replace(str, regexPatternToReplace, regexReplacePattern).Trim();
-            if (str == "") str = old;
-        }
         if (!noRemoveSpecialChars)
         {
             old = str;

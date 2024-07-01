@@ -207,7 +207,9 @@ Options:
   --remove-ft                    Remove 'feat.' and everything after before searching
   --remove-brackets              Remove square brackets and their contents before searching
   --regex <regex>                Remove a regexp from all track titles and artist names.
-                                 Optionally specify the replacement regex after a semicolon
+                                 Optionally specify a replacement regex after a semicolon.
+                                 Add 'T:', 'A:' or 'L:' at the start to only apply this to
+                                 the track title, artist, or album respectively.
   --artist-maybe-wrong           Performs an additional search without the artist name.
                                  Useful for sources like SoundCloud where the "artist"
                                  could just be an uploader. Note that when downloading a
