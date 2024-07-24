@@ -259,7 +259,7 @@ Variables enclosed in {} will be replaced by the corresponding file tag value. A
 
 ### Quality vs Speed
 The following options will make it go faster, but may decrease search result quality or cause instability:
-- `--fast-search` skips waiting until the search completes and downloads as soon as a matching file is found
+- `--fast-search` skips waiting until the search completes and downloads as soon as a file matching the preferred conditions is found
 - `--concurrent-downloads` -  set it to 4 or more
 - `--max-stale-time` is set to 50 seconds by default, so it will wait a long time before giving up on a file
 - `--searches-per-time` increase at the risk of ban, see the notes section for details.
