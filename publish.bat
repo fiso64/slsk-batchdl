@@ -1,6 +1,8 @@
 @echo off
 setlocal
 
+set DOTNET_CLI_TELEMETRY_OPTOUT=1
+
 if not exist slsk-batchdl\bin\zips mkdir slsk-batchdl\bin\zips
  
 REM win-x86
