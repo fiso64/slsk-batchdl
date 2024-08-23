@@ -576,11 +576,11 @@ To create a schedule make a new file on the host `./config/crontabs/abc` and use
 
 Make sure to restart the container after any changes to the cron file are made.
 
-Example => Run `sldl` every Sunday at 1am, search for all tracks from the specified Spotify playlist
+Example => Run `sldl` every Sunday at 1am, search for missing tracks from the specified Spotify playlist
 
 ```
 # min   hour    day     month   weekday command
-0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data"
+0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data --music-dir /data --skip-existing"
 ```
 
 [crontab.guru](https://crontab.guru/) could be used to help with the scheduling expression.
