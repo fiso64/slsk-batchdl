@@ -531,3 +531,56 @@ sldl "artist=MC MENTAL" --aggregate --album
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
 - `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
+
+## Docker
+
+A docker container for running `sldl` can be built from this repository. The image supports linux x86/ARM. 
+
+To build and start container:
+
+```shell
+clone https://github.com/fiso64/slsk-batchdl
+cd slsk-batchdl
+docker compose up -d
+```
+
+`exec` into the container to start using `sldl`:
+
+```shell
+docker compose exec sldl sh
+sldl --help
+```
+
+The compose stack mounts two directories relative to where `docker-compose.yml` is located which can be used for file management:
+
+* `/config` (at `./config` on host) - put your `sldl.conf` [configuration](#configuration-) in this directory and then use `sldl -c /config ...` to use your configuration in the container
+* `/data` (at `./data` on host) - use as the download directory IE `sldl -p /data ...`
+
+### File Permissions
+
+If you are running Docker on a **Linux Host** you should specify `user:group` permissions of the user who owns the **configuration and data directory** on the host to avoid [docker file permission problems.](https://ikriv.com/blog/?p=4698) These can be specified using the [environmental variables **PUID** and **PGID**.](https://docs.linuxserver.io/general/understanding-puid-and-pgid)
+
+To get the UID and GID for the current user run these commands from a terminal:
+
+* `id -u` -- prints UID
+* `id -g` -- prints GID
+
+Replace these with the corresponding variable (`PUID` `PGID`) in `docker-compose.yml`.
+
+
+### Cron
+
+One or more `sldl` commands can be run on a schedule using [cron](https://en.wikipedia.org/wiki/Cron) built into the container.
+
+To create a schedule make a new file on the host `./config/crontabs/abc` and use it with the standard [crontab](https://en.wikipedia.org/wiki/Cron#Overview) syntax.
+
+Make sure to restart the container after any changes to the cron file are made.
+
+Example => Run `sldl` every Sunday at 1am, search for all tracks from the specified Spotify playlist
+
+```
+# min   hour    day     month   weekday command
+0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data"
+```
+
+[crontab.guru](https://crontab.guru/) could be used to help with the scheduling expression.
