@@ -68,6 +68,7 @@ static class Program
     static string spotifyUrl = "";
     static string spotifyId = "";
     static string spotifySecret = "";
+    static string spotifyToken = "";
     static string ytKey = "";
     static string csvPath = "";
     static int csvColumnCount = -1;
@@ -223,6 +224,8 @@ static class Program
                             "\n" +
                             "\n  --spotify-id <id>              spotify client ID" +
                             "\n  --spotify-secret <secret>      spotify client secret" +
+                            "\n  --spotify-token <token>        spotify token generated on login. This is logged to console" +
+                            "\n                                 and can then be used to bypass opening a browser (useful for docker)" +
                             "\n" +
                             "\n  --youtube-key <key>            Youtube data API key" +
                             "\n  --get-deleted                  Attempt to retrieve titles of deleted videos from wayback" +
@@ -472,6 +475,10 @@ static class Program
                     case "--ss":
                     case "--spotify-secret":
                         spotifySecret = args[++i];
+                        break;
+                    case "-st":
+                    case "--spotify-token":
+                        spotifyToken = args[++i];
                         break;
                     case "--yk":
                     case "--youtube-key":
@@ -1130,16 +1137,18 @@ static class Program
             spotifyId = Console.ReadLine();
             Console.Write("Spotify client secret:");
             spotifySecret = Console.ReadLine();
+            Console.Write("Spotify token:");
+            spotifyToken = Console.ReadLine();
             Console.WriteLine();
         }
 
-        if (needLogin && (spotifyId == "" || spotifySecret == ""))
+        if (needLogin && spotifyToken == "" && (spotifyId == "" || spotifySecret == ""))
         {
             readSpotifyCreds();
         }
 
-        spotifyClient = new Spotify(spotifyId, spotifySecret);
-        await spotifyClient.Authorize(needLogin, removeTracksFromSource);
+        spotifyClient = new Spotify(spotifyId, spotifySecret, spotifyToken);
+        await spotifyClient.Authorize(needLogin && spotifyToken == "", removeTracksFromSource);
 
         if (spotifyUrl == "spotify-likes")
         {

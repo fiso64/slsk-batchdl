@@ -7,6 +7,7 @@ public class Spotify
     private EmbedIOAuthServer _server;
     private readonly string _clientId;
     private readonly string _clientSecret;
+    private readonly string _token;
     private SpotifyClient? _client;
     private bool loggedIn = false;
 
@@ -15,12 +16,13 @@ public class Spotify
     public const string encodedSpotifySecret = "Y2JlM2QxYTE5MzJkNDQ2MmFiOGUy3shTuf4Y2JhY2M3ZDdjYWU=";
     public bool UsedDefaultCredentials { get; private set; }
 
-    public Spotify(string clientId="", string clientSecret="")
+    public Spotify(string clientId="", string clientSecret="", string token="")
     {
         _clientId = clientId;
         _clientSecret = clientSecret;
+        _token = token;
 
-        if (_clientId == "" || _clientSecret == "")
+        if (token == "" && (_clientId == "" || _clientSecret == ""))
         {
             _clientId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId.Replace("1bLaH9", "")));
             _clientSecret = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret.Replace("3shTuf4", "")));
@@ -36,10 +38,15 @@ public class Spotify
         {
             var config = SpotifyClientConfig.CreateDefault();
 
+            if(_token != "") {
+                _client = new SpotifyClient(config.WithToken(_token));
+                loggedIn = true;
+            } else {
             var request = new ClientCredentialsRequest(_clientId, _clientSecret);
             var response = await new OAuthClient(config).RequestToken(request);
 
             _client = new SpotifyClient(config.WithToken(response.AccessToken));
+            }
         }
         else
         {
@@ -78,6 +85,8 @@ public class Spotify
                 _clientId, _clientSecret, response.Code, new Uri("http://localhost:48721/callback")
             )
         );
+
+        Console.WriteLine("Spotify token: " + tokenResponse.AccessToken);
 
         _client = new SpotifyClient(tokenResponse.AccessToken);
         loggedIn = true;
