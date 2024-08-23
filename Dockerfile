@@ -2,6 +2,9 @@ FROM ghcr.io/linuxserver/baseimage-alpine:3.20 as base
 
 FROM base as build
 
+ARG TARGETPLATFORM
+ARG DOCKER_ARCH
+
 RUN \
   echo "**** install build packages ****" && \
   apk --no-cache add \
@@ -15,8 +18,10 @@ WORKDIR /app
 
 COPY --chown=root:root . /app
 
-RUN dotnet publish -c Release -r linux-musl-x64 -p:PublishSingleFile=true -p:PublishTrimmed=true --self-contained true \
-    && rm -f slsk-batchdl/bin/Release/net6.0/osx-x64/publish/*.pdb
+RUN if [ "$DOCKER_ARCH" = "amd64" ] || [ "$TARGETPLATFORM" = "linux/amd64" ]; then export DN_RUNTIME=linux-musl-x64; echo 'Building x64'; fi \
+    && if [ "$DOCKER_ARCH" = "arm64" ] || [ "$TARGETPLATFORM" = "linux/arm64" ]; then export DN_RUNTIME=linux-musl-arm64; echo 'Build ARM'; fi \
+    && dotnet publish -c Release -r "$DN_RUNTIME" -p:PublishSingleFile=true -p:PublishTrimmed=true --self-contained true -o build \
+    && rm -f build/*.pdb
 
 FROM base as app
 
@@ -37,4 +42,4 @@ ENV DOCKER_MODS=linuxserver/mods:universal-cron
 
 COPY docker/root/ /
 
-COPY --from=build /app/slsk-batchdl/bin/Release/net6.0/linux-musl-x64/publish/* /usr/bin/
+COPY --from=build /app/build/* /usr/bin/
