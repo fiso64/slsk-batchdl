@@ -196,6 +196,7 @@ Usage: sldl <input> [OPTIONS]
                                    in the folder
 ```
 ```
+  Aggregate Download
     -g, --aggregate                Aggregate download mode: Find and download all distinct
                                    songs associated with the provided artist, album, or title.
     --min-users-aggregate <num>    Minimum number of users sharing a track or album for it to
