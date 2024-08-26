@@ -362,5 +362,3 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /slsk-batchdl/Properties/launchSettings.json
-/slsk-batchdl/Test.cs
-/Class1.cs
