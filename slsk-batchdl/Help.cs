@@ -67,7 +67,7 @@ public static class Help
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred
-                                       conditions is found. Higher chance to download wrong files.
+                                       conditions is found. Only for normal download mode.
         --remove-ft                    Remove 'feat.' and everything after before searching
         --no-remove-special-chars      Do not remove special characters before searching
         --remove-brackets              Remove square brackets and their contents before searching
@@ -253,15 +253,14 @@ public static class Help
         The program will download a single file for every input entry.
 
       Album
-        The program will search for the album and download an entire folder including non-audio
-        files. Activated when the input is a link to a spotify or bandcamp album, when the input 
-        string or csv row has no track title, or when -a/--album is enabled.
+        sldl will search for the album and download an entire folder including non-audio files.
+        Activated when the input is a link to a spotify or bandcamp album, when the input string
+        or csv row has no track title, or when -a/--album is enabled.
         
       Aggregate
-        With -g/--aggregate, the program will first perform an ordinary search for the input, then
-        attempt to group the results into distinct songs and download one of each kind. A common use
-        case is finding all remixes of a song or printing all songs by an artist that are not your 
-        music dir.
+        With -g/--aggregate, sldl will first perform an ordinary search for the input, then attempt to
+        group the results into distinct songs and download one of each kind. A common use case is
+        finding all remixes of a song or printing all songs by an artist that are not your music dir.  
         Two files are considered equal if their inferred track title and artist name are equal 
         (ignoring case and some special characters), and their lengths are within --length-tol of each
         other.

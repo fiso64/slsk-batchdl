@@ -3,26 +3,25 @@
 A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files and Spotify or YouTube urls.
 
 ## Index
-- [slsk-batchdl](#slsk-batchdl)
-  - [Options](#options)
-  - [Input types](#input-types)
-    - [CSV file](#csv-file)
-    - [YouTube](#youtube)
-    - [Spotify](#spotify)
-    - [Bandcamp](#bandcamp)
-    - [Search string](#search-string)
-  - [Download modes](#download-modes)
-    - [Normal](#normal)
-    - [Album](#album)
-    - [Aggregate](#aggregate)
-    - [Album Aggregate](#album-aggregate)
-  - [Searching](#searching)
-  - [File conditions](#file-conditions)
-  - [Name format](#name-format)
-  - [Skip existing](#skip-existing)
-  - [Configuration](#configuration)
-  - [Examples](#examples-1)
-  - [Notes](#notes)
+ - [Options](#options)
+ - [Input types](#input-types)
+   - [CSV file](#csv-file)
+   - [YouTube](#youtube)
+   - [Spotify](#spotify)
+   - [Bandcamp](#bandcamp)
+   - [Search string](#search-string)
+ - [Download modes](#download-modes)
+   - [Normal](#normal)
+   - [Album](#album)
+   - [Aggregate](#aggregate)
+   - [Album Aggregate](#album-aggregate)
+ - [Searching](#searching)
+ - [File conditions](#file-conditions)
+ - [Name format](#name-format)
+ - [Skip existing](#skip-existing)
+ - [Configuration](#configuration)
+ - [Examples](#examples-1)
+ - [Notes](#notes)
 
 
 ## Options
@@ -89,7 +88,7 @@ Usage: sldl <input> [OPTIONS]
 ```
   Searching
     --fast-search                  Begin downloading as soon as a file satisfying the preferred
-                                   conditions is found. Higher chance to download wrong files.
+                                   conditions is found. Only for normal download mode.
     --remove-ft                    Remove 'feat.' and everything after before searching
     --no-remove-special-chars      Do not remove special characters before searching
     --remove-brackets              Remove square brackets and their contents before searching
@@ -283,12 +282,12 @@ Input String                            | Artist   | Title    | Album    | Lengt
   The program will download a single file for every input entry.
 
 ### Album
-  The program will search for the album and download an entire folder including non-audio
+  sldl will search for the album and download an entire folder including non-audio
   files. Activated when the input is a link to a spotify or bandcamp album, when the input
   string or csv row has no track title, or when -a/--album is enabled.
 
 ### Aggregate
-  With -g/--aggregate, the program will first perform an ordinary search for the input, then
+  With -g/--aggregate, sldl will first perform an ordinary search for the input, then
   attempt to group the results into distinct songs and download one of each kind. A common use
   case is finding all remixes of a song or printing all songs by an artist that are not your
   music dir.  
