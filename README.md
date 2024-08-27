@@ -1,6 +1,6 @@
 # slsk-batchdl
 
-A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files and Spotify or YouTube urls.
+A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls. See [Examples](#examples-1).
 
 ## Index
  - [Options](#options)
@@ -314,9 +314,9 @@ will be ignored.
 ### Search Query
 The search query is determined as follows:
 
-- For album downloads: If the album field is non-empty, search for 'Artist Album'
+- For album downloads: If the album field is non-empty, search for 'Artist Album'.
   Otherwise, search for 'Artist Title'
-- For all other download types: If the title field is non-empty, search for 'Artist Title'
+- For all other download types: If the title field is non-empty, search for 'Artist Title'.
   Otherwise, search for 'Artist Album'
 
 ### Soulseek's rate limits
