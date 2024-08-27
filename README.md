@@ -251,7 +251,7 @@ Create an app and add http://localhost:48721/callback as a redirect url in its s
 
 ### Bandcamp
 An bandcamp url: Download a single track, and album, or an artist's entire discography. 
-Extracts the artist name, album name and sets --album-track-count=""n+"", where n is the 
+Extracts the artist name, album name and sets --album-track-count="n+", where n is the 
 number of visible tracks on the bandcamp page.
 
 ### Search string
@@ -390,12 +390,15 @@ Name format supports subdirectories as well as conditional expressions like {tag
 tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check.
 
 ### Examples:
-  - "{artist} - {title}"
+  - "{artist} - {title}"  
       Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
       following is generally preferred:
-  - "{artist( - )title|filename}"
+  - "{artist( - )title|filename}"  
       If artist and title are not null, name it 'Artist - Title', otherwise use the original
       filename.
+  - "{artist(/)album(/)track(. )title|(missing-tags/)filename}"  
+      Sort files into artist/album folders if all tags are present, otherwise put them in
+      the 'missing-tags' folder.   
 
 ### Available variables:
 ```
@@ -411,6 +414,7 @@ salbum                          Source album name
 year                            Track year or date
 track                           Track number
 disc                            Disc number
+filename                        Soulseek filename without extension
 foldername                      Soulseek folder name (only available for album downloads)
 default-foldername              Default sldl folder name
 extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
