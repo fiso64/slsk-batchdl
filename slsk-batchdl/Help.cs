@@ -286,9 +286,9 @@ public static class Help
       Search Query
         The search query is determined as follows:
 
-        - For album downloads: If the album field is non-empty, search for 'Artist Album'
+        - For album downloads: If the album field is non-empty, search for 'Artist Album'.
           Otherwise, search for 'Artist Title'
-        - For all other download types: If the title field is non-empty, search for 'Artist Title'
+        - For all other download types: If the title field is non-empty, search for 'Artist Title'.
           Otherwise, search for 'Artist Album'
 
       Soulseek's rate limits
@@ -369,6 +369,9 @@ public static class Help
         ""{artist( - )title|filename}""
             If artist and title are not null, name it 'Artist - Title', otherwise use the original 
             filename.
+        ""{artist(/)album(/)track(. )title|(missing-tags/)filename}""  
+            Sort files into artist/album folders if all tags are present, otherwise put them in
+            the 'missing-tags' folder. 
         
       Available variables:
         artist                          First artist (from the file tags)
