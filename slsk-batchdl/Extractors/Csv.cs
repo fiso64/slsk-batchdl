@@ -17,25 +17,22 @@ namespace Extractors
 
         public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
-            int max = reverse ? int.MaxValue : maxTracks;
-            int off = reverse ? 0 : offset;
-
             if (!File.Exists(Config.input))
                 throw new FileNotFoundException("CSV file not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(Config.input, Config.artistCol, Config.trackCol, Config.lengthCol, Config.albumCol, Config.descCol, Config.ytIdCol, Config.trackCountCol, Config.timeUnit, Config.ytParse);
+            var tracks = await ParseCsvIntoTrackInfo(Config.input, Config.artistCol, Config.trackCol, Config.lengthCol, 
+                Config.albumCol, Config.descCol, Config.ytIdCol, Config.trackCountCol, Config.timeUnit, Config.ytParse);
 
             if (reverse)
                 tracks.Reverse();
 
-            var trackLists = TrackLists.FromFlattened(tracks.Skip(off).Take(max));
+            var trackLists = TrackLists.FromFlattened(tracks.Skip(offset).Take(maxTracks));
 
             foreach (var tle in trackLists.lists)
             {
                 if (tle.source.Type != TrackType.Normal)
                 {
                     tle.placeInSubdir = true;
-                    tle.subdirOverride = tle.source.ToString(true);
                 }
             }
 

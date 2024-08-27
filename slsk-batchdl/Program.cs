@@ -68,9 +68,11 @@ static partial class Program
 
         WriteLine("Got tracks", debugOnly: true);
 
-        Config.PostProcessArgs();
-
         trackLists.UpgradeListTypes(Config.aggregate, Config.album);
+
+        trackLists.SetListEntryOptions();
+
+        Config.PostProcessArgs();
 
         m3uEditor = new M3uEditor(Config.m3uFilePath, trackLists, Config.m3uOption, Config.offset);
 
@@ -262,7 +264,7 @@ static partial class Program
                     foreach (var item in res)
                     {
                         var newSource = new Track(tle.source) { Type = TrackType.Album };
-                        trackLists.AddEntry(new TrackListEntry(item, newSource, false, true, true, false, false));
+                        trackLists.AddEntry(new TrackListEntry(item, newSource, false, true, true, true, false, false));
                     }
                 }
 
@@ -680,9 +682,9 @@ static partial class Program
 
             soulseekFolderPathPrefix = GetCommonPathPrefix(tracks);
 
-            if (tle.placeInSubdir && Config.nameFormat.Length == 0 && (!downloadingImages || idx == 0))
+            if (tle.placeInSubdir && Config.nameFormat.Length == 0 && (idx == 0 || !downloadingImages))
             {
-                string name = tle.subdirOverride ?? Utils.GetBaseNameSlsk(soulseekFolderPathPrefix);
+                string name = tle.useRemoteDirname ? Utils.GetBaseNameSlsk(soulseekFolderPathPrefix) : tle.source.ToString(true);
                 Config.outputFolder = Path.Join(savedOutputFolder, name);
             }
 

@@ -225,10 +225,16 @@ static class Config
 
         if (DoNotDownload)
             m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && inputType == InputType.String)
-            m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && Program.trackLists != null && !aggregate &&!Program.trackLists.Flattened(true, false, true).Skip(1).Any())
-            m3uOption = M3uOption.None;
+        else if (!hasConfiguredM3uMode)
+        {
+            if (inputType == InputType.String)
+                m3uOption = M3uOption.None;
+            else if (!aggregate && !(skipExisting && (skipMode == SkipMode.M3u || skipMode == SkipMode.M3uCond))
+                && Program.trackLists != null && !Program.trackLists.Flattened(true, false, true).Skip(1).Any())
+            {
+                m3uOption = M3uOption.None;
+            }
+        }
 
         parentFolder = Utils.ExpandUser(parentFolder);
         m3uFilePath = Utils.ExpandUser(m3uFilePath);

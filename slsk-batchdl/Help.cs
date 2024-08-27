@@ -283,6 +283,14 @@ public static class Help
     const string searchHelp = @"
     Searching
 
+      Search Query
+        The search query is determined as follows:
+
+        - For album downloads: If the album field is non-empty, search for 'Artist Album'
+          Otherwise, search for 'Artist Title'
+        - For all other download types: If the title field is non-empty, search for 'Artist Title'
+          Otherwise, search for 'Artist Album'
+
       Soulseek's rate limits
         The server will ban you for 30 minutes if too many searches are performed within a short 
         timespan. The program has a search limiter which can be adjusted with --searches-per-time 

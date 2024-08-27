@@ -25,6 +25,7 @@ namespace Extractors
 
             if (isArtist)
             {
+                Console.WriteLine("Retrieving bandcamp artist discography..");
                 string artistUrl = Config.input.TrimEnd('/');
 
                 if (!artistUrl.EndsWith("/music"))
@@ -60,13 +61,13 @@ namespace Extractors
                     {
                         source = t,
                         placeInSubdir = true,
-                        subdirOverride = t.ToString(true)
                     };
                     trackLists.AddEntry(tle);
                 }
             }
             else
             {
+                Console.WriteLine("Retrieving bandcamp item..");
                 var web = new HtmlWeb();
                 var doc = await web.LoadFromWebAsync(Config.input);
 

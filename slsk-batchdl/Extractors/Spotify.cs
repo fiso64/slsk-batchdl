@@ -110,6 +110,8 @@ namespace Extractors
 
             Config.defaultFolderName = playlistName.ReplaceInvalidChars(Config.invalidReplaceStr);
 
+            trackLists.AddEntry(tle);
+
             if (reverse)
             {
                 trackLists.Reverse();

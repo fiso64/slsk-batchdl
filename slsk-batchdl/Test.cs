@@ -1,14 +1,8 @@
 ﻿using Data;
 using Enums;
 using ExistingCheckers;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 
 using static Test.Helpers;
 
@@ -238,17 +232,17 @@ namespace Test
 
             var albums = new List<Track>()
             {
-                new Track() { Album="Some Title" },
-                new Track() { Album="Some, Title" },
-                new Track() { Title = "some title", Artist = "Some artist" },
-                new Track() { Album = "Title", Artist = "Artist", Length = 42 },
-                new Track() { Title="Some, Title", Artist = "Some, Artist", Album = "Some, Album", Length = 42 },
-                new Track() { Artist = "Some, Artist = a", Album = "Some, Album", Length = 42 },
+                new Track() { Album="Some Title", Type = TrackType.Album },
+                new Track() { Album="Some, Title", Type = TrackType.Album },
+                new Track() { Title = "some title", Artist = "Some artist", Type = TrackType.Album },
+                new Track() { Album = "Title", Artist = "Artist", Length = 42, Type = TrackType.Album },
+                new Track() { Title="Some, Title", Artist = "Some, Artist", Album = "Some, Album", Length = 42, Type = TrackType.Album },
+                new Track() { Artist = "Some, Artist = a", Album = "Some, Album", Length = 42, Type = TrackType.Album },
 
-                new Track() { Album = "Foo Bar" },
-                new Track() { Album = "Bar", Artist = "Foo" },
-                new Track() { Album = "Title", Artist = "Artist", Length = 42 },
-                new Track() { Title = "Title", Artist = "Artist", Length = 42 },
+                new Track() { Album = "Foo Bar", Type = TrackType.Album },
+                new Track() { Album = "Bar", Artist = "Foo", Type = TrackType.Album },
+                new Track() { Album = "Title", Artist = "Artist", Length = 42, Type = TrackType.Album },
+                new Track() { Title = "Title", Artist = "Artist", Length = 42, Type = TrackType.Album },
             };
 
             var extractor = new Extractors.StringExtractor();

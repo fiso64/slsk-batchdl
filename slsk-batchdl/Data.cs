@@ -51,7 +51,10 @@ namespace Data
 
         public string ToKey()
         {
-            return $"{Artist};{Album};{Title};{Length};{(int)Type}";
+            if (Type == TrackType.Album)
+                return $"{Artist};{Album};{(int)Type}";
+            else
+                return $"{Artist};{Album};{Title};{Length};{(int)Type}";
         }
 
         public override string ToString()
@@ -103,7 +106,7 @@ namespace Data
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
         public bool placeInSubdir = false;
-        public string? subdirOverride;
+        public bool useRemoteDirname = false;
 
         public TrackListEntry()
         {
@@ -138,12 +141,13 @@ namespace Data
         }
 
         public TrackListEntry(List<List<Track>> list, Track source, bool needSearch, bool placeInSubdir, 
-            bool canBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
+            bool useRemoteDirname, bool canBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
         {
             this.list = list;
             this.source = source;
             this.needSourceSearch = needSearch;
             this.placeInSubdir = placeInSubdir;
+            this.useRemoteDirname = useRemoteDirname;
             this.sourceCanBeSkipped = canBeSkipped;
             this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
             this.gotoNextAfterSearch = gotoNextAfterSearch;
@@ -183,10 +187,9 @@ namespace Data
                         res.AddTrackToLast(enumerator.Current);
                     }
 
-                    if (hasNext && enumerator.Current.Type != TrackType.Normal)
-                        res.AddEntry(new TrackListEntry(track));
-                    else if (!hasNext)
-                        break;
+                    if (hasNext)
+                        res.AddEntry(new TrackListEntry(enumerator.Current));
+                    else break;
                 }
             }
 
@@ -280,11 +283,26 @@ namespace Data
             lists = newLists;
         }
 
+        public void SetListEntryOptions()
+        {
+            // place downloads in subdirs if there is more than one special (album/aggregate) download
+            bool placeInSubdirs = Flattened(true, false, true).Skip(1).Any();
+
+            if (placeInSubdirs)
+            {
+                foreach(var tle in lists)
+                {
+                    if (tle.source.Type != TrackType.Normal)
+                        tle.placeInSubdir = true;
+                }
+            }
+        }
+
         public IEnumerable<Track> Flattened(bool addSources, bool addSpecialSourceTracks, bool sourcesOnly = false)
         {
             foreach (var tle in lists)
             {
-                if ((addSources || sourcesOnly) && tle.source != null)
+                if ((addSources || sourcesOnly) && tle.source != null && tle.source.Type != TrackType.Normal)
                     yield return tle.source;
                 if (!sourcesOnly && tle.list.Count > 0 && (tle.source.Type == TrackType.Normal || addSpecialSourceTracks))
                 {

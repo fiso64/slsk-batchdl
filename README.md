@@ -311,6 +311,14 @@ will be ignored.
 
 ## Searching
 
+### Search Query
+The search query is determined as follows:
+
+- For album downloads: If the album field is non-empty, search for 'Artist Album'
+  Otherwise, search for 'Artist Title'
+- For all other download types: If the title field is non-empty, search for 'Artist Title'
+  Otherwise, search for 'Artist Album'
+
 ### Soulseek's rate limits
   The server will ban you for 30 minutes if too many searches are performed within a short
   timespan. The program has a search limiter which can be adjusted with --searches-per-time
@@ -492,13 +500,20 @@ sldl test.csv
 ```
 <br>
 
-Download spotify likes while skipping songs that already exist in the output folder:
+Download spotify likes:
 ```
-sldl spotify-likes --skip-existing
+sldl spotify-likes
 ```
 <br>
 
-Download from a youtube playlist with fallback to yt-dlp in case it is not found on soulseek, and retrieve deleted video titles from wayback machine:
+Download albums for every song in a spotify playlist:
+```
+sldl https://spotify/playlist/url --album --skip-existing
+```
+
+<br>
+
+Retrieve deleted video names, then download from a youtube playlist with fallback to yt-dlp:
 ```
 sldl "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX" --get-deleted --yt-dlp
 ```
@@ -522,7 +537,7 @@ sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" 
 ```
 <br>
 
-Download all albums:
+Download all albums by an artist that are on soulseek:
 ```
 sldl "artist=MC MENTAL" --aggregate --album
 ```

@@ -16,7 +16,7 @@ namespace Extractors
             var trackLists = new TrackLists();
             var music = ParseTrackArg(Config.input, Config.album);
 
-            if (music.Title.Length == 0 && music.Album.Length > 0)
+            if (Config.album || (music.Title.Length == 0 && music.Album.Length > 0))
             {
                 music.Type = TrackType.Album;
                 trackLists.AddEntry(new TrackListEntry(music));
@@ -35,7 +35,7 @@ namespace Extractors
             return trackLists;
         }
 
-        public Track ParseTrackArg(string input, bool isAlbum)
+        static public Track ParseTrackArg(string input, bool isAlbum)
         {
             input = input.Trim();
             var track = new Track();

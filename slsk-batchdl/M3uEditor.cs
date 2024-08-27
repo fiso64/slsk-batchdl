@@ -289,6 +289,7 @@ public class M3uEditor
 
     public Track? PreviousRunResult(Track track)
     {
+        var key = track.ToKey();
         previousRunData.TryGetValue(track.ToKey(), out var t);
         return t;
     }

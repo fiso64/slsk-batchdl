@@ -919,11 +919,22 @@ static partial class Program
 
     static string GetSearchString(Track track)
     {
-        if (track.Title.Length > 0)
-            return (track.Artist + " " + track.Title).Trim();
-        else if (track.Album.Length > 0)
-            return (track.Artist + " " + track.Album).Trim();
-        return track.Artist.Trim();
+        if (track.Type == TrackType.Album)
+        {
+            if (track.Album.Length > 0)
+                return (track.Artist + " " + track.Album).Trim();
+            if (track.Title.Length > 0)
+                return (track.Artist + " " + track.Title).Trim();
+            return track.Artist.Trim();
+        }
+        else
+        {
+            if (track.Title.Length > 0)
+                return (track.Artist + " " + track.Title).Trim();
+            else if (track.Album.Length > 0)
+                return (track.Artist + " " + track.Album).Trim();
+            return track.Artist.Trim();
+        }
     }
 
 
