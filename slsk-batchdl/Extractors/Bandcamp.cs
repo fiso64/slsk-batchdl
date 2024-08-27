@@ -16,7 +16,7 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<TrackLists> GetTracks()
+        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
             bool isTrack = Config.input.Contains("/track/");
@@ -54,9 +54,15 @@ namespace Extractors
                     {
                         Album = item.GetProperty("title").GetString(),
                         Artist = item.GetProperty("artist_name").GetString() ?? item.GetProperty("band_name").GetString(),
-                        IsAlbum = true,
+                        Type = TrackType.Album,
                     };
-                    trackLists.AddEntry(ListType.Album, t);
+                    var tle = new TrackListEntry()
+                    {
+                        source = t,
+                        placeInSubdir = true,
+                        subdirOverride = t.ToString(true)
+                    };
+                    trackLists.AddEntry(tle);
                 }
             }
             else
@@ -70,8 +76,8 @@ namespace Extractors
                 if (isAlbum)
                 {
                     var artist = nameSection.SelectSingleNode(".//h3/span/a").InnerText.UnHtmlString().Trim();
-                    var track = new Track() { Artist = artist, Album = name, IsAlbum = true };
-                    trackLists.AddEntry(ListType.Album, track);
+                    var track = new Track() { Artist = artist, Album = name, Type = TrackType.Album };
+                    trackLists.AddEntry(new TrackListEntry(track));
 
                     if (Config.setAlbumMinTrackCount || Config.setAlbumMaxTrackCount)
                     {
@@ -92,16 +98,20 @@ namespace Extractors
                     var album = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span/a").InnerText.UnHtmlString().Trim();
                     var artist = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span[last()]/a").InnerText.UnHtmlString().Trim();
                     //var timeParts = doc.DocumentNode.SelectSingleNode("//span[@class='time_total']").InnerText.Trim().Split(':');
+
                     var track = new Track() { Artist = artist, Title = name, Album = album };
-                    trackLists.AddEntry(track);
+                    trackLists.AddEntry(new());
+                    trackLists.AddTrackToLast(track);
+
                     Config.defaultFolderName = ".";
                 }
             }
 
-            if (!Config.reverse)
-            {
-                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(Config.offset).Take(Config.maxTracks), Config.aggregate, Config.album);
-            }
+            if (reverse)
+                trackLists.Reverse();
+
+            if (offset > 0 || maxTracks < int.MaxValue)
+                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
 
             return trackLists;
         }

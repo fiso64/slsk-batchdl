@@ -11,41 +11,23 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks()
+        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
             var music = ParseTrackArg(Config.input, Config.album);
-            bool isAlbum = false;
 
-            if (Config.album && Config.aggregate)
+            if (music.Title.Length == 0 && music.Album.Length > 0)
             {
-                trackLists.AddEntry(ListType.AlbumAggregate, music);
-            }
-            else if (Config.album)
-            {
-                music.IsAlbum = true;
-                trackLists.AddEntry(ListType.Album, music);
-            }
-            else if (!Config.aggregate && music.Title.Length > 0)
-            {
-                trackLists.AddEntry(music);
-            }
-            else if (Config.aggregate)
-            {
-                trackLists.AddEntry(ListType.Aggregate, music);
-            }
-            else if (music.Title.Length == 0 && music.Album.Length > 0)
-            {
-                isAlbum = true;
-                music.IsAlbum = true;
-                trackLists.AddEntry(ListType.Album, music);
+                music.Type = TrackType.Album;
+                trackLists.AddEntry(new TrackListEntry(music));
             }
             else
             {
-                throw new ArgumentException("Need track title or album");
+                trackLists.AddEntry(new TrackListEntry());
+                trackLists.AddTrackToLast(music);
             }
 
-            if (Config.aggregate || isAlbum || Config.album)
+            if (Config.aggregate || Config.album || music.Type != TrackType.Normal)
                 Config.defaultFolderName = music.ToString(true).ReplaceInvalidChars(Config.invalidReplaceStr).Trim();
             else
                 Config.defaultFolderName = ".";
@@ -58,8 +40,6 @@ namespace Extractors
             input = input.Trim();
             var track = new Track();
             var keys = new string[] { "title", "artist", "length", "album", "artist-maybe-wrong" };
-
-            track.IsAlbum = isAlbum;
 
             void setProperty(string key, string value)
             {

@@ -6,13 +6,13 @@ using System.Text;
 public class M3uEditor
 {
     List<string> lines;
-    TrackLists trackLists;
-    string path;
-    string parent;
-    int offset = 0;
-    M3uOption option = M3uOption.Index;
     bool needFirstUpdate = false;
-    Dictionary<string, Track> previousRunTracks = new(); // {track.ToKey(), track }
+    readonly TrackLists trackLists;
+    readonly string path;
+    readonly string parent;
+    readonly int offset = 0;
+    readonly M3uOption option = M3uOption.Index;
+    readonly Dictionary<string, Track> previousRunData = new(); // { track.ToKey(), track }
 
     public M3uEditor(string m3uPath, TrackLists trackLists, M3uOption option, int offset = 0)
     {
@@ -27,18 +27,25 @@ public class M3uEditor
         LoadPreviousResults();
     }
 
-    private void LoadPreviousResults() // #SLDL:path,artist,album,title,length(int),state(int),failurereason(int); ... ; ...
+    private void LoadPreviousResults()
     {
+        // Format:
+        // #SLDL:<trackinfo>;<trackinfo>; ... 
+        // where <trackinfo>  = filepath,artist,album,title,length(int),tracktype(int),state(int),failurereason(int)
+
         if (lines.Count == 0 || !lines[0].StartsWith("#SLDL:"))
             return;
 
-        string sldlLine = lines[0]["#SLDL:".Length..];
+        string sldlLine = lines[0];
+        lines = lines.Skip(1).ToList();
+
+        int k = "#SLDL:".Length;
         var currentItem = new StringBuilder();
         bool inQuotes = false;
 
-        lines = lines.Skip(1).ToList();
+        for (; k < sldlLine.Length && sldlLine[k] == ' '; k++);
 
-        for (int k = 0; k < sldlLine.Length; k++)
+        for (; k < sldlLine.Length; k++)
         {
             var track = new Track();
             int field = 0;
@@ -58,7 +65,7 @@ public class M3uEditor
                         inQuotes = !inQuotes;
                     }
                 }
-                else if (field <= 5 && c == ',' && !inQuotes)
+                else if (field <= 6 && c == ',' && !inQuotes)
                 {
                     var x = currentItem.ToString();
 
@@ -77,12 +84,14 @@ public class M3uEditor
                     else if (field == 4)
                         track.Length = int.Parse(x);
                     else if (field == 5)
+                        track.Type = (TrackType)int.Parse(currentItem.ToString());
+                    else if (field == 6)
                         track.State = (TrackState)int.Parse(x);
 
                     currentItem.Clear();
                     field++;
                 }
-                else if (field == 6 && c == ';')
+                else if (field == 7 && c == ';')
                 {
                     track.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
                     currentItem.Clear();
@@ -94,7 +103,8 @@ public class M3uEditor
                     currentItem.Append(c);
                 }
             }
-            previousRunTracks[track.ToKey()] = track;
+
+            previousRunData[track.ToKey()] = track;
         }
     }
 
@@ -108,64 +118,71 @@ public class M3uEditor
             bool needUpdate = false;
             int index = 1 + offset;
 
-            void updateLine(string newLine)
+            bool updateLine(string newLine)
             {
+                bool changed = index >= lines.Count || newLine != lines[index];
+
                 while (index >= lines.Count) lines.Add("");
                 lines[index] = newLine;
+
+                return changed;
+            }
+
+            bool trackChanged(Track track, Track? indexTrack)
+            {
+                return indexTrack == null
+                    || indexTrack.State != track.State
+                    || indexTrack.FailureReason != track.FailureReason
+                    || indexTrack.DownloadPath != track.DownloadPath;
+            }
+
+            void updateTrackIfNeeded(Track track)
+            {
+                var key = track.ToKey();
+
+                previousRunData.TryGetValue(key, out Track? indexTrack);
+
+                if (!needUpdate)
+                    needUpdate = trackChanged(track, indexTrack);
+
+                if (needUpdate)
+                {
+                    if (indexTrack == null)
+                        previousRunData[key] = new Track(track);
+                    else
+                    {
+                        indexTrack.State = track.State;
+                        indexTrack.FailureReason = track.FailureReason;
+                        indexTrack.DownloadPath = track.DownloadPath;
+                    }
+                }
             }
 
             foreach (var tle in trackLists.lists)
             {
-                if (tle.type != ListType.Normal)
+                if (tle.source.Type != TrackType.Normal)
                 {
-                    continue;
-                }
-                //if (option == M3uOption.All && source.State == TrackState.Failed)
-                //{
-                //    string reason = source.FailureReason.ToString();
-                //    updateLine(TrackToLine(source, reason));
-                //    index++;
-                //}
-                else
-                {
-                    for (int k = 0; k < tle.list.Count; k++)
+                    if (tle.source.State != TrackState.Initial)
                     {
-                        for (int j = 0; j < tle.list[k].Count; j++)
+                        updateTrackIfNeeded(tle.source);
+                    }
+                }
+
+                for (int k = 0; k < tle.list.Count; k++)
+                {
+                    for (int j = 0; j < tle.list[k].Count; j++)
+                    {
+                        var track = tle.list[k][j];
+
+                        if (track.IsNotAudio || track.State == TrackState.Initial)
+                            continue;
+
+                        updateTrackIfNeeded(track);
+
+                        if (option == M3uOption.All)
                         {
-                            var track = tle.list[k][j];
-
-                            if (track.IsNotAudio || track.State == TrackState.Initial)
-                                continue;
-
-                            string trackKey = track.ToKey();
-                            previousRunTracks.TryGetValue(trackKey, out Track? indexTrack);
-
-                            if (!needUpdate)
-                            {
-                                needUpdate |= indexTrack == null
-                                    || indexTrack.State != track.State
-                                    || indexTrack.FailureReason != track.FailureReason
-                                    || indexTrack.DownloadPath != track.DownloadPath;
-                            }
-
-                            previousRunTracks[trackKey] = track;
-
-                            if (option == M3uOption.All)
-                            {
-                                if (track.State != TrackState.AlreadyExists || k == 0)
-                                {
-                                    string? reason = track.FailureReason != FailureReason.None ? track.FailureReason.ToString() : null;
-                                    if (reason == null && track.State == TrackState.NotFoundLastTime)
-                                        reason = nameof(FailureReason.NoSuitableFileFound);
-
-                                    updateLine(TrackToLine(track, reason));
-                                    if (tle.type != ListType.Normal)
-                                        index++;
-                                }
-                            }
-
-                            if (tle.type == ListType.Normal)
-                                index++;
+                            needUpdate |= updateLine(TrackToLine(track));
+                            index++;
                         }
                     }
                 }
@@ -194,8 +211,12 @@ public class M3uEditor
         }
     }
 
-    private void WriteSldlLine(StreamWriter writer)  // #SLDL:path,artist,album,title,length(int),state(int),failurereason(int); ... ; ...
+    private void WriteSldlLine(StreamWriter writer)
     {
+        // Format:
+        // #SLDL:<trackinfo>;<trackinfo>; ... 
+        // where <trackinfo>  = filepath,artist,album,title,length(int),tracktype(int),state(int),failurereason(int)
+
         void writeCsvLine(string[] items)
         {
             bool comma = false;
@@ -221,7 +242,7 @@ public class M3uEditor
 
         writer.Write("#SLDL:");
 
-        foreach (var val in previousRunTracks.Values)
+        foreach (var val in previousRunData.Values)
         {
             string p = val.DownloadPath;
             if (p.StartsWith(parent))
@@ -234,6 +255,7 @@ public class M3uEditor
                 val.Album,
                 val.Title,
                 val.Length.ToString(),
+                ((int)val.Type).ToString(),
                 ((int)val.State).ToString(),
                 ((int)val.FailureReason).ToString(),
             };
@@ -245,10 +267,15 @@ public class M3uEditor
         writer.Write('\n');
     }
 
-    private string TrackToLine(Track track, string? failureReason = null)
+    private string TrackToLine(Track track)
     {
+        string? failureReason = track.FailureReason != FailureReason.None ? track.FailureReason.ToString() : null;
+        if (failureReason == null && track.State == TrackState.NotFoundLastTime)
+            failureReason = nameof(FailureReason.NoSuitableFileFound);
+
         if (failureReason != null)
             return $"# Failed: {track} [{failureReason}]";
+
         if (track.DownloadPath.Length > 0)
         {
             if (track.DownloadPath.StartsWith(parent))
@@ -256,18 +283,19 @@ public class M3uEditor
             else
                 return track.DownloadPath;
         }
+
         return $"# {track}";
     }
 
     public Track? PreviousRunResult(Track track)
     {
-        previousRunTracks.TryGetValue(track.ToKey(), out var t);
+        previousRunData.TryGetValue(track.ToKey(), out var t);
         return t;
     }
 
     public bool TryGetPreviousRunResult(Track track, out Track? result)
     {
-        previousRunTracks.TryGetValue(track.ToKey(), out result);
+        previousRunData.TryGetValue(track.ToKey(), out result);
         return result != null;
     }
 

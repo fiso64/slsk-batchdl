@@ -74,13 +74,14 @@ static class Config
     public static bool noModifyShareCount = false;
     public static bool useRandomLogin = false;
     public static bool noBrowseFolder = false;
+    public static bool skipExistingPrefCond = false;
     public static int downrankOn = -1;
     public static int ignoreOn = -2;
     public static int minAlbumTrackCount = -1;
     public static int maxAlbumTrackCount = -1;
     public static int fastSearchDelay = 300;
-    public static int maxTracks = int.MaxValue;
     public static int minUsersAggregate = 2;
+    public static int maxTracks = int.MaxValue;
     public static int offset = 0;
     public static int maxStaleTime = 50000;
     public static int updateDelay = 100;
@@ -98,8 +99,8 @@ static class Config
     public static M3uOption m3uOption = M3uOption.Index;
     public static DisplayMode displayMode = DisplayMode.Single;
     public static InputType inputType = InputType.None;
-    public static SkipMode skipMode = SkipMode.M3uCond;
-    public static SkipMode skipModeMusicDir = SkipMode.NameCond;
+    public static SkipMode skipMode = SkipMode.M3u;
+    public static SkipMode skipModeMusicDir = SkipMode.Name;
     public static PrintOption printOption = PrintOption.None;
 
     static readonly Dictionary<string, (List<string> args, string? cond)> profiles = new();
@@ -226,7 +227,7 @@ static class Config
             m3uOption = M3uOption.None;
         else if (!hasConfiguredM3uMode && inputType == InputType.String)
             m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && !aggregate && Program.trackLists != null && Program.trackLists.Flattened(true, false, true).All(t => t.IsAlbum))
+        else if (!hasConfiguredM3uMode && Program.trackLists != null && !aggregate &&!Program.trackLists.Flattened(true, false, true).Skip(1).Any())
             m3uOption = M3uOption.None;
 
         parentFolder = Utils.ExpandUser(parentFolder);
@@ -238,7 +239,7 @@ static class Config
         if (folderName == ".")
             folderName = "";
 
-        folderName = folderName.Replace("\\", "/");
+        folderName = folderName.Replace('\\', '/');
         folderName = string.Join('/', folderName.Split('/').Select(x => x.ReplaceInvalidChars(invalidReplaceStr).Trim()));
         folderName = folderName.Replace('/', Path.DirectorySeparatorChar);
 
@@ -370,7 +371,7 @@ static class Config
         return var switch
         {
             "input-type" => inputType.ToString().ToLower(),
-            "download-mode" => tle != null ? toKebab(tle.type.ToString())
+            "download-mode" => tle != null ? toKebab(tle.source.Type.ToString())
                 : album && aggregate ? "album-aggregate" : album ? "album" : aggregate ? "aggregate" : "normal",
             "interactive" => interactiveMode,
             "album" => album,
@@ -1147,6 +1148,10 @@ static class Config
                     case "--nbf":
                     case "--no-browse-folder":
                         setFlag(ref noBrowseFolder, ref i);
+                        break;
+                    case "--sepc":
+                    case "--skip-existing-pref-cond":
+                        setFlag(ref skipExistingPrefCond, ref i);
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");

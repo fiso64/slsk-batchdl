@@ -63,6 +63,7 @@ Usage: sldl <input> [OPTIONS]
                                    library. Use with --skip-existing
     --skip-not-found               Skip searching for tracks that weren't found on Soulseek
                                    during the last run. Fails are read from the m3u file.
+    --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing
 
     --display-mode <option>        Changes how searches and downloads are displayed:
                                    'single' (default): Show transfer state and percentage
@@ -402,23 +403,25 @@ salbum                          Source album name
 year                            Track year or date
 track                           Track number
 disc                            Disc number
-filename                        Soulseek filename without extension
-foldername                      Default sldl folder name
+foldername                      Soulseek folder name (only available for album downloads)
+default-foldername              Default sldl folder name
 extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
 ```
 
 ## Skip existing
 
-sldl can skip files that exist in the download directory or a specified directory configured with
---music-dir.
+sldl can skip downloads that exist in the output directory or a specified directory configured
+with --music-dir.
 The following modes are available for --skip-mode:
 
 ### m3u
 Default when checking in the output directory.  
-  Checks whether the output m3u file contains the track in the '#SLDL' line. Does not check if
-  the audio file exists or satisfies the file conditions (use m3u-cond for that).
+Checks whether the output m3u file contains the track in the '#SLDL' line. Does not check if
+the audio file exists or satisfies the file conditions (use m3u-cond for that). m3u and
+m3u-cond are the only modes that can skip album downloads.
 
 ### name
+Default when checking in the music directory.   
   Compares filenames to the track title and artist name to determine if a track already exists.
   Specifically, a track will be skipped if there exists a file whose name contains the title
   and whose full path contains the artist name.
@@ -429,11 +432,11 @@ Default when checking in the output directory.
   (ignoring case and ws). Slower than name mode as it needs to read all file tags.
 
 ### m3u-cond, name-cond, tag-cond
-Default for checking in --music-dir: name-cond.  
-  Same as the above modes but also checks whether the found file satisfies necessary conditions.
-  Equivalent to the above modes if no necessary conditions have been specified (except m3u-cond
-  which always checks if the file exists). May be slower and use a lot of memory for large
-  libraries.
+Same as the above modes but also checks whether the found file satisfies the configured 
+conditions. Uses necessary conditions by default, run with --skip-existing-pref-cond to use 
+preferred conditions instead. Equivalent to the above modes if no necessary conditions have 
+been specified (except m3u-cond, which always checks if the file exists). 
+May be slower and use a lot of memory for large libraries.
 
 ## Configuration
 ### Config Location:

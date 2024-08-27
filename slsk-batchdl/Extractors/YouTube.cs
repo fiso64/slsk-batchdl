@@ -20,11 +20,11 @@ namespace Extractors
             return input.IsInternetUrl() && (input.Contains("youtu.be") || input.Contains("youtube.com"));
         }
 
-        public async Task<TrackLists> GetTracks()
+        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
-            int max = Config.reverse ? int.MaxValue : Config.maxTracks;
-            int off = Config.reverse ? 0 : Config.offset;
+            int max = reverse ? int.MaxValue : maxTracks;
+            int off = reverse ? 0 : offset;
             YouTube.apiKey = Config.ytKey;
 
             string name;
@@ -60,11 +60,18 @@ namespace Extractors
             }
 
             YouTube.StopService();
-            trackLists.AddEntry(tracks);
 
-            if (Config.album || Config.aggregate)
-                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false), Config.aggregate, Config.album);
+            var tle = new TrackListEntry();
+            tle.list.Add(tracks);
+            trackLists.AddEntry(tle);
+
             Config.defaultFolderName = name.ReplaceInvalidChars(Config.invalidReplaceStr);
+
+            if (reverse)
+            {
+                trackLists.Reverse();
+                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
+            }
 
             return trackLists;
         }

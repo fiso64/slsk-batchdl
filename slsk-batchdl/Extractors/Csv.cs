@@ -1,4 +1,5 @@
 ﻿using Data;
+using Enums;
 using System.Text.RegularExpressions;
 
 namespace Extractors
@@ -14,16 +15,30 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<TrackLists> GetTracks()
+        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
-            int max = Config.reverse ? int.MaxValue : Config.maxTracks;
-            int off = Config.reverse ? 0 : Config.offset;
+            int max = reverse ? int.MaxValue : maxTracks;
+            int off = reverse ? 0 : offset;
 
             if (!File.Exists(Config.input))
                 throw new FileNotFoundException("CSV file not found");
 
             var tracks = await ParseCsvIntoTrackInfo(Config.input, Config.artistCol, Config.trackCol, Config.lengthCol, Config.albumCol, Config.descCol, Config.ytIdCol, Config.trackCountCol, Config.timeUnit, Config.ytParse);
-            var trackLists = TrackLists.FromFlattened(tracks.Skip(off).Take(max), Config.aggregate, Config.album);
+
+            if (reverse)
+                tracks.Reverse();
+
+            var trackLists = TrackLists.FromFlattened(tracks.Skip(off).Take(max));
+
+            foreach (var tle in trackLists.lists)
+            {
+                if (tle.source.Type != TrackType.Normal)
+                {
+                    tle.placeInSubdir = true;
+                    tle.subdirOverride = tle.source.ToString(true);
+                }
+            }
+
             Config.defaultFolderName = Path.GetFileNameWithoutExtension(Config.input);
 
             return trackLists;
@@ -161,7 +176,8 @@ namespace Extractors
                 if (ytParse)
                     track = await YouTube.ParseTrackInfo(track.Title, track.Artist, track.URI, track.Length, desc);
 
-                track.IsAlbum = track.Title.Length == 0 && track.Album.Length > 0;
+                if (track.Title.Length == 0 && track.Album.Length > 0)
+                    track.Type = Enums.TrackType.Album;
 
                 if (track.Title.Length > 0 || track.Artist.Length > 0 || track.Album.Length > 0)
                     tracks.Add(track);

@@ -18,15 +18,15 @@ namespace Extractors
             return input == "spotify-likes" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<TrackLists> GetTracks()
+        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
-            int max = Config.reverse ? int.MaxValue : Config.maxTracks;
-            int off = Config.reverse ? 0 : Config.offset;
+            int max = reverse ? int.MaxValue : maxTracks;
+            int off = reverse ? 0 : offset;
 
             string playlistName = "";
             bool needLogin = Config.input == "spotify-likes" || Config.removeTracksFromSource;
-            List<Track> tracks = new List<Track>();
+            var tle = new TrackListEntry();
 
             static void readSpotifyCreds()
             {
@@ -48,19 +48,16 @@ namespace Extractors
             if (Config.input == "spotify-likes")
             {
                 Console.WriteLine("Loading Spotify likes");
-                tracks = await spotifyClient.GetLikes(max, off);
+                var tracks = await spotifyClient.GetLikes(max, off);
                 playlistName = "Spotify Likes";
-
-                trackLists.AddEntry(tracks);
-                if (Config.album || Config.aggregate)
-                    trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false), Config.aggregate, Config.album);
+                tle.list.Add(tracks);
             }
             else if (Config.input.Contains("/album/"))
             {
                 Console.WriteLine("Loading Spotify album");
-                (var source, tracks) = await spotifyClient.GetAlbum(Config.input);
+                (var source, var tracks) = await spotifyClient.GetAlbum(Config.input);
                 playlistName = source.ToString(noInfo: true);
-                trackLists.AddEntry(ListType.Album, source);
+                tle.source = source;
 
                 if (Config.setAlbumMinTrackCount)
                     source.MinAlbumTrackCount = tracks.Count;
@@ -75,6 +72,8 @@ namespace Extractors
             }
             else
             {
+                var tracks = new List<Track>();
+
                 try
                 {
                     Console.WriteLine("Loading Spotify playlist");
@@ -105,12 +104,17 @@ namespace Extractors
                     }
                     else throw;
                 }
-                trackLists.AddEntry(tracks);
-                if (Config.album || Config.aggregate)
-                    trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false), Config.aggregate, Config.album);
+
+                tle.list.Add(tracks);
             }
 
             Config.defaultFolderName = playlistName.ReplaceInvalidChars(Config.invalidReplaceStr);
+
+            if (reverse)
+            {
+                trackLists.Reverse();
+                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
+            }
 
             return trackLists;
         }
@@ -328,7 +332,7 @@ namespace Extractors
                 tracks.Add(t);
             }
 
-            return (new Track { Album = album.Name, Artist = album.Artists.First().Name, IsAlbum = true }, tracks);
+            return (new Track { Album = album.Name, Artist = album.Artists.First().Name, Type = TrackType.Album }, tracks);
         }
 
         private string GetAlbumIdFromUrl(string url)

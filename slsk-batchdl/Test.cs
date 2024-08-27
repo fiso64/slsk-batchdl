@@ -1,5 +1,6 @@
 ﻿using Data;
 using Enums;
+using ExistingCheckers;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -260,7 +261,7 @@ namespace Test
             {
                 Config.input = strings[i];
                 Console.WriteLine(Config.input);
-                var res = await extractor.GetTracks();
+                var res = await extractor.GetTracks(0, 0, false);
                 var t = res[0].list[0][0];
                 Assert(Extractors.StringExtractor.InputMatches(Config.input));
                 Assert(t.ToKey() == tracks[i].ToKey());
@@ -273,7 +274,7 @@ namespace Test
             {
                 Config.input = strings[i];
                 Console.WriteLine(Config.input);
-                var t = (await extractor.GetTracks())[0].source;
+                var t = (await extractor.GetTracks(0, 0, false))[0].source;
                 Assert(Extractors.StringExtractor.InputMatches(Config.input));
                 Assert(t.ToKey() == albums[i].ToKey());
             }
@@ -287,6 +288,7 @@ namespace Test
 
             Config.m3uOption = M3uOption.All;
             Config.skipMode = SkipMode.M3u;
+            Config.musicDir = "";
             Config.printOption = PrintOption.Tracks | PrintOption.Full;
             Config.skipExisting = true;
 
@@ -296,11 +298,12 @@ namespace Test
                 File.Delete(path);
 
             File.WriteAllText(path, $"#SLDL:" +
-                $"{Path.Join(Directory.GetCurrentDirectory(), "file1.5")},\"Artist, 1.5\",,\"Title, , 1.5\",-1,3,0;" +
-                $"path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,3,0;" +
-                $"path/to/file2,\"Artist, 2\",,Title2,-1,3,0;,\"Artist; ,3\",,Title3 ;a,-1,4,0;" +
-                $",\"Artist,,, ;4\",,Title4,-1,4,3;" +
-                $",,,,-1,0,0;");
+                $"{Path.Join(Directory.GetCurrentDirectory(), "file1.5")},\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;" +
+                $"path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;" +
+                $"path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;" +
+                $",\"Artist; ,3\",,Title3 ;a,-1,0,4,0;" +
+                $",\"Artist,,, ;4\",,Title4,-1,0,4,3;" +
+                $",,,,-1,0,0,0;");
 
             var notFoundInitial = new List<Track>()
             {
@@ -320,7 +323,7 @@ namespace Test
             };
 
             var trackLists = new TrackLists();
-            trackLists.AddEntry();
+            trackLists.AddEntry(new TrackListEntry());
             foreach (var t in notFoundInitial)
                 trackLists.AddTrackToLast(t);
             foreach (var t in existingInitial)
@@ -330,20 +333,22 @@ namespace Test
 
             Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
 
+            Program.outputExistingChecker = new M3uExistingChecker(Program.m3uEditor, false);
+
             var notFound = (List<Track>)ProgramInvoke("DoSkipNotFound", new object[] { trackLists[0].list[0] });
-            var existing = (List<Track>)ProgramInvoke("DoSkipExisting", new object[] { trackLists[0].list[0], false });
+            var existing = (List<Track>)ProgramInvoke("DoSkipExisting", new object[] { trackLists[0].list[0] });
             var toBeDownloaded = trackLists[0].list[0].Where(t => t.State == TrackState.Initial).ToList();
 
             Assert(notFound.SequenceEqualUpToPermutation(notFoundInitial));
             Assert(existing.SequenceEqualUpToPermutation(existingInitial));
             Assert(toBeDownloaded.SequenceEqualUpToPermutation(toBeDownloadedInitial));
 
-            ProgramInvoke("PrintTracksTbd", new object[] { toBeDownloaded, existing, notFound, ListType.Normal });
+            ProgramInvoke("PrintTracksTbd", new object[] { toBeDownloaded, existing, notFound, TrackType.Normal });
 
             Program.m3uEditor.Update();
             string output = File.ReadAllText(path);
             string need = 
-                "#SLDL:./file1.5,\"Artist, 1.5\",,\"Title, , 1.5\",-1,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,3,0;,\"Artist; ,3\",,Title3 ;a,-1,4,0;,\"Artist,,, ;4\",,Title4,-1,4,3;,,,,-1,0,0;" +
+                "#SLDL:./file1.5,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;,,,,-1,0,0,0;" +
                 "\n" +
                 "\n# Failed: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
                 "\n# Failed: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
@@ -362,8 +367,8 @@ namespace Test
             Program.m3uEditor.Update();
             output = File.ReadAllText(path);
             need = 
-                "#SLDL:/other/new/file/path,\"Artist, 1.5\",,\"Title, , 1.5\",-1,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,3,0;,\"Artist; ,3\",,Title3 ;a,-1,4,0;,\"Artist,,, ;4\",,Title4,-1,4,3;" +
-                ",,,,-1,0,0;new/file/path,ArtistA,Albumm,TitleA,-1,1,0;,ArtistB,Albumm,TitleB,-1,2,3;" +
+                "#SLDL:/other/new/file/path,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;" +
+                ",,,,-1,0,0,0;new/file/path,ArtistA,Albumm,TitleA,-1,0,1,0;,ArtistB,Albumm,TitleB,-1,0,2,3;" +
                 "\n" +
                 "\n# Failed: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
                 "\n# Failed: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
@@ -393,6 +398,44 @@ namespace Test
             Program.m3uEditor.Update();
             output = File.ReadAllText(path);
             Assert(output == need);
+
+
+            var test = new List<Track>
+            {
+                new() { Artist = "ArtistA", Album = "AlbumA", Type = TrackType.Album },
+                new() { Artist = "ArtistB", Album = "AlbumB", Type = TrackType.Album },
+                new() { Artist = "ArtistC", Album = "AlbumC", Type = TrackType.Album },
+            };
+
+            trackLists = new TrackLists();
+            foreach (var t in test)
+                trackLists.AddEntry(new TrackListEntry(t));
+
+            File.WriteAllText(path, "");
+            Config.m3uOption = M3uOption.Index;
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+            Program.m3uEditor.Update();
+
+            Assert(File.ReadAllText(path) == "");
+
+            test[0].State = TrackState.Downloaded;
+            test[0].DownloadPath = "download/path";
+            test[1].State = TrackState.Failed;
+            test[1].FailureReason = FailureReason.NoSuitableFileFound;
+            test[2].State = TrackState.AlreadyExists;
+
+            Program.m3uEditor.Update();
+
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+
+            foreach (var t in test)
+            {
+                Program.m3uEditor.TryGetPreviousRunResult(t, out var tt);
+                Assert(tt != null);
+                Assert(tt.ToKey() == t.ToKey());
+                t.DownloadPath = "this should not change tt.DownloadPath";
+                Assert(t.DownloadPath != tt.DownloadPath);
+            }
 
             File.Delete(path);
 

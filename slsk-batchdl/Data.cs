@@ -12,16 +12,19 @@ namespace Data
         public string URI = "";
         public int Length = -1;
         public bool ArtistMaybeWrong = false;
-        public bool IsAlbum = false;
         public int MinAlbumTrackCount = -1;
         public int MaxAlbumTrackCount = -1;
         public bool IsNotAudio = false;
         public string DownloadPath = "";
         public string Other = "";
         public int CsvRow = -1;
+        public TrackType Type = TrackType.Normal;
         public FailureReason FailureReason = FailureReason.None;
         public TrackState State = TrackState.Initial;
         public SlDictionary? Downloads = null;
+
+        public bool OutputsDirectory => Type != TrackType.Normal;
+        public Soulseek.File? FirstDownload => Downloads?.FirstOrDefault().Value.Item2;
 
         public Track() { }
 
@@ -34,7 +37,7 @@ namespace Data
             URI = other.URI;
             ArtistMaybeWrong = other.ArtistMaybeWrong;
             Downloads = other.Downloads;
-            IsAlbum = other.IsAlbum;
+            Type = other.Type;
             IsNotAudio = other.IsNotAudio;
             State = other.State;
             FailureReason = other.FailureReason;
@@ -47,7 +50,7 @@ namespace Data
 
         public string ToKey()
         {
-            return $"{Artist};{Album};{Title};{Length}";
+            return $"{Artist};{Album};{Title};{Length};{(int)Type}";
         }
 
         public override string ToString()
@@ -61,7 +64,7 @@ namespace Data
                 return $"{Utils.GetFileNameSlsk(Downloads.First().Value.Item2.Filename)}";
 
             string str = Artist;
-            if (!IsAlbum && Title.Length == 0 && Downloads != null && !Downloads.IsEmpty)
+            if (Type == TrackType.Normal && Title.Length == 0 && Downloads != null && !Downloads.IsEmpty)
             {
                 str = $"{Utils.GetFileNameSlsk(Downloads.First().Value.Item2.Filename)}";
             }
@@ -69,7 +72,7 @@ namespace Data
             {
                 if (str.Length > 0)
                     str += " - ";
-                if (IsAlbum)
+                if (Type == TrackType.Album)
                     str += Album;
                 else if (Title.Length > 0)
                     str += Title;
@@ -77,7 +80,7 @@ namespace Data
                 {
                     if (Length > 0)
                         str += $" ({Length}s)";
-                    if (IsAlbum)
+                    if (Type == TrackType.Album)
                         str += " (album)";
                 }
             }
@@ -93,28 +96,56 @@ namespace Data
     public class TrackListEntry
     {
         public List<List<Track>> list;
-        public ListType type;
         public Track source;
-        public bool needSearch;
-        public bool placeInSubdir;
+        public bool needSourceSearch = false;
+        public bool sourceCanBeSkipped = false;
+        public bool needSkipExistingAfterSearch = false;
+        public bool gotoNextAfterSearch = false;
+        public bool placeInSubdir = false;
+        public string? subdirOverride;
 
-        public TrackListEntry(List<List<Track>> list, ListType type, Track source)
+        public TrackListEntry()
         {
-            this.list = list;
-            this.type = type;
-            this.source = source;
-
-            needSearch = type != ListType.Normal;
-            placeInSubdir = false;
+            list = new List<List<Track>>();
+            source = new Track();
         }
 
-        public TrackListEntry(List<List<Track>> list, ListType type, Track source, bool needSearch, bool placeInSubdir)
+        public TrackListEntry(Track source)
+        {
+            list = new List<List<Track>>();
+            this.source = source;
+
+            needSourceSearch = source.Type != TrackType.Normal;
+            needSkipExistingAfterSearch = source.Type == TrackType.Aggregate;
+            gotoNextAfterSearch = source.Type == TrackType.AlbumAggregate;
+            sourceCanBeSkipped = source.Type != TrackType.Normal 
+                && source.Type != TrackType.Aggregate 
+                && source.Type != TrackType.AlbumAggregate;
+        }
+
+        public TrackListEntry(List<List<Track>> list, Track source)
         {
             this.list = list;
-            this.type = type;
             this.source = source;
-            this.needSearch = needSearch;
+
+            needSourceSearch = source.Type != TrackType.Normal;
+            needSkipExistingAfterSearch = source.Type == TrackType.Aggregate;
+            gotoNextAfterSearch = source.Type == TrackType.AlbumAggregate;
+            sourceCanBeSkipped = source.Type != TrackType.Normal
+                && source.Type != TrackType.Aggregate
+                && source.Type != TrackType.AlbumAggregate;
+        }
+
+        public TrackListEntry(List<List<Track>> list, Track source, bool needSearch, bool placeInSubdir, 
+            bool canBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
+        {
+            this.list = list;
+            this.source = source;
+            this.needSourceSearch = needSearch;
             this.placeInSubdir = placeInSubdir;
+            this.sourceCanBeSkipped = canBeSkipped;
+            this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
+            this.gotoNextAfterSearch = gotoNextAfterSearch;
         }
     }
 
@@ -124,21 +155,7 @@ namespace Data
 
         public TrackLists() { }
 
-        public TrackLists(List<(List<List<Track>> list, ListType type, Track source)> lists)
-        {
-            foreach (var (list, type, source) in lists)
-            {
-                var newList = new List<List<Track>>();
-                foreach (var innerList in list)
-                {
-                    var innerNewList = new List<Track>(innerList);
-                    newList.Add(innerNewList);
-                }
-                this.lists.Add(new TrackListEntry(newList, type, source));
-            }
-        }
-
-        public static TrackLists FromFlattened(IEnumerable<Track> flatList, bool aggregate, bool album)
+        public static TrackLists FromFlattened(IEnumerable<Track> flatList)
         {
             var res = new TrackLists();
             using var enumerator = flatList.GetEnumerator();
@@ -147,35 +164,26 @@ namespace Data
             {
                 var track = enumerator.Current;
 
-                if (album && aggregate)
+                if (track.Type != TrackType.Normal)
                 {
-                    res.AddEntry(ListType.AlbumAggregate, track);
-                }
-                else if (aggregate)
-                {
-                    res.AddEntry(ListType.Aggregate, track);
-                }
-                else if (album || track.IsAlbum)
-                {
-                    track.IsAlbum = true;
-                    res.AddEntry(ListType.Album, track);
+                    res.AddEntry(new TrackListEntry(track));
                 }
                 else
                 {
-                    res.AddEntry(ListType.Normal);
+                    res.AddEntry(new TrackListEntry());
                     res.AddTrackToLast(track);
 
                     bool hasNext;
                     while (true)
                     {
                         hasNext = enumerator.MoveNext();
-                        if (!hasNext || enumerator.Current.IsAlbum)
+                        if (!hasNext || enumerator.Current.Type != TrackType.Normal)
                             break;
                         res.AddTrackToLast(enumerator.Current);
                     }
 
-                    if (hasNext && enumerator.Current.IsAlbum)
-                        res.AddEntry(ListType.Album, track);
+                    if (hasNext && enumerator.Current.Type != TrackType.Normal)
+                        res.AddEntry(new TrackListEntry(track));
                     else if (!hasNext)
                         break;
                 }
@@ -195,35 +203,22 @@ namespace Data
             lists.Add(tle);
         }
 
-        public void AddEntry(List<List<Track>>? list, ListType? type = null, Track? source = null)
-        {
-            type ??= ListType.Normal;
-            source ??= new Track();
-            list ??= new List<List<Track>>();
-            lists.Add(new TrackListEntry(list, (ListType)type, source));
-        }
-
-        public void AddEntry(List<Track> tracks, ListType? type = null, Track? source = null)
-        {
-            var list = new List<List<Track>>() { tracks };
-            AddEntry(list, type, source);
-        }
-
-        public void AddEntry(Track track, ListType? type = null, Track? source = null)
-        {
-            var list = new List<List<Track>>() { new List<Track>() { track } };
-            AddEntry(list, type, source);
-        }
-
-        public void AddEntry(ListType? type = null, Track? source = null)
-        {
-            var list = new List<List<Track>>() { new List<Track>() };
-            AddEntry(list, type, source);
-        }
-
         public void AddTrackToLast(Track track)
         {
+            if (lists.Count == 0)
+            {
+                AddEntry(new TrackListEntry(new List<List<Track>> { new List<Track>() { track } }, new Track()));
+                return;
+            }
+
             int i = lists.Count - 1;
+
+            if (lists[i].list.Count == 0)
+            {
+                lists[i].list.Add(new List<Track>() { track });
+                return;
+            }
+
             int j = lists[i].list.Count - 1;
             lists[i].list[j].Add(track);
         }
@@ -240,13 +235,57 @@ namespace Data
             }
         }
 
+        public void UpgradeListTypes(bool aggregate, bool album)
+        {
+            if (!aggregate && !album)
+                return;
+
+            var newLists = new List<TrackListEntry>();
+
+            for (int i = 0; i < lists.Count; i++)
+            {
+                var tle = lists[i];
+
+                if (tle.source.Type == TrackType.Album && aggregate)
+                {
+                    tle.source.Type = TrackType.AlbumAggregate;
+                    newLists.Add(tle);
+                }
+                else if (tle.source.Type == TrackType.Aggregate && album)
+                {
+                    tle.source.Type = TrackType.AlbumAggregate;
+                    newLists.Add(tle);
+                }
+                else if (tle.source.Type == TrackType.Normal && (album || aggregate))
+                {
+                    foreach (var track in tle.list[0])
+                    {
+                        if (album && aggregate)
+                            track.Type = TrackType.AlbumAggregate;
+                        else if (album)
+                            track.Type = TrackType.Album;
+                        else if (aggregate)
+                            track.Type = TrackType.Aggregate;
+
+                        newLists.Add(new TrackListEntry(track));
+                    }
+                }
+                else
+                {
+                    newLists.Add(tle);
+                }
+            }
+
+            lists = newLists;
+        }
+
         public IEnumerable<Track> Flattened(bool addSources, bool addSpecialSourceTracks, bool sourcesOnly = false)
         {
             foreach (var tle in lists)
             {
                 if ((addSources || sourcesOnly) && tle.source != null)
                     yield return tle.source;
-                if (!sourcesOnly && tle.list.Count > 0 && (tle.type == ListType.Normal || addSpecialSourceTracks))
+                if (!sourcesOnly && tle.list.Count > 0 && (tle.source.Type == TrackType.Normal || addSpecialSourceTracks))
                 {
                     foreach (var t in tle.list[0])
                         yield return t;

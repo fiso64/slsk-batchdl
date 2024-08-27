@@ -6,7 +6,7 @@ namespace Extractors
 {
     public interface IExtractor
     {
-        Task<TrackLists> GetTracks();
+        Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse);
         Task RemoveTrackFromSource(Track track) => Task.CompletedTask;
     }
 

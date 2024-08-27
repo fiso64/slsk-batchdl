@@ -5,9 +5,9 @@ using System.IO;
 
 namespace ExistingCheckers
 {
-    public static class Registry
+    public static class ExistingCheckerRegistry
     {
-        static IExistingChecker GetChecker(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
+        public static ExistingChecker GetChecker(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
         {
             bool noConditions = conditions.Equals(new FileConditions());
             return mode switch
@@ -20,38 +20,16 @@ namespace ExistingCheckers
                 SkipMode.M3uCond => noConditions ? new M3uExistingChecker(m3uEditor, true) : new M3uConditionExistingChecker(m3uEditor, conditions),
             };
         }
-
-        public static Dictionary<Track, string> SkipExisting(List<Track> tracks, string dir, FileConditions necessaryCond, M3uEditor m3uEditor, SkipMode mode)
-        {
-            var existing = new Dictionary<Track, string>();
-
-            var checker = GetChecker(mode, dir, necessaryCond, m3uEditor);
-            checker.BuildIndex();
-
-            for (int i = 0; i < tracks.Count; i++)
-            {
-                if (tracks[i].IsNotAudio)
-                    continue;
-
-                if (checker.TrackExists(tracks[i], out string? path))
-                {
-                    existing.TryAdd(tracks[i], path);
-                    tracks[i].State = TrackState.AlreadyExists;
-                    tracks[i].DownloadPath = path;
-                }
-            }
-
-            return existing;
-        }
     }
 
-    public interface IExistingChecker
+    public abstract class ExistingChecker
     {
-        public bool TrackExists(Track track, out string? foundPath);
-        public void BuildIndex() { }
+        public abstract bool TrackExists(Track track, out string? foundPath);
+        public virtual void BuildIndex() { IndexIsBuilt = true; }
+        public bool IndexIsBuilt { get; protected set; } = false;
     }
 
-    public class NameExistingChecker : IExistingChecker
+    public class NameExistingChecker : ExistingChecker
     {
         readonly string[] ignore = new string[] { " ", "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
@@ -71,7 +49,7 @@ namespace ExistingCheckers
             return s;
         }
 
-        public void BuildIndex()
+        public override void BuildIndex()
         {
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
@@ -86,16 +64,24 @@ namespace ExistingCheckers
                     index.Add((path, ppath, pname));
                 }
             }
+
+            IndexIsBuilt = true;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
+            foundPath = null;
+
+            if (track.OutputsDirectory)
+                return false;
+
             string title = Preprocess(track.Title, true);
             string artist = Preprocess(track.Artist, true);
 
             foreach ((var path, var ppath, var pname) in index)
             {
-                if (pname.Contains(title) && ppath.Contains(artist))
+                if (pname.ContainsWithBoundaryIgnoreWs(title, acceptLeftDigit: true) 
+                    && ppath.ContainsWithBoundaryIgnoreWs(artist, acceptLeftDigit: true))
                 {
                     foundPath = path;
                     return true;
@@ -107,7 +93,7 @@ namespace ExistingCheckers
         }
     }
 
-    public class NameConditionExistingChecker : IExistingChecker
+    public class NameConditionExistingChecker : ExistingChecker
     {
         readonly string[] ignore = new string[] { " ", "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
@@ -129,7 +115,7 @@ namespace ExistingCheckers
             return s;
         }
 
-        public void BuildIndex()
+        public override void BuildIndex()
         {
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
@@ -148,16 +134,25 @@ namespace ExistingCheckers
                     index.Add((ppath, pname, new SimpleFile(musicFile)));
                 }
             }
+
+            IndexIsBuilt = true;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
+            foundPath = null;
+
+            if (track.OutputsDirectory)
+                return false;
+
             string title = Preprocess(track.Title, true);
             string artist = Preprocess(track.Artist, true);
 
             foreach ((var ppath, var pname, var musicFile) in index)
             {
-                if (pname.Contains(title) && ppath.Contains(artist) && conditions.FileSatisfies(musicFile, track))
+                if (pname.ContainsWithBoundaryIgnoreWs(title, acceptLeftDigit: true) 
+                    && ppath.ContainsWithBoundaryIgnoreWs(artist, acceptLeftDigit: true)
+                    && conditions.FileSatisfies(musicFile, track))
                 {
                     foundPath = musicFile.Path;
                     return true;
@@ -169,7 +164,7 @@ namespace ExistingCheckers
         }
     }
 
-    public class TagExistingChecker : IExistingChecker
+    public class TagExistingChecker : ExistingChecker
     {
         readonly string dir;
         readonly List<(string, string, string)> index = new(); // (Path, PreprocessedArtist, PreprocessedTitle)
@@ -184,7 +179,7 @@ namespace ExistingCheckers
             return s.Replace(" ", "").RemoveFt().ToLower();
         }
 
-        public void BuildIndex()
+        public override void BuildIndex()
         {
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
@@ -201,10 +196,17 @@ namespace ExistingCheckers
                     index.Add((path, partist, ptitle));
                 }
             }
+
+            IndexIsBuilt = true;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
+            foundPath = null;
+
+            if (track.OutputsDirectory)
+                return false;
+
             string title = Preprocess(track.Title);
             string artist = Preprocess(track.Artist);
 
@@ -217,12 +219,11 @@ namespace ExistingCheckers
                 }
             }
 
-            foundPath = null;
             return false;
         }
     }
 
-    public class TagConditionExistingChecker : IExistingChecker
+    public class TagConditionExistingChecker : ExistingChecker
     {
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedArtist, PreprocessedTitle, file)
@@ -239,7 +240,7 @@ namespace ExistingCheckers
             return s.Replace(" ", "").RemoveFt().ToLower();
         }
 
-        public void BuildIndex()
+        public override void BuildIndex()
         {
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
@@ -256,10 +257,17 @@ namespace ExistingCheckers
                     index.Add((partist, ptitle, new SimpleFile(musicFile)));
                 }
             }
+
+            IndexIsBuilt = true;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
+            foundPath = null;
+
+            if (track.OutputsDirectory)
+                return false;
+
             string title = Preprocess(track.Title);
             string artist = Preprocess(track.Artist);
 
@@ -272,12 +280,11 @@ namespace ExistingCheckers
                 }
             }
 
-            foundPath = null;
             return false;
         }
     }
 
-    public class M3uExistingChecker : IExistingChecker
+    public class M3uExistingChecker : ExistingChecker
     {
         M3uEditor m3uEditor;
         bool checkFileExists;
@@ -288,16 +295,29 @@ namespace ExistingCheckers
             this.checkFileExists = checkFileExists;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
             foundPath = null;
             var t = m3uEditor.PreviousRunResult(track);
             if (t != null && (t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
             {
-                if (checkFileExists && (t.DownloadPath.Length == 0 || !File.Exists(t.DownloadPath)))
+                if (checkFileExists)
                 {
-                    return false;
+                    if (t.DownloadPath.Length == 0)
+                        return false;
+
+                    if (t.OutputsDirectory)
+                    {
+                        if (!Directory.Exists(t.DownloadPath))
+                            return false;
+                    }
+                    else
+                    {
+                        if (!File.Exists(t.DownloadPath))
+                            return false;
+                    }
                 }
+
                 foundPath = t.DownloadPath;
                 return true;
             }
@@ -305,7 +325,7 @@ namespace ExistingCheckers
         }
     }
 
-    public class M3uConditionExistingChecker : IExistingChecker
+    public class M3uConditionExistingChecker : ExistingChecker
     {
         M3uEditor m3uEditor;
         FileConditions conditions;
@@ -316,36 +336,71 @@ namespace ExistingCheckers
             this.conditions = conditions;
         }
 
-        public bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, out string? foundPath)
         {
             foundPath = null;
             var t = m3uEditor.PreviousRunResult(track);
-            if (t != null && (t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists) && t.DownloadPath.Length > 0)
+
+            if (t == null || t.DownloadPath.Length == 0)
+                return false;
+
+            if (!t.OutputsDirectory)
             {
-                if (File.Exists(t.DownloadPath))
-                {
-                    TagLib.File musicFile;
-                    try 
-                    { 
-                        musicFile = TagLib.File.Create(t.DownloadPath);
-                        if (conditions.FileSatisfies(musicFile, track, false))
-                        {
-                            foundPath = t.DownloadPath;
-                            return true;
-                        }
-                        else
-                        {
-                            return false;
-                        }
+                if (!File.Exists(t.DownloadPath))
+                    return false;
+
+                TagLib.File musicFile;
+                try 
+                { 
+                    musicFile = TagLib.File.Create(t.DownloadPath);
+                    if (conditions.FileSatisfies(musicFile, track, false))
+                    {
+                        foundPath = t.DownloadPath;
+                        return true;
                     }
-                    catch 
-                    { 
+                    else
+                    {
                         return false;
                     }
-
+                }
+                catch 
+                { 
+                    return false;
                 }
             }
-            return false;
+            else
+            {
+                if (!Directory.Exists(t.DownloadPath))
+                    return false;
+
+                var files = Directory.GetFiles(t.DownloadPath, "*", SearchOption.AllDirectories);
+
+                if (t.MaxAlbumTrackCount > -1 || t.MinAlbumTrackCount > -1)
+                {
+                    int count = files.Count(x=> Utils.IsMusicFile(x));
+
+                    if (t.MaxAlbumTrackCount > -1 && count > t.MaxAlbumTrackCount)
+                        return false;
+                    if (t.MinAlbumTrackCount > -1 && count < t.MinAlbumTrackCount)
+                        return false;
+                }
+
+                foreach (var path in files)
+                {
+                    if (Utils.IsMusicFile(path))
+                    {
+                        TagLib.File musicFile;
+                        try { musicFile = TagLib.File.Create(path); }
+                        catch { return false; }
+
+                        if (!conditions.FileSatisfies(musicFile, track))
+                            return false;
+                    }
+                }
+
+                foundPath = t.DownloadPath;
+                return true;
+            }
         }
     }
 }

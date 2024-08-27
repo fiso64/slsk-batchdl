@@ -40,12 +40,12 @@ namespace Enums
         None,
     }
 
-    public enum ListType
+    public enum TrackType
     {
-        Normal,
-        Album,
-        Aggregate,
-        AlbumAggregate,
+        Normal = 0,
+        Album = 1,
+        Aggregate = 2,
+        AlbumAggregate = 3,
     }
 
     public enum M3uOption
