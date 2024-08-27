@@ -30,6 +30,8 @@ static class Config
     public static string defaultFolderName = "";
     public static string spotifyId = "";
     public static string spotifySecret = "";
+    public static string spotifyToken = "";
+    public static string spotifyRefresh = "";
     public static string ytKey = "";
     public static string username = "";
     public static string password = "";
@@ -641,6 +643,14 @@ static class Config
                     case "--ss":
                     case "--spotify-secret":
                         spotifySecret = args[++i];
+                        break;
+                    case "--stk":
+                    case "--spotify-token":
+                        spotifyToken = args[++i];
+                        break;
+                    case "--str":
+                    case "--spotify-refresh":
+                        spotifyRefresh = args[++i];
                         break;
                     case "--yk":
                     case "--youtube-key":
