@@ -179,8 +179,8 @@ Usage: sldl <input> [OPTIONS]
 ```
 ```
   Album Download
-    -a, --album                    Album download mode
-    -t, --interactive              Allows to select the wanted folder and images
+    -a, --album                    Album download mode: Download a folder
+    -t, --interactive              Interactive mode, allows to select the folder and images
     --album-track-count <num>      Specify the exact number of tracks in the album. Add a + or
                                    - for inequalities, e.g '5+' for five or more tracks.
     --album-ignore-fails           Do not skip to the next source and do not delete all
