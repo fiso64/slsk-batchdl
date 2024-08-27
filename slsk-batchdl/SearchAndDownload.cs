@@ -482,18 +482,24 @@ static partial class Program
 
         var albums = await GetAlbumDownloads(track, responseData);
 
-        var sortedLengthLists = new List<(int[] lengths, List<Track> album)>();
+        var sortedLengthLists = new List<(int[] lengths, List<Track> album, string username)>();
 
         foreach (var album in albums)
         {
+            if (album.Count == 0)
+            {
+                continue;
+            }
+
             var sortedLengths = album.Where(x => !x.IsNotAudio).Select(x => x.Length).OrderBy(x => x).ToArray();
-            sortedLengthLists.Add((sortedLengths, album));
+            string user = album[0].FirstUsername;
+            sortedLengthLists.Add((sortedLengths, album, user));
         }
 
         var lengthsList = new List<int[]>();
         var res = new List<List<List<Track>>>();
 
-        foreach ((var lengths, var album) in sortedLengthLists)
+        foreach ((var lengths, var album, var user) in sortedLengthLists)
         {
             bool found = false;
 
@@ -536,7 +542,7 @@ static partial class Program
             }
         }
 
-        res = res.Where(x => x.Count >= Config.minUsersAggregate).OrderByDescending(x => x.Count).ToList();
+        res = res.Where(x => x.Count >= Config.minSharesAggregate).OrderByDescending(x => x.Count).ToList();
 
         return res; // Note: The nested lists are still ordered according to OrderedResults
     }
@@ -611,7 +617,7 @@ static partial class Program
         IEnumerable<(SlResponse, SlFile)> fileResponses, int minShares = -1)
     {
         if (minShares == -1)
-            minShares = Config.minUsersAggregate;
+            minShares = Config.minSharesAggregate;
 
         Track inferTrack((SearchResponse r, Soulseek.File f) x)
         {

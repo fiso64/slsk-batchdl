@@ -25,6 +25,7 @@ namespace Data
 
         public bool OutputsDirectory => Type != TrackType.Normal;
         public Soulseek.File? FirstDownload => Downloads?.FirstOrDefault().Value.Item2;
+        public string? FirstUsername => Downloads?.FirstOrDefault().Value.Item1.Username;
 
         public Track() { }
 

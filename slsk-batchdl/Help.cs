@@ -172,8 +172,8 @@ public static class Help
       Aggregate Download
         -g, --aggregate                Aggregate download mode: Find and download all distinct 
                                        songs associated with the provided artist, album, or title.
-        --min-users-aggregate <num>    Minimum number of users sharing a track or album for it to
-                                       be downloaded in aggregate mode. (Default: 2)
+        --min-shares-aggregate <num>   Minimum number of shares of a track or album for it to be
+                                       downloaded in aggregate mode. (Default: 2)
         --relax-filtering              Slightly relax file filtering in aggregate mode to include
                                        more results
 
@@ -265,9 +265,9 @@ public static class Help
         Two files are considered equal if their inferred track title and artist name are equal 
         (ignoring case and some special characters), and their lengths are within --length-tol of each
         other.
-        Note that this mode is not 100% reliable, which is why --min-users-aggregate is set to 2 by
-        default, i.e. any song that is shared by only one peer will be ignored. Enable --relax-filtering
-        to make the file filtering less aggressive.
+        Note that this mode is not 100% reliable, which is why --min-shares-aggregate is set to 2 by
+        default, i.e. any song that is shared only once will be ignored. Enable --relax-filtering to
+        make the file filtering less aggressive.
 
       Album Aggregate
         Activated when --album and --aggregate are enabled, in this mode sldl searches for the query
@@ -276,8 +276,8 @@ public static class Help
         other (or within 3 seconds if length-tol is not configured). If both folders have exactly one
         audio file with similar lengths, also checks if the inferred title and artist name coincide.
         More reliable than normal aggregate due to much simpler grouping logic.
-        Note that --min-users-aggregate is 2 by default, which means that folders shared by only one
-        peer are ignored.
+        Note that --min-shares-aggregate is 2 by default, which means that folders shared only once
+        will be ignored.
     ";
 
     const string searchHelp = @"

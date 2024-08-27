@@ -243,9 +243,9 @@ static partial class Program
 
             if (tle.needSourceSearch)
             {
-                Console.WriteLine($"{tle.source.Type} download: {tle.source.ToString(true)}, searching..");
-
                 await InitClientAndUpdateIfNeeded();
+
+                Console.WriteLine($"{tle.source.Type} download: {tle.source.ToString(true)}, searching..");
 
                 if (tle.source.Type == TrackType.Album)
                 {
@@ -260,7 +260,10 @@ static partial class Program
                     var res = await GetAggregateAlbums(tle.source, responseData);
 
                     foreach (var item in res)
-                        trackLists.AddEntry(new TrackListEntry(item, tle.source, false, true, true, false, false));
+                    {
+                        var newSource = new Track(tle.source) { Type = TrackType.Album };
+                        trackLists.AddEntry(new TrackListEntry(item, newSource, false, true, true, false, false));
+                    }
                 }
 
                 if (Config.skipExisting && tle.needSkipExistingAfterSearch)
@@ -993,7 +996,8 @@ static partial class Program
             user = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
             pass = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
         }
-        WriteLine($"Login {user}", debugOnly: true);
+
+        WriteLine($"Login {user}");
 
         while (true)
         {

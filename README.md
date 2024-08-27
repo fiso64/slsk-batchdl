@@ -199,8 +199,8 @@ Usage: sldl <input> [OPTIONS]
   Aggregate Download
     -g, --aggregate                Aggregate download mode: Find and download all distinct
                                    songs associated with the provided artist, album, or title.
-    --min-users-aggregate <num>    Minimum number of users sharing a track or album for it to
-                                   be downloaded in aggregate mode. (Default: 2)
+    --min-shares-aggregate <num>   Minimum number of shares of a track or album for it to be
+                                   downloaded in aggregate mode. (Default: 2)
     --relax-filtering              Slightly relax file filtering in aggregate mode to include
                                    more results
 ```
@@ -288,26 +288,25 @@ Input String                            | Artist   | Title    | Album    | Lengt
   string or csv row has no track title, or when -a/--album is enabled.
 
 ### Aggregate
-  With -g/--aggregate, sldl will first perform an ordinary search for the input, then
-  attempt to group the results into distinct songs and download one of each kind. A common use
-  case is finding all remixes of a song or printing all songs by an artist that are not your
-  music dir.  
-  Two files are considered equal if their inferred track title and artist name are equal
-  (ignoring case and some special characters), and their lengths are within --length-tol of each
-  other.  
-  Note that this mode is not 100% reliable, which is why --min-users-aggregate is set to 2 by default,
-  i.e. any song that is shared by only one peer will be ignored. Enable --relax-filtering to
-  make the file filtering less aggressive.
+With -g/--aggregate, sldl will first perform an ordinary search for the input, then attempt to
+group the results into distinct songs and download one of each kind. A common use case is
+finding all remixes of a song or printing all songs by an artist that are not your music dir.  
+Two files are considered equal if their inferred track title and artist name are equal 
+(ignoring case and some special characters), and their lengths are within --length-tol of each
+other.  
+Note that this mode is not 100% reliable, which is why --min-shares-aggregate is set to 2 by
+default, i.e. any song that is shared only once will be ignored. Enable --relax-filtering to
+make the file filtering less aggressive.
 
 ### Album Aggregate
-  Activated when --album and --aggregate are enabled, in this mode sldl searches for the query
-  and groups results into distinct albums. Two folders are considered same if they have the
-  same number of audio files, and the durations of the files are within --length-tol of each
-  other (or within 3 seconds if length-tol is not configured). If both folders have exactly one
-  audio file with similar lengths, also checks if the inferred title and artist name coincide.
-  More reliable than normal aggregate due to much simpler grouping logic.  
-  Note that --min-users-aggregate is 2 by default, which means that folders shared by only one
-  peer are ignored.
+Activated when --album and --aggregate are enabled, in this mode sldl searches for the query
+and groups results into distinct albums. Two folders are considered same if they have the
+same number of audio files, and the durations of the files are within --length-tol of each 
+other (or within 3 seconds if length-tol is not configured). If both folders have exactly one
+audio file with similar lengths, also checks if the inferred title and artist name coincide.
+More reliable than normal aggregate due to much simpler grouping logic.  
+Note that --min-shares-aggregate is 2 by default, which means that folders shared only once
+will be ignored.
 
 
 ## Searching

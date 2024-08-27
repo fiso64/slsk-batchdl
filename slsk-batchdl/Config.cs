@@ -80,7 +80,7 @@ static class Config
     public static int minAlbumTrackCount = -1;
     public static int maxAlbumTrackCount = -1;
     public static int fastSearchDelay = 300;
-    public static int minUsersAggregate = 2;
+    public static int minSharesAggregate = 2;
     public static int maxTracks = int.MaxValue;
     public static int offset = 0;
     public static int maxStaleTime = 50000;
@@ -625,9 +625,9 @@ static class Config
                     case "--aggregate":
                         setFlag(ref aggregate, ref i);
                         break;
-                    case "--mua":
-                    case "--min-users-aggregate":
-                        minUsersAggregate = int.Parse(args[++i]);
+                    case "--msa":
+                    case "--min-shares-aggregate":
+                        minSharesAggregate = int.Parse(args[++i]);
                         break;
                     case "--rf":
                     case "--relax":
