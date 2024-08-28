@@ -537,9 +537,6 @@ static class Config
                 case "bannedusers":
                     cond.BannedUsers = value.Split(',', tr);
                     break;
-                case "dangerwords":
-                    cond.DangerWords = value.Split(',', tr);
-                    break;
                 case "stricttitle":
                     cond.StrictTitle = bool.Parse(value);
                     break;
@@ -967,10 +964,6 @@ static class Config
                     case "--pref-max-bitdepth":
                         preferredCond.MaxBitDepth = int.Parse(args[++i]);
                         break;
-                    case "--pdw":
-                    case "--pref-danger-words":
-                        preferredCond.DangerWords = args[++i].Split(',');
-                        break;
                     case "--pst":
                     case "--pstt":
                     case "--pref-strict-title":
@@ -1021,10 +1014,6 @@ static class Config
                     case "--Mbd":
                     case "--max-bitdepth":
                         necessaryCond.MaxBitDepth = int.Parse(args[++i]);
-                        break;
-                    case "--dw":
-                    case "--danger-words":
-                        necessaryCond.DangerWords = args[++i].Split(',');
                         break;
                     case "--stt":
                     case "--strict-title":

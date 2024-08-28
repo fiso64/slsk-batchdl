@@ -22,6 +22,7 @@ static partial class Program
             throw new Exception();
 
         responseData ??= new ResponseData();
+        IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
         var progress = GetProgressBar(Config.displayMode);
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
@@ -38,7 +39,7 @@ static partial class Program
 
         if (track.Downloads != null)
         {
-            results = track.Downloads;
+            orderedResults = track.Downloads;
             goto downloads;
         }
 
@@ -141,9 +142,10 @@ static partial class Program
 
     downloads:
 
-        if (downloading == 0 && !results.IsEmpty)
+        if (downloading == 0 && (!results.IsEmpty || orderedResults != null))
         {
-            var orderedResults = OrderedResults(results, track, true);
+            if (orderedResults == null)
+                orderedResults = OrderedResults(results, track, useInfer: true);
 
             int trackTries = Config.maxRetriesPerTrack;
             async Task<bool> process(SlResponse response, SlFile file)
@@ -376,13 +378,12 @@ static partial class Program
                     Album = track.Album,
                     Length = x.file.Length ?? -1,
                     IsNotAudio = !Utils.IsMusicFile(x.file.Filename),
-                    Downloads = new ConcurrentDictionary<string, (SlResponse, SlFile file)>(
-                    new Dictionary<string, (SlResponse response, SlFile file)> { { x.response.Username + '\\' + x.file.Filename, x } })
+                    Downloads = new() { x },
                 };
                 ls.Add(t);
             }
 
-            ls = ls.OrderBy(t => t.IsNotAudio).ThenBy(t => t.Downloads.First().Value.Item2.Filename).ToList();
+            ls = ls.OrderBy(t => t.IsNotAudio).ThenBy(t => t.Downloads[0].Item2.Filename).ToList();
 
             result.Add(ls);
         }
@@ -396,9 +397,9 @@ static partial class Program
 
     static async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData)
     {
-        var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
+        var results = new SlDictionary();
         SearchOptions getSearchOptions(int timeout, FileConditions nec, FileConditions prf) =>
-            new SearchOptions(
+            new (
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
                 removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
@@ -410,9 +411,6 @@ static partial class Program
                 fileFilter: (file) =>
                 {
                     return Utils.IsMusicFile(file.Filename) && nec.FileSatisfies(file, track, null);
-                    //&& FileConditions.StrictString(file.Filename, track.ArtistName, ignoreCase: true)
-                    //&& FileConditions.StrictString(file.Filename, track.TrackTitle, ignoreCase: true)
-                    //&& FileConditions.StrictString(file.Filename, track.Album, ignoreCase: true);
                 }
             );
         void handler(SlResponse r)
@@ -433,11 +431,8 @@ static partial class Program
         string trackName = track.Title.Trim();
         string albumName = track.Album.Trim();
 
-        //var orderedResults = OrderedResults(results, track, false, false, false);
-
-        var fileResponses = results.Select(x => x.Value);
-
-        var equivalentFiles = EquivalentFiles(track, fileResponses).ToList();
+        var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value))
+            .Select(x => (x.Item1, OrderedResults(x.Item2, track, false, false, false))).ToList();
 
         if (!Config.relax)
         {
@@ -452,8 +447,7 @@ static partial class Program
         var tracks = equivalentFiles
             .Select(kvp =>
             {
-                kvp.Item1.Downloads = new SlDictionary(
-                    kvp.Item2.ToDictionary(item => { return item.response.Username + "\\" + item.file.Filename; }, item => item));
+                kvp.Item1.Downloads = kvp.Item2.ToList();
                 return kvp.Item1;
             }).ToList();
 
@@ -498,6 +492,7 @@ static partial class Program
             sortedLengthLists.Add((sortedLengths, album, user));
         }
 
+        var usernamesList = new List<HashSet<string>>();
         var lengthsList = new List<int[]>();
         var res = new List<List<List<Track>>>();
 
@@ -511,8 +506,8 @@ static partial class Program
                 {
                     if (lengths.Length == 1 && lengthsList[i].Length == 1) 
                     {
-                        var t1 = InferTrack(album[0].Downloads.First().Value.Item2.Filename, new Track());
-                        var t2 = InferTrack(res[i][0][0].Downloads.First().Value.Item2.Filename, new Track());
+                        var t1 = InferTrack(album[0].Downloads[0].Item2.Filename, new Track());
+                        var t2 = InferTrack(res[i][0][0].Downloads[0].Item2.Filename, new Track());
 
                         if ((t2.Artist.ContainsIgnoreCase(t1.Artist) || t1.Artist.ContainsIgnoreCase(t2.Artist))
                             && (t2.Title.ContainsIgnoreCase(t1.Title) || t1.Title.ContainsIgnoreCase(t2.Title)))
@@ -527,6 +522,7 @@ static partial class Program
                     
                     if (found)
                     {
+                        usernamesList[i].Add(user);
                         res[i].Add(album);
                         break;
                     }
@@ -539,12 +535,17 @@ static partial class Program
             }
             else
             {
+                usernamesList.Add(new() { user });
                 lengthsList.Add(lengths);
                 res.Add(new List<List<Track>> { album });
             }
         }
 
-        res = res.Where(x => x.Count >= Config.minSharesAggregate).OrderByDescending(x => x.Count).ToList();
+        res = res.Select((x, i) => (x, i))
+            .Where(x => usernamesList[x.i].Count >= Config.minSharesAggregate)
+            .OrderByDescending(x => usernamesList[x.i].Count)
+            .Select(x => x.x)
+            .ToList();
 
         return res; // Note: The nested lists are still ordered according to OrderedResults
     }
@@ -586,7 +587,7 @@ static partial class Program
 
             if (allFiles.Count > tracks.Count)
             {
-                var paths = tracks.Select(x => x.Downloads.First().Value.Item2.Filename).ToHashSet();
+                var paths = tracks.Select(x => x.Downloads[0].Item2.Filename).ToHashSet();
                 var first = tracks[0];
 
                 foreach ((var dir, var file) in allFiles)
@@ -600,8 +601,7 @@ static partial class Program
                             Artist = first.Artist,
                             Album = first.Album,
                             IsNotAudio = !Utils.IsMusicFile(file.Filename),
-                            Downloads = new ConcurrentDictionary<string, (SlResponse, SlFile file)>(
-                                new Dictionary<string, (SlResponse response, SlFile file)> { { response.Username + '\\' + fullPath, (response, newFile) } })
+                            Downloads = new() { (response, newFile) }
                         };
                         tracks.Add(t);
                     }
@@ -615,7 +615,7 @@ static partial class Program
     }
 
 
-    static IOrderedEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(Track track,
+    static IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(Track track,
         IEnumerable<(SlResponse, SlFile)> fileResponses, int minShares = -1)
     {
         if (minShares == -1)
@@ -628,52 +628,31 @@ static partial class Program
             return t;
         }
 
-        var res = fileResponses
-            .GroupBy(inferTrack, new TrackStringComparer(ignoreCase: true))
-            .Where(group => group.Select(x => x.Item1.Username).Distinct().Count() >= minShares)
-            .SelectMany(group =>
+        var groups = fileResponses
+            .GroupBy(inferTrack, new TrackComparer(ignoreCase: true, Config.necessaryCond.LengthTolerance))
+            .Select(x => (x, x.Select(y => y.Item1.Username).Distinct().Count()))
+            .Where(x => x.Item2 >= minShares)
+            .OrderByDescending(x => x.Item2)
+            .Select(x => x.x)
+            .Select(x =>
             {
-                var sortedTracks = group.OrderBy(t => t.Item2.Length).Where(x => x.Item2.Length != null).ToList();
-                var groups = new List<(Track, List<(SearchResponse, Soulseek.File)>)>();
-                var noLengthGroup = group.Where(x => x.Item2.Length == null);
-                for (int i = 0; i < sortedTracks.Count;)
-                {
-                    var subGroup = new List<(SearchResponse, Soulseek.File)> { sortedTracks[i] };
-                    int j = i + 1;
-                    while (j < sortedTracks.Count)
-                    {
-                        int l1 = (int)sortedTracks[j].Item2.Length;
-                        int l2 = (int)sortedTracks[i].Item2.Length;
-                        if (Config.necessaryCond.LengthTolerance == -1 || Math.Abs(l1 - l2) <= Config.necessaryCond.LengthTolerance)
-                        {
-                            subGroup.Add(sortedTracks[j]);
-                            j++;
-                        }
-                        else break;
-                    }
-                    var t = new Track(group.Key);
-                    t.Length = (int)sortedTracks[i].Item2.Length;
-                    groups.Add((t, subGroup));
-                    i = j;
-                }
+                if (x.Key.Length == -1)
+                    x.Key.Length = x.FirstOrDefault(y => y.Item2.Length != null).Item2?.Length ?? -1;
+                return (x.Key, x.AsEnumerable());
+            });
 
-                if (noLengthGroup.Any())
-                {
-                    if (groups.Count > 0 && !Config.preferredCond.AcceptNoLength)
-                        groups.First().Item2.AddRange(noLengthGroup);
-                    else
-                        groups.Add((group.Key, noLengthGroup.ToList()));
-                }
-
-                return groups.Where(subGroup => subGroup.Item2.Select(x => x.Item1.Username).Distinct().Count() >= minShares)
-                    .Select(subGroup => (subGroup.Item1, subGroup.Item2.AsEnumerable()));
-            }).OrderByDescending(x => x.Item2.Count());
-
-        return res;
+        return groups;
     }
 
 
     static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
+        Track track, bool useInfer = false, bool useLevenshtein = true, bool albumMode = false)
+    {
+        return OrderedResults(results.Select(x => x.Value), track, useInfer, useLevenshtein, albumMode);
+    }
+
+
+    static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<(SlResponse, SlFile)> results,
         Track track, bool useInfer = false, bool useLevenshtein = true, bool albumMode = false)
     {
         bool useBracketCheck = true;
@@ -685,9 +664,10 @@ static partial class Program
         }
 
         Dictionary<string, (Track, int)>? infTracksAndCounts = null;
-        if (useInfer)
+
+        if (useInfer) // this is very slow
         {
-            var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value), 1);
+            var equivalentFiles = EquivalentFiles(track, results, 1);
             infTracksAndCounts = equivalentFiles
                 .SelectMany(t => t.Item2, (t, f) => new { t.Item1, f.response.Username, f.file.Filename, Count = t.Item2.Count() })
                 .ToSafeDictionary(x => $"{x.Username}\\{x.Filename}", y => (y.Item1, y.Count));
@@ -710,7 +690,7 @@ static partial class Program
         }
 
         var random = new Random();
-        return results.Select(kvp => (response: kvp.Value.Item1, file: kvp.Value.Item2))
+        return results.Select(x => (response: x.Item1, file: x.Item2))
                 .Where(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.ignoreOn)
                 .OrderByDescending(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.downrankOn)
                 .ThenByDescending(x => Config.necessaryCond.FileSatisfies(x.file, track, x.response))
@@ -718,10 +698,11 @@ static partial class Program
                 .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || Config.preferredCond.AcceptNoLength)
                 .ThenByDescending(x => !useBracketCheck || FileConditions.BracketCheck(track, inferredTrack(x).Item1)) // downrank result if it contains '(' or '[' and the title does not (avoid remixes)
                 .ThenByDescending(x => Config.preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
+                .ThenByDescending(x => !albumMode || Config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
                 .ThenByDescending(x => Config.preferredCond.StrictArtistSatisfies(x.file.Filename, track.Title))
                 .ThenByDescending(x => Config.preferredCond.LengthToleranceSatisfies(x.file, track.Length))
                 .ThenByDescending(x => Config.preferredCond.FormatSatisfies(x.file.Filename))
-                .ThenByDescending(x => Config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
+                .ThenByDescending(x => albumMode || Config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
                 .ThenByDescending(x => Config.preferredCond.BitrateSatisfies(x.file))
                 .ThenByDescending(x => Config.preferredCond.SampleRateSatisfies(x.file))
                 .ThenByDescending(x => Config.preferredCond.BitDepthSatisfies(x.file))
@@ -901,7 +882,7 @@ static partial class Program
             }
             else
             {
-                var orderedResults = OrderedResults(results, track, true);
+                var orderedResults = OrderedResults(results, track, useInfer: true);
                 int count = 0;
                 Console.WriteLine();
                 foreach (var (response, file) in orderedResults)
@@ -971,7 +952,6 @@ static partial class Program
         filename = Utils.GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
 
         var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
-        //var trackNumMiddle = new Regex(@"\s+-\s+(\d{2,3})(?: -|\.|)\s+|\s+-(\d{2,3})-\s+");
         var trackNumMiddle = new Regex(@"(?<= - )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
         var trackNumMiddleAlt = new Regex(@"\s+-(\d{2,3})-\s+");
 

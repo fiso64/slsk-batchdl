@@ -1,6 +1,6 @@
 ﻿using Enums;
+using Soulseek;
 
-using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 namespace Data
 {
@@ -21,11 +21,11 @@ namespace Data
         public TrackType Type = TrackType.Normal;
         public FailureReason FailureReason = FailureReason.None;
         public TrackState State = TrackState.Initial;
-        public SlDictionary? Downloads = null;
+        public List<(SearchResponse, Soulseek.File)>? Downloads = null;
 
         public bool OutputsDirectory => Type != TrackType.Normal;
-        public Soulseek.File? FirstDownload => Downloads?.FirstOrDefault().Value.Item2;
-        public string? FirstUsername => Downloads?.FirstOrDefault().Value.Item1.Username;
+        public Soulseek.File? FirstDownload => Downloads?.FirstOrDefault().Item2;
+        public string? FirstUsername => Downloads?.FirstOrDefault().Item1?.Username;
 
         public Track() { }
 
@@ -64,13 +64,13 @@ namespace Data
 
         public string ToString(bool noInfo = false)
         {
-            if (IsNotAudio && Downloads != null && !Downloads.IsEmpty)
-                return $"{Utils.GetFileNameSlsk(Downloads.First().Value.Item2.Filename)}";
+            if (IsNotAudio && Downloads != null && Downloads.Count > 0)
+                return $"{Utils.GetFileNameSlsk(Downloads[0].Item2.Filename)}";
 
             string str = Artist;
-            if (Type == TrackType.Normal && Title.Length == 0 && Downloads != null && !Downloads.IsEmpty)
+            if (Type == TrackType.Normal && Title.Length == 0 && Downloads != null && Downloads.Count > 0)
             {
-                str = $"{Utils.GetFileNameSlsk(Downloads.First().Value.Item2.Filename)}";
+                str = $"{Utils.GetFileNameSlsk(Downloads[0].Item2.Filename)}";
             }
             else if (Title.Length > 0 || Album.Length > 0)
             {
@@ -313,12 +313,14 @@ namespace Data
         }
     }
 
-    public class TrackStringComparer : IEqualityComparer<Track>
+    public class TrackComparer : IEqualityComparer<Track>
     {
         private bool _ignoreCase = false;
-        public TrackStringComparer(bool ignoreCase = false)
+        private int _lenTol = -1;
+        public TrackComparer(bool ignoreCase = false, int lenTol = -1)
         {
             _ignoreCase = ignoreCase;
+            _lenTol = lenTol;
         }
 
         public bool Equals(Track a, Track b)
@@ -330,7 +332,8 @@ namespace Data
 
             return string.Equals(a.Title, b.Title, comparer)
                 && string.Equals(a.Artist, b.Artist, comparer)
-                && string.Equals(a.Album, b.Album, comparer);
+                && string.Equals(a.Album, b.Album, comparer)
+                && _lenTol == -1 || (a.Length == -1 && b.Length == -1) || (a.Length != -1 && b.Length != -1 && Math.Abs(a.Length - b.Length) <= _lenTol);
         }
 
         public int GetHashCode(Track a)

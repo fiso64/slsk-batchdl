@@ -350,12 +350,16 @@ static partial class Program
         else if (tle.source.Type == TrackType.Album)
         {
             Console.WriteLine(new string('-', 60));
-            Console.WriteLine($"Results for album {tle.source.ToString(true)}:");
+
+            if (!Config.printOption.HasFlag(PrintOption.Full))
+                Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
+            else
+                Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
 
             if (tle.list.Count > 0 && tle.list[0].Count > 0)
             {
                 if (!Config.noBrowseFolder)
-                    Console.WriteLine("[Skipped full folder retrieval]");
+                    Console.WriteLine("[Skipping full folder retrieval]");
 
                 foreach (var ls in tle.list)
                 {
@@ -430,12 +434,12 @@ static partial class Program
 
     static void PrintAlbum(List<Track> albumTracks, bool retrieveAll = false)
     {
-        if (albumTracks.Count == 0 && albumTracks[0].Downloads.IsEmpty)
+        if (albumTracks.Count == 0 && albumTracks[0].Downloads.Count == 0)
             return;
 
-        var response = albumTracks[0].Downloads.First().Value.Item1;
+        var response = albumTracks[0].Downloads[0].Item1;
         string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s)";
-        var (parents, props) = FolderInfo(albumTracks.SelectMany(x => x.Downloads.Select(d => d.Value.Item2)));
+        var (parents, props) = FolderInfo(albumTracks.SelectMany(x => x.Downloads.Select(d => d.Item2)));
 
         Console.WriteLine();
         WriteLine($"User  : {userInfo}\nFolder: {parents}\nProps : {props}", ConsoleColor.White);
@@ -623,23 +627,23 @@ static partial class Program
         {
             var albumArtList = list
                 //.Where(tracks => tracks)
-                .Select(tracks => tracks.Where(t => Utils.IsImageFile(t.Downloads.First().Value.Item2.Filename)))
+                .Select(tracks => tracks.Where(t => Utils.IsImageFile(t.Downloads[0].Item2.Filename)))
                 .Where(tracks => tracks.Any());
 
             if (option == AlbumArtOption.Largest)
             {
                 list = albumArtList
-                    .OrderByDescending(tracks => tracks.Select(t => t.Downloads.First().Value.Item2.Size).Max() / 1024 / 100)
-                    .ThenByDescending(tracks => tracks.First().Downloads.First().Value.Item1.UploadSpeed / 1024 / 300)
-                    .ThenByDescending(tracks => tracks.Select(t => t.Downloads.First().Value.Item2.Size).Sum() / 1024 / 100)
+                    .OrderByDescending(tracks => tracks.Select(t => t.Downloads[0].Item2.Size).Max() / 1024 / 100)
+                    .ThenByDescending(tracks => tracks.First().Downloads[0].Item1.UploadSpeed / 1024 / 300)
+                    .ThenByDescending(tracks => tracks.Select(t => t.Downloads[0].Item2.Size).Sum() / 1024 / 100)
                     .Select(x => x.ToList()).ToList();
             }
             else if (option == AlbumArtOption.Most)
             {
                 list = albumArtList
                     .OrderByDescending(tracks => tracks.Count())
-                    .ThenByDescending(tracks => tracks.First().Downloads.First().Value.Item1.UploadSpeed / 1024 / 300)
-                    .ThenByDescending(tracks => tracks.Select(t => t.Downloads.First().Value.Item2.Size).Sum() / 1024 / 100)
+                    .ThenByDescending(tracks => tracks.First().Downloads[0].Item1.UploadSpeed / 1024 / 300)
+                    .ThenByDescending(tracks => tracks.Select(t => t.Downloads[0].Item2.Size).Sum() / 1024 / 100)
                     .Select(x => x.ToList()).ToList();
             }
         }
@@ -655,7 +659,7 @@ static partial class Program
             else if (option == AlbumArtOption.Largest)
             {
                 long curMax = dlFiles.Keys.Where(x => Utils.IsImageFile(x) && File.Exists(x)).Max(x => new FileInfo(x).Length);
-                need = curMax < list[0].Max(t => t.Downloads.First().Value.Item2.Size) - 1024 * 50;
+                need = curMax < list[0].Max(t => t.Downloads[0].Item2.Size) - 1024 * 50;
             }
 
             return need;
@@ -693,7 +697,7 @@ static partial class Program
                 if (!Config.noBrowseFolder && !Config.interactiveMode && !retrievedFolders.Contains(soulseekFolderPathPrefix))
                 {
                     Console.WriteLine("Getting all files in folder...");
-                    var response = tracks[0].Downloads.First().Value.Item1;
+                    var response = tracks[0].Downloads[0].Item1;
                     await CompleteFolder(tracks, response, soulseekFolderPathPrefix);
                     retrievedFolders.Add(soulseekFolderPathPrefix);
                 }
@@ -865,9 +869,9 @@ static partial class Program
     static string GetCommonPathPrefix(List<Track> tracks)
     {
         if (tracks.Count == 1)
-            return Utils.GetDirectoryNameSlsk(tracks.First().Downloads.First().Value.Item2.Filename);
+            return Utils.GetDirectoryNameSlsk(tracks.First().Downloads[0].Item2.Filename);
         else
-            return Utils.GreatestCommonPath(tracks.SelectMany(x => x.Downloads.Select(y => y.Value.Item2.Filename)), dirsep: '\\');
+            return Utils.GreatestCommonPath(tracks.SelectMany(x => x.Downloads.Select(y => y.Item2.Filename)), dirsep: '\\');
     }
 
 
@@ -897,7 +901,7 @@ static partial class Program
         {
             Console.WriteLine();
             var tracks = list[aidx];
-            var response = tracks[0].Downloads.First().Value.Item1;
+            var response = tracks[0].Downloads[0].Item1;
 
             var folder = GetCommonPathPrefix(tracks);
             if (retrieveFolder && !Config.noBrowseFolder && !retrievedFolders.Contains(folder))
@@ -908,7 +912,7 @@ static partial class Program
             }
 
             string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s)";
-            var (parents, props) = FolderInfo(tracks.SelectMany(x => x.Downloads.Select(d => d.Value.Item2)));
+            var (parents, props) = FolderInfo(tracks.SelectMany(x => x.Downloads.Select(d => d.Item2)));
 
             WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
             WriteLine($"User  : {userInfo}\nFolder: {parents}\nProps : {props}", ConsoleColor.White);
@@ -1396,7 +1400,7 @@ static partial class Program
         string ancestor = "";
 
         if (showAncestors)
-            ancestor = Utils.GreatestCommonPath(tracks.SelectMany(x => x.Downloads.Select(y => y.Value.Item2.Filename)), Path.DirectorySeparatorChar);
+            ancestor = Utils.GreatestCommonPath(tracks.SelectMany(x => x.Downloads.Select(y => y.Item2.Filename)), Path.DirectorySeparatorChar);
 
         if (pathsOnly)
         {
@@ -1405,9 +1409,9 @@ static partial class Program
                 foreach (var x in tracks[i].Downloads)
                 {
                     if (ancestor.Length == 0)
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst, showUser: showUser));
+                        Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
                     else
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
+                        Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
                 }
             }
         }
@@ -1447,23 +1451,23 @@ static partial class Program
                         foreach (var x in tracks[i].Downloads)
                         {
                             if (ancestor.Length == 0)
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst, showUser: showUser));
+                                Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
                             else
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
+                                Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
                         }
                         if (tracks[i].Downloads?.Count > 0) Console.WriteLine();
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"  File:               {Utils.GetFileNameSlsk(tracks[i].Downloads.First().Value.Item2.Filename)}");
+                    Console.WriteLine($"  File:               {Utils.GetFileNameSlsk(tracks[i].Downloads[0].Item2.Filename)}");
                     Console.WriteLine($"  Shares:             {tracks[i].Downloads.Count}");
                     foreach (var x in tracks[i].Downloads)
                     {
                         if (ancestor.Length == 0)
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, infoFirst: infoFirst, showUser: showUser));
+                            Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
                         else
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Value.Item2, x.Value.Item1, customPath: x.Value.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
+                            Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, ""), infoFirst: infoFirst, showUser: showUser));
                     }
                     Console.WriteLine();
                 }

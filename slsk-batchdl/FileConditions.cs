@@ -17,10 +17,8 @@ public class FileConditions
     public bool StrictTitle = false;
     public bool StrictArtist = false;
     public bool StrictAlbum = false;
-    public string[] DangerWords = Array.Empty<string>();
     public string[] Formats = Array.Empty<string>();
     public string[] BannedUsers = Array.Empty<string>();
-    public string StrictStringRegexRemove = string.Empty;
     public bool StrictStringDiacrRemove = true;
     public bool AcceptNoLength = true;
     public bool AcceptMissingProps = true;
@@ -40,7 +38,6 @@ public class FileConditions
         MinBitDepth = other.MinBitDepth;
         MaxBitDepth = other.MaxBitDepth;
         Formats = other.Formats.ToArray();
-        DangerWords = other.DangerWords.ToArray();
         BannedUsers = other.BannedUsers.ToArray();
     }
 
@@ -58,12 +55,10 @@ public class FileConditions
                    StrictTitle == other.StrictTitle &&
                    StrictArtist == other.StrictArtist &&
                    StrictAlbum == other.StrictAlbum &&
-                   StrictStringRegexRemove == other.StrictStringRegexRemove &&
                    StrictStringDiacrRemove == other.StrictStringDiacrRemove &&
                    AcceptNoLength == other.AcceptNoLength &&
                    AcceptMissingProps == other.AcceptMissingProps &&
                    Formats.SequenceEqual(other.Formats) &&
-                   DangerWords.SequenceEqual(other.DangerWords) &&
                    BannedUsers.SequenceEqual(other.BannedUsers);
         }
         return false;
@@ -81,7 +76,7 @@ public class FileConditions
 
     public bool FileSatisfies(Soulseek.File file, Track track, SearchResponse? response)
     {
-        return DangerWordSatisfies(file.Filename, track.Title, track.Artist) && FormatSatisfies(file.Filename)
+        return FormatSatisfies(file.Filename)
             && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
             && StrictTitleSatisfies(file.Filename, track.Title) && StrictArtistSatisfies(file.Filename, track.Artist)
             && StrictAlbumSatisfies(file.Filename, track.Album) && BannedUsersSatisfies(response) && BitDepthSatisfies(file);
@@ -89,7 +84,7 @@ public class FileConditions
 
     public bool FileSatisfies(TagLib.File file, Track track, bool filenameChecks = false)
     {
-        return DangerWordSatisfies(file.Name, track.Title, track.Artist) && FormatSatisfies(file.Name)
+        return FormatSatisfies(file.Name)
             && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
             && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, track.Title) 
             && StrictArtistSatisfies(file.Name, track.Artist) && StrictAlbumSatisfies(file.Name, track.Album));
@@ -97,35 +92,10 @@ public class FileConditions
 
     public bool FileSatisfies(SimpleFile file, Track track, bool filenameChecks = false)
     {
-        return DangerWordSatisfies(file.Path, track.Title, track.Artist) && FormatSatisfies(file.Path)
+        return FormatSatisfies(file.Path)
             && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
             && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Path, track.Title)
             && StrictArtistSatisfies(file.Path, track.Artist) && StrictAlbumSatisfies(file.Path, track.Album));
-    }
-
-    public bool DangerWordSatisfies(string fname, string tname, string aname)
-    {
-        if (tname.Length == 0)
-            return true;
-
-        fname = Utils.GetFileNameWithoutExtSlsk(fname).Replace(" — ", " - ");
-        tname = tname.Replace(" — ", " - ");
-
-        foreach (var word in DangerWords)
-        {
-            if (fname.ContainsIgnoreCase(word) ^ tname.ContainsIgnoreCase(word))
-            {
-                if (!(fname.Contains(" - ") && fname.ContainsIgnoreCase(word) && aname.ContainsIgnoreCase(word)))
-                {
-                    if (word == "mix")
-                        return fname.ContainsIgnoreCase("original mix") || tname.ContainsIgnoreCase("original mix");
-                    else
-                        return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     public bool StrictTitleSatisfies(string fname, string tname, bool noPath = true)
@@ -134,7 +104,7 @@ public class FileConditions
             return true;
 
         fname = noPath ? Utils.GetFileNameWithoutExtSlsk(fname) : fname;
-        return StrictString(fname, tname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true);
+        return StrictString(fname, tname, StrictStringDiacrRemove, ignoreCase: true);
     }
 
     public bool StrictArtistSatisfies(string fname, string aname)
@@ -142,7 +112,7 @@ public class FileConditions
         if (!StrictArtist || aname.Length == 0)
             return true;
 
-        return StrictString(fname, aname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true, boundarySkipWs: false);
+        return StrictString(fname, aname, StrictStringDiacrRemove, ignoreCase: true, boundarySkipWs: false);
     }
 
     public bool StrictAlbumSatisfies(string fname, string alname)
@@ -150,25 +120,24 @@ public class FileConditions
         if (!StrictAlbum || alname.Length == 0)
             return true;
 
-        return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, StrictStringRegexRemove, StrictStringDiacrRemove, ignoreCase: true);
+        return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, StrictStringDiacrRemove, ignoreCase: true);
     }
 
-    public static string StrictStringPreprocess(string str, string regexRemove = "", bool diacrRemove = true)
+    public static string StrictStringPreprocess(string str, bool diacrRemove = true)
     {
         str = str.Replace('_', ' ').ReplaceInvalidChars(' ', true, false);
-        str = regexRemove.Length > 0 ? Regex.Replace(str, regexRemove, "") : str;
         str = diacrRemove ? str.RemoveDiacritics() : str;
         str = str.Trim().RemoveConsecutiveWs();
         return str;
     }
 
-    public static bool StrictString(string fname, string tname, string regexRemove = "", bool diacrRemove = true, bool ignoreCase = true, bool boundarySkipWs = true)
+    public static bool StrictString(string fname, string tname, bool diacrRemove = true, bool ignoreCase = true, bool boundarySkipWs = true)
     {
         if (tname.Length == 0)
             return true;
 
-        fname = StrictStringPreprocess(fname, regexRemove, diacrRemove);
-        tname = StrictStringPreprocess(tname, regexRemove, diacrRemove);
+        fname = StrictStringPreprocess(fname, diacrRemove);
+        tname = StrictStringPreprocess(tname, diacrRemove);
 
         if (boundarySkipWs)
             return fname.ContainsWithBoundaryIgnoreWs(tname, ignoreCase, acceptLeftDigit: true);
@@ -252,43 +221,24 @@ public class FileConditions
 
     public string GetNotSatisfiedName(Soulseek.File file, Track track, SearchResponse? response)
     {
-        if (!DangerWordSatisfies(file.Filename, track.Title, track.Artist))
-            return "DangerWord fails";
-        if (!FormatSatisfies(file.Filename))
-            return "Format fails";
-        if (!LengthToleranceSatisfies(file, track.Length))
-            return "Length fails";
-        if (!BitrateSatisfies(file))
-            return "Bitrate fails";
-        if (!SampleRateSatisfies(file))
-            return "SampleRate fails";
-        if (!StrictTitleSatisfies(file.Filename, track.Title))
-            return "StrictTitle fails";
-        if (!StrictArtistSatisfies(file.Filename, track.Artist))
-            return "StrictArtist fails";
-        if (!BitDepthSatisfies(file))
-            return "BitDepth fails";
         if (!BannedUsersSatisfies(response))
             return "BannedUsers fails";
-        return "Satisfied";
-    }
-
-    public string GetNotSatisfiedName(TagLib.File file, Track track)
-    {
-        if (!DangerWordSatisfies(file.Name, track.Title, track.Artist))
-            return "DangerWord fails";
-        if (!FormatSatisfies(file.Name))
-            return "Format fails";
+        if (!StrictTitleSatisfies(file.Filename, track.Title))
+            return "StrictTitle fails";
+        if (track.Type == Enums.TrackType.Album && !StrictAlbumSatisfies(file.Filename, track.Artist))
+            return "StrictAlbum fails";
+        if (!StrictArtistSatisfies(file.Filename, track.Artist))
+            return "StrictArtist fails";
         if (!LengthToleranceSatisfies(file, track.Length))
-            return "Length fails";
+            return "LengthTolerance fails";
+        if (!FormatSatisfies(file.Filename))
+            return "Format fails";
+        if (track.Type != Enums.TrackType.Album && !StrictAlbumSatisfies(file.Filename, track.Artist))
+            return "StrictAlbum fails";
         if (!BitrateSatisfies(file))
             return "Bitrate fails";
         if (!SampleRateSatisfies(file))
             return "SampleRate fails";
-        if (!StrictTitleSatisfies(file.Name, track.Title))
-            return "StrictTitle fails";
-        if (!StrictArtistSatisfies(file.Name, track.Artist))
-            return "StrictArtist fails";
         if (!BitDepthSatisfies(file))
             return "BitDepth fails";
         return "Satisfied";

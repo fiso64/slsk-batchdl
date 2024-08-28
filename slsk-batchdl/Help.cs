@@ -83,8 +83,8 @@ public static class Help
                                        on a per-track basis, so it is best kept off in that case.
         -d, --desperate                Tries harder to find the desired track by searching for the
                                        artist/album/title only, then filtering. (slower search)
-        --fails-to-downrank <num>      Number of fails to downrank a user's uploads (default: 1)
-        --fails-to-ignore <num>        Number of fails to ban/ignore a user's uploads (default: 2)
+        --fails-to-downrank <num>      Number of fails to downrank a user's shares (default: 1)
+        --fails-to-ignore <num>        Number of fails to ban/ignore a user's shares (default: 2)
           
         --yt-dlp                       Use yt-dlp to download tracks that weren't found on
                                        Soulseek. yt-dlp must be available from the command line.
@@ -339,8 +339,12 @@ public static class Help
 
       sldl will therefore prefer mp3 files with bitrate between 200 and 2500 kbps, and whose length
       differs from the supplied length by no more than 3 seconds. It will also prefer files whose
-      paths contain the supplied artist and album (ignoring case, and bounded by boundary characters)
-      and which have a non-null length. Changing the last three preferred conditions is not recommended.
+      paths contain the supplied title and album (ignoring case, and bounded by boundary characters)
+      and which have non-null length. Changing the last three preferred conditions is not recommended.
+      Note that files satisfying a subset of the preferred conditions will still be preferred over files
+      that don't satisfy any condition, but some conditions have precedence over others. For instance,
+      a file that only satisfies strict-title (if enabled) will always be preferred over a file that
+      only satisfies the format condition. Run with --print ""results-full"" to reveal the sorting logic.
         
       Important note
         Some info may be unavailable depending on the client used by the peer. For example, the standard 
