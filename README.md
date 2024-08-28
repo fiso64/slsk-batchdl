@@ -250,7 +250,7 @@ The id and secret can be obtained at https://developer.spotify.com/dashboard/app
 Create an app and add http://localhost:48721/callback as a redirect url in its settings.
 
 ### Bandcamp
-An bandcamp url: Download a single track, and album, or an artist's entire discography. 
+A bandcamp url: Download a single track, and album, or an artist's entire discography. 
 Extracts the artist name, album name and sets --album-track-count="n+", where n is the 
 number of visible tracks on the bandcamp page.
 

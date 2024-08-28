@@ -76,7 +76,7 @@ static partial class Program
 
         m3uEditor = new M3uEditor(Config.m3uFilePath, trackLists, Config.m3uOption, Config.offset);
 
-        InitExistingChecker();
+        InitExistingCheckers();
 
         await MainLoop();
         WriteLine("Mainloop done", debugOnly: true);
@@ -109,7 +109,7 @@ static partial class Program
     }
 
 
-    static void InitExistingChecker()
+    static void InitExistingCheckers()
     {
         if (Config.skipExisting)
         {
@@ -123,7 +123,7 @@ static partial class Program
                 if (!Directory.Exists(Config.musicDir))
                     Console.WriteLine("Error: Music directory does not exist");
                 else
-                    musicDirExistingChecker = ExistingCheckerRegistry.GetChecker(Config.skipModeMusicDir, Config.outputFolder, cond, m3uEditor);
+                    musicDirExistingChecker = ExistingCheckerRegistry.GetChecker(Config.skipModeMusicDir, Config.musicDir, cond, m3uEditor);
             }
         }
     }
@@ -255,7 +255,7 @@ static partial class Program
                 }
                 else if (tle.source.Type == TrackType.Aggregate)
                 {
-                    tle.list[0] = await GetAggregateTracks(tle.source, responseData);
+                    tle.list.Insert(0, await GetAggregateTracks(tle.source, responseData));
                 }
                 else if (tle.source.Type == TrackType.AlbumAggregate)
                 {
@@ -271,7 +271,7 @@ static partial class Program
                 if (Config.skipExisting && tle.needSkipExistingAfterSearch)
                 {
                     foreach (var tracks in tle.list)
-                        notFound.AddRange(DoSkipExisting(tracks));
+                        existing.AddRange(DoSkipExisting(tracks));
                 }
 
                 if (tle.gotoNextAfterSearch)
@@ -412,7 +412,7 @@ static partial class Program
                 Console.WriteLine("\n-----------------------------------------------\n");
         }
 
-        if (Config.PrintTracks)
+        if (Config.PrintTracks || Config.PrintResults)
         {
             if (existing.Count > 0)
             {

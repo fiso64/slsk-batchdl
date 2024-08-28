@@ -363,7 +363,7 @@ static partial class Program
         {
             int musicFileCount = val.Count(x => Utils.IsMusicFile(x.file.Filename));
 
-            if (!countIsGood(musicFileCount))
+            if (musicFileCount == 0 || !countIsGood(musicFileCount))
                 continue;
 
             var ls = new List<Track>();
@@ -432,6 +432,8 @@ static partial class Program
         string artistName = track.Artist.Trim();
         string trackName = track.Title.Trim();
         string albumName = track.Album.Trim();
+
+        //var orderedResults = OrderedResults(results, track, false, false, false);
 
         var fileResponses = results.Select(x => x.Value);
 
@@ -961,9 +963,11 @@ static partial class Program
     }
 
 
-    static Track InferTrack(string filename, Track defaultTrack)
+    static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
         var t = new Track(defaultTrack);
+        t.Type = type;
+
         filename = Utils.GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
 
         var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");

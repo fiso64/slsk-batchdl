@@ -357,7 +357,7 @@ public static class Utils
         return s.Contains(other, StringComparison.OrdinalIgnoreCase);
     }
 
-    static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@:*=+{}|'\"$^&`~%<>".ToCharArray());
+    static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@#:*=+{}|'\"$^&`~%<>".ToCharArray());
 
     public static bool ContainsWithBoundary(this string str, string value, bool ignoreCase = false)
     {
@@ -429,6 +429,38 @@ public static class Utils
         {
             if (match.Value.Contains(searchTerm, comp))
                 return true;
+        }
+
+        return false;
+    }
+
+    public static bool ContainsInBracketsOptimized(this string str, string searchTerm, bool ignoreCase = false)
+    {
+        if (str.Length == 0 && searchTerm.Length > 0)
+            return false;
+
+        var comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        int depth = 0;
+        int searchTermLen = searchTerm.Length;
+
+        for (int i = 0; i < str.Length; i++)
+        {
+            char c = str[i];
+
+            if (c == '[' || c == '(')
+            {
+                depth++;
+            }
+            else if (c == ']' || c == ')')
+            {
+                depth--;
+            }
+
+            if (depth > 0 && i + searchTermLen <= str.Length)
+            {
+                if (str.Substring(i, searchTermLen).Equals(searchTerm, comp))
+                    return true;
+            }
         }
 
         return false;

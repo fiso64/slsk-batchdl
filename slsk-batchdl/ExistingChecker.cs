@@ -31,7 +31,7 @@ namespace ExistingCheckers
 
     public class NameExistingChecker : ExistingChecker
     {
-        readonly string[] ignore = new string[] { " ", "_", "-", ".", "(", ")", "[", "]" };
+        readonly string[] ignore = new string[] { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
         readonly List<(string, string, string)> index = new(); // (Path, PreprocessedPath, PreprocessedName)
 
@@ -42,15 +42,22 @@ namespace ExistingCheckers
 
         private string Preprocess(string s, bool removeSlash)
         {
-            s = s.ToLower().Replace(ignore, "");
-            s = s.ReplaceInvalidChars("", false, removeSlash);
+            s = s.ToLower();
             s = s.RemoveFt();
-            s = s.RemoveDiacritics();
+            s = s.Replace(ignore, " ");
+            s = s.ReplaceInvalidChars(' ', false, removeSlash);
+            s = s.RemoveConsecutiveWs();
             return s;
         }
 
         public override void BuildIndex()
         {
+            if (!Directory.Exists(dir))
+            {
+                IndexIsBuilt = true;
+                return;
+            }
+
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
             int removeLen = Preprocess(dir, false).Length + 1;
@@ -59,7 +66,7 @@ namespace ExistingCheckers
             {
                 if (Utils.IsMusicFile(path))
                 {
-                    string ppath = Preprocess(path[..path.LastIndexOf('.')], false)[removeLen..];
+                    string ppath = Preprocess(path[removeLen..path.LastIndexOf('.')], false);
                     string pname = Path.GetFileName(ppath);
                     index.Add((path, ppath, pname));
                 }
@@ -80,8 +87,7 @@ namespace ExistingCheckers
 
             foreach ((var path, var ppath, var pname) in index)
             {
-                if (pname.ContainsWithBoundaryIgnoreWs(title, acceptLeftDigit: true) 
-                    && ppath.ContainsWithBoundaryIgnoreWs(artist, acceptLeftDigit: true))
+                if (pname.ContainsWithBoundary(title) && ppath.ContainsWithBoundary(artist))
                 {
                     foundPath = path;
                     return true;
@@ -95,7 +101,7 @@ namespace ExistingCheckers
 
     public class NameConditionExistingChecker : ExistingChecker
     {
-        readonly string[] ignore = new string[] { " ", "_", "-", ".", "(", ")", "[", "]" };
+        readonly string[] ignore = new string[] { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedPath, PreprocessedName, file)
         FileConditions conditions;
@@ -108,15 +114,22 @@ namespace ExistingCheckers
 
         private string Preprocess(string s, bool removeSlash)
         {
-            s = s.ToLower().Replace(ignore, "");
-            s = s.ReplaceInvalidChars("", false, removeSlash);
+            s = s.ToLower();
             s = s.RemoveFt();
-            s = s.RemoveDiacritics();
+            s = s.Replace(ignore, " ");
+            s = s.ReplaceInvalidChars(' ', false, removeSlash);
+            s = s.RemoveConsecutiveWs();
             return s;
         }
 
         public override void BuildIndex()
         {
+            if (!Directory.Exists(dir))
+            {
+                IndexIsBuilt = true;
+                return;
+            }
+
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
             int removeLen = Preprocess(dir, false).Length + 1;
@@ -150,9 +163,7 @@ namespace ExistingCheckers
 
             foreach ((var ppath, var pname, var musicFile) in index)
             {
-                if (pname.ContainsWithBoundaryIgnoreWs(title, acceptLeftDigit: true) 
-                    && ppath.ContainsWithBoundaryIgnoreWs(artist, acceptLeftDigit: true)
-                    && conditions.FileSatisfies(musicFile, track))
+                if (pname.ContainsWithBoundary(title) && ppath.ContainsWithBoundary(artist) && conditions.FileSatisfies(musicFile, track))
                 {
                     foundPath = musicFile.Path;
                     return true;
@@ -176,11 +187,17 @@ namespace ExistingCheckers
 
         private string Preprocess(string s)
         {
-            return s.Replace(" ", "").RemoveFt().ToLower();
+            return s.RemoveFt().Replace(" ", "").ToLower();
         }
 
         public override void BuildIndex()
         {
+            if (!Directory.Exists(dir))
+            {
+                IndexIsBuilt = true;
+                return;
+            }
+
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
             foreach (var path in files)
@@ -237,11 +254,17 @@ namespace ExistingCheckers
 
         private string Preprocess(string s)
         {
-            return s.Replace(" ", "").RemoveFt().ToLower();
+            return s.RemoveFt().Replace(" ", "").ToLower();
         }
 
         public override void BuildIndex()
         {
+            if (!Directory.Exists(dir))
+            {
+                IndexIsBuilt = true;
+                return;
+            }
+
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
             foreach (var path in files)
@@ -293,6 +316,7 @@ namespace ExistingCheckers
         {
             this.m3uEditor = m3UEditor;
             this.checkFileExists = checkFileExists;
+            IndexIsBuilt = true;
         }
 
         public override bool TrackExists(Track track, out string? foundPath)
@@ -334,6 +358,7 @@ namespace ExistingCheckers
         {
             this.m3uEditor = m3UEditor;
             this.conditions = conditions;
+            IndexIsBuilt = true;
         }
 
         public override bool TrackExists(Track track, out string? foundPath)
