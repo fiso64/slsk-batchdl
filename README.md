@@ -1,6 +1,7 @@
 # slsk-batchdl
 
-A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls. See [Examples](#examples-1).
+A batch downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls.  
+See the [examples](#examples-1).
 
 ## Index
  - [Options](#options)
