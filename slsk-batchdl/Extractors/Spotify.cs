@@ -29,22 +29,10 @@ namespace Extractors
             bool needLogin = Config.input == "spotify-likes" || Config.removeTracksFromSource;
             var tle = new TrackListEntry();
 
-            static void readSpotifyCreds()
-            {
-                Console.Write("Spotify client ID:");
-                Config.spotifyId = Console.ReadLine();
-                Console.Write("Spotify client secret:");
-                Config.spotifySecret = Console.ReadLine();
-                Console.Write("Spotify token:");
-                Config.spotifyToken = Console.ReadLine();
-                Console.Write("Spotify refresh token:");
-                Config.spotifyRefresh = Console.ReadLine();
-                Console.WriteLine();
-            }
-
             if (needLogin && Config.spotifyToken.Length == 0 && (Config.spotifyId.Length == 0 || Config.spotifySecret.Length == 0))
             {
-                readSpotifyCreds();
+                Console.WriteLine("Error: Credentials are required when downloading liked music or removing from source playlists.");
+                Environment.Exit(0);
             }
 
             spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret, Config.spotifyToken, Config.spotifyRefresh);
@@ -73,7 +61,8 @@ namespace Extractors
             else if (Config.input.Contains("/artist/"))
             {
                 Console.WriteLine("Loading spotify artist");
-                throw new NotImplementedException("Spotify artist download currently not supported.");
+                Console.WriteLine("Error: Spotify artist download currently not supported.");
+                Environment.Exit(0);
             }
             else
             {
@@ -93,19 +82,8 @@ namespace Extractors
                     }
                     else if (!needLogin)
                     {
-                        Console.WriteLine("Spotify playlist not found. It may be set to private. Login? [Y/n]");
-                        if (Console.ReadLine()?.ToLower().Trim() == "y")
-                        {
-                            readSpotifyCreds();
-                            spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret);
-                            await spotifyClient.Authorize(true, Config.removeTracksFromSource);
-                            Console.WriteLine("Loading Spotify playlist");
-                            (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(Config.input, max, off);
-                        }
-                        else
-                        {
-                            Environment.Exit(0);
-                        }
+                        Console.WriteLine("Spotify playlist not found (it may be set to private, but no credentials have been provided).");
+                        Environment.Exit(0);
                     }
                     else throw;
                 }
@@ -242,11 +220,11 @@ namespace Extractors
             if (_clientRefreshToken.Length != 0)
             {
                 Console.WriteLine("Trying to renew access with refresh token...");
-            //     var refreshRequest = new TokenSwapRefreshRequest(
-            //     new Uri("http://localhost:48721/refresh"),
-            //     _clientRefreshToken
-            // );
-            var refreshRequest = new AuthorizationCodeRefreshRequest(_clientId, _clientSecret, _clientRefreshToken);
+                //     var refreshRequest = new TokenSwapRefreshRequest(
+                //     new Uri("http://localhost:48721/refresh"),
+                //     _clientRefreshToken
+                // );
+                var refreshRequest = new AuthorizationCodeRefreshRequest(_clientId, _clientSecret, _clientRefreshToken);
                 try
                 {
                     var oauthClient = new OAuthClient();
@@ -279,9 +257,11 @@ namespace Extractors
                 )
             );
 
-            Console.WriteLine("Spotify token: " + tokenResponse.AccessToken);
+            Console.WriteLine("spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
-            Console.WriteLine("Spotify refresh token: " + tokenResponse.RefreshToken);
+            Console.WriteLine();
+            Console.WriteLine("spotify-refresh=" + tokenResponse.RefreshToken);
+            Console.WriteLine();
             _clientRefreshToken = tokenResponse.RefreshToken;
 
             _client = new SpotifyClient(tokenResponse.AccessToken);
