@@ -585,7 +585,7 @@ Set up a cron job (or scheduled task on windows) to periodically run sldl on eve
 ```
 --skip-existing --skip-mode m3u --m3u index --m3u-path wishlist-archive.sldl
 ```
-You can also use m3u-cond and specify some preferred conditions to e.g only stop searching for an item once a lossless version is downloaded.
+You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
