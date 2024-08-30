@@ -25,6 +25,7 @@ namespace Data
 
         public bool OutputsDirectory => Type != TrackType.Normal;
         public Soulseek.File? FirstDownload => Downloads?.FirstOrDefault().Item2;
+        public SearchResponse? FirstResponse => Downloads?.FirstOrDefault().Item1;
         public string? FirstUsername => Downloads?.FirstOrDefault().Item1?.Username;
 
         public Track() { }
@@ -106,7 +107,6 @@ namespace Data
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
         public bool placeInSubdir = false;
-        public bool useRemoteDirname = false;
 
         public TrackListEntry()
         {
@@ -140,15 +140,14 @@ namespace Data
                 && source.Type != TrackType.AlbumAggregate;
         }
 
-        public TrackListEntry(List<List<Track>> list, Track source, bool needSearch, bool placeInSubdir, 
-            bool useRemoteDirname, bool canBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
+        public TrackListEntry(List<List<Track>> list, Track source, bool needSearch, bool placeInSubdir,
+            bool sourceCanBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
         {
             this.list = list;
             this.source = source;
             this.needSourceSearch = needSearch;
             this.placeInSubdir = placeInSubdir;
-            this.useRemoteDirname = useRemoteDirname;
-            this.sourceCanBeSkipped = canBeSkipped;
+            this.sourceCanBeSkipped = sourceCanBeSkipped;
             this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
             this.gotoNextAfterSearch = gotoNextAfterSearch;
         }

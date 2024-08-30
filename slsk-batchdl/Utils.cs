@@ -140,14 +140,14 @@ public static class Utils
         return ((decimal)value) / 1.000000000000000000000000000000000m;
     }
 
-    public static int GetRecursiveFileCount(string directory)
+    public static int FileCountRecursive(string directory)
     {
         if (!Directory.Exists(directory))
             return 0;
 
         int count = Directory.GetFiles(directory).Length;
         foreach (string subDirectory in Directory.GetDirectories(directory))
-            count += GetRecursiveFileCount(subDirectory);
+            count += FileCountRecursive(subDirectory);
 
         return count;
     }
@@ -512,23 +512,23 @@ public static class Utils
         return distance[source.Length, target.Length];
     }
 
-    public static string GreatestCommonPath(IEnumerable<string> paths, char dirsep)
+    public static string GreatestCommonPath(IEnumerable<string> paths)
     {
         string? path = paths.FirstOrDefault();
 
         if (path == null || path.Length == 0)
             return "";
 
-        int commonPathIndex(string path1, string path2, int maxIndex)
+        static int commonPathIndex(string path1, string path2, int maxIndex)
         {
             var minLength = Math.Min(path1.Length, Math.Min(path2.Length, maxIndex));
             var commonPathLength = 0;
             for (int i = 0; i < minLength; i++)
             {
-                if (path1[i] != path2[i])
-                    break;
-                if (path1[i] == dirsep)
+                if ((path1[i] == '/' || path1[i] == '\\') && (path2[i] == '/' || path2[i] == '\\'))
                     commonPathLength = i + 1;
+                else if (path1[i] != path2[i])
+                    break;
             }
             return commonPathLength;
         }
@@ -539,6 +539,27 @@ public static class Utils
             index = commonPathIndex(path, p, index);
 
         return path[..index];
+    }
+
+    public static string GreatestCommonDirectory(IEnumerable<string> paths)
+    {
+        if (paths.Skip(1).Any())
+            return NormalizedPath(GreatestCommonPath(paths));
+        else
+            return NormalizedPath(Path.GetDirectoryName(paths.First().TrimEnd('/').TrimEnd('\\')) ?? "");
+    }
+
+    public static string GreatestCommonDirectorySlsk(IEnumerable<string> paths)
+    {
+        if (paths.Skip(1).Any())
+            return Utils.GreatestCommonPath(paths).Replace('/', '\\').TrimEnd('\\');
+        else
+            return Utils.GetDirectoryNameSlsk(paths.First()).Replace('/', '\\').TrimEnd('\\');
+    }
+
+    public static string NormalizedPath(string path)
+    {
+        return path.Replace('\\', '/').TrimEnd('/').Trim();
     }
 
     public static bool SequenceEqualUpToPermutation<T>(this IEnumerable<T> list1, IEnumerable<T> list2)

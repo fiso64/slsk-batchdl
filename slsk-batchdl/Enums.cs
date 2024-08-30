@@ -68,7 +68,6 @@ namespace Enums
         Default,
         Most,
         Largest,
-        MostLargest,
     }
 
     public enum DisplayMode

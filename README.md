@@ -191,7 +191,6 @@ Usage: sldl <input> [OPTIONS]
                                    'default': No additional images
                                    'largest': Download from the folder with the largest image
                                    'most': Download from the folder containing the most images
-                                   'most-largest': Do most, then largest
     --album-art-only               Only download album art for the provided album
     --no-browse-folder             Do not automatically browse user shares to get all files in
                                    in the folder
@@ -250,7 +249,7 @@ The id and secret can be obtained at https://developer.spotify.com/dashboard/app
 Create an app and add http://localhost:48721/callback as a redirect url in its settings.
 
 ### Bandcamp
-A bandcamp url: Download a single track, and album, or an artist's entire discography. 
+A bandcamp url: Download a single track, an album, or an artist's entire discography. 
 Extracts the artist name, album name and sets --album-track-count="n+", where n is the 
 number of visible tracks on the bandcamp page.
 
@@ -296,8 +295,7 @@ Two files are considered equal if their inferred track title and artist name are
 (ignoring case and some special characters), and their lengths are within --length-tol of each
 other.  
 Note that this mode is not 100% reliable, which is why --min-shares-aggregate is set to 2 by
-default, i.e. any song that is shared only once will be ignored. Enable --relax-filtering to
-make the file filtering less aggressive.
+default, i.e. any song that is shared only once will be ignored.
 
 ### Album Aggregate
 Activated when --album and --aggregate are enabled, in this mode sldl searches for the query
@@ -356,14 +354,14 @@ files if available, and only download lossy files if there's nothing else.
 
 There are no default required conditions. The default preferred conditions are:
 ```
-format = mp3
-length-tol = 3
-min-bitrate = 200
-max-bitrate = 2500
-max-samplerate = 48000
-strict-title = true
-strict-album = true
-accept-no-length = false
+pref-format = mp3
+pref-length-tol = 3
+pref-min-bitrate = 200
+pref-max-bitrate = 2500
+pref-max-samplerate = 48000
+pref-strict-title = true
+pref-strict-album = true
+pref-accept-no-length = false
 ```
 sldl will therefore prefer mp3 files with bitrate between 200 and 2500 kbps, and whose length
 differs from the supplied length by no more than 3 seconds. It will also prefer files whose
@@ -419,7 +417,7 @@ year                            Track year or date
 track                           Track number
 disc                            Disc number
 filename                        Soulseek filename without extension
-foldername                      Soulseek folder name (only available for album downloads)
+foldername                      Soulseek folder name
 default-foldername              Default sldl folder name
 extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
 ```
@@ -494,11 +492,11 @@ profile-cond = input-type == "youtube"
 path = ~/downloads/sldl-youtube
 # download to another location for youtube
 ```
-  The following operators are supported: &&, ||, ==, !=, ! (negation for bools).  
-  The following variables are available for use in profile-cond:
+  The following operators are supported for use in profile-cond: &&, ||, ==, !=, !{bool}.  
+  The following variables are available:
 ```
-input-type        ( = "youtube"|"csv"|"string"|"bandcamp"|"spotify")
-download-mode     ( = "normal"|"aggregate"|"album"|"album-aggregate")
+input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
+download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
 interactive       (bool)
   ```
 ## Examples

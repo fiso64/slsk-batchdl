@@ -3,39 +3,39 @@ using Data;
 using Enums;
 using System.IO;
 
-namespace ExistingCheckers
+namespace FileSkippers
 {
-    public static class ExistingCheckerRegistry
+    public static class FileSkipperRegistry
     {
-        public static ExistingChecker GetChecker(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
+        public static FileSkipper GetChecker(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
         {
             bool noConditions = conditions.Equals(new FileConditions());
             return mode switch
             {
-                SkipMode.Name => new NameExistingChecker(dir),
-                SkipMode.NameCond => noConditions ? new NameExistingChecker(dir) : new NameConditionExistingChecker(dir, conditions),
-                SkipMode.Tag => new TagExistingChecker(dir),
-                SkipMode.TagCond => noConditions ? new TagExistingChecker(dir) : new TagConditionExistingChecker(dir, conditions),
-                SkipMode.M3u => new M3uExistingChecker(m3uEditor, false),
-                SkipMode.M3uCond => noConditions ? new M3uExistingChecker(m3uEditor, true) : new M3uConditionExistingChecker(m3uEditor, conditions),
+                SkipMode.Name => new NameSkipper(dir),
+                SkipMode.NameCond => noConditions ? new NameSkipper(dir) : new NameConditionalSkipper(dir, conditions),
+                SkipMode.Tag => new TagSkipper(dir),
+                SkipMode.TagCond => noConditions ? new TagSkipper(dir) : new TagConditionalSkipper(dir, conditions),
+                SkipMode.M3u => new M3uSkipper(m3uEditor, false),
+                SkipMode.M3uCond => noConditions ? new M3uSkipper(m3uEditor, true) : new M3uConditionalSkipper(m3uEditor, conditions),
             };
         }
     }
 
-    public abstract class ExistingChecker
+    public abstract class FileSkipper
     {
         public abstract bool TrackExists(Track track, out string? foundPath);
         public virtual void BuildIndex() { IndexIsBuilt = true; }
         public bool IndexIsBuilt { get; protected set; } = false;
     }
 
-    public class NameExistingChecker : ExistingChecker
+    public class NameSkipper : FileSkipper
     {
         readonly string[] ignore = new string[] { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
         readonly List<(string, string, string)> index = new(); // (Path, PreprocessedPath, PreprocessedName)
 
-        public NameExistingChecker(string dir)
+        public NameSkipper(string dir)
         {
             this.dir = dir;
         }
@@ -99,14 +99,14 @@ namespace ExistingCheckers
         }
     }
 
-    public class NameConditionExistingChecker : ExistingChecker
+    public class NameConditionalSkipper : FileSkipper
     {
         readonly string[] ignore = new string[] { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedPath, PreprocessedName, file)
         FileConditions conditions;
 
-        public NameConditionExistingChecker(string dir, FileConditions conditions)
+        public NameConditionalSkipper(string dir, FileConditions conditions)
         {
             this.dir = dir;
             this.conditions = conditions;
@@ -175,12 +175,12 @@ namespace ExistingCheckers
         }
     }
 
-    public class TagExistingChecker : ExistingChecker
+    public class TagSkipper : FileSkipper
     {
         readonly string dir;
         readonly List<(string, string, string)> index = new(); // (Path, PreprocessedArtist, PreprocessedTitle)
 
-        public TagExistingChecker(string dir)
+        public TagSkipper(string dir)
         {
             this.dir = dir;
         }
@@ -240,13 +240,13 @@ namespace ExistingCheckers
         }
     }
 
-    public class TagConditionExistingChecker : ExistingChecker
+    public class TagConditionalSkipper : FileSkipper
     {
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedArtist, PreprocessedTitle, file)
         FileConditions conditions;
 
-        public TagConditionExistingChecker(string dir, FileConditions conditions)
+        public TagConditionalSkipper(string dir, FileConditions conditions)
         {
             this.dir = dir;
             this.conditions = conditions;
@@ -307,12 +307,12 @@ namespace ExistingCheckers
         }
     }
 
-    public class M3uExistingChecker : ExistingChecker
+    public class M3uSkipper : FileSkipper
     {
         M3uEditor m3uEditor;
         bool checkFileExists;
         
-        public M3uExistingChecker(M3uEditor m3UEditor, bool checkFileExists) 
+        public M3uSkipper(M3uEditor m3UEditor, bool checkFileExists) 
         {
             this.m3uEditor = m3UEditor;
             this.checkFileExists = checkFileExists;
@@ -349,12 +349,12 @@ namespace ExistingCheckers
         }
     }
 
-    public class M3uConditionExistingChecker : ExistingChecker
+    public class M3uConditionalSkipper : FileSkipper
     {
         M3uEditor m3uEditor;
         FileConditions conditions;
 
-        public M3uConditionExistingChecker(M3uEditor m3UEditor, FileConditions conditions)
+        public M3uConditionalSkipper(M3uEditor m3UEditor, FileConditions conditions)
         {
             this.m3uEditor = m3UEditor;
             this.conditions = conditions;

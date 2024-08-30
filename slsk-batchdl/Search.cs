@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 
 using Data;
 using Enums;
+using static Program;
 
 using File = System.IO.File;
 using Directory = System.IO.Directory;
@@ -14,28 +15,31 @@ using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 
-static partial class Program
+static class Search
 {
-    static async Task<string> SearchAndDownload(Track track, ResponseData? responseData = null)
+    public static RateLimitedSemaphore? searchSemaphore;
+
+    // very messy function that does everything
+    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer)
     {
         if (Config.DoNotDownload)
             throw new Exception();
 
-        responseData ??= new ResponseData();
+        var responseData = new ResponseData();
         IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
-        var progress = GetProgressBar(Config.displayMode);
+        var progress = Printing.GetProgressBar(Config.displayMode);
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
         var cts = new CancellationTokenSource();
         var saveFilePath = "";
+        SlFile? chosenFile = null;
         Task? downloadTask = null;
         var fsDownloadLock = new object();
         int fsResultsStarted = 0;
         int downloading = 0;
         bool notFound = false;
         bool searchEnded = false;
-        string fsUser = "";
-        string fsFile = "";
+        string? fsUser = null;
 
         if (track.Downloads != null)
         {
@@ -43,10 +47,7 @@ static partial class Program
             goto downloads;
         }
 
-        RefreshOrPrint(progress, 0, $"Waiting: {track}", false);
-
-        string searchText = $"{track.Artist} {track.Title}".Trim();
-        var removeChars = new string[] { " ", "_", "-" };
+        Printing.RefreshOrPrint(progress, 0, $"Waiting: {track}", false);
 
         searches.TryAdd(track, new SearchInfo(results, progress));
 
@@ -58,10 +59,10 @@ static partial class Program
                 {
                     downloading = 1;
                     var (r, f) = fsResults.MaxBy(x => x.Value.Item1.UploadSpeed).Value;
-                    saveFilePath = GetSavePath(f.Filename);
+                    saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
-                    fsFile = f.Filename;
-                    downloadTask = DownloadFile(r, f, saveFilePath, track, progress, cts);
+                    chosenFile = f;
+                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, cts);
                 }
             }
         }
@@ -109,7 +110,7 @@ static partial class Program
                 });
         }
 
-        void onSearch() => RefreshOrPrint(progress, 0, $"Searching: {track}", true);
+        void onSearch() => Printing.RefreshOrPrint(progress, 0, $"Searching: {track}", true);
         await RunSearches(track, results, getSearchOptions, responseHandler, cts.Token, onSearch);
 
         searches.TryRemove(track, out _);
@@ -133,8 +134,11 @@ static partial class Program
             {
                 saveFilePath = "";
                 downloading = 0;
-                results.TryRemove(fsUser + "\\" + fsFile, out _);
-                userSuccessCount.AddOrUpdate(fsUser, -1, (k, v) => v - 1);
+                if (chosenFile != null && fsUser != null)
+                {
+                    results.TryRemove(fsUser + '\\' + chosenFile.Filename, out _);
+                    userSuccessCount.AddOrUpdate(fsUser, -1, (k, v) => v - 1);
+                }
             }
         }
 
@@ -150,24 +154,27 @@ static partial class Program
             int trackTries = Config.maxRetriesPerTrack;
             async Task<bool> process(SlResponse response, SlFile file)
             {
-                saveFilePath = GetSavePath(file.Filename);
+                saveFilePath = organizer.GetSavePath(file.Filename);
+                chosenFile = file;
                 try
                 {
                     downloading = 1;
-                    await DownloadFile(response, file, saveFilePath, track, progress);
+                    await Download.DownloadFile(response, file, saveFilePath, track, progress);
                     userSuccessCount.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
                 catch (Exception e)
                 {
+                    chosenFile = null;
+                    saveFilePath = "";
                     downloading = 0;
                     if (!IsConnectedAndLoggedIn())
                         throw;
                     userSuccessCount.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
                     if (--trackTries <= 0)
                     {
-                        RefreshOrPrint(progress, 0, $"Out of download retries: {track}", true);
-                        WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow, true);
+                        Printing.RefreshOrPrint(progress, 0, $"Out of download retries: {track}", true);
+                        Printing.WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow, true);
                         throw new SearchAndDownloadException(FailureReason.OutOfDownloadRetries);
                     }
                     return false;
@@ -206,7 +213,7 @@ static partial class Program
             notFound = false;
             try
             {
-                RefreshOrPrint(progress, 0, $"yt-dlp search: {track}", true);
+                Printing.RefreshOrPrint(progress, 0, $"yt-dlp search: {track}", true);
                 var ytResults = await Extractors.YouTube.YtdlpSearch(track);
 
                 if (ytResults.Count > 0)
@@ -215,11 +222,11 @@ static partial class Program
                     {
                         if (Config.necessaryCond.LengthToleranceSatisfies(length, track.Length))
                         {
-                            string saveFilePathNoExt = GetSavePathNoExt(title);
+                            string saveFilePathNoExt = organizer.GetSavePathNoExt(title);
                             downloading = 1;
-                            RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
+                            Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
                             saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, Config.ytdlpArgument);
-                            RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
+                            Printing.RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;
                         }
                     }
@@ -229,7 +236,7 @@ static partial class Program
             {
                 saveFilePath = "";
                 downloading = 0;
-                RefreshOrPrint(progress, 0, $"{e.Message}", true);
+                Printing.RefreshOrPrint(progress, 0, $"{e.Message}", true);
                 throw new SearchAndDownloadException(FailureReason.NoSuitableFileFound);
             }
         }
@@ -239,24 +246,21 @@ static partial class Program
             if (notFound)
             {
                 string lockedFilesStr = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
-                RefreshOrPrint(progress, 0, $"Not found: {track}{lockedFilesStr}", true);
+                Printing.RefreshOrPrint(progress, 0, $"Not found: {track}{lockedFilesStr}", true);
                 throw new SearchAndDownloadException(FailureReason.NoSuitableFileFound);
             }
             else
             {
-                RefreshOrPrint(progress, 0, $"All downloads failed: {track}", true);
+                Printing.RefreshOrPrint(progress, 0, $"All downloads failed: {track}", true);
                 throw new SearchAndDownloadException(FailureReason.AllDownloadsFailed);
             }
         }
 
-        if (Config.nameFormat.Length > 0)
-            saveFilePath = ApplyNamingFormat(saveFilePath, track);
-
-        return Path.GetFullPath(saveFilePath);
+        return (Path.GetFullPath(saveFilePath), chosenFile);
     }
 
 
-    static async Task<List<List<Track>>> GetAlbumDownloads(Track track, ResponseData responseData)
+    public static async Task<List<List<Track>>> GetAlbumDownloads(Track track, ResponseData responseData)
     {
         var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         SearchOptions getSearchOptions(int timeout, FileConditions nec, FileConditions prf) =>
@@ -312,7 +316,7 @@ static partial class Program
             foreach (var key in directoryStructure.Keys.ToArray())
             {
                 var dirname = key[(key.LastIndexOf('\\') + 1)..];
-            
+
                 if (discPattern.IsMatch(dirname))
                 {
                     directoryStructure.Remove(key, out var val);
@@ -395,11 +399,11 @@ static partial class Program
     }
 
 
-    static async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData)
+    public static async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData)
     {
         var results = new SlDictionary();
         SearchOptions getSearchOptions(int timeout, FileConditions nec, FileConditions prf) =>
-            new (
+            new(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
                 removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
@@ -455,7 +459,7 @@ static partial class Program
     }
 
 
-    static async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData)
+    public static async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData)
     {
         int maxDiff = Config.necessaryCond.LengthTolerance;
 
@@ -504,7 +508,7 @@ static partial class Program
             {
                 if (lengthsAreSimilar(lengths, lengthsList[i]))
                 {
-                    if (lengths.Length == 1 && lengthsList[i].Length == 1) 
+                    if (lengths.Length == 1 && lengthsList[i].Length == 1)
                     {
                         var t1 = InferTrack(album[0].Downloads[0].Item2.Filename, new Track());
                         var t2 = InferTrack(res[i][0][0].Downloads[0].Item2.Filename, new Track());
@@ -519,7 +523,7 @@ static partial class Program
                     {
                         found = true;
                     }
-                    
+
                     if (found)
                     {
                         usernamesList[i].Add(user);
@@ -551,7 +555,7 @@ static partial class Program
     }
 
 
-    static async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix)
+    public static async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix)
     {
         var browseOptions = new BrowseOptions();
         var res = new List<(string dir, SlFile file)>();
@@ -579,7 +583,7 @@ static partial class Program
     }
 
 
-    static async Task CompleteFolder(List<Track> tracks, SearchResponse response, string folder)
+    public static async Task CompleteFolder(List<Track> tracks, SearchResponse response, string folder)
     {
         try
         {
@@ -610,12 +614,12 @@ static partial class Program
         }
         catch (Exception ex)
         {
-            WriteLine($"Error getting complete list of files: {ex}", ConsoleColor.DarkYellow);
+            Printing.WriteLine($"Error getting complete list of files: {ex}", ConsoleColor.DarkYellow);
         }
     }
 
 
-    static IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(Track track,
+    public static IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(Track track,
         IEnumerable<(SlResponse, SlFile)> fileResponses, int minShares = -1)
     {
         if (minShares == -1)
@@ -645,14 +649,14 @@ static partial class Program
     }
 
 
-    static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
+    public static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
         Track track, bool useInfer = false, bool useLevenshtein = true, bool albumMode = false)
     {
         return OrderedResults(results.Select(x => x.Value), track, useInfer, useLevenshtein, albumMode);
     }
 
 
-    static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<(SlResponse, SlFile)> results,
+    public static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(IEnumerable<(SlResponse, SlFile)> results,
         Track track, bool useInfer = false, bool useLevenshtein = true, bool albumMode = false)
     {
         bool useBracketCheck = true;
@@ -720,7 +724,7 @@ static partial class Program
     }
 
 
-    static async Task RunSearches(Track track, SlDictionary results, Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
+    public static async Task RunSearches(Track track, SlDictionary results, Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
         Action<SearchResponse> responseHandler, CancellationToken? ct = null, Action? onSearch = null)
     {
         bool artist = track.Artist.Length > 0;
@@ -731,11 +735,11 @@ static partial class Program
         var searchTasks = new List<Task>();
 
         var defaultSearchOpts = getSearchOptions(Config.searchTimeout, Config.necessaryCond, Config.preferredCond);
-        searchTasks.Add(Search(search, defaultSearchOpts, responseHandler, ct, onSearch));
+        searchTasks.Add(DoSearch(search, defaultSearchOpts, responseHandler, ct, onSearch));
 
         if (search.RemoveDiacriticsIfExist(out string noDiacrSearch) && !track.ArtistMaybeWrong)
         {
-            searchTasks.Add(Search(noDiacrSearch, defaultSearchOpts, responseHandler, ct, onSearch));
+            searchTasks.Add(DoSearch(noDiacrSearch, defaultSearchOpts, responseHandler, ct, onSearch));
         }
 
         await Task.WhenAll(searchTasks);
@@ -747,7 +751,7 @@ static partial class Program
             cond.StrictTitle = infTrack.Title == track.Title;
             cond.StrictArtist = false;
             var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-            searchTasks.Add(Search($"{infTrack.Artist} {infTrack.Title}", opts, responseHandler, ct, onSearch));
+            searchTasks.Add(DoSearch($"{infTrack.Artist} {infTrack.Title}", opts, responseHandler, ct, onSearch));
         }
 
         if (Config.desperateSearch)
@@ -764,7 +768,7 @@ static partial class Program
                         StrictAlbum = true
                     };
                     var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-                    searchTasks.Add(Search($"{track.Artist} {track.Album}", opts, responseHandler, ct, onSearch));
+                    searchTasks.Add(DoSearch($"{track.Artist} {track.Album}", opts, responseHandler, ct, onSearch));
                 }
                 if (artist && title && track.Length != -1 && Config.necessaryCond.LengthTolerance != -1)
                 {
@@ -775,7 +779,7 @@ static partial class Program
                         StrictArtist = true
                     };
                     var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-                    searchTasks.Add(Search($"{track.Artist} {track.Title}", opts, responseHandler, ct, onSearch));
+                    searchTasks.Add(DoSearch($"{track.Artist} {track.Title}", opts, responseHandler, ct, onSearch));
                 }
             }
 
@@ -795,7 +799,7 @@ static partial class Program
                         LengthTolerance = -1
                     };
                     var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-                    searchTasks.Add(Search($"{track.Album}", opts, responseHandler, ct, onSearch));
+                    searchTasks.Add(DoSearch($"{track.Album}", opts, responseHandler, ct, onSearch));
                 }
                 if (track2.Title.Length > 3 && artist)
                 {
@@ -806,7 +810,7 @@ static partial class Program
                         LengthTolerance = -1
                     };
                     var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-                    searchTasks.Add(Search($"{track2.Title}", opts, responseHandler, ct, onSearch));
+                    searchTasks.Add(DoSearch($"{track2.Title}", opts, responseHandler, ct, onSearch));
                 }
                 if (track2.Artist.Length > 3 && title)
                 {
@@ -817,7 +821,7 @@ static partial class Program
                         LengthTolerance = -1
                     };
                     var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
-                    searchTasks.Add(Search($"{track2.Artist}", opts, responseHandler, ct, onSearch));
+                    searchTasks.Add(DoSearch($"{track2.Artist}", opts, responseHandler, ct, onSearch));
                 }
             }
         }
@@ -826,7 +830,7 @@ static partial class Program
     }
 
 
-    static async Task Search(string search, SearchOptions opts, Action<SearchResponse> rHandler, CancellationToken? ct = null, Action? onSearch = null)
+    static async Task DoSearch(string search, SearchOptions opts, Action<SearchResponse> rHandler, CancellationToken? ct = null, Action? onSearch = null)
     {
         await searchSemaphore.WaitAsync();
         try
@@ -840,7 +844,7 @@ static partial class Program
     }
 
 
-    static async Task SearchAndPrintResults(List<Track> tracks)
+    public static async Task SearchAndPrintResults(List<Track> tracks)
     {
         foreach (var track in tracks)
         {
@@ -878,7 +882,7 @@ static partial class Program
 
             if (Config.DoNotDownload && results.IsEmpty)
             {
-                WriteLine($"No results", ConsoleColor.Yellow);
+                Printing.WriteLine($"No results", ConsoleColor.Yellow);
             }
             else
             {
@@ -887,12 +891,12 @@ static partial class Program
                 Console.WriteLine();
                 foreach (var (response, file) in orderedResults)
                 {
-                    Console.WriteLine(DisplayString(track, file, response,
+                    Console.WriteLine(Printing.DisplayString(track, file, response,
                         Config.PrintResultsFull ? Config.necessaryCond : null, Config.PrintResultsFull ? Config.preferredCond : null,
                         fullpath: Config.PrintResultsFull, infoFirst: true, showSpeed: Config.PrintResultsFull));
                     count += 1;
                 }
-                WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+                Printing.WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
             }
 
             Console.WriteLine();
@@ -944,7 +948,7 @@ static partial class Program
     }
 
 
-    static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
+    public static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
         var t = new Track(defaultTrack);
         t.Type = type;
@@ -1111,229 +1115,53 @@ static partial class Program
     }
 
 
-    static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource? searchCts = null)
+    public static bool AlbumsAreSimilar(List<Track> album1, List<Track> album2, int[]? album1SortedLengths = null, int tolerance = 3)
     {
-        if (Config.DoNotDownload)
-            throw new Exception();
+        if (album1SortedLengths != null && album1SortedLengths.Length != album2.Count(t => !t.IsNotAudio))
+            return false;
+        else if (album1.Count(t => !t.IsNotAudio) != album2.Count(t => !t.IsNotAudio))
+            return false;
 
-        await WaitForLogin();
-        Directory.CreateDirectory(Path.GetDirectoryName(filePath));
-        string origPath = filePath;
-        filePath += ".incomplete";
+        if (album1SortedLengths == null)
+            album1SortedLengths = album1.Where(t => !t.IsNotAudio).Select(t => t.Length).OrderBy(x => x).ToArray();
 
-        var transferOptions = new TransferOptions(
-            stateChanged: (state) =>
-            {
-                if (downloads.TryGetValue(file.Filename, out var x))
-                    x.transfer = state.Transfer;
-            },
-            progressUpdated: (progress) =>
-            {
-                if (downloads.TryGetValue(file.Filename, out var x))
-                    x.bytesTransferred = progress.PreviousBytesTransferred;
-            }
-        );
+        var album2SortedLengths = album2.Where(t => !t.IsNotAudio).Select(t => t.Length).OrderBy(x => x).ToArray();
 
-        try
+        for (int i = 0; i < album1SortedLengths.Length; i++)
         {
-            using var cts = new CancellationTokenSource();
-            using var outputStream = new FileStream(filePath, FileMode.Create);
-            var wrapper = new DownloadWrapper(origPath, response, file, track, cts, progress);
-            downloads.TryAdd(file.Filename, wrapper);
-
-            // Attempt to make it resume downloads after a network interruption.
-            // Does not work: The resumed download will be queued until it goes stale.
-            // The host (slskd) reports that "Another upload to {user} is already in progress"
-            // when attempting to resume. Must wait until timeout, which can take minutes.
-
-            int maxRetries = 3;
-            int retryCount = 0;
-            while (true)
-            {
-                try
-                {
-                    await client.DownloadAsync(response.Username, file.Filename,
-                        () => Task.FromResult((Stream)outputStream),
-                        file.Size, startOffset: outputStream.Position,
-                        options: transferOptions, cancellationToken: cts.Token);
-
-                    break;
-                }
-                catch (SoulseekClientException)
-                {
-                    retryCount++;
-
-                    if (retryCount >= maxRetries || IsConnectedAndLoggedIn())
-                        throw;
-
-                    await WaitForLogin();
-                }
-            }
-        }
-        catch
-        {
-            if (File.Exists(filePath))
-                try { File.Delete(filePath); } catch { }
-            downloads.TryRemove(file.Filename, out var d);
-            if (d != null)
-                lock (d) { d.UpdateText(); }
-            throw;
+            if (Math.Abs(album1SortedLengths[i] - album2SortedLengths[i]) > tolerance)
+                return false;
         }
 
-        try { searchCts?.Cancel(); }
-        catch { }
-
-        try { Utils.Move(filePath, origPath); }
-        catch (IOException) { WriteLine($"Failed to rename .incomplete file", ConsoleColor.DarkYellow, true); }
-
-        downloads.TryRemove(file.Filename, out var x);
-        if (x != null)
-        {
-            lock (x)
-            {
-                x.success = true;
-                x.UpdateText();
-            }
-        }
+        return true;
     }
 
 
-    public class SearchAndDownloadException : Exception
+    static readonly List<string> bannedTerms = new()
     {
-        public FailureReason reason;
-        public SearchAndDownloadException(FailureReason reason, string text = "") : base(text) { this.reason = reason; }
-    }
+        "depeche mode", "beatles", "prince revolutions", "michael jackson", "coexist", "bob dylan", "enter shikari",
+        "village people", "lenny kravitz", "beyonce", "beyoncé", "lady gaga", "jay z", "kanye west", "rihanna",
+        "adele", "kendrick lamar", "bad romance", "born this way", "weeknd", "broken hearted", "highway 61 revisited",
+        "west gold digger", "west good life"
+    };
+}
 
+public class SearchAndDownloadException : Exception
+{
+    public FailureReason reason;
+    public SearchAndDownloadException(FailureReason reason, string text = "") : base(text) { this.reason = reason; }
+}
 
-    class DownloadWrapper
+public class SearchInfo
+{
+    public ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results;
+    public ProgressBar progress;
+
+    public SearchInfo(ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results, ProgressBar progress)
     {
-        public string savePath;
-        public string displayText = "";
-        public int downloadRotatingBarState = 0;
-        public Soulseek.File file;
-        public Transfer? transfer;
-        public SearchResponse response;
-        public ProgressBar progress;
-        public Track track;
-        public long bytesTransferred = 0;
-        public bool stalled = false;
-        public bool queued = false;
-        public bool success = false;
-        public CancellationTokenSource cts;
-        public DateTime startTime = DateTime.Now;
-        public DateTime lastChangeTime = DateTime.Now;
-
-        TransferStates? prevTransferState = null;
-        long prevBytesTransferred = 0;
-        bool updatedTextDownload = false;
-        bool updatedTextSuccess = false;
-        readonly char[] bars = { '|', '/', '—', '\\' };
-
-        public DownloadWrapper(string savePath, SearchResponse response, Soulseek.File file, Track track, CancellationTokenSource cts, ProgressBar progress)
-        {
-            this.savePath = savePath;
-            this.response = response;
-            this.file = file;
-            this.cts = cts;
-            this.track = track;
-            this.progress = progress;
-            this.displayText = DisplayString(track, file, response);
-
-            RefreshOrPrint(progress, 0, "Initialize: " + displayText, true);
-            RefreshOrPrint(progress, 0, displayText, false);
-        }
-
-        public void UpdateText()
-        {
-            downloadRotatingBarState++;
-            downloadRotatingBarState %= bars.Length;
-            float? percentage = bytesTransferred / (float)file.Size;
-            queued = (transfer?.State & TransferStates.Queued) != 0;
-            string bar;
-            string state;
-            bool downloading = false;
-
-            if (stalled)
-            {
-                state = "Stalled";
-                bar = "";
-            }
-            else if (transfer != null)
-            {
-                if (queued)
-                    state = "Queued";
-                else if ((transfer.State & TransferStates.Initializing) != 0)
-                    state = "Initialize";
-                else if ((transfer.State & TransferStates.Completed) != 0)
-                {
-                    var flag = transfer.State & (TransferStates.Succeeded | TransferStates.Cancelled 
-                        | TransferStates.TimedOut | TransferStates.Errored | TransferStates.Rejected 
-                        | TransferStates.Aborted);
-                    state = flag.ToString();
-
-                    if (flag == TransferStates.Succeeded)
-                        success = true;
-                }
-                else
-                {
-                    state = transfer.State.ToString();
-                    if ((transfer.State & TransferStates.InProgress) != 0)
-                        downloading = true;
-                }
-
-                bar = success ? "" : bars[downloadRotatingBarState] + " ";
-            }
-            else
-            {
-                state = "NullState";
-                bar = "";
-            }
-
-            string txt = $"{bar}{state}:".PadRight(14) + $" {displayText}";
-            bool needSimplePrintUpdate = (downloading && !updatedTextDownload) || (success && !updatedTextSuccess);
-            updatedTextDownload |= downloading;
-            updatedTextSuccess |= success;
-
-            Console.ResetColor();
-            RefreshOrPrint(progress, (int)((percentage ?? 0) * 100), txt, needSimplePrintUpdate, needSimplePrintUpdate);
-
-        }
-
-        public DateTime UpdateLastChangeTime(bool updateAllFromThisUser = true, bool forceChanged = false)
-        {
-            bool changed = prevTransferState != transfer?.State || prevBytesTransferred != bytesTransferred;
-            if (changed || forceChanged)
-            {
-                lastChangeTime = DateTime.Now;
-                stalled = false;
-                if (updateAllFromThisUser)
-                {
-                    foreach (var (_, dl) in downloads)
-                    {
-                        if (dl != this && dl.response.Username == response.Username)
-                            dl.UpdateLastChangeTime(updateAllFromThisUser: false, forceChanged: true);
-                    }
-                }
-            }
-            prevTransferState = transfer?.State;
-            prevBytesTransferred = bytesTransferred;
-            return lastChangeTime;
-        }
+        this.results = results;
+        this.progress = progress;
     }
-
-
-    class SearchInfo
-    {
-        public ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results;
-        public ProgressBar progress;
-
-        public SearchInfo(ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results, ProgressBar progress)
-        {
-            this.results = results;
-            this.progress = progress;
-        }
-    }
-
 }
 
 

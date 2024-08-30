@@ -166,7 +166,7 @@ namespace Extractors
                     }
                     catch
                     {
-                        Program.WriteLine($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\" for \"{track}\"", ConsoleColor.DarkYellow);
+                        Printing.WriteLine($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\" for \"{track}\"", ConsoleColor.DarkYellow);
                     }
                 }
 

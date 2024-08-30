@@ -20,7 +20,7 @@ public class M3uEditor
         this.offset = offset;
         this.option = option;
         this.path = Path.GetFullPath(m3uPath);
-        this.parent = Path.GetDirectoryName(path);
+        this.parent = Utils.NormalizedPath(Path.GetDirectoryName(path));
         this.lines = ReadAllLines().ToList();
         this.needFirstUpdate = option == M3uOption.All;
 
@@ -133,7 +133,7 @@ public class M3uEditor
                 return indexTrack == null
                     || indexTrack.State != track.State
                     || indexTrack.FailureReason != track.FailureReason
-                    || indexTrack.DownloadPath != track.DownloadPath;
+                    || Utils.NormalizedPath(indexTrack.DownloadPath) != Utils.NormalizedPath(track.DownloadPath);
             }
 
             void updateTrackIfNeeded(Track track)
@@ -245,7 +245,7 @@ public class M3uEditor
         foreach (var val in previousRunData.Values)
         {
             string p = val.DownloadPath;
-            if (p.StartsWith(parent))
+            if (Utils.NormalizedPath(p).StartsWith(parent))
                 p = "./" + Path.GetRelativePath(parent, p); // prepend ./ for LoadPreviousResults to recognize that a rel. path is used
 
             var items = new string[] 
@@ -274,7 +274,7 @@ public class M3uEditor
             failureReason = nameof(FailureReason.NoSuitableFileFound);
 
         if (failureReason != null)
-            return $"# Failed: {track} [{failureReason}]";
+            return $"#FAIL: {track} [{failureReason}]";
 
         if (track.DownloadPath.Length > 0)
         {

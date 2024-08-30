@@ -1,6 +1,6 @@
 ﻿using Data;
 using Enums;
-using ExistingCheckers;
+using FileSkippers;
 using System.Diagnostics;
 using System.Reflection;
 
@@ -62,12 +62,12 @@ namespace Test
                 "/home/user/docs/report.pdf",
                 "/home/user/docs/",
             };
-            Assert(Utils.GreatestCommonPath(paths, dirsep: '/') == "/home/user/docs/");
-            Assert(Utils.GreatestCommonPath(new string[] { "/path/file", "" }, dirsep: '/') == "");
-            Assert(Utils.GreatestCommonPath(new string[] { "/path/file", "/" }, dirsep: '/') == "/");
-            Assert(Utils.GreatestCommonPath(new string[] { "/path/dir1", "/path/dir2" }, dirsep: '/') == "/path/");
-            Assert(Utils.GreatestCommonPath(new string[] { "/path/dir1", "/path/dir2" }, dirsep: '\\') == "");
-            Assert(Utils.GreatestCommonPath(new string[] { "dir1", "dir2" }, dirsep: '/') == "");
+            Assert(Utils.GreatestCommonPath(paths) == "/home/user/docs/");
+            Assert(Utils.GreatestCommonPath(new string[] { "/path/file", "" }) == "");
+            Assert(Utils.GreatestCommonPath(new string[] { "/path/file", "/" }) == "/");
+            Assert(Utils.GreatestCommonPath(new string[] { "/path/dir1", "/path/dir2" }) == "/path/");
+            Assert(Utils.GreatestCommonPath(new string[] { "/path\\dir1/blah", "/path/dir2\\blah" }) == "/path\\");
+            Assert(Utils.GreatestCommonPath(new string[] { "dir1", "dir2" }) == "");
 
             // RemoveDiacritics
             Assert(" Café Crème à la mode Ü".RemoveDiacritics() == " Cafe Creme a la mode U");
@@ -327,7 +327,7 @@ namespace Test
 
             Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
 
-            Program.outputExistingChecker = new M3uExistingChecker(Program.m3uEditor, false);
+            Program.outputDirSkipper = new M3uSkipper(Program.m3uEditor, false);
 
             var notFound = (List<Track>)ProgramInvoke("DoSkipNotFound", new object[] { trackLists[0].list[0] });
             var existing = (List<Track>)ProgramInvoke("DoSkipExisting", new object[] { trackLists[0].list[0] });

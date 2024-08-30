@@ -236,6 +236,9 @@ static class Config
             }
         }
 
+        if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
+            albumArtOption = AlbumArtOption.Largest;
+
         parentFolder = Utils.ExpandUser(parentFolder);
         m3uFilePath = Utils.ExpandUser(m3uFilePath);
         musicDir = Utils.ExpandUser(musicDir);
@@ -250,6 +253,7 @@ static class Config
         folderName = folderName.Replace('/', Path.DirectorySeparatorChar);
 
         outputFolder = Path.Join(parentFolder, folderName);
+        nameFormat = nameFormat.Trim();
 
         if (m3uFilePath.Length == 0)
             m3uFilePath = Path.Join(outputFolder, (folderName.Length == 0 ? "playlist" : folderName) + ".m3u8");
@@ -319,7 +323,7 @@ static class Config
         if (newProfiles.Count > 0)
         {
             //appliedProfiles.Clear();
-            appliedProfiles.Union(newProfiles);
+            appliedProfiles.UnionWith(newProfiles);
             ApplyProfile(profile);
             ProcessArgs(arguments);
             PostProcessArgs();
@@ -551,6 +555,7 @@ static class Config
                     cond.AcceptNoLength = bool.Parse(value);
                     break;
                 case "strict":
+                case "strictconditions":
                 case "acceptmissing":
                 case "acceptmissingprops":
                     cond.AcceptMissingProps = bool.Parse(value);
@@ -908,7 +913,6 @@ static class Config
                             "default" => AlbumArtOption.Default,
                             "largest" => AlbumArtOption.Largest,
                             "most" => AlbumArtOption.Most,
-                            "most-largest" => AlbumArtOption.MostLargest,
                             _ => throw new ArgumentException($"Invalid album art download mode '{args[i]}'"),
                         };
                         break;
@@ -977,6 +981,10 @@ static class Config
                     case "--pref-strict-album":
                         setFlag(ref preferredCond.StrictAlbum, ref i);
                         break;
+                    case "--panl":
+                    case "--pref-accept-no-length":
+                        setFlag(ref preferredCond.AcceptNoLength, ref i);
+                        break;
                     case "--pbu":
                     case "--pref-banned-users":
                         preferredCond.BannedUsers = args[++i].Split(',');
@@ -1030,6 +1038,10 @@ static class Config
                     case "--bu":
                     case "--banned-users":
                         necessaryCond.BannedUsers = args[++i].Split(',');
+                        break;
+                    case "--anl":
+                    case "--accept-no-length":
+                        setFlag(ref necessaryCond.AcceptNoLength, ref i);
                         break;
                     case "--c":
                     case "--cond":
