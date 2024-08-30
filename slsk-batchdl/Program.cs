@@ -432,7 +432,7 @@ static partial class Program
         bool succeeded = false;
         string? soulseekDir = null;
 
-        while (tle.list.Count > 0)
+        while (tle.list.Count > 0 && !Config.albumArtOnly)
         {
             int index = 0;
             bool wasInteractive = Config.interactiveMode;
@@ -531,7 +531,7 @@ static partial class Program
 
         int[]? sortedLengths = null;
 
-        if (chosenAlbum != null && chosenAlbum.Count(t => !t.IsNotAudio) > 0)
+        if (chosenAlbum != null && chosenAlbum.Any(t => !t.IsNotAudio))
             sortedLengths = chosenAlbum.Where(t => !t.IsNotAudio).Select(t => t.Length).OrderBy(x => x).ToArray();
 
         var albumArts = downloads
@@ -556,7 +556,9 @@ static partial class Program
             {
                 mSize = chosenAlbum
                     .Where(t => t.State == TrackState.Downloaded && Utils.IsImageFile(t.DownloadPath))
-                    .Max(t => t.FirstDownload.Size);
+                    .Select(t => t.FirstDownload.Size)
+                    .DefaultIfEmpty(0)
+                    .Max();
             }
         }
         else if (option == AlbumArtOption.Most)
@@ -772,6 +774,7 @@ static partial class Program
             }
 
             PrintAlbum(tracks);
+            Console.WriteLine();
 
             string userInput = interactiveModeLoop().Trim();
             switch (userInput)
@@ -913,15 +916,30 @@ static partial class Program
     {
         if (onComplete.Length == 0)
             return;
-        else if (onComplete.Length > 2 && onComplete[0].IsDigit() && onComplete[1] == ':')
+
+        bool useShellExecute = false;
+        int count = 0;
+
+        while (onComplete.Length > 2 && count++ < 2)
         {
-            if ((int)track.State != int.Parse(onComplete[0].ToString()))
-                return;
+            if (onComplete[0] == 's' && onComplete[1] == ':')
+            {
+                useShellExecute = true;
+            }
+            else if (onComplete[0].IsDigit() && onComplete[1] == ':')
+            {
+                if ((int)track.State != int.Parse(onComplete[0].ToString()))
+                    return;
+            }
+            else
+            {
+                break;
+            }
             onComplete = onComplete[2..];
         }
 
-        Process process = new Process();
-        ProcessStartInfo startInfo = new ProcessStartInfo();
+        var process = new Process();
+        var startInfo = new ProcessStartInfo();
 
         onComplete = onComplete.Replace("{title}", track.Title)
                            .Replace("{artist}", track.Artist)
@@ -957,16 +975,25 @@ static partial class Program
             startInfo.Arguments = parts.Length > 1 ? parts[1] : "";
         }
 
-        startInfo.RedirectStandardOutput = true;
-        startInfo.RedirectStandardError = true;
-        startInfo.UseShellExecute = false;
+        if (!useShellExecute)
+        {
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+        }
+
+        startInfo.UseShellExecute = useShellExecute;
         process.StartInfo = startInfo;
 
         WriteLine($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}", debugOnly: true);
 
         process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+
+        if (!useShellExecute)
+        {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
+
         process.WaitForExit();
     }
 

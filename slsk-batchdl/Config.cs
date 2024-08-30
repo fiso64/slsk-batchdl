@@ -173,7 +173,7 @@ static class Config
             ApplyAutoProfiles();
         }
 
-        ApplyProfile(profile);
+        ApplyProfiles(profile);
 
         ProcessArgs(args);
 
@@ -326,24 +326,27 @@ static class Config
         {
             //appliedProfiles.Clear();
             appliedProfiles.UnionWith(newProfiles);
-            ApplyProfile(profile);
+            ApplyProfiles(profile);
             ProcessArgs(arguments);
             PostProcessArgs();
         }
     }
 
 
-    static void ApplyProfile(string name)
+    static void ApplyProfiles(string names)
     {
-        if (name.Length > 0 && name != "default")
+        foreach (var name in names.Split(','))
         {
-            if (profiles.ContainsKey(name))
+            if (name.Length > 0 && name != "default")
             {
-                ProcessArgs(profiles[name].args);
-                appliedProfiles.Add(name);
+                if (profiles.ContainsKey(name))
+                {
+                    ProcessArgs(profiles[name].args);
+                    appliedProfiles.Add(name);
+                }
+                else
+                    Console.WriteLine($"Error: No profile '{name}' found in config");
             }
-            else
-                Console.WriteLine($"Error: No profile '{name}' found in config");
         }
     }
 
@@ -359,7 +362,7 @@ static class Config
         {
             if (key == "default" || appliedProfiles.Contains(key))
                 continue;
-            if (key != profile && val.cond != null && ProfileConditionSatisfied(val.cond, tle))
+            if (val.cond != null && ProfileConditionSatisfied(val.cond, tle))
             {
                 Console.WriteLine($"Applying auto profile: {key}");
                 ProcessArgs(val.args);

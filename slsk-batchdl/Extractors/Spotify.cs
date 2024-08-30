@@ -40,14 +40,14 @@ namespace Extractors
 
             if (Config.input == "spotify-likes")
             {
-                Console.WriteLine("Loading Spotify likes");
+                Console.WriteLine("Loading Spotify likes..");
                 var tracks = await spotifyClient.GetLikes(max, off);
                 playlistName = "Spotify Likes";
                 tle.list.Add(tracks);
             }
             else if (Config.input.Contains("/album/"))
             {
-                Console.WriteLine("Loading Spotify album");
+                Console.WriteLine("Loading Spotify album..");
                 (var source, var tracks) = await spotifyClient.GetAlbum(Config.input);
                 playlistName = source.ToString(noInfo: true);
                 tle.source = source;
@@ -60,7 +60,7 @@ namespace Extractors
             }
             else if (Config.input.Contains("/artist/"))
             {
-                Console.WriteLine("Loading spotify artist");
+                Console.WriteLine("Loading spotify artist..");
                 Console.WriteLine("Error: Spotify artist download currently not supported.");
                 Environment.Exit(0);
             }
@@ -203,12 +203,12 @@ namespace Extractors
         {
             if (_clientToken.Length != 0)
             {
-                Console.WriteLine("Testing Spotify access with existing token...");
+                //Console.WriteLine("Testing Spotify access with existing token...");
                 var client = new SpotifyClient(_clientToken);
                 try
                 {
                     var me = await client.UserProfile.Current();
-                    Console.WriteLine("Spotify access is good!");
+                    //Console.WriteLine("Spotify access is good!");
                     _client = client;
                     return true;
                 }
@@ -229,7 +229,7 @@ namespace Extractors
                 {
                     var oauthClient = new OAuthClient();
                     var refreshResponse = await oauthClient.RequestToken(refreshRequest);
-                    Console.WriteLine($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
+                    //Console.WriteLine($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
                     _clientToken = refreshResponse.AccessToken;
                     _client = new SpotifyClient(_clientToken);
                     return true;

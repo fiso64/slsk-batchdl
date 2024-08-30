@@ -258,7 +258,6 @@ public static class Printing
 
         WriteLine($"User  : {userInfo}\nFolder: {parents}\nProps : {props}", ConsoleColor.White);
         PrintTracks(albumTracks.ToList(), pathsOnly: true, showAncestors: false, showUser: false);
-        Console.WriteLine();
     }
 
 

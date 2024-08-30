@@ -27,7 +27,7 @@ public static class Help
         -o, --offset <offset>          Skip a specified number of tracks
         -r, --reverse                  Download tracks in reverse order
         -c, --config <path>            Set config file location. Set to 'none' to ignore config
-        --profile <name>               Configuration profile to use. See --help ""config"".
+        --profile <names>              Configuration profile(s) to use. See --help ""config"".
         --concurrent-downloads <num>   Max concurrent downloads (default: 2)
         --m3u <option>                 Create an m3u8 playlist file in the output directory
                                        'none' (default for single inputs): Do not create 
@@ -57,14 +57,15 @@ public static class Help
         --debug                        Print extra debug info
           
         --listen-port <port>           Port for incoming connections (default: 49998)
-        --on-complete <command>        Run a specified command whenever a file is downloaded.
+        --on-complete <command>        Run a command whenever a file is downloaded.
                                        Available placeholders: {path} (local save path), {title},
                                        {artist},{album},{uri},{length},{failure-reason},{state}.
                                        Prepend a state number to only download in specific cases:
                                        1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
                                        NotFoundLastTime states respectively. 
                                        E.g: '1:<cmd>' will only run the command if the file is
-                                       downloaded successfully.
+                                       downloaded successfully. Prepend 's:' to use the system
+                                       shell to execute the command.
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred
@@ -393,7 +394,7 @@ public static class Help
         ""{artist( - )title|filename}""
             If artist and title are not null, name it 'Artist - Title', otherwise use the original 
             filename.
-        ""{artist(/)album(/)track(. )title|(missing-tags/)filename}""  
+        ""{albumartist(/)album(/)track(. )title|(missing-tags/)filename}""  
             Sort files into artist/album folders if all tags are present, otherwise put them in
             the 'missing-tags' folder. 
         

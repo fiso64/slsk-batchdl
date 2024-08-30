@@ -1,0 +1,8 @@
+- configuration profiles, auto-profiles
+- album aggregate download mode
+- automatically browse user shares during album downloads to guarantee that all files from the parent folder are downloaded
+- skip-existing is now much faster. Default mode is now m3u as it is more reliable. Changed how m3u skip-existing works (not backward compatible). Added `m3u-cond` skip mode. m3u modes can now skip album downloads.
+- can now download entire bandcamp artist discographies
+- added `--on-complete` to run a command whenever a file is downloaded
+- now also looks in the user config directories for `sldl.conf`
+- many bug fixes
