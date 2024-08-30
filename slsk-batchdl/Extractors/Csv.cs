@@ -47,12 +47,19 @@ namespace Extractors
             {
                 if (File.Exists(Config.input))
                 {
-                    string[] lines = File.ReadAllLines(Config.input, System.Text.Encoding.UTF8);
-
-                    if (lines.Length > track.CsvRow)
+                    try
                     {
-                        lines[track.CsvRow] = new string(',', Math.Max(0, csvColumnCount - 1));
-                        Utils.WriteAllLines(Config.input, lines, '\n');
+                        string[] lines = File.ReadAllLines(Config.input, System.Text.Encoding.UTF8);
+
+                        if (track.CsvRow > -1 && track.CsvRow < lines.Length)
+                        {
+                            lines[track.CsvRow] = new string(',', Math.Max(0, csvColumnCount - 1));
+                            Utils.WriteAllLines(Config.input, lines, '\n');
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Printing.WriteLine($"Error removing from source: {e}", debugOnly: true);
                     }
                 }
             }

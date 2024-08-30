@@ -106,8 +106,15 @@ namespace Extractors
 
         public async Task RemoveTrackFromSource(Track track)
         {
-            if (playlistUri.Length > 0 && track.URI.Length > 0)
-                await spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+            try
+            {
+                if (playlistUri.Length > 0 && track.URI.Length > 0)
+                    await spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+            }
+            catch (Exception e) 
+            {
+                Printing.WriteLine($"Error removing from source: {e}", debugOnly: true);
+            }
         }
     }
 

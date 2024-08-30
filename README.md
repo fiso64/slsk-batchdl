@@ -56,6 +56,7 @@ Usage: sldl <input> [OPTIONS]
                                    'index' (default): Write a line indexing all downloaded
                                    files, required for skip-not-found or skip-existing=m3u
                                    'all': Write the index and a list of paths and fails
+    --m3u-path <path>              Override default m3u path
 
     -s, --skip-existing            Skip if a track matching file conditions is found in the
                                    output folder or your music library (if provided)
@@ -558,7 +559,7 @@ sldl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
 
 Interactive album download:
 ```
-sldl "album=Some Album" --interactive
+sldl "Some Album" --album --interactive
 ```
 <br>
 
@@ -568,10 +569,23 @@ sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" 
 ```
 <br>
 
-Download all albums by an artist that are on soulseek:
+Download all albums by an artist found on soulseek:
 ```
 sldl "artist=MC MENTAL" --aggregate --album
 ```
+<hr style="height:0px; visibility:hidden;" />
+
+#### Advanced example: Automatic wishlist downloader
+Create a file named wishlist.txt, and add your wishlist items:
+```bash
+echo title=My Favorite Song, artist=Artist >> wishlist.txt
+echo https://spotify/album/url >> wishlist.txt
+```
+Set up a cron job (or scheduled task on windows) to periodically run sldl on every line of the wishlist file with the following options:
+```
+--skip-existing --skip-mode m3u --m3u index --m3u-path wishlist-archive.sldl
+```
+You can also use m3u-cond and specify some preferred conditions to e.g only stop searching for an item once a lossless version is downloaded.
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 

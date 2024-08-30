@@ -416,7 +416,7 @@ static partial class Program
 
         var downloadTasks = tracks.Select(async (track, index) =>
         {
-            await DownloadTask(tle, track, semaphore, organizer, null, false);
+            await DownloadTask(tle, track, semaphore, organizer, null, false, true);
             m3uEditor.Update();
         });
 
@@ -469,7 +469,7 @@ static partial class Program
             {
                 var downloadTasks = tracks.Select(async track =>
                 {
-                    await DownloadTask(tle, track, semaphore, organizer, cts, cancelOnFail: !Config.albumIgnoreFails);
+                    await DownloadTask(tle, track, semaphore, organizer, cts, cancelOnFail: !Config.albumIgnoreFails, true);
                 });
                 await Task.WhenAll(downloadTasks);
 
@@ -491,7 +491,7 @@ static partial class Program
             tle.list.RemoveAt(index);
         }
 
-        if (tracks != null)
+        if (tracks != null && succeeded)
         {
             var downloadedAudio = tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0);
 
@@ -499,6 +499,11 @@ static partial class Program
             {
                 tle.source.State = TrackState.Downloaded;
                 tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
+
+                if (Config.removeTracksFromSource)
+                {
+                    await extractor.RemoveTrackFromSource(tle.source);
+                }
             }
         }
 
@@ -620,7 +625,7 @@ static partial class Program
 
             foreach (var track in tracks)
             {
-                await DownloadTask(null, track, semaphore, organizer, null, false);
+                await DownloadTask(null, track, semaphore, organizer, null, false, false);
 
                 if (track.State == TrackState.Downloaded)
                     downloadedImages.Add(track);
@@ -636,7 +641,7 @@ static partial class Program
     }
 
 
-    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource? cts, bool cancelOnFail)
+    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource? cts, bool cancelOnFail, bool removeFromSource)
     {
         if (track.State != TrackState.Initial)
             return;
@@ -706,7 +711,7 @@ static partial class Program
                 track.DownloadPath = savedFilePath;
             }
 
-            if (Config.removeTracksFromSource)
+            if (removeFromSource && Config.removeTracksFromSource)
             {
                 try
                 {

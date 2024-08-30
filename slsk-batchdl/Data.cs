@@ -47,7 +47,7 @@ namespace Data
             Other = other.Other;
             MinAlbumTrackCount = other.MinAlbumTrackCount;
             MaxAlbumTrackCount = other.MaxAlbumTrackCount;
-            CsvRow = other.CsvRow;
+            //CsvRow = other.CsvRow;
         }
 
         public string ToKey()

@@ -846,6 +846,10 @@ static class Config
                             _ => throw new ArgumentException($"Invalid m3u option '{args[i]}'"),
                         };
                         break;
+                    case "--m3up":
+                    case "--m3u-path":
+                        m3uFilePath = args[++i];
+                        break;
                     case "--lp":
                     case "--port":
                     case "--listen-port":

@@ -34,6 +34,7 @@ public static class Help
                                        'index' (default): Write a line indexing all downloaded 
                                        files, required for skip-not-found or skip-existing=m3u
                                        'all': Write the index and a list of paths and fails
+        --m3u-path <path>              Override default m3u path
             
         -s, --skip-existing            Skip if a track matching file conditions is found in the
                                        output folder or your music library (if provided)
