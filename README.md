@@ -127,6 +127,8 @@ Usage: sldl <input> [OPTIONS]
   Spotify
     --spotify-id <id>              spotify client ID
     --spotify-secret <secret>      spotify client secret
+    --spotify-token <token>        spotify access token
+    --spotify-refresh <token>      spotify refresh token
     --remove-from-source           Remove downloaded tracks from source playlist
 ```
 ```
@@ -243,10 +245,26 @@ Tip: For playlists containing music videos, it may be better to remove all text 
 
 ### Spotify
 A playlist/album url or 'spotify-likes': Download a spotify playlist, album, or your
-liked songs. --spotify-id and --spotify-secret are required in addition when downloading
-a private playlist or liked music.
-The id and secret can be obtained at https://developer.spotify.com/dashboard/applications.
-Create an app and add http://localhost:48721/callback as a redirect url in its settings.
+liked songs. Credentials are required when downloading a private playlist or liked music.
+
+#### Using Credential/Application
+
+Create a [Spotify application](https://developer.spotify.com/dashboard/applications) with a redirect url of `http://localhost:48721/callback`. Obtain an application **ID** and **Secret** from the created application dashboard.
+
+Start sldl with the obtained credentials and an authorized action to trigger the Spotify app login flow:
+
+```shell
+sldl spotify-likes --number 1 --spotify-id 123456 --spotify-secret 123456 ...
+```
+sldl will try to open a browser automatically but will fallback to logging the login flow URL to output. After login flow is complete sldl will output a **Token** and **Refresh Token** and finish running the current command.
+
+To skip requiring login flow every time `sldl` is used the **Token** and **Refresh Token** can be provided to sldl (hint: use `--config` and store this info in the config file to make commands less verbose):
+
+```shell
+sldl spotify-likes --number 1 --spotify-id 123456 --spotify-secret 123456 --spotify-refresh 123456 --spotify-token 123456 ...
+```
+
+`spotify-token` access is only valid for 1 hour. `spotify-refresh` will enable sldl to renew access every time it is run (and can be used without including `spotify-token`)
 
 ### Bandcamp
 A bandcamp url: Download a single track, an album, or an artist's entire discography. 

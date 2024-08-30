@@ -4,6 +4,7 @@ using Swan;
 
 using Data;
 using Enums;
+using System.Security;
 
 namespace Extractors
 {
@@ -34,15 +35,19 @@ namespace Extractors
                 Config.spotifyId = Console.ReadLine();
                 Console.Write("Spotify client secret:");
                 Config.spotifySecret = Console.ReadLine();
+                Console.Write("Spotify token:");
+                Config.spotifyToken = Console.ReadLine();
+                Console.Write("Spotify refresh token:");
+                Config.spotifyRefresh = Console.ReadLine();
                 Console.WriteLine();
             }
 
-            if (needLogin && (Config.spotifyId.Length == 0 || Config.spotifySecret.Length == 0))
+            if (needLogin && Config.spotifyToken.Length == 0 && (Config.spotifyId.Length == 0 || Config.spotifySecret.Length == 0))
             {
                 readSpotifyCreds();
             }
 
-            spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret);
+            spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret, Config.spotifyToken, Config.spotifyRefresh);
             await spotifyClient.Authorize(needLogin, Config.removeTracksFromSource);
 
             if (Config.input == "spotify-likes")
@@ -134,6 +139,8 @@ namespace Extractors
         private EmbedIOAuthServer _server;
         private readonly string _clientId;
         private readonly string _clientSecret;
+        private string _clientToken;
+        private string _clientRefreshToken;
         private SpotifyClient? _client;
         private bool loggedIn = false;
 
@@ -142,12 +149,14 @@ namespace Extractors
         public const string encodedSpotifySecret = "Y2JlM2QxYTE5MzJkNDQ2MmFiOGUy3shTuf4Y2JhY2M3ZDdjYWU=";
         public bool UsedDefaultCredentials { get; private set; }
 
-        public Spotify(string clientId = "", string clientSecret = "")
+        public Spotify(string clientId = "", string clientSecret = "", string token = "", string refreshToken = "")
         {
             _clientId = clientId;
             _clientSecret = clientSecret;
+            _clientToken = token;
+            _clientRefreshToken = refreshToken;
 
-            if (_clientId.Length == 0 || _clientSecret.Length == 0)
+            if (_clientToken.Length == 0 && (_clientId.Length == 0 || _clientSecret.Length == 0))
             {
                 _clientId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId.Replace("1bLaH9", "")));
                 _clientSecret = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret.Replace("3shTuf4", "")));
@@ -174,25 +183,89 @@ namespace Extractors
                 _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
                 await _server.Start();
 
-                _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
-                _server.ErrorReceived += OnErrorReceived;
+                var existingOk = false;
+                if (_clientToken.Length != 0 || _clientRefreshToken.Length != 0)
+                {
+                    existingOk = await this.TryExistingToken();
+                    loggedIn = true;
+                    //new OAuthClient(config).RequestToken()
+                }
+                if (!existingOk)
+                {
+                    _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
+                    _server.ErrorReceived += OnErrorReceived;
 
-                var scope = new List<string> {
+                    var scope = new List<string> {
                     Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate, Scopes.PlaylistReadCollaborative
                 };
 
-                if (needModify)
-                {
-                    scope.Add(Scopes.PlaylistModifyPublic);
-                    scope.Add(Scopes.PlaylistModifyPrivate);
+                    if (needModify)
+                    {
+                        scope.Add(Scopes.PlaylistModifyPublic);
+                        scope.Add(Scopes.PlaylistModifyPrivate);
+                    }
+
+                    var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code) { Scope = scope };
+
+                    try
+                    {
+                        BrowserUtil.Open(request.ToUri());
+                    }
+                    catch (Exception)
+                    {
+                        Console.WriteLine("Unable to open URL, manually open: {0}", request.ToUri());
+                    }
                 }
-
-                var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code) { Scope = scope };
-
-                BrowserUtil.Open(request.ToUri());
 
                 await IsClientReady();
             }
+        }
+
+        private async Task<bool> TryExistingToken() 
+        {
+            if (_clientToken.Length != 0)
+            {
+                Console.WriteLine("Testing Spotify access with existing token...");
+                var client = new SpotifyClient(_clientToken);
+                try
+                {
+                    var me = await client.UserProfile.Current();
+                    Console.WriteLine("Spotify access is good!");
+                    _client = client;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Could not make an API call with existing token: {ex}");
+                }
+            }
+            if (_clientRefreshToken.Length != 0)
+            {
+                Console.WriteLine("Trying to renew access with refresh token...");
+            //     var refreshRequest = new TokenSwapRefreshRequest(
+            //     new Uri("http://localhost:48721/refresh"),
+            //     _clientRefreshToken
+            // );
+            var refreshRequest = new AuthorizationCodeRefreshRequest(_clientId, _clientSecret, _clientRefreshToken);
+                try
+                {
+                    var oauthClient = new OAuthClient();
+                    var refreshResponse = await oauthClient.RequestToken(refreshRequest);
+                    Console.WriteLine($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
+                    _clientToken = refreshResponse.AccessToken;
+                    _client = new SpotifyClient(_clientToken);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Could not refresh access token with refresh token: {ex}");
+                }
+            } else {
+                Console.WriteLine("No refresh token present, cannot refresh existing access");
+            }
+
+            Console.WriteLine("Not possible to access Spotify API without login! Falling back to login flow...");
+            return false;
         }
 
         private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
@@ -205,6 +278,11 @@ namespace Extractors
                     _clientId, _clientSecret, response.Code, new Uri("http://localhost:48721/callback")
                 )
             );
+
+            Console.WriteLine("Spotify token: " + tokenResponse.AccessToken);
+            _clientToken = tokenResponse.AccessToken;
+            Console.WriteLine("Spotify refresh token: " + tokenResponse.RefreshToken);
+            _clientRefreshToken = tokenResponse.RefreshToken;
 
             _client = new SpotifyClient(tokenResponse.AccessToken);
             loggedIn = true;
