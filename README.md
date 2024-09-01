@@ -583,7 +583,7 @@ sldl "artist=MC MENTAL" --aggregate --album
 <hr style="height:0px; visibility:hidden;" />
 
 #### Advanced example: Automatic wishlist downloader
-Create a file named wishlist.txt, and add your wishlist items:
+Create a file named `wishlist.txt`, and add some wishlist items:
 ```bash
 echo title=My Favorite Song, artist=Artist >> wishlist.txt
 echo https://spotify/album/url >> wishlist.txt
@@ -592,7 +592,9 @@ Set up a cron job (or scheduled task on windows) to periodically run sldl on eve
 ```
 --skip-existing --skip-mode m3u --m3u index --m3u-path wishlist-archive.sldl
 ```
-You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.
+This will create a global archive file `wishlist-archive.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded.  
+You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.  
+If you expect to have a lot of individual songs in your wishlist, it may be better to use a csv file as that will allow sldl to use concurrency when downloading.
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
