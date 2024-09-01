@@ -5,25 +5,34 @@ using System.Text;
 
 public class M3uEditor
 {
+    public string path { get; private set; }
+    string parent;
     List<string> lines;
     bool needFirstUpdate = false;
     readonly TrackLists trackLists;
-    readonly string path;
-    readonly string parent;
-    readonly int offset = 0;
     readonly M3uOption option = M3uOption.Index;
     readonly Dictionary<string, Track> previousRunData = new(); // { track.ToKey(), track }
 
-    public M3uEditor(string m3uPath, TrackLists trackLists, M3uOption option, int offset = 0)
+    public M3uEditor(TrackLists trackLists, M3uOption option)
     {
         this.trackLists = trackLists;
-        this.offset = offset;
         this.option = option;
-        this.path = Path.GetFullPath(m3uPath);
-        this.parent = Utils.NormalizedPath(Path.GetDirectoryName(path));
-        this.lines = ReadAllLines().ToList();
         this.needFirstUpdate = option == M3uOption.All;
+    }
 
+    public M3uEditor(string path, TrackLists trackLists, M3uOption option) : this(trackLists, option)
+    {
+        SetPathAndLoad(path);
+    }
+
+    public void SetPathAndLoad(string path)
+    {
+        if (this.path == path)
+            return;
+
+        this.path = Path.GetFullPath(path);
+        parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
+        lines = ReadAllLines().ToList();
         LoadPreviousResults();
     }
 
@@ -72,7 +81,7 @@ public class M3uEditor
                     if (field == 0)
                     {
                         if (x.StartsWith("./"))
-                            x = Path.Join(parent, x[2..]);
+                            x = System.IO.Path.Join(parent, x[2..]);
                         track.DownloadPath = x;
                     }
                     else if (field == 1)
@@ -116,7 +125,7 @@ public class M3uEditor
         lock (trackLists)
         {
             bool needUpdate = false;
-            int index = 1 + offset;
+            int index = 1;
 
             bool updateLine(string newLine)
             {
@@ -246,7 +255,7 @@ public class M3uEditor
         {
             string p = val.DownloadPath;
             if (Utils.NormalizedPath(p).StartsWith(parent))
-                p = "./" + Path.GetRelativePath(parent, p); // prepend ./ for LoadPreviousResults to recognize that a rel. path is used
+                p = "./" + System.IO.Path.GetRelativePath(parent, p); // prepend ./ for LoadPreviousResults to recognize that a rel. path is used
 
             var items = new string[] 
             { 
@@ -278,7 +287,7 @@ public class M3uEditor
 
         if (track.DownloadPath.Length > 0)
         {
-            if (track.DownloadPath.StartsWith(parent))
+            if (Utils.NormalizedPath(track.DownloadPath).StartsWith(parent))
                 return Path.GetRelativePath(parent, track.DownloadPath);
             else
                 return track.DownloadPath;

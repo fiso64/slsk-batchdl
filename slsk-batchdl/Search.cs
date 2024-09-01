@@ -20,17 +20,17 @@ static class Search
     public static RateLimitedSemaphore? searchSemaphore;
 
     // very messy function that does everything
-    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer)
+    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, CancellationTokenSource cts)
     {
         if (Config.DoNotDownload)
             throw new Exception();
 
-        var responseData = new ResponseData();
         IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
+        var responseData = new ResponseData();
         var progress = Printing.GetProgressBar(Config.displayMode);
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
-        var cts = new CancellationTokenSource();
+        using var searchCts = new CancellationTokenSource();
         var saveFilePath = "";
         SlFile? chosenFile = null;
         Task? downloadTask = null;
@@ -62,7 +62,7 @@ static class Search
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, cts);
+                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, cts, searchCts);
                 }
             }
         }
@@ -111,7 +111,7 @@ static class Search
         }
 
         void onSearch() => Printing.RefreshOrPrint(progress, 0, $"Searching: {track}", true);
-        await RunSearches(track, results, getSearchOptions, responseHandler, cts.Token, onSearch);
+        await RunSearches(track, results, getSearchOptions, responseHandler, searchCts.Token, onSearch);
 
         searches.TryRemove(track, out _);
         searchEnded = true;
@@ -142,7 +142,7 @@ static class Search
             }
         }
 
-        cts.Dispose();
+        searchCts.Dispose();
 
     downloads:
 
@@ -159,7 +159,7 @@ static class Search
                 try
                 {
                     downloading = 1;
-                    await Download.DownloadFile(response, file, saveFilePath, track, progress);
+                    await Download.DownloadFile(response, file, saveFilePath, track, progress, cts);
                     userSuccessCount.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
@@ -168,13 +168,17 @@ static class Search
                     chosenFile = null;
                     saveFilePath = "";
                     downloading = 0;
+
                     if (!IsConnectedAndLoggedIn())
                         throw;
+
+                    Printing.WriteLine("Error: " + e.Message, ConsoleColor.DarkYellow, true);
+
                     userSuccessCount.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
                     if (--trackTries <= 0)
                     {
                         Printing.RefreshOrPrint(progress, 0, $"Out of download retries: {track}", true);
-                        Printing.WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow, true);
+                        Printing.WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow);
                         throw new SearchAndDownloadException(FailureReason.OutOfDownloadRetries);
                     }
                     return false;
@@ -284,7 +288,7 @@ static class Search
                     results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
             }
         }
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
 
         await RunSearches(track, results, getSearchOptions, handler, cts.Token);
 
@@ -427,7 +431,7 @@ static class Search
                     results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
             }
         }
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
 
         await RunSearches(track, results, getSearchOptions, handler, cts.Token);
 
@@ -461,10 +465,7 @@ static class Search
 
     public static async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData)
     {
-        int maxDiff = Config.necessaryCond.LengthTolerance;
-
-        if (maxDiff < 0)
-            maxDiff = 3;
+        int maxDiff = Config.aggregateLengthTol;
 
         bool lengthsAreSimilar(int[] sorted1, int[] sorted2)
         {
@@ -555,13 +556,13 @@ static class Search
     }
 
 
-    public static async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix)
+    public static async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? cancellationToken = null)
     {
         var browseOptions = new BrowseOptions();
         var res = new List<(string dir, SlFile file)>();
 
         folderPrefix = folderPrefix.TrimEnd('\\') + '\\';
-        var userFileList = await client.BrowseAsync(user, browseOptions);
+        var userFileList = await client.BrowseAsync(user, browseOptions, cancellationToken);
 
         foreach (var dir in userFileList.Directories)
         {
@@ -572,22 +573,15 @@ static class Search
             }
         }
         return res;
-
-        // It would be much better to use GetDirectoryContentsAsync. Unfortunately it only returns the file
-        // names without full paths, and DownloadAsync needs full paths in order to download files.
-        // Therefore it would not be possible to download any files that are in a subdirectory of the folder.
-
-        // var dir = await client.GetDirectoryContentsAsync(user, folderPrefix);
-        // var res = dir.Files.Select(x => (folderPrefix, x)).ToList();
-        // return res;
     }
 
 
-    public static async Task CompleteFolder(List<Track> tracks, SearchResponse response, string folder)
+    public static async Task<int> CompleteFolder(List<Track> tracks, SearchResponse response, string folder, CancellationToken? cancellationToken = null)
     {
+        int newFiles = 0;
         try
         {
-            var allFiles = await GetAllFilesInFolder(response.Username, folder);
+            var allFiles = await GetAllFilesInFolder(response.Username, folder, cancellationToken);
 
             if (allFiles.Count > tracks.Count)
             {
@@ -599,6 +593,7 @@ static class Search
                     var fullPath = dir + '\\' + file.Filename;
                     if (!paths.Contains(fullPath))
                     {
+                        newFiles++;
                         var newFile = new SlFile(file.Code, fullPath, file.Size, file.Extension, file.Attributes);
                         var t = new Track
                         {
@@ -616,6 +611,7 @@ static class Search
         {
             Printing.WriteLine($"Error getting complete list of files: {ex}", ConsoleColor.DarkYellow);
         }
+        return newFiles;
     }
 
 
@@ -633,7 +629,7 @@ static class Search
         }
 
         var groups = fileResponses
-            .GroupBy(inferTrack, new TrackComparer(ignoreCase: true, Config.necessaryCond.LengthTolerance))
+            .GroupBy(inferTrack, new TrackComparer(ignoreCase: true, Config.aggregateLengthTol))
             .Select(x => (x, x.Select(y => y.Item1.Username).Distinct().Count()))
             .Where(x => x.Item2 >= minShares)
             .OrderByDescending(x => x.Item2)

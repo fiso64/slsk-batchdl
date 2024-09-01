@@ -9,6 +9,7 @@ using HtmlAgilityPack;
 using System.Collections.Concurrent;
 
 using Data;
+using Enums;
 
 namespace Extractors
 {
@@ -20,7 +21,7 @@ namespace Extractors
             return input.IsInternetUrl() && (input.Contains("youtu.be") || input.Contains("youtube.com"));
         }
 
-        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
             int max = reverse ? int.MaxValue : maxTracks;
@@ -35,24 +36,24 @@ namespace Extractors
             {
                 Console.WriteLine("Getting deleted videos..");
                 var archive = new YouTube.YouTubeArchiveRetriever();
-                deleted = await archive.RetrieveDeleted(Config.input, printFailed: Config.deletedOnly);
+                deleted = await archive.RetrieveDeleted(input, printFailed: Config.deletedOnly);
             }
             if (!Config.deletedOnly)
             {
                 if (YouTube.apiKey.Length > 0)
                 {
                     Console.WriteLine("Loading YouTube playlist (API)");
-                    (name, tracks) = await YouTube.GetTracksApi(Config.input, max, off);
+                    (name, tracks) = await YouTube.GetTracksApi(input, max, off);
                 }
                 else
                 {
                     Console.WriteLine("Loading YouTube playlist");
-                    (name, tracks) = await YouTube.GetTracksYtExplode(Config.input, max, off);
+                    (name, tracks) = await YouTube.GetTracksYtExplode(input, max, off);
                 }
             }
             else
             {
-                name = await YouTube.GetPlaylistTitle(Config.input);
+                name = await YouTube.GetPlaylistTitle(input);
             }
             if (deleted != null)
             {
@@ -61,11 +62,12 @@ namespace Extractors
 
             YouTube.StopService();
 
-            var tle = new TrackListEntry();
-            tle.list.Add(tracks);
-            trackLists.AddEntry(tle);
+            var tle = new TrackListEntry(TrackType.Normal);
 
-            Config.defaultFolderName = name.ReplaceInvalidChars(Config.invalidReplaceStr);
+            tle.defaultFolderName = name;
+            tle.list.Add(tracks);
+
+            trackLists.AddEntry(tle);
 
             if (reverse)
             {

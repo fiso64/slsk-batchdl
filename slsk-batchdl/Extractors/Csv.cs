@@ -6,7 +6,8 @@ namespace Extractors
 {
     public class CsvExtractor : IExtractor
     {
-        object csvLock = new();
+        string? csvFilePath = null;
+        readonly object csvLock = new();
         int csvColumnCount = -1;
 
         public static bool InputMatches(string input)
@@ -15,28 +16,26 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
-            if (!File.Exists(Config.input))
+            if (!File.Exists(input))
                 throw new FileNotFoundException("CSV file not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(Config.input, Config.artistCol, Config.trackCol, Config.lengthCol, 
+            csvFilePath = input;
+
+            var tracks = await ParseCsvIntoTrackInfo(input, Config.artistCol, Config.trackCol, Config.lengthCol, 
                 Config.albumCol, Config.descCol, Config.ytIdCol, Config.trackCountCol, Config.timeUnit, Config.ytParse);
 
             if (reverse)
                 tracks.Reverse();
 
             var trackLists = TrackLists.FromFlattened(tracks.Skip(offset).Take(maxTracks));
-
+            var csvName = Path.GetFileNameWithoutExtension(input);
+            
             foreach (var tle in trackLists.lists)
             {
-                if (tle.source.Type != TrackType.Normal)
-                {
-                    tle.placeInSubdir = true;
-                }
+                tle.defaultFolderName = csvName;
             }
-
-            Config.defaultFolderName = Path.GetFileNameWithoutExtension(Config.input);
 
             return trackLists;
         }
@@ -45,16 +44,16 @@ namespace Extractors
         {
             lock (csvLock)
             {
-                if (File.Exists(Config.input))
+                if (File.Exists(csvFilePath))
                 {
                     try
                     {
-                        string[] lines = File.ReadAllLines(Config.input, System.Text.Encoding.UTF8);
+                        string[] lines = File.ReadAllLines(csvFilePath, System.Text.Encoding.UTF8);
 
                         if (track.CsvRow > -1 && track.CsvRow < lines.Length)
                         {
                             lines[track.CsvRow] = new string(',', Math.Max(0, csvColumnCount - 1));
-                            Utils.WriteAllLines(Config.input, lines, '\n');
+                            Utils.WriteAllLines(csvFilePath, lines, '\n');
                         }
                     }
                     catch (Exception e)
@@ -193,7 +192,7 @@ namespace Extractors
             return tracks;
         }
 
-        double ParseTrackLength(string duration, string format)
+        static double ParseTrackLength(string duration, string format)
         {
             if (string.IsNullOrEmpty(format))
                 throw new ArgumentException("Duration format string empty");
@@ -224,6 +223,5 @@ namespace Extractors
 
             return totalSeconds;
         }
-
     }
 }

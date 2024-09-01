@@ -7,15 +7,14 @@ using System.Text.RegularExpressions;
 
 using Data;
 using Enums;
+using System.ComponentModel;
 
 
 public class FileManager
 {
-    readonly TrackListEntry? tle;
+    readonly TrackListEntry tle;
     readonly HashSet<Track> organized = new();
     string? remoteCommonDir;
-
-    public FileManager() { }
 
     public FileManager(TrackListEntry tle)
     {
@@ -24,18 +23,24 @@ public class FileManager
 
     public string GetSavePath(string sourceFname)
     {
-        return $"{GetSavePathNoExt(sourceFname)}{Path.GetExtension(sourceFname)}";
+        return GetSavePathNoExt(sourceFname) + Path.GetExtension(sourceFname);
     }
 
     public string GetSavePathNoExt(string sourceFname)
     {
+        string parent = Config.parentDir;
         string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
-        name = name.ReplaceInvalidChars(Config.invalidReplaceStr);
 
-        string parent = Config.outputFolder;
-
-        if (tle != null && tle.placeInSubdir && remoteCommonDir != null)
+        if (tle.defaultFolderName != null)
         {
+            parent = Path.Join(parent, tle.defaultFolderName.ReplaceInvalidChars(Config.invalidReplaceStr, removeSlash: false));
+        } 
+
+        if (tle.source.Type == TrackType.Album)
+        {
+            if (remoteCommonDir == null)
+                throw new NullReferenceException("Remote common dir needs to be configured to organize album files");
+
             string dirname = Path.GetFileName(remoteCommonDir);
             string relpath = Path.GetRelativePath(remoteCommonDir, Utils.NormalizedPath(sourceFname));
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath));
@@ -51,17 +56,12 @@ public class FileManager
 
     public void OrganizeAlbum(List<Track> tracks, List<Track>? additionalImages, bool remainingOnly = true)
     {
-        if (tle == null)
-            throw new NullReferenceException("TrackListEntry should not be null.");
-
-        string outputFolder = Config.outputFolder;
-
         foreach (var track in tracks.Where(t => !t.IsNotAudio))
         {
             if (remainingOnly && organized.Contains(track))
                 continue;
 
-            OrganizeAudio(tle, track, track.FirstDownload);
+            OrganizeAudio(track, track.FirstDownload);
         }
 
         bool onlyAdditionalImages = Config.nameFormat.Length == 0;
@@ -83,20 +83,19 @@ public class FileManager
         }
     }
 
-    public void OrganizeAudio(TrackListEntry tle, Track track, Soulseek.File? file)
+    public void OrganizeAudio(Track track, Soulseek.File? file)
     {
         if (track.DownloadPath.Length == 0 || !Utils.IsMusicFile(track.DownloadPath))
-        {
             return;
-        }
-        else if (Config.nameFormat.Length == 0)
+
+        if (Config.nameFormat.Length == 0)
         {
             organized.Add(track);
             return;
         }
 
         string pathPart = SubstituteValues(Config.nameFormat, track, file);
-        string newFilePath = Path.Join(Config.outputFolder, pathPart + Path.GetExtension(track.DownloadPath));
+        string newFilePath = Path.Join(Config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
 
         try
         {
@@ -141,15 +140,7 @@ public class FileManager
         {
             Directory.CreateDirectory(Path.GetDirectoryName(newPath));
             Utils.Move(oldPath, newPath);
-
-            string x = Utils.NormalizedPath(Path.GetFullPath(Config.outputFolder));
-            string y = Utils.NormalizedPath(Path.GetDirectoryName(oldPath));
-
-            while (x.Length > 0 && y.StartsWith(x + '/') && Utils.FileCountRecursive(y) == 0)
-            {
-                Directory.Delete(y, true); // hopefully this is fine
-                y = Utils.NormalizedPath(Path.GetDirectoryName(y));
-            }
+            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), Config.parentDir);
         }
     }
          
@@ -172,17 +163,22 @@ public class FileManager
                 inner = inner[1..^1];
 
                 var options = inner.Split('|');
-                string chosenOpt = "";
+                string? chosenOpt = null;
 
                 foreach (var opt in options)
                 {
                     string[] parts = Regex.Split(opt, @"\([^\)]*\)");
                     string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => GetVarValue(x, file, slfile, track).Length > 0))
+                    if (result.All(x => TryGetVarValue(x, file, slfile, track, out string res) && res.Length > 0))
                     {
                         chosenOpt = opt;
                         break;
                     }
+                }
+
+                if (chosenOpt == null)
+                {
+                    chosenOpt = options[^1];
                 }
 
                 chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", match =>
@@ -190,7 +186,10 @@ public class FileManager
                     if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
                         return match.Value[1..^1].ReplaceInvalidChars(Config.invalidReplaceStr, removeSlash: false);
                     else
-                        return GetVarValue(match.Value, file, slfile, track);
+                    {
+                        TryGetVarValue(match.Value, file, slfile, track, out string res);
+                        return res;
+                    }
                 });
 
                 string old = match.Groups[1].Value;
@@ -213,10 +212,8 @@ public class FileManager
         return format;
     }
 
-    string GetVarValue(string x, TagLib.File? file, Soulseek.File? slfile, Track track)
+    bool TryGetVarValue(string x, TagLib.File? file, Soulseek.File? slfile, Track track, out string res)
     {
-        string res;
-
         switch (x)
         {
             case "artist":
@@ -249,23 +246,24 @@ public class FileManager
             case "foldername":
                 if (remoteCommonDir ==  null || slfile == null)
                 {
-                    return Utils.GetBaseNameSlsk(Utils.GetDirectoryNameSlsk(slfile?.Filename ?? ""));
+                    res = Utils.GetBaseNameSlsk(Utils.GetDirectoryNameSlsk(slfile?.Filename ?? ""));
+                    return true;
                 }
                 else
                 {
                     string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
                     string r = Path.GetFileName(remoteCommonDir);
-                    return Path.Join(r, Path.GetRelativePath(remoteCommonDir, d));
+                    res = Path.Join(r, Path.GetRelativePath(remoteCommonDir, d));
+                    return true;
                 }
-            case "default-foldername":
-                res = Config.defaultFolderName; break;
             case "extractor":
                 res = Config.inputType.ToString(); break;
             default:
-                res = ""; break;
+                res = x; return false;
         }
 
-        return res.ReplaceInvalidChars(Config.invalidReplaceStr);
+        res = res.ReplaceInvalidChars(Config.invalidReplaceStr);
+        return true;
     }
 }
 

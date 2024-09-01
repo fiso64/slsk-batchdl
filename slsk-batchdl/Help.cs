@@ -19,8 +19,7 @@ public static class Help
 
       General Options
         -p, --path <path>              Download directory
-        -f, --folder <name>            Subfolder name. Set to '.' to output directly to --path
-        --input-type <type>            Force set input type, [csv|youtube|spotify|bandcamp|string]
+        --input-type <type>            [csv|youtube|spotify|bandcamp|string|list]
         --name-format <format>         Name format for downloaded tracks. See --help name-format
           
         -n, --number <maxtracks>       Download the first n tracks of a playlist
@@ -161,9 +160,6 @@ public static class Help
         -t, --interactive              Interactive mode, allows to select the folder and images
         --album-track-count <num>      Specify the exact number of tracks in the album. Add a + or
                                        - for inequalities, e.g '5+' for five or more tracks.
-        --album-ignore-fails           Do not skip to the next source and do not delete all 
-                                       successfully downloaded files if one of the files in the 
-                                       folder fails to download
         --album-art <option>           Retrieve additional images after downloading the album:
                                        'default': No additional images
                                        'largest': Download from the folder with the largest image
@@ -171,10 +167,16 @@ public static class Help
         --album-art-only               Only download album art for the provided album
         --no-browse-folder             Do not automatically browse user shares to get all files in
                                        in the folder
+        --failed-album-path            Path to move all album files to when one of the items from
+                                       the directory fails to download. Set to 'delete' to delete
+                                       the files instead. Set to the empty string """" to disable.
+                                       Default: {configured output dir}/failed
           
       Aggregate Download
         -g, --aggregate                Aggregate download mode: Find and download all distinct 
                                        songs associated with the provided artist, album, or title.
+        --aggregate-length-tol <tol>   Max length tolerance in seconds to consider two tracks or
+                                       albums equal. (Default: 3)
         --min-shares-aggregate <num>   Minimum number of shares of a track or album for it to be
                                        downloaded in aggregate mode. (Default: 2)
         --relax-filtering              Slightly relax file filtering in aggregate mode to include
@@ -196,7 +198,7 @@ public static class Help
     Input types
 
       The input type is usually determined automatically. To force a specific input type, set
-      --input-type [spotify|youtube|csv|string|bandcamp]. The following input types are available:
+      --input-type [spotify|youtube|csv|string|bandcamp|list]. The following input types are available:
             
       CSV file            
         Path to a local CSV file: Use a csv file containing track info of the songs to download. 
@@ -258,7 +260,8 @@ public static class Help
           artist
           album
           length (in seconds)
-          artist-maybe-wrong 
+          artist-maybe-wrong
+          album-track-count
 
         Example inputs and their interpretations:
           Input String                            | Artist   | Title    | Album    | Length
@@ -268,6 +271,17 @@ public static class Help
           'Foo - Bar' (with --album enabled)      | Foo      |          | Bar      |
           'Artist - Title, length=42'             | Artist   | Title    |          | 42
           'artist=AR, title=T, album=AL'          | AR       | T        | AL       |
+        
+      List
+        A path to a text file where each line has the following form:
+       
+        ""some input""      ""conditions""                  ""preferred conditions""
+        ""album=Album""     ""format=mp3; br > 128""        ""br >= 320""
+       
+        Where ""some input"" is any of the above input types. The quotes can be omitted if the field
+        contains no spaces. The conditions and preferred conditions fields are added on top of the
+        configured conditions and can also be omitted. List input must be manually activated with
+        --input-type=list.
     ";
 
     const string downloadModesHelp = @"
@@ -282,24 +296,18 @@ public static class Help
         or csv row has no track title, or when -a/--album is enabled.
         
       Aggregate
-        With -g/--aggregate, sldl will first perform an ordinary search for the input, then attempt to
-        group the results into distinct songs and download one of each kind. A common use case is
-        finding all remixes of a song or printing all songs by an artist that are not your music dir.  
-        Two files are considered equal if their inferred track title and artist name are equal 
-        (ignoring case and some special characters), and their lengths are within --length-tol of each
-        other.
-        Note that this mode is not 100% reliable, which is why --min-shares-aggregate is set to 2 by
-        default, i.e. any song that is shared only once will be ignored.
+        With -g/--aggregate, sldl performs an ordinary search for the input then attempts to
+        group the results into distinct songs and download one of each kind, starting with the one
+        which is shared by the most users.  
+        Note that --min-shares-aggregate is 2 by default, which means that songs shared by only
+        one user will be ignored.
 
       Album Aggregate
-        Activated when --album and --aggregate are enabled, in this mode sldl searches for the query
-        and groups results into distinct albums. Two folders are considered same if they have the
-        same number of audio files, and the durations of the files are within --length-tol of each 
-        other (or within 3 seconds if length-tol is not configured). If both folders have exactly one
-        audio file with similar lengths, also checks if the inferred title and artist name coincide.
-        More reliable than normal aggregate due to much simpler grouping logic.
-        Note that --min-shares-aggregate is 2 by default, which means that folders shared only once
-        will be ignored.
+        Activated when both --album and --aggregate are enabled. sldl will group shares and download
+        one of each distinct album, starting with the one shared by the most users. It's
+        recommended to pair this with --interactive.  
+        Note that --min-shares-aggregate is 2 by default, which means that albums shared by only
+        one user will be ignored.
     ";
 
     const string searchHelp = @"
@@ -377,8 +385,8 @@ public static class Help
         client will be ignored. Also note that the default preferred conditions will already affect
         ranking with this option due to the bitrate and samplerate checks.
         
-      Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g 
-      --cond ""br>=320;f=mp3,ogg;sr<96000""
+      Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g
+      --cond ""br >= 320; format = mp3,ogg; sr < 96000"".
     ";
 
     const string nameFormatHelp = @"
@@ -414,7 +422,6 @@ public static class Help
         disc                            Disc number
         filename                        Soulseek filename without extension
         foldername                      Soulseek folder name
-        default-foldername              Default sldl folder name
         extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
     ";
 

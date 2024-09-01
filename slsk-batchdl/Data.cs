@@ -100,38 +100,51 @@ namespace Data
 
     public class TrackListEntry
     {
-        public List<List<Track>> list;
+        public List<List<Track>>? list;
         public Track source;
         public bool needSourceSearch = false;
         public bool sourceCanBeSkipped = false;
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
-        public bool placeInSubdir = false;
+        public string? defaultFolderName = null;
+        public FileConditionsPatch? additionalConds = null;
+        public FileConditionsPatch? additionalPrefConds = null;
 
-        public TrackListEntry()
+        public TrackListEntry(TrackType trackType)
         {
             list = new List<List<Track>>();
-            source = new Track();
+            this.source = new Track() { Type = trackType };
+            SetDefaults();
         }
 
         public TrackListEntry(Track source)
         {
             list = new List<List<Track>>();
             this.source = source;
-
-            needSourceSearch = source.Type != TrackType.Normal;
-            needSkipExistingAfterSearch = source.Type == TrackType.Aggregate;
-            gotoNextAfterSearch = source.Type == TrackType.AlbumAggregate;
-            sourceCanBeSkipped = source.Type != TrackType.Normal 
-                && source.Type != TrackType.Aggregate 
-                && source.Type != TrackType.AlbumAggregate;
+            SetDefaults();
         }
 
         public TrackListEntry(List<List<Track>> list, Track source)
         {
             this.list = list;
             this.source = source;
+            SetDefaults();
+        }
 
+        public TrackListEntry(List<List<Track>> list, Track source, bool needSourceSearch = false, bool sourceCanBeSkipped = false,
+            bool needSkipExistingAfterSearch = false, bool gotoNextAfterSearch = false, string? defaultFoldername = null)
+        {
+            this.list = list;
+            this.source = source;
+            this.needSourceSearch = needSourceSearch;
+            this.sourceCanBeSkipped = sourceCanBeSkipped;
+            this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
+            this.gotoNextAfterSearch = gotoNextAfterSearch;
+            this.defaultFolderName = defaultFoldername;
+        }
+
+        public void SetDefaults()
+        {
             needSourceSearch = source.Type != TrackType.Normal;
             needSkipExistingAfterSearch = source.Type == TrackType.Aggregate;
             gotoNextAfterSearch = source.Type == TrackType.AlbumAggregate;
@@ -140,16 +153,14 @@ namespace Data
                 && source.Type != TrackType.AlbumAggregate;
         }
 
-        public TrackListEntry(List<List<Track>> list, Track source, bool needSearch, bool placeInSubdir,
-            bool sourceCanBeSkipped, bool needSkipExistingAfterSearch, bool gotoNextAfterSearch)
+        public void AddTrack(Track track)
         {
-            this.list = list;
-            this.source = source;
-            this.needSourceSearch = needSearch;
-            this.placeInSubdir = placeInSubdir;
-            this.sourceCanBeSkipped = sourceCanBeSkipped;
-            this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
-            this.gotoNextAfterSearch = gotoNextAfterSearch;
+            if (list == null)
+                list = new List<List<Track>>() { new List<Track>() { track } };
+            else if (list.Count == 0)
+                list.Add(new List<Track>() { track });
+            else
+                list[0].Add(track);
         }
     }
 
@@ -174,7 +185,7 @@ namespace Data
                 }
                 else
                 {
-                    res.AddEntry(new TrackListEntry());
+                    res.AddEntry(new TrackListEntry(TrackType.Normal));
                     res.AddTrackToLast(track);
 
                     bool hasNext;
@@ -252,11 +263,13 @@ namespace Data
                 if (tle.source.Type == TrackType.Album && aggregate)
                 {
                     tle.source.Type = TrackType.AlbumAggregate;
+                    tle.SetDefaults();
                     newLists.Add(tle);
                 }
                 else if (tle.source.Type == TrackType.Aggregate && album)
                 {
                     tle.source.Type = TrackType.AlbumAggregate;
+                    tle.SetDefaults();
                     newLists.Add(tle);
                 }
                 else if (tle.source.Type == TrackType.Normal && (album || aggregate))
@@ -270,7 +283,9 @@ namespace Data
                         else if (aggregate)
                             track.Type = TrackType.Aggregate;
 
-                        newLists.Add(new TrackListEntry(track));
+                        var newTle = new TrackListEntry(track);
+                        newTle.defaultFolderName = tle.defaultFolderName;
+                        newLists.Add(newTle);
                     }
                 }
                 else
@@ -284,16 +299,11 @@ namespace Data
 
         public void SetListEntryOptions()
         {
-            // place downloads in subdirs if there is more than one special (album/aggregate) download
-            bool placeInSubdirs = Flattened(true, false, true).Skip(1).Any();
-
-            if (placeInSubdirs)
+            // aggregate downloads will be placed in subfolders by default
+            foreach (var tle in lists)
             {
-                foreach(var tle in lists)
-                {
-                    if (tle.source.Type != TrackType.Normal)
-                        tle.placeInSubdir = true;
-                }
+                if (tle.source.Type == TrackType.Aggregate || tle.source.Type == TrackType.AlbumAggregate)
+                    tle.defaultFolderName = Path.Join(tle.defaultFolderName, tle.source.ToString(true));
             }
         }
 

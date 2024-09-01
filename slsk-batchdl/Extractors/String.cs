@@ -11,35 +11,33 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
-            var music = ParseTrackArg(Config.input, Config.album);
+            var music = ParseTrackArg(input, Config.album);
+            TrackListEntry tle;
 
             if (Config.album || (music.Title.Length == 0 && music.Album.Length > 0))
             {
                 music.Type = TrackType.Album;
-                trackLists.AddEntry(new TrackListEntry(music));
+                tle = new TrackListEntry(music);
             }
             else
             {
-                trackLists.AddEntry(new TrackListEntry());
-                trackLists.AddTrackToLast(music);
+                tle = new TrackListEntry(TrackType.Normal);
+                tle.AddTrack(music);
             }
 
-            if (Config.aggregate || Config.album || music.Type != TrackType.Normal)
-                Config.defaultFolderName = music.ToString(true).ReplaceInvalidChars(Config.invalidReplaceStr).Trim();
-            else
-                Config.defaultFolderName = ".";
+            trackLists.AddEntry(tle);
 
             return trackLists;
         }
 
-        static public Track ParseTrackArg(string input, bool isAlbum)
+        public static Track ParseTrackArg(string input, bool isAlbum)
         {
             input = input.Trim();
             var track = new Track();
-            var keys = new string[] { "title", "artist", "length", "album", "artist-maybe-wrong" };
+            var keys = new string[] { "title", "artist", "length", "album", "artist-maybe-wrong", "album-track-count" };
 
             void setProperty(string key, string value)
             {
@@ -59,6 +57,26 @@ namespace Extractors
                         break;
                     case "artist-maybe-wrong":
                         if (value == "true") track.ArtistMaybeWrong = true;
+                        break;
+                    case "album-track-count":
+                        if (value == "-1")
+                        {
+                            track.MinAlbumTrackCount = -1;
+                            track.MaxAlbumTrackCount = -1;
+                        }
+                        else if (value.Last() == '-')
+                        {
+                            track.MaxAlbumTrackCount = int.Parse(value[..^1]);
+                        }
+                        else if (value.Last() == '+')
+                        {
+                            track.MinAlbumTrackCount = int.Parse(value[..^1]);
+                        }
+                        else
+                        {
+                            track.MinAlbumTrackCount = int.Parse(value);
+                            track.MaxAlbumTrackCount = track.MinAlbumTrackCount;
+                        }
                         break;
                 }
             }

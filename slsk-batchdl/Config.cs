@@ -21,13 +21,10 @@ static class Config
         AcceptNoLength = false,
     };
 
-    public static string parentFolder = Directory.GetCurrentDirectory();
+    public static string parentDir = Directory.GetCurrentDirectory();
     public static string input = "";
-    public static string outputFolder = "";
     public static string m3uFilePath = "";
     public static string musicDir = "";
-    public static string folderName = "";
-    public static string defaultFolderName = "";
     public static string spotifyId = "";
     public static string spotifySecret = "";
     public static string spotifyToken = "";
@@ -49,11 +46,11 @@ static class Config
     public static string onComplete = "";
     public static string confPath = "";
     public static string profile = "";
+    public static string failedAlbumPath = "";
     public static bool aggregate = false;
     public static bool album = false;
     public static bool albumArtOnly = false;
     public static bool interactiveMode = false;
-    public static bool albumIgnoreFails = false;
     public static bool setAlbumMinTrackCount = true;
     public static bool setAlbumMaxTrackCount = false;
     public static bool skipNotFound = false;
@@ -94,6 +91,7 @@ static class Config
     public static int listenPort = 49998;
     public static int searchesPerTime = 34;
     public static int searchRenewTime = 220;
+    public static int aggregateLengthTol = 3;
     public static double fastSearchMinUpSpeed = 1.0;
     public static Track regexToReplace = new();
     public static Track regexReplaceBy = new();
@@ -105,19 +103,22 @@ static class Config
     public static SkipMode skipModeMusicDir = SkipMode.Name;
     public static PrintOption printOption = PrintOption.None;
 
-    static readonly Dictionary<string, (List<string> args, string? cond)> profiles = new();
-    static readonly HashSet<string> appliedProfiles = new();
-    static bool hasConfiguredM3uMode = false;
-    static bool confPathChanged = false;
-    static string[] arguments;
-
     public static bool HasAutoProfiles { get; private set; } = false;
     public static bool DoNotDownload => (printOption & (PrintOption.Results | PrintOption.Tracks)) != 0;
     public static bool PrintTracks => (printOption & PrintOption.Tracks) != 0;
     public static bool PrintResults => (printOption & PrintOption.Results) != 0;
     public static bool PrintTracksFull => (printOption & PrintOption.Tracks) != 0 && (printOption & PrintOption.Full) != 0;
     public static bool PrintResultsFull => (printOption & PrintOption.Results) != 0 && (printOption & PrintOption.Full) != 0;
+    public static bool DeleteAlbumOnFail => failedAlbumPath == "delete";
+    public static bool IgnoreAlbumFail => failedAlbumPath == "disable";
 
+    static readonly Dictionary<string, (List<string> args, string? cond)> profiles = new();
+    static readonly HashSet<string> appliedProfiles = new();
+    static bool hasConfiguredM3uMode = false;
+    static bool confPathChanged = false;
+    static string[] arguments;
+    static FileConditions? prevConds = null;
+    static FileConditions? prevPrefConds = null;
 
     public static bool ParseArgsAndReadConfig(string[] args)
     {
@@ -218,7 +219,7 @@ static class Config
     }
 
 
-    public static void PostProcessArgs() // must be run after Program.trackLists has been assigned
+    public static void PostProcessArgs()
     {
         if (DoNotDownload || debugInfo)
             concurrentProcesses = 1;
@@ -227,38 +228,21 @@ static class Config
 
         if (DoNotDownload)
             m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode)
-        {
-            if (inputType == InputType.String)
-                m3uOption = M3uOption.None;
-            else if (!aggregate && !(skipExisting && (skipMode == SkipMode.M3u || skipMode == SkipMode.M3uCond))
-                && Program.trackLists != null && !Program.trackLists.Flattened(true, false, true).Skip(1).Any())
-            {
-                m3uOption = M3uOption.None;
-            }
-        }
+        else if (!hasConfiguredM3uMode && inputType == InputType.String)
+            m3uOption = M3uOption.None;
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
-
-        parentFolder = Utils.ExpandUser(parentFolder);
-        m3uFilePath = Utils.ExpandUser(m3uFilePath);
-        musicDir = Utils.ExpandUser(musicDir);
-
-        if (folderName.Length == 0)
-            folderName = defaultFolderName;
-        if (folderName == ".")
-            folderName = "";
-
-        folderName = folderName.Replace('\\', '/');
-        folderName = string.Join('/', folderName.Split('/').Select(x => x.ReplaceInvalidChars(invalidReplaceStr).Trim()));
-        folderName = folderName.Replace('/', Path.DirectorySeparatorChar);
-
-        outputFolder = Path.Join(parentFolder, folderName);
+        
         nameFormat = nameFormat.Trim();
 
-        if (m3uFilePath.Length == 0)
-            m3uFilePath = Path.Join(outputFolder, (folderName.Length == 0 ? "playlist" : folderName) + ".m3u8");
+        parentDir = Utils.ExpandUser(parentDir);
+        m3uFilePath = Utils.ExpandUser(m3uFilePath);
+        musicDir = Utils.ExpandUser(musicDir);
+        failedAlbumPath = Utils.ExpandUser(failedAlbumPath);
+
+        if (failedAlbumPath.Length == 0)
+            failedAlbumPath = Path.Join(parentDir, "failed");
     }
 
 
@@ -313,7 +297,7 @@ static class Config
     }
 
 
-    public static void UpdateArgs(TrackListEntry tle)
+    public static void UpdateProfiles(TrackListEntry tle)
     {
         if (DoNotDownload)
             return;
@@ -491,9 +475,32 @@ static class Config
     }
 
 
-    static void ParseConditions(FileConditions cond, string input)
+    public static void AddTemporaryConditions(FileConditionsPatch? cond, FileConditionsPatch? prefCond)
     {
-        static void UpdateMinMax(string value, string condition, ref int min, ref int max)
+        if (cond != null)
+        {
+            prevConds = necessaryCond;
+            necessaryCond = necessaryCond.With(cond);
+        }
+        if (prefCond != null)
+        {
+            prevPrefConds = preferredCond;
+            preferredCond = preferredCond.With(prefCond);
+        }
+    }
+
+    public static void RestoreConditions()
+    {
+        if (prevConds != null)
+            necessaryCond = prevConds;
+        if (prevPrefConds != null)
+            preferredCond = prevPrefConds;
+    }
+
+
+    public static FileConditionsPatch ParseConditions(string input)
+    {
+        static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
             if (condition.Contains(">="))
                 min = int.Parse(value);
@@ -506,6 +513,8 @@ static class Config
             else if (condition.Contains('='))
                 min = max = int.Parse(value);
         }
+
+        var cond = new FileConditionsPatch();
 
         var tr = StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries;
         string[] conditions = input.Split(';', tr);
@@ -569,6 +578,8 @@ static class Config
                     throw new ArgumentException($"Unknown condition '{condition}'");
             }
         }
+
+        return cond;
     }
 
 
@@ -614,20 +625,17 @@ static class Config
                             "spotify" => InputType.Spotify,
                             "bandcamp" => InputType.Bandcamp,
                             "string" => InputType.String,
+                            "list" => InputType.List,
                             _ => throw new ArgumentException($"Invalid input type '{args[i]}'"),
                         };
                         break;
                     case "-p":
                     case "--path":
-                        parentFolder = args[++i];
+                        parentDir = args[++i];
                         break;
                     case "-c":
                     case "--config":
                         confPath = args[++i];
-                        break;
-                    case "-f":
-                    case "--folder":
-                        folderName = args[++i];
                         break;
                     case "-m":
                     case "--md":
@@ -942,9 +950,9 @@ static class Config
                         preferredCond = new FileConditions();
                         necessaryCond = new FileConditions();
                         break;
-                    case "--aif":
-                    case "--album-ignore-fails":
-                        setFlag(ref albumIgnoreFails, ref i);
+                    case "--fap":
+                    case "--failed-album-path":
+                        failedAlbumPath = args[++i];
                         break;
                     case "-t":
                     case "--interactive":
@@ -1063,12 +1071,12 @@ static class Config
                     case "--c":
                     case "--cond":
                     case "--conditions":
-                        ParseConditions(necessaryCond, args[++i]);
+                        necessaryCond.With(ParseConditions(args[++i]));
                         break;
                     case "--pc":
                     case "--pref":
                     case "--preferred-conditions":
-                        ParseConditions(preferredCond, args[++i]);
+                        preferredCond.With(ParseConditions(args[++i]));
                         break;
                     case "--nmsc":
                     case "--no-modify-share-count":
@@ -1177,6 +1185,10 @@ static class Config
                     case "--skip-existing-pref-cond":
                         setFlag(ref skipExistingPrefCond, ref i);
                         break;
+                    case "--alt":
+                    case "--aggregate-length-tol":
+                        aggregateLengthTol = int.Parse(args[++i]);
+                        break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
                 }
@@ -1192,5 +1204,42 @@ static class Config
                     throw new ArgumentException($"Invalid argument \'{args[i]}\'. Input is already set to \'{input}\'");
             }
         }
+    }
+
+
+    public static string[] GetArgsArray(string commandLine)
+    {
+        var args = new List<string>();
+        var currentArg = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < commandLine.Length; i++)
+        {
+            char c = commandLine[i];
+
+            if (c == '\"')
+            {
+                inQuotes = !inQuotes;
+            }
+            else if (c == ' ' && !inQuotes)
+            {
+                if (currentArg.Length > 0)
+                {
+                    args.Add(currentArg.ToString());
+                    currentArg.Clear();
+                }
+            }
+            else
+            {
+                currentArg.Append(c);
+            }
+        }
+
+        if (currentArg.Length > 0)
+        {
+            args.Add(currentArg.ToString());
+        }
+
+        return args.ToArray();
     }
 }

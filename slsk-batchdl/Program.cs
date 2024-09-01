@@ -5,10 +5,12 @@ using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Net.Sockets;
 
 using Data;
 using Enums;
 using FileSkippers;
+using Extractors;
 using static Printing;
 
 using Directory = System.IO.Directory;
@@ -54,14 +56,11 @@ static partial class Program
         if (Config.input.Length == 0)
             throw new ArgumentException($"No input provided");
 
-        (Config.inputType, extractor) = Extractors.ExtractorRegistry.GetMatchingExtractor(Config.input);
-
-        if (Config.inputType == InputType.None)
-            throw new ArgumentException($"No matching extractor for input '{Config.input}'");
+        (Config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(Config.input, Config.inputType);
 
         WriteLine($"Using extractor: {Config.inputType}", debugOnly: true);
 
-        trackLists = await extractor.GetTracks(Config.maxTracks, Config.offset, Config.reverse);
+        trackLists = await extractor.GetTracks(Config.input, Config.maxTracks, Config.offset, Config.reverse);
 
         WriteLine("Got tracks", debugOnly: true);
 
@@ -71,7 +70,7 @@ static partial class Program
 
         Config.PostProcessArgs();
 
-        m3uEditor = new M3uEditor(Config.m3uFilePath, trackLists, Config.m3uOption, Config.offset);
+        m3uEditor = new M3uEditor(trackLists, Config.m3uOption);
 
         InitFileSkippers();
 
@@ -88,9 +87,25 @@ static partial class Program
         bool needLogin = !Config.PrintTracks;
         if (needLogin)
         {
-            client = new SoulseekClient(new SoulseekClientOptions(listenPort: Config.listenPort));
+            var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+            {
+                socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
+            });
+
+            var clientOptions = new SoulseekClientOptions(
+                transferConnectionOptions: connectionOptions,
+                serverConnectionOptions: connectionOptions,
+                listenPort: Config.listenPort
+            );
+
+            client = new SoulseekClient(clientOptions);
+
             if (!Config.useRandomLogin && (string.IsNullOrEmpty(Config.username) || string.IsNullOrEmpty(Config.password)))
                 throw new ArgumentException("No soulseek username or password");
+
             await Login(Config.useRandomLogin);
 
             Search.searchSemaphore = new RateLimitedSemaphore(Config.searchesPerTime, TimeSpan.FromSeconds(Config.searchRenewTime));
@@ -113,8 +128,8 @@ static partial class Program
         {
             var cond = Config.skipExistingPrefCond ? Config.preferredCond : Config.necessaryCond;
 
-            if (Config.musicDir.Length == 0 || !Config.outputFolder.StartsWith(Config.musicDir, StringComparison.OrdinalIgnoreCase))
-                outputDirSkipper = FileSkipperRegistry.GetChecker(Config.skipMode, Config.outputFolder, cond, m3uEditor);
+            if (Config.musicDir.Length == 0 || !Config.parentDir.StartsWith(Config.musicDir, StringComparison.OrdinalIgnoreCase))
+                outputDirSkipper = FileSkipperRegistry.GetChecker(Config.skipMode, Config.parentDir, cond, m3uEditor);
 
             if (Config.musicDir.Length > 0)
             {
@@ -171,6 +186,27 @@ static partial class Program
     }
 
 
+    static void PrepareListEntry(TrackListEntry tle)
+    {
+        Config.RestoreConditions();
+
+        Config.UpdateProfiles(tle);
+
+        Config.AddTemporaryConditions(tle.additionalConds, tle.additionalPrefConds);
+
+        string m3uPath;
+
+        if (Config.m3uFilePath.Length > 0)
+            m3uPath = Config.m3uFilePath;
+        else
+            m3uPath = Path.Join(Config.parentDir, tle.defaultFolderName, "sldl.m3u");
+
+        m3uEditor.SetPathAndLoad(m3uPath);
+
+        PreprocessTracks(tle);
+    }
+
+
     static async Task MainLoop()
     {
         for (int i = 0; i < trackLists.lists.Count; i++)
@@ -179,13 +215,10 @@ static partial class Program
 
             var tle = trackLists[i];
 
-            Config.UpdateArgs(tle);
-
-            PreprocessTracks(tle);
+            PrepareListEntry(tle);
 
             var existing = new List<Track>();
             var notFound = new List<Track>();
-            var responseData = new ResponseData();
 
             if (Config.skipNotFound && !Config.PrintResults)
             {
@@ -247,13 +280,18 @@ static partial class Program
 
                 Console.WriteLine($"{tle.source.Type} download: {tle.source.ToString(true)}, searching..");
 
+                bool foundSomething = false;
+                var responseData = new ResponseData();
+
                 if (tle.source.Type == TrackType.Album)
                 {
                     tle.list = await Search.GetAlbumDownloads(tle.source, responseData);
+                    foundSomething = tle.list.Count > 0;
                 }
                 else if (tle.source.Type == TrackType.Aggregate)
                 {
                     tle.list.Insert(0, await Search.GetAggregateTracks(tle.source, responseData));
+                    foundSomething = tle.list.Count > 0;
                 }
                 else if (tle.source.Type == TrackType.AlbumAggregate)
                 {
@@ -262,8 +300,27 @@ static partial class Program
                     foreach (var item in res)
                     {
                         var newSource = new Track(tle.source) { Type = TrackType.Album };
-                        trackLists.AddEntry(new TrackListEntry(item, newSource, false, true, true, false, false));
+                        var albumTle = new TrackListEntry(item, newSource, needSourceSearch: false, sourceCanBeSkipped: true);
+                        albumTle.defaultFolderName = tle.defaultFolderName;
+                        trackLists.AddEntry(albumTle);
                     }
+
+                    foundSomething = res.Count > 0;
+                }
+
+                if (!foundSomething)
+                {
+                    var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
+                    Console.WriteLine($"No results.{lockedFiles}");
+
+                    if (!Config.PrintResults) 
+                    {
+                        tle.source.State = TrackState.Failed;
+                        tle.source.FailureReason = FailureReason.NoSuitableFileFound;
+                        m3uEditor.Update();
+                    }
+                    
+                    continue;
                 }
 
                 if (Config.skipExisting && tle.needSkipExistingAfterSearch)
@@ -281,18 +338,6 @@ static partial class Program
             if (Config.PrintResults)
             {
                 await PrintResults(tle, existing, notFound);
-                continue;
-            }
-
-            if (tle.needSourceSearch && (tle.list.Count == 0 || !tle.list.Any(x => x.Count > 0)))
-            {
-                string lockedFilesStr = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
-                Console.WriteLine($"No results.{lockedFilesStr}");
-
-                tle.source.State = TrackState.Failed;
-                tle.source.FailureReason = FailureReason.NoSuitableFileFound;
-
-                m3uEditor.Update();
                 continue;
             }
 
@@ -416,11 +461,15 @@ static partial class Program
 
         var downloadTasks = tracks.Select(async (track, index) =>
         {
-            await DownloadTask(tle, track, semaphore, organizer, null, false, true);
+            using var cts = new CancellationTokenSource();
+            await DownloadTask(tle, track, semaphore, organizer, cts, false, true, true);
             m3uEditor.Update();
         });
 
         await Task.WhenAll(downloadTasks);
+
+        if (Config.removeTracksFromSource && tracks.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
+            await extractor.RemoveTrackFromSource(tle.source);
     }
 
 
@@ -449,13 +498,6 @@ static partial class Program
 
             organizer.SetRemoteCommonDir(soulseekDir);
 
-            if (!Config.noBrowseFolder && !Config.interactiveMode && !retrievedFolders.Contains(soulseekDir))
-            {
-                Console.WriteLine("Getting all files in folder...");
-                await Search.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
-                retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
-            }
-
             if (!Config.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
@@ -463,48 +505,45 @@ static partial class Program
             }
 
             var semaphore = new SemaphoreSlim(Config.concurrentProcesses);
-            var cts = new CancellationTokenSource();
+            using var cts = new CancellationTokenSource();
 
             try
             {
-                var downloadTasks = tracks.Select(async track =>
+                await RunAlbumDownloads(tle, organizer, tracks, semaphore, cts);
+
+                if (!Config.noBrowseFolder && !retrievedFolders.Contains(soulseekDir))
                 {
-                    await DownloadTask(tle, track, semaphore, organizer, cts, cancelOnFail: !Config.albumIgnoreFails, true);
-                });
-                await Task.WhenAll(downloadTasks);
+                    Console.WriteLine("Getting all files in folder...");
+
+                    int newFilesFound = await Search.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
+                    retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
+
+                    if (newFilesFound > 0)
+                    {
+                        Console.WriteLine($"Found {newFilesFound} more files in the directory, downloading:");
+                        await RunAlbumDownloads(tle, organizer, tracks, semaphore, cts);
+                    }
+                    else
+                    {
+                        Console.WriteLine("No more files found.");
+                    }
+                }
 
                 succeeded = true;
                 break;
             }
-            catch (OperationCanceledException) when (!Config.albumIgnoreFails)
+            catch (OperationCanceledException)
             {
-                foreach (var track in tracks)
-                {
-                    if (track.State == TrackState.Downloaded && File.Exists(track.DownloadPath))
-                    {
-                        try { File.Delete(track.DownloadPath); } catch { }
-                    }
-                }
+                OnAlbumFail(tracks);
             }
 
             organizer.SetRemoteCommonDir(null);
             tle.list.RemoveAt(index);
         }
 
-        if (tracks != null && succeeded)
+        if (succeeded)
         {
-            var downloadedAudio = tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0);
-
-            if (downloadedAudio.Any())
-            {
-                tle.source.State = TrackState.Downloaded;
-                tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
-
-                if (Config.removeTracksFromSource)
-                {
-                    await extractor.RemoveTrackFromSource(tle.source);
-                }
-            }
+            await OnAlbumSuccess(tle, tracks);
         }
 
         List<Track>? additionalImages = null;
@@ -512,7 +551,7 @@ static partial class Program
         if (Config.albumArtOnly || succeeded && Config.albumArtOption != AlbumArtOption.Default)
         {
             Console.WriteLine($"\nDownloading additional images:");
-            additionalImages = await DownloadImages(tle.list, Config.albumArtOption, tracks);
+            additionalImages = await DownloadImages(tle.list, Config.albumArtOption, tracks, organizer);
             tracks?.AddRange(additionalImages);
         }
 
@@ -525,7 +564,70 @@ static partial class Program
     }
 
 
-    static async Task<List<Track>> DownloadImages(List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum)
+    static async Task RunAlbumDownloads(TrackListEntry tle, FileManager organizer, List<Track> tracks, SemaphoreSlim semaphore, CancellationTokenSource cts)
+    {
+        var downloadTasks = tracks.Select(async track =>
+        {
+            await DownloadTask(tle, track, semaphore, organizer, cts, true, true, true);
+        });
+        await Task.WhenAll(downloadTasks);
+    }
+
+
+    static async Task OnAlbumSuccess(TrackListEntry tle, List<Track>? tracks)
+    {
+        if (tracks == null)
+            return;
+
+        var downloadedAudio = tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0);
+
+        if (downloadedAudio.Any())
+        {
+            tle.source.State = TrackState.Downloaded;
+            tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
+
+            if (Config.removeTracksFromSource)
+            {
+                await extractor.RemoveTrackFromSource(tle.source);
+            }
+        }
+    }
+
+
+    static void OnAlbumFail(List<Track>? tracks)
+    {
+        if (tracks == null || Config.IgnoreAlbumFail)
+            return;
+
+        foreach (var track in tracks)
+        {
+            if (track.DownloadPath.Length > 0 && File.Exists(track.DownloadPath))
+            {
+                try
+                {
+                    if (Config.DeleteAlbumOnFail)
+                    {
+                        File.Delete(track.DownloadPath);
+                    }
+                    else if (Config.failedAlbumPath.Length > 0)
+                    {
+                        var newPath = Path.Join(Config.failedAlbumPath, Path.GetRelativePath(Config.parentDir, track.DownloadPath));
+                        Directory.CreateDirectory(Path.GetDirectoryName(newPath));
+                        Utils.Move(track.DownloadPath, newPath);
+                    }
+
+                    Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(track.DownloadPath), Config.parentDir);
+                }
+                catch (Exception e) 
+                {
+                    Printing.WriteLine($"Error: Unable to move or delete file '{track.DownloadPath}' after album fail: {e}");
+                }
+            }
+        }
+    }
+
+
+    static async Task<List<Track>> DownloadImages(List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum, FileManager fileManager)
     {
         var downloadedImages = new List<Track>();
         long mSize = 0;
@@ -621,11 +723,11 @@ static partial class Program
 
             bool allSucceeded = true;
             var semaphore = new SemaphoreSlim(1);
-            var organizer = new FileManager();
 
             foreach (var track in tracks)
             {
-                await DownloadTask(null, track, semaphore, organizer, null, false, false);
+                using var cts = new CancellationTokenSource();
+                await DownloadTask(null, track, semaphore, fileManager, cts, false, false, false);
 
                 if (track.State == TrackState.Downloaded)
                     downloadedImages.Add(track);
@@ -641,15 +743,12 @@ static partial class Program
     }
 
 
-    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource? cts, bool cancelOnFail, bool removeFromSource)
+    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource cts, bool cancelOnFail, bool removeFromSource, bool organize)
     {
         if (track.State != TrackState.Initial)
             return;
 
-        if (cts != null)
-            await semaphore.WaitAsync(cts.Token);
-        else
-            await semaphore.WaitAsync();
+        await semaphore.WaitAsync(cts.Token);
 
         int tries = Config.unknownErrorRetries;
         string savedFilePath = "";
@@ -659,15 +758,15 @@ static partial class Program
         {
             await WaitForLogin();
 
-            cts?.Token.ThrowIfCancellationRequested();
+            cts.Token.ThrowIfCancellationRequested();
 
             try
             {
-                (savedFilePath, chosenFile) = await Search.SearchAndDownload(track, organizer);
+                (savedFilePath, chosenFile) = await Search.SearchAndDownload(track, organizer, cts);
             }
             catch (Exception ex)
             {
-                WriteLine($"Exception thrown: {ex}", debugOnly: true);
+                WriteLine($"Error: {ex}", debugOnly: true);
                 if (!IsConnectedAndLoggedIn())
                 {
                     continue;
@@ -682,13 +781,12 @@ static partial class Program
 
                     if (cancelOnFail)
                     {
-                        cts?.Cancel();
+                        cts.Cancel();
                         throw new OperationCanceledException();
                     }
                 }
                 else
                 {
-                    WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
                     tries--;
                     continue;
                 }
@@ -699,7 +797,7 @@ static partial class Program
 
         if (tries == 0 && cancelOnFail)
         {
-            cts?.Cancel();
+            cts.Cancel();
             throw new OperationCanceledException();
         }
 
@@ -724,9 +822,9 @@ static partial class Program
             }
         }
 
-        if (track.State == TrackState.Downloaded && tle != null)
+        if (track.State == TrackState.Downloaded && organize)
         {
-            organizer?.OrganizeAudio(tle, track, chosenFile);
+            organizer?.OrganizeAudio(track, chosenFile);
         }
 
         if (Config.onComplete.Length > 0)
@@ -760,7 +858,13 @@ static partial class Program
             }
         }
 
-        WriteLine($"\nPrev [Up/p] / Next [Down/n] / Accept [Enter] / Accept & Exit Interactive [q] / Skip [Esc/s]\n", ConsoleColor.Green);
+        string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
+        string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
+
+        Console.WriteLine();
+        WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
+        WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
+        Console.WriteLine();
 
         while (true)
         {
@@ -770,17 +874,10 @@ static partial class Program
 
             WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
 
-            var folder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
-            if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
-            {
-                Console.WriteLine("Getting all files in folder...");
-                await Search.CompleteFolder(tracks, response, folder);
-                retrievedFolders.Add(username + '\\' + folder);
-            }
-
             PrintAlbum(tracks);
             Console.WriteLine();
 
+            Loop:
             string userInput = interactiveModeLoop().Trim();
             switch (userInput)
             {
@@ -795,6 +892,24 @@ static partial class Program
                 case "q":
                     Config.interactiveMode = false;
                     return aidx;
+                case "r":
+                    var folder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+                    if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
+                    {
+                        Console.WriteLine("Getting all files in folder...");
+                        int newFiles = await Search.CompleteFolder(tracks, response, folder);
+                        retrievedFolders.Add(username + '\\' + folder);
+                        if (newFiles == 0)
+                        {
+                            Console.WriteLine("No more files found.");
+                            goto Loop;
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Found {newFiles} more files in the folder:");
+                        }
+                    }
+                    break;
                 case "":
                     return aidx;
             }
@@ -846,7 +961,9 @@ static partial class Program
                     }
                     else
                     {
-                        if (!client.State.HasFlag(SoulseekClientStates.LoggedIn | SoulseekClientStates.LoggingIn | SoulseekClientStates.Connecting))
+                        if (!client.State.HasFlag(SoulseekClientStates.LoggedIn) 
+                            && !client.State.HasFlag(SoulseekClientStates.LoggingIn) 
+                            && !client.State.HasFlag(SoulseekClientStates.Connecting))
                         {
                             WriteLine($"\nDisconnected, logging in\n", ConsoleColor.DarkYellow, true);
                             try { await Login(Config.useRandomLogin); }
@@ -1017,7 +1134,7 @@ static partial class Program
 
     public static bool IsConnectedAndLoggedIn()
     {
-        return client != null && (client.State & (SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn)) != 0;
+        return client != null && client.State.HasFlag(SoulseekClientStates.Connected) && client.State.HasFlag(SoulseekClientStates.LoggedIn);
     }
 }
 

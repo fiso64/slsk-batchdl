@@ -19,37 +19,35 @@ namespace Extractors
             return input == "spotify-likes" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            string playlistName = "";
-            bool needLogin = Config.input == "spotify-likes" || Config.removeTracksFromSource;
-            var tle = new TrackListEntry();
+            bool needLogin = input == "spotify-likes" || Config.removeTracksFromSource;
+            var tle = new TrackListEntry(TrackType.Normal);
 
             if (needLogin && Config.spotifyToken.Length == 0 && (Config.spotifyId.Length == 0 || Config.spotifySecret.Length == 0))
             {
                 Console.WriteLine("Error: Credentials are required when downloading liked music or removing from source playlists.");
-                Environment.Exit(0);
+                Environment.Exit(1);
             }
 
             spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret, Config.spotifyToken, Config.spotifyRefresh);
             await spotifyClient.Authorize(needLogin, Config.removeTracksFromSource);
 
-            if (Config.input == "spotify-likes")
+            if (input == "spotify-likes")
             {
                 Console.WriteLine("Loading Spotify likes..");
                 var tracks = await spotifyClient.GetLikes(max, off);
-                playlistName = "Spotify Likes";
+                tle.defaultFolderName = "Spotify Likes";
                 tle.list.Add(tracks);
             }
-            else if (Config.input.Contains("/album/"))
+            else if (input.Contains("/album/"))
             {
                 Console.WriteLine("Loading Spotify album..");
-                (var source, var tracks) = await spotifyClient.GetAlbum(Config.input);
-                playlistName = source.ToString(noInfo: true);
+                (var source, var tracks) = await spotifyClient.GetAlbum(input);
                 tle.source = source;
 
                 if (Config.setAlbumMinTrackCount)
@@ -58,11 +56,11 @@ namespace Extractors
                 if (Config.setAlbumMaxTrackCount)
                     source.MaxAlbumTrackCount = tracks.Count;
             }
-            else if (Config.input.Contains("/artist/"))
+            else if (input.Contains("/artist/"))
             {
                 Console.WriteLine("Loading spotify artist..");
                 Console.WriteLine("Error: Spotify artist download currently not supported.");
-                Environment.Exit(0);
+                Environment.Exit(1);
             }
             else
             {
@@ -71,27 +69,27 @@ namespace Extractors
                 try
                 {
                     Console.WriteLine("Loading Spotify playlist");
-                    (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(Config.input, max, off);
+                    (var playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
+                    tle.defaultFolderName = playlistName;
                 }
                 catch (SpotifyAPI.Web.APIException)
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
                         await spotifyClient.Authorize(true, Config.removeTracksFromSource);
-                        (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(Config.input, max, off);
+                        (var playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
+                        tle.defaultFolderName = playlistName;
                     }
                     else if (!needLogin)
                     {
-                        Console.WriteLine("Spotify playlist not found (it may be set to private, but no credentials have been provided).");
-                        Environment.Exit(0);
+                        Console.WriteLine("Error: Spotify playlist not found (it may be set to private, but no credentials have been provided).");
+                        Environment.Exit(1);
                     }
                     else throw;
                 }
 
                 tle.list.Add(tracks);
             }
-
-            Config.defaultFolderName = playlistName.ReplaceInvalidChars(Config.invalidReplaceStr);
 
             trackLists.AddEntry(tle);
 

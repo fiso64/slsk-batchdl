@@ -6,7 +6,7 @@ namespace Extractors
 {
     public interface IExtractor
     {
-        Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse);
+        Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse);
         Task RemoveTrackFromSource(Track track) => Task.CompletedTask;
     }
 
@@ -19,18 +19,29 @@ namespace Extractors
             (InputType.Spotify,     SpotifyExtractor.InputMatches,  () => new SpotifyExtractor()),
             (InputType.Bandcamp,    BandcampExtractor.InputMatches, () => new BandcampExtractor()),
             (InputType.String,      StringExtractor.InputMatches,   () => new StringExtractor()),
+            (InputType.List,        ListExtractor.InputMatches,     () => new ListExtractor()),
         };
 
-        public static (InputType, IExtractor?) GetMatchingExtractor(string input)
+        public static (InputType, IExtractor) GetMatchingExtractor(string input, InputType inputType = InputType.None)
         {
-            foreach ((var inputType, var inputMatches, var extractor) in extractors)
+            if (string.IsNullOrEmpty(input))
+                throw new ArgumentException("Input string can not be null or empty.");
+
+            if (inputType != InputType.None)
+            {
+                var (t, _, e) = extractors.First(x => x.Item1 == inputType);
+                return (t, e());
+            }
+
+            foreach ((var type, var inputMatches, var extractor) in extractors)
             {
                 if (inputMatches(input))
                 {
-                    return (inputType, extractor());
+                    return (type, extractor());
                 }
             }
-            return (InputType.None, null);
+
+            throw new ArgumentException($"No matching extractor for input '{input}'");
         }
     }
 }

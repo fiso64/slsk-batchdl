@@ -255,7 +255,7 @@ namespace Test
             {
                 Config.input = strings[i];
                 Console.WriteLine(Config.input);
-                var res = await extractor.GetTracks(0, 0, false);
+                var res = await extractor.GetTracks(Config.input, 0, 0, false);
                 var t = res[0].list[0][0];
                 Assert(Extractors.StringExtractor.InputMatches(Config.input));
                 Assert(t.ToKey() == tracks[i].ToKey());
@@ -268,7 +268,7 @@ namespace Test
             {
                 Config.input = strings[i];
                 Console.WriteLine(Config.input);
-                var t = (await extractor.GetTracks(0, 0, false))[0].source;
+                var t = (await extractor.GetTracks(Config.input, 0, 0, false))[0].source;
                 Assert(Extractors.StringExtractor.InputMatches(Config.input));
                 Assert(t.ToKey() == albums[i].ToKey());
             }
@@ -317,7 +317,7 @@ namespace Test
             };
 
             var trackLists = new TrackLists();
-            trackLists.AddEntry(new TrackListEntry());
+            trackLists.AddEntry(new TrackListEntry(TrackType.Normal));
             foreach (var t in notFoundInitial)
                 trackLists.AddTrackToLast(t);
             foreach (var t in existingInitial)

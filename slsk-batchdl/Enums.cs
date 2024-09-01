@@ -37,6 +37,7 @@ namespace Enums
         Spotify,
         Bandcamp,
         String,
+        List,
         None,
     }
 
@@ -84,5 +85,12 @@ namespace Enums
         Warning,
         Normal,
         Verbose
+    }
+
+    public enum AlbumFailOption
+    {
+        Ignore,
+        Keep,
+        Delete,
     }
 }

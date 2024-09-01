@@ -89,10 +89,13 @@ public static class Utils
             return path;
         }
 
-        if (path.StartsWith("~"))
+        if (path.StartsWith('~'))
         {
             string homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(homeDirectory, path.Substring(1).TrimStart('/').TrimStart('\\'));
+            path = Path.Join(homeDirectory, path.Substring(1).TrimStart('/').TrimStart('\\'));
+            
+            if (path.Length > 0)
+                path = Path.GetFullPath(path);
         }
 
         return path;
@@ -159,6 +162,26 @@ public static class Utils
             if (File.Exists(destinationFilePath))
                 File.Delete(destinationFilePath);
             File.Move(sourceFilePath, destinationFilePath);
+        }
+    }
+
+    public static void DeleteAncestorsIfEmpty(string startDir, string root)
+    {
+        string x = NormalizedPath(Path.GetFullPath(root));
+        string y = NormalizedPath(startDir);
+
+        if (x.Length == 0)
+            return;
+
+        while (y.StartsWith(x + '/') && FileCountRecursive(y) == 0)
+        {
+            Directory.Delete(y, true);
+            
+            string prev = y;
+            y = NormalizedPath(Path.GetDirectoryName(y) ?? "");
+            
+            if (prev.Length == y.Length)
+                break;
         }
     }
 

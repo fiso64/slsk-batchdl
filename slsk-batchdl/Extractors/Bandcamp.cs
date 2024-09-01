@@ -16,17 +16,17 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<TrackLists> GetTracks(int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
-            bool isTrack = Config.input.Contains("/track/");
-            bool isAlbum = !isTrack && Config.input.Contains("/album/");
+            bool isTrack = input.Contains("/track/");
+            bool isAlbum = !isTrack && input.Contains("/album/");
             bool isArtist =!isTrack && !isAlbum;
 
             if (isArtist)
             {
                 Console.WriteLine("Retrieving bandcamp artist discography..");
-                string artistUrl = Config.input.TrimEnd('/');
+                string artistUrl = input.TrimEnd('/');
 
                 if (!artistUrl.EndsWith("/music"))
                     artistUrl += "/music";
@@ -51,17 +51,14 @@ namespace Extractors
                 foreach (var item in root.GetProperty("discography").EnumerateArray())
                 {
                     //ItemType = item.GetProperty("item_type").GetString(),
-                    var t = new Track()
+                    var track = new Track()
                     {
                         Album = item.GetProperty("title").GetString(),
                         Artist = item.GetProperty("artist_name").GetString() ?? item.GetProperty("band_name").GetString(),
                         Type = TrackType.Album,
                     };
-                    var tle = new TrackListEntry()
-                    {
-                        source = t,
-                        placeInSubdir = true,
-                    };
+                    var tle = new TrackListEntry(track);
+                    tle.defaultFolderName = track.Artist;
                     trackLists.AddEntry(tle);
                 }
             }
@@ -69,7 +66,7 @@ namespace Extractors
             {
                 Console.WriteLine("Retrieving bandcamp item..");
                 var web = new HtmlWeb();
-                var doc = await web.LoadFromWebAsync(Config.input);
+                var doc = await web.LoadFromWebAsync(input);
 
                 var nameSection = doc.DocumentNode.SelectSingleNode("//div[@id='name-section']");
                 var name = nameSection.SelectSingleNode(".//h2[contains(@class, 'trackTitle')]").InnerText.UnHtmlString().Trim();
@@ -91,8 +88,6 @@ namespace Extractors
                         if (Config.setAlbumMaxTrackCount)
                             track.MaxAlbumTrackCount = n;
                     }
-
-                    Config.defaultFolderName = track.ToString(true).ReplaceInvalidChars(Config.invalidReplaceStr).Trim();
                 }
                 else
                 {
@@ -101,10 +96,8 @@ namespace Extractors
                     //var timeParts = doc.DocumentNode.SelectSingleNode("//span[@class='time_total']").InnerText.Trim().Split(':');
 
                     var track = new Track() { Artist = artist, Title = name, Album = album };
-                    trackLists.AddEntry(new());
+                    trackLists.AddEntry(new TrackListEntry(TrackType.Normal));
                     trackLists.AddTrackToLast(track);
-
-                    Config.defaultFolderName = ".";
                 }
             }
 

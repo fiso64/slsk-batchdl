@@ -17,7 +17,7 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 
 static class Download
 {
-    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource? searchCts = null)
+    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource cts, CancellationTokenSource? searchCts = null)
     {
         if (Config.DoNotDownload)
             throw new Exception();
@@ -42,15 +42,9 @@ static class Download
 
         try
         {
-            using var cts = new CancellationTokenSource();
             using var outputStream = new FileStream(filePath, FileMode.Create);
             var wrapper = new DownloadWrapper(origPath, response, file, track, cts, progress);
             downloads.TryAdd(file.Filename, wrapper);
-
-            // Attempt to make it resume downloads after a network interruption.
-            // Does not work: The resumed download will be queued until it goes stale.
-            // The host (slskd) reports that "Another upload to {user} is already in progress"
-            // when attempting to resume. Must wait until timeout, which can take minutes.
 
             int maxRetries = 3;
             int retryCount = 0;
@@ -65,9 +59,11 @@ static class Download
 
                     break;
                 }
-                catch (SoulseekClientException)
+                catch (SoulseekClientException e)
                 {
                     retryCount++;
+
+                    Printing.WriteLine($"Error while downloading: {e}", ConsoleColor.DarkYellow, debugOnly: true);
 
                     if (retryCount >= maxRetries || IsConnectedAndLoggedIn())
                         throw;
@@ -86,13 +82,13 @@ static class Download
             throw;
         }
 
-        try { searchCts?.Cancel(); }
-        catch { }
+        try { searchCts?.Cancel(); } catch { }
 
         try { Utils.Move(filePath, origPath); }
         catch (IOException) { Printing.WriteLine($"Failed to rename .incomplete file", ConsoleColor.DarkYellow, true); }
 
         downloads.TryRemove(file.Filename, out var x);
+
         if (x != null)
         {
             lock (x)
