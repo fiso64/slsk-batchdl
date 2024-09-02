@@ -324,25 +324,16 @@ public static class Help
         ""Waiting""). By default it is configured to allow up to 34 searches every 220 seconds. 
         The default values were determined through experimentation, so they may be incorrect.
 
-      Quality vs Speed
+      Speeding things up
         The following options will make it go faster, but may decrease search result quality or cause
         instability:
-          --fast-search skips waiting until the search completes and downloads as soon as a file 
-            matching the preferred conditions is found
-          --concurrent-downloads - set it to 4 or more
-          --max-stale-time is set to 50 seconds by default, so it will wait a long time before giving 
-            up on a file
-          --searches-per-time increase at the risk of bans.
         
-      Quality vs Quantity
-        The options --strict-title, --strict-artist and --strict-album will filter any file that 
-        does not contain the title/artist/album in the filename (ignoring case, bounded by boundary 
-        chars). 
-        Another way to prevent false downloads is to set --length-tol to 3 or less to make it ignore 
-        any songs that differ from the input by more than 3 seconds. However, all 4 options are already 
-        enabled as 'preferred' conditions by default, meaning that such files will only be downloaded 
-        as a last resort anyways. Hence it is only recommended to enable them if you need to minimize
-        false downloads as much as possible.
+        --fast-search skips waiting until the search completes and downloads as soon as a file
+          matching the preferred conditions is found
+        --concurrent-downloads - set it to 4 or more
+        --max-stale-time is set to 50 seconds by default, so it will wait a long time before giving
+          up on a file
+        --searches-per-time - increase at the risk of bans.
     ";
 
     const string fileConditionsHelp = @"
@@ -371,6 +362,20 @@ public static class Help
       that don't satisfy any condition, but some conditions have precedence over others. For instance,
       a file that only satisfies strict-title (if enabled) will always be preferred over a file that
       only satisfies the format condition. Run with --print ""results-full"" to reveal the sorting logic.
+
+      Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g
+      --cond ""br >= 320; format = mp3,ogg; sr < 96000"".
+
+      Filtering irrelevant results
+        The options --strict-title, --strict-artist and --strict-album will filter any file that
+        does not contain the title/artist/album in the filename (ignoring case, bounded by boundary
+        chars).  
+        Another way to prevent false downloads is to set --length-tol to 3 or less to make it ignore
+        any songs that differ from the input by more than 3 seconds. However, all 4 options are already
+        enabled as 'preferred' conditions by default, meaning that such files will only be downloaded
+        as a last resort anyways. Hence it is only recommended to enable them if you need to minimize
+        false downloads as much as possible, or for special cases like tracks or albums whose name
+        is just one or a two characters.
         
       Important note
         Some info may be unavailable depending on the client used by the peer. For example, the standard 
@@ -380,9 +385,6 @@ public static class Help
         As a consequence, if --min-bitrate is also set then any files shared by users with the default 
         client will be ignored. Also note that the default preferred conditions will already affect
         ranking with this option due to the bitrate and samplerate checks.
-        
-      Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g
-      --cond ""br >= 320; format = mp3,ogg; sr < 96000"".
     ";
 
     const string nameFormatHelp = @"

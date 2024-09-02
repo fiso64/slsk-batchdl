@@ -295,6 +295,10 @@ static class Search
                 responseFilter: (response) =>
                 {
                     return response.UploadSpeed > 0 && nec.BannedUsersSatisfies(response);
+                },
+                fileFilter: (file) =>
+                {
+                    return !Utils.IsMusicFile(file.Filename) || nec.FileSatisfies(file, track, null);
                 }
             );
         void handler(SlResponse r)
@@ -304,14 +308,14 @@ static class Search
             if (r.Files.Count > 0)
             {
                 foreach (var file in r.Files)
-                    results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
+                    results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
             }
         }
         using var cts = new CancellationTokenSource();
 
         await RunSearches(track, results, getSearchOptions, handler, cts.Token);
 
-        string fullPath((SearchResponse r, Soulseek.File f) x) { return x.r.Username + "\\" + x.f.Filename; }
+        string fullPath((SearchResponse r, Soulseek.File f) x) { return x.r.Username + '\\' + x.f.Filename; }
 
         var orderedResults = OrderedResults(results, track, false, false, albumMode: true);
 

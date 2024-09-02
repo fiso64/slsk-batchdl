@@ -34,8 +34,11 @@ public class FileConditions
         AcceptNoLength = other.AcceptNoLength;
         StrictArtist = other.StrictArtist;
         StrictTitle = other.StrictTitle;
+        StrictAlbum = other.StrictAlbum;
         MinBitDepth = other.MinBitDepth;
         MaxBitDepth = other.MaxBitDepth;
+        AcceptMissingProps = other.AcceptMissingProps;
+        StrictStringDiacrRemove = other.StrictStringDiacrRemove;
         Formats = other.Formats.ToArray();
         BannedUsers = other.BannedUsers.ToArray();
     }
@@ -203,7 +206,7 @@ public class FileConditions
         if (!StrictAlbum || alname.Length == 0)
             return true;
 
-        return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, StrictStringDiacrRemove, ignoreCase: true);
+        return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, StrictStringDiacrRemove, ignoreCase: true, boundarySkipWs: true);
     }
 
     public static string StrictStringPreprocess(string str, bool diacrRemove = true)
