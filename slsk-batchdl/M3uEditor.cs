@@ -27,7 +27,7 @@ public class M3uEditor
 
     public void SetPathAndLoad(string path)
     {
-        if (Utils.NormalizedPath(this.path) == Utils.NormalizedPath(path))
+        if (this.path != null && Utils.NormalizedPath(this.path) == Utils.NormalizedPath(path))
             return;
 
         this.path = Path.GetFullPath(path);
