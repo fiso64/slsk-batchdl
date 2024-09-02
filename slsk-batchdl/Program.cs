@@ -15,17 +15,13 @@ using static Printing;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
-using ProgressBar = Konsole.ProgressBar;
-using SearchResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
-using SlResponse = Soulseek.SearchResponse;
-
 
 static partial class Program
 {
     public static bool skipUpdate = false;
     public static bool initialized = false;
-    public static Extractors.IExtractor? extractor;
+    public static IExtractor? extractor;
     public static FileSkipper? outputDirSkipper;
     public static FileSkipper? musicDirSkipper;
     public static SoulseekClient? client;
@@ -48,33 +44,30 @@ static partial class Program
             return;
         }
 
-        bool doContinue = Config.ParseArgsAndReadConfig(args);
+        Config.I.Load(args);
 
-        if (!doContinue)
-            return;
-
-        if (Config.input.Length == 0)
+        if (Config.I.input.Length == 0)
             throw new ArgumentException($"No input provided");
 
-        (Config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(Config.input, Config.inputType);
+        (Config.I.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(Config.I.input, Config.I.inputType);
 
-        WriteLine($"Using extractor: {Config.inputType}", debugOnly: true);
-
-        trackLists = await extractor.GetTracks(Config.input, Config.maxTracks, Config.offset, Config.reverse);
+        WriteLine($"Using extractor: {Config.I.inputType}", debugOnly: true);
+        
+        trackLists = await extractor.GetTracks(Config.I.input, Config.I.maxTracks, Config.I.offset, Config.I.reverse);
 
         WriteLine("Got tracks", debugOnly: true);
 
-        trackLists.UpgradeListTypes(Config.aggregate, Config.album);
+        Config.I.PostProcessArgs();
 
+        trackLists.UpgradeListTypes(Config.I.aggregate, Config.I.album);
         trackLists.SetListEntryOptions();
 
-        Config.PostProcessArgs();
-
-        m3uEditor = new M3uEditor(trackLists, Config.m3uOption);
+        m3uEditor = new M3uEditor(trackLists, Config.I.m3uOption);
 
         InitFileSkippers();
 
         await MainLoop();
+
         WriteLine("Mainloop done", debugOnly: true);
     }
 
@@ -84,7 +77,7 @@ static partial class Program
         if (initialized)
             return;
 
-        bool needLogin = !Config.PrintTracks;
+        bool needLogin = !Config.I.PrintTracks;
         if (needLogin)
         {
             var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
@@ -98,17 +91,17 @@ static partial class Program
             var clientOptions = new SoulseekClientOptions(
                 transferConnectionOptions: connectionOptions,
                 serverConnectionOptions: connectionOptions,
-                listenPort: Config.listenPort
+                listenPort: Config.I.listenPort
             );
 
             client = new SoulseekClient(clientOptions);
 
-            if (!Config.useRandomLogin && (string.IsNullOrEmpty(Config.username) || string.IsNullOrEmpty(Config.password)))
+            if (!Config.I.useRandomLogin && (string.IsNullOrEmpty(Config.I.username) || string.IsNullOrEmpty(Config.I.password)))
                 throw new ArgumentException("No soulseek username or password");
 
-            await Login(Config.useRandomLogin);
+            await Login(Config.I.useRandomLogin);
 
-            Search.searchSemaphore = new RateLimitedSemaphore(Config.searchesPerTime, TimeSpan.FromSeconds(Config.searchRenewTime));
+            Search.searchSemaphore = new RateLimitedSemaphore(Config.I.searchesPerTime, TimeSpan.FromSeconds(Config.I.searchRenewTime));
         }
 
         bool needUpdate = needLogin;
@@ -124,19 +117,19 @@ static partial class Program
 
     static void InitFileSkippers()
     {
-        if (Config.skipExisting)
+        if (Config.I.skipExisting)
         {
-            var cond = Config.skipExistingPrefCond ? Config.preferredCond : Config.necessaryCond;
+            var cond = Config.I.skipExistingPrefCond ? Config.I.preferredCond : Config.I.necessaryCond;
 
-            if (Config.musicDir.Length == 0 || !Config.parentDir.StartsWith(Config.musicDir, StringComparison.OrdinalIgnoreCase))
-                outputDirSkipper = FileSkipperRegistry.GetChecker(Config.skipMode, Config.parentDir, cond, m3uEditor);
+            if (Config.I.musicDir.Length == 0 || !Config.I.parentDir.StartsWith(Config.I.musicDir, StringComparison.OrdinalIgnoreCase))
+                outputDirSkipper = FileSkipperRegistry.GetChecker(Config.I.skipMode, Config.I.parentDir, cond, m3uEditor);
 
-            if (Config.musicDir.Length > 0)
+            if (Config.I.musicDir.Length > 0)
             {
-                if (!Directory.Exists(Config.musicDir))
+                if (!Directory.Exists(Config.I.musicDir))
                     Console.WriteLine("Error: Music directory does not exist");
                 else
-                    musicDirSkipper = FileSkipperRegistry.GetChecker(Config.skipModeMusicDir, Config.musicDir, cond, m3uEditor);
+                    musicDirSkipper = FileSkipperRegistry.GetChecker(Config.I.skipModeMusicDir, Config.I.musicDir, cond, m3uEditor);
             }
         }
     }
@@ -160,22 +153,22 @@ static partial class Program
 
     static void PreprocessTrack(Track track)
     {
-        if (Config.removeFt)
+        if (Config.I.removeFt)
         {
             track.Title = track.Title.RemoveFt();
             track.Artist = track.Artist.RemoveFt();
         }
-        if (Config.removeBrackets)
+        if (Config.I.removeBrackets)
         {
             track.Title = track.Title.RemoveSquareBrackets();
         }
-        if (Config.regexToReplace.Title.Length + Config.regexToReplace.Artist.Length + Config.regexToReplace.Album.Length > 0)
+        if (Config.I.regexToReplace.Title.Length + Config.I.regexToReplace.Artist.Length + Config.I.regexToReplace.Album.Length > 0)
         {
-            track.Title = Regex.Replace(track.Title, Config.regexToReplace.Title, Config.regexReplaceBy.Title);
-            track.Artist = Regex.Replace(track.Artist, Config.regexToReplace.Artist, Config.regexReplaceBy.Artist);
-            track.Album = Regex.Replace(track.Album, Config.regexToReplace.Album, Config.regexReplaceBy.Album);
+            track.Title = Regex.Replace(track.Title, Config.I.regexToReplace.Title, Config.I.regexReplaceBy.Title);
+            track.Artist = Regex.Replace(track.Artist, Config.I.regexToReplace.Artist, Config.I.regexReplaceBy.Artist);
+            track.Album = Regex.Replace(track.Album, Config.I.regexToReplace.Album, Config.I.regexReplaceBy.Album);
         }
-        if (Config.artistMaybeWrong)
+        if (Config.I.artistMaybeWrong)
         {
             track.ArtistMaybeWrong = true;
         }
@@ -188,18 +181,18 @@ static partial class Program
 
     static void PrepareListEntry(TrackListEntry tle)
     {
-        Config.RestoreConditions();
+        Config.I.RestoreConditions();
 
         Config.UpdateProfiles(tle);
 
-        Config.AddTemporaryConditions(tle.additionalConds, tle.additionalPrefConds);
+        Config.I.AddTemporaryConditions(tle.additionalConds, tle.additionalPrefConds);
 
         string m3uPath;
 
-        if (Config.m3uFilePath.Length > 0)
-            m3uPath = Config.m3uFilePath;
+        if (Config.I.m3uFilePath.Length > 0)
+            m3uPath = Config.I.m3uFilePath;
         else
-            m3uPath = Path.Join(Config.parentDir, tle.defaultFolderName, "sldl.m3u");
+            m3uPath = Path.Join(Config.I.parentDir, tle.defaultFolderName, "sldl.m3u8");
 
         m3uEditor.SetPathAndLoad(m3uPath);
 
@@ -211,7 +204,7 @@ static partial class Program
     {
         for (int i = 0; i < trackLists.lists.Count; i++)
         {
-            if (i > 0) Console.WriteLine();
+            Console.WriteLine();
 
             var tle = trackLists[i];
 
@@ -220,7 +213,7 @@ static partial class Program
             var existing = new List<Track>();
             var notFound = new List<Track>();
 
-            if (Config.skipNotFound && !Config.PrintResults)
+            if (Config.I.skipNotFound && !Config.I.PrintResults)
             {
                 if (tle.sourceCanBeSkipped && SetNotFoundLastTime(tle.source))
                     notFound.Add(tle.source);
@@ -232,7 +225,7 @@ static partial class Program
                 }
             }
 
-            if (Config.skipExisting && !Config.PrintResults && tle.source.State != TrackState.NotFoundLastTime)
+            if (Config.I.skipExisting && !Config.I.PrintResults && tle.source.State != TrackState.NotFoundLastTime)
             {
                 if (tle.sourceCanBeSkipped && SetExisting(tle.source))
                     existing.Add(tle.source);
@@ -244,7 +237,7 @@ static partial class Program
                 }
             }
 
-            if (Config.PrintTracks)
+            if (Config.I.PrintTracks)
             {
                 if (tle.source.Type == TrackType.Normal)
                 {
@@ -286,12 +279,12 @@ static partial class Program
                 if (tle.source.Type == TrackType.Album)
                 {
                     tle.list = await Search.GetAlbumDownloads(tle.source, responseData);
-                    foundSomething = tle.list.Count > 0;
+                    foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
                 }
                 else if (tle.source.Type == TrackType.Aggregate)
                 {
                     tle.list.Insert(0, await Search.GetAggregateTracks(tle.source, responseData));
-                    foundSomething = tle.list.Count > 0;
+                    foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
                 }
                 else if (tle.source.Type == TrackType.AlbumAggregate)
                 {
@@ -313,7 +306,7 @@ static partial class Program
                     var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
                     Console.WriteLine($"No results.{lockedFiles}");
 
-                    if (!Config.PrintResults) 
+                    if (!Config.I.PrintResults) 
                     {
                         tle.source.State = TrackState.Failed;
                         tle.source.FailureReason = FailureReason.NoSuitableFileFound;
@@ -323,7 +316,7 @@ static partial class Program
                     continue;
                 }
 
-                if (Config.skipExisting && tle.needSkipExistingAfterSearch)
+                if (Config.I.skipExisting && tle.needSkipExistingAfterSearch)
                 {
                     foreach (var tracks in tle.list)
                         existing.AddRange(DoSkipExisting(tracks));
@@ -335,7 +328,7 @@ static partial class Program
                 }
             }
 
-            if (Config.PrintResults)
+            if (Config.I.PrintResults)
             {
                 await PrintResults(tle, existing, notFound);
                 continue;
@@ -369,7 +362,7 @@ static partial class Program
             }
         }
 
-        if (!Config.DoNotDownload && (trackLists.lists.Count > 0 || trackLists.Flattened(false, false).Skip(1).Any()))
+        if (!Config.I.DoNotDownload && (trackLists.lists.Count > 0 || trackLists.Flattened(false, false).Skip(1).Any()))
         {
             PrintComplete(trackLists);
         }
@@ -455,7 +448,7 @@ static partial class Program
     {
         var tracks = tle.list[0];
 
-        var semaphore = new SemaphoreSlim(Config.concurrentProcesses);
+        var semaphore = new SemaphoreSlim(Config.I.concurrentProcesses);
 
         var organizer = new FileManager(tle);
 
@@ -468,7 +461,7 @@ static partial class Program
 
         await Task.WhenAll(downloadTasks);
 
-        if (Config.removeTracksFromSource && tracks.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
+        if (Config.I.removeTracksFromSource && tracks.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
             await extractor.RemoveTrackFromSource(tle.source);
     }
 
@@ -481,14 +474,14 @@ static partial class Program
         bool succeeded = false;
         string? soulseekDir = null;
 
-        while (tle.list.Count > 0 && !Config.albumArtOnly)
+        while (tle.list.Count > 0 && !Config.I.albumArtOnly)
         {
             int index = 0;
-            bool wasInteractive = Config.interactiveMode;
+            bool wasInteractive = Config.I.interactiveMode;
 
-            if (Config.interactiveMode)
+            if (Config.I.interactiveMode)
             {
-                index = await InteractiveModeAlbum(tle.list, !Config.noBrowseFolder, retrievedFolders);
+                index = await InteractiveModeAlbum(tle.list, !Config.I.noBrowseFolder, retrievedFolders);
                 if (index == -1) break;
             }
 
@@ -498,20 +491,20 @@ static partial class Program
 
             organizer.SetRemoteCommonDir(soulseekDir);
 
-            if (!Config.interactiveMode && !wasInteractive)
+            if (!Config.I.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
                 PrintAlbum(tracks);
             }
 
-            var semaphore = new SemaphoreSlim(Config.concurrentProcesses);
+            var semaphore = new SemaphoreSlim(Config.I.concurrentProcesses);
             using var cts = new CancellationTokenSource();
 
             try
             {
                 await RunAlbumDownloads(tle, organizer, tracks, semaphore, cts);
 
-                if (!Config.noBrowseFolder && !retrievedFolders.Contains(soulseekDir))
+                if (!Config.I.noBrowseFolder && !retrievedFolders.Contains(soulseekDir))
                 {
                     Console.WriteLine("Getting all files in folder...");
 
@@ -548,10 +541,10 @@ static partial class Program
 
         List<Track>? additionalImages = null;
         
-        if (Config.albumArtOnly || succeeded && Config.albumArtOption != AlbumArtOption.Default)
+        if (Config.I.albumArtOnly || succeeded && Config.I.albumArtOption != AlbumArtOption.Default)
         {
             Console.WriteLine($"\nDownloading additional images:");
-            additionalImages = await DownloadImages(tle.list, Config.albumArtOption, tracks, organizer);
+            additionalImages = await DownloadImages(tle.list, Config.I.albumArtOption, tracks, organizer);
             tracks?.AddRange(additionalImages);
         }
 
@@ -586,7 +579,7 @@ static partial class Program
             tle.source.State = TrackState.Downloaded;
             tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
 
-            if (Config.removeTracksFromSource)
+            if (Config.I.removeTracksFromSource)
             {
                 await extractor.RemoveTrackFromSource(tle.source);
             }
@@ -596,7 +589,7 @@ static partial class Program
 
     static void OnAlbumFail(List<Track>? tracks)
     {
-        if (tracks == null || Config.IgnoreAlbumFail)
+        if (tracks == null || Config.I.IgnoreAlbumFail)
             return;
 
         foreach (var track in tracks)
@@ -605,18 +598,18 @@ static partial class Program
             {
                 try
                 {
-                    if (Config.DeleteAlbumOnFail)
+                    if (Config.I.DeleteAlbumOnFail)
                     {
                         File.Delete(track.DownloadPath);
                     }
-                    else if (Config.failedAlbumPath.Length > 0)
+                    else if (Config.I.failedAlbumPath.Length > 0)
                     {
-                        var newPath = Path.Join(Config.failedAlbumPath, Path.GetRelativePath(Config.parentDir, track.DownloadPath));
+                        var newPath = Path.Join(Config.I.failedAlbumPath, Path.GetRelativePath(Config.I.parentDir, track.DownloadPath));
                         Directory.CreateDirectory(Path.GetDirectoryName(newPath));
                         Utils.Move(track.DownloadPath, newPath);
                     }
 
-                    Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(track.DownloadPath), Config.parentDir);
+                    Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(track.DownloadPath), Config.I.parentDir);
                 }
                 catch (Exception e) 
                 {
@@ -698,9 +691,9 @@ static partial class Program
         while (albumArtLists.Count > 0)
         {
             int index = 0;
-            bool wasInteractive = Config.interactiveMode;
+            bool wasInteractive = Config.I.interactiveMode;
 
-            if (Config.interactiveMode)
+            if (Config.I.interactiveMode)
             {
                 index = await InteractiveModeAlbum(albumArtLists, false, null);
                 if (index == -1) break;
@@ -715,10 +708,15 @@ static partial class Program
                 return downloadedImages;
             }
 
-            if (!Config.interactiveMode && !wasInteractive)
+            if (!Config.I.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
                 PrintAlbum(tracks);
+            }
+
+            if (fileManager.remoteCommonDir == null)
+            {
+                fileManager.SetRemoteCommonDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
             }
 
             bool allSucceeded = true;
@@ -743,14 +741,14 @@ static partial class Program
     }
 
 
-    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource cts, bool cancelOnFail, bool removeFromSource, bool organize)
+    static async Task DownloadTask(TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource? cts, bool cancelOnFail, bool removeFromSource, bool organize)
     {
         if (track.State != TrackState.Initial)
             return;
 
         await semaphore.WaitAsync(cts.Token);
 
-        int tries = Config.unknownErrorRetries;
+        int tries = Config.I.unknownErrorRetries;
         string savedFilePath = "";
         SlFile? chosenFile = null;
 
@@ -809,7 +807,7 @@ static partial class Program
                 track.DownloadPath = savedFilePath;
             }
 
-            if (removeFromSource && Config.removeTracksFromSource)
+            if (removeFromSource && Config.I.removeTracksFromSource)
             {
                 try
                 {
@@ -827,9 +825,9 @@ static partial class Program
             organizer?.OrganizeAudio(track, chosenFile);
         }
 
-        if (Config.onComplete.Length > 0)
+        if (Config.I.onComplete.Length > 0)
         {
-            OnComplete(Config.onComplete, track);
+            OnComplete(Config.I.onComplete, track);
         }
 
         semaphore.Release();
@@ -890,9 +888,11 @@ static partial class Program
                 case "s":
                     return -1;
                 case "q":
-                    Config.interactiveMode = false;
+                    Config.I.interactiveMode = false;
                     return aidx;
                 case "r":
+                    if (!retrieveFolder)
+                        break;
                     var folder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
                     if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
                     {
@@ -939,7 +939,7 @@ static partial class Program
                             {
                                 lock (val)
                                 {
-                                    if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > Config.maxStaleTime)
+                                    if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > Config.I.maxStaleTime)
                                     {
                                         val.stalled = true;
                                         val.UpdateText();
@@ -966,10 +966,10 @@ static partial class Program
                             && !client.State.HasFlag(SoulseekClientStates.Connecting))
                         {
                             WriteLine($"\nDisconnected, logging in\n", ConsoleColor.DarkYellow, true);
-                            try { await Login(Config.useRandomLogin); }
+                            try { await Login(Config.I.useRandomLogin); }
                             catch (Exception ex)
                             {
-                                string banMsg = Config.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
+                                string banMsg = Config.I.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
                                 WriteLine($"{ex.Message}{banMsg}", ConsoleColor.DarkYellow, true);
                             }
                         }
@@ -989,14 +989,14 @@ static partial class Program
                 }
             }
 
-            await Task.Delay(Config.updateDelay);
+            await Task.Delay(Config.I.updateDelay);
         }
     }
 
 
     static async Task Login(bool random = false, int tries = 3)
     {
-        string user = Config.username, pass = Config.password;
+        string user = Config.I.username, pass = Config.I.password;
         if (random)
         {
             var r = new Random();
@@ -1013,7 +1013,7 @@ static partial class Program
             {
                 WriteLine($"Connecting {user}", debugOnly: true);
                 await client.ConnectAsync(user, pass);
-                if (!Config.noModifyShareCount)
+                if (!Config.I.noModifyShareCount)
                 {
                     WriteLine($"Setting share count", debugOnly: true);
                     await client.SetSharedCountsAsync(20, 100);
@@ -1074,7 +1074,7 @@ static partial class Program
                            .Replace("{failure-reason}", track.FailureReason.ToString())
                            .Replace("{path}", track.DownloadPath)
                            .Replace("{state}", track.State.ToString())
-                           .Replace("{extractor}", Config.inputType.ToString())
+                           .Replace("{extractor}", Config.I.inputType.ToString())
                            .Trim();
 
         if (onComplete[0] == '"')

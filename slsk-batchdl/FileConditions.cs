@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
+﻿
 using Data;
 
 using SearchResponse = Soulseek.SearchResponse;
@@ -41,52 +40,38 @@ public class FileConditions
         BannedUsers = other.BannedUsers.ToArray();
     }
 
-    public FileConditions With(FileConditionsPatch patch)
+    public FileConditions With(FileConditionsMod patch)
     {
         var cond = new FileConditions(this);
 
         if (patch.LengthTolerance != null)
             cond.LengthTolerance = patch.LengthTolerance.Value;
-
         if (patch.MinBitrate != null)
             cond.MinBitrate = patch.MinBitrate.Value;
-
         if (patch.MaxBitrate != null)
             cond.MaxBitrate = patch.MaxBitrate.Value;
-
         if (patch.MinSampleRate != null)
             cond.MinSampleRate = patch.MinSampleRate.Value;
-
         if (patch.MaxSampleRate != null)
             cond.MaxSampleRate = patch.MaxSampleRate.Value;
-
         if (patch.MinBitDepth != null)
             cond.MinBitDepth = patch.MinBitDepth.Value;
-
         if (patch.MaxBitDepth != null)
             cond.MaxBitDepth = patch.MaxBitDepth.Value;
-
         if (patch.StrictTitle != null)
             cond.StrictTitle = patch.StrictTitle.Value;
-
         if (patch.StrictArtist != null)
             cond.StrictArtist = patch.StrictArtist.Value;
-
         if (patch.StrictAlbum != null)
             cond.StrictAlbum = patch.StrictAlbum.Value;
-
         if (patch.Formats != null)
             cond.Formats = patch.Formats;
-
         if (patch.BannedUsers != null)
             cond.BannedUsers = patch.BannedUsers;
-
         if (patch.StrictStringDiacrRemove != null)
             cond.StrictStringDiacrRemove = patch.StrictStringDiacrRemove.Value;
-
         if (patch.AcceptNoLength != null)
             cond.AcceptNoLength = patch.AcceptNoLength.Value;
-
         if (patch.AcceptMissingProps != null)
             cond.AcceptMissingProps = patch.AcceptMissingProps.Value;
 
@@ -298,7 +283,7 @@ public class FileConditions
 }
 
 
-public class FileConditionsPatch
+public class FileConditionsMod
 {
     public int? LengthTolerance = null;
     public int? MinBitrate = null;

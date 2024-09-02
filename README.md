@@ -11,6 +11,7 @@ See the [examples](#examples-1).
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
    - [Search string](#search-string)
+   - [List](#list)
  - [Download modes](#download-modes)
    - [Normal](#normal)
    - [Album](#album)
@@ -51,7 +52,7 @@ Usage: sldl <input> [OPTIONS]
     --profile <names>              Configuration profile(s) to use. See --help "config".
     --concurrent-downloads <num>   Max concurrent downloads (default: 2)
     --m3u <option>                 Create an m3u8 playlist file in the output directory
-                                   'none' (default for single inputs): Do not create
+                                   'none' (default for string input): Do not create
                                    'index' (default): Write a line indexing all downloaded
                                    files, required for skip-not-found or skip-existing=m3u
                                    'all': Write the index and a list of paths and fails
@@ -234,8 +235,8 @@ The input type is usually determined automatically. To force a specific input ty
 Path to a local CSV file: Use a csv file containing track info of the songs to download.
 The names of the columns should be Artist, Title, Album, Length, although alternative names
 are usually detected as well. Only the title or album column is required, but extra info may
-improve search results. Every row that does not have a title column text will be treated as an
-album download.
+improve search result ranking. Every row that does not have a title column text will be treated 
+as an album download.
 
 ###  YouTube
 A playlist url: Download songs from a youtube playlist.
@@ -243,10 +244,6 @@ The default method to retrieve playlists doesn't always return all videos, espec
 the ones which are unavailable. To get all video titles, you can use the official API by
 providing a key with --youtube-key. Get it here https://console.cloud.google.com. Create a
 new project, click "Enable Api" and search for "youtube data", then follow the prompts.
-
-Tip: For playlists containing music videos, it may be better to remove all text in parentheses
-(to remove (Lyrics), (Official), etc) and disable song duration checking:
---regex "[\[\(].*?[\]\)]" --pref-length-tol -1
 
 ### Spotify
 A playlist/album url or 'spotify-likes': Download a spotify playlist, album, or your
@@ -285,7 +282,7 @@ Name of the track, album, or artist to search for: Can either be any typical sea
 (like what you would enter into the soulseek search bar), or a comma-separated list of
 properties like 'title=Song Name, artist=Artist Name, length=215'.
 
-The following properties are allowed:
+The following properties are accepted:
 ```
 title
 artist
@@ -336,7 +333,7 @@ one user will be ignored.
 ### Album Aggregate
 Activated when both --album and --aggregate are enabled. sldl will group shares and download
 one of each distinct album, starting with the one shared by the most users. It's
-recommended to pair this with --interactive. 
+recommended to pair this with --interactive.  
 Note that --min-shares-aggregate is 2 by default, which means that albums shared by only
 one user will be ignored.
 
@@ -452,6 +449,7 @@ disc                            Disc number
 filename                        Soulseek filename without extension
 foldername                      Soulseek folder name
 extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
+default-folder                  Default sldl folder name (usually the playlist name)
 ```
 
 ## Skip existing
@@ -547,20 +545,20 @@ sldl spotify-likes
 
 Download albums for every song in a spotify playlist:
 ```
-sldl https://spotify/playlist/url --album --skip-existing
+sldl https://spotify/playlist/id --album --skip-existing
 ```
 
 <br>
 
 Retrieve deleted video names, then download from a youtube playlist with fallback to yt-dlp:
 ```
-sldl "https://www.youtube.com/playlist?list=PLI_eFW8NAFzYAXZ5DrU6E6mQ_XfhaLBUX" --get-deleted --yt-dlp
+sldl https://www.youtube.com/playlist/id --get-deleted --yt-dlp
 ```
 <br>
 
 Search & download a specific song, preferring lossless:
 ```
-sldl "title=MC MENTAL @ HIS BEST,length=242" --pref-format "flac,wav"
+sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
 ```  
 <br>
 
@@ -578,23 +576,31 @@ sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" 
 
 Download all albums by an artist found on soulseek:
 ```
-sldl "artist=MC MENTAL" --aggregate --album
+sldl "artist=MC MENTAL" --aggregate --album --interactive
 ```
-<hr style="height:0px; visibility:hidden;" />
 
 #### Advanced example: Automatic wishlist downloader
-Create a file named `wishlist.txt`, and add some wishlist items:
+Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```bash
-echo title=My Favorite Song, artist=Artist >> wishlist.txt
-echo https://spotify/album/url >> wishlist.txt
+echo "title=My Favorite Song, artist=Artist" >> wishlist.txt
+echo "album=Album" "format=mp3" >> wishlist.txt
 ```
-Set up a cron job (or scheduled task on windows) to periodically run sldl on every line of the wishlist file with the following options:
+Add a profile to your `sldl.conf`:
 ```
---skip-existing --skip-mode m3u --m3u index --m3u-path wishlist-archive.sldl
+[wishlist]
+input = wishlist.txt 
+input-type = list 
+skip-existing = true
+skip-mode = m3u
+m3u = index 
+m3u-path = wishlist-archive.sldl
 ```
-This will create a global archive file `wishlist-archive.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded.  
-You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.  
-If you expect to have a lot of individual songs in your wishlist, it may be better to use a csv file as that will allow sldl to use concurrency when downloading.
+This will create a global archive file `wishlist-archive.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded. You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.  
+Finally, set up a cron job (or a scheduled task on windows) to periodically run sldl with the following option:
+```
+sldl --profile wishlist
+```
+
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 

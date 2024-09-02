@@ -7,14 +7,13 @@ using System.Text.RegularExpressions;
 
 using Data;
 using Enums;
-using System.ComponentModel;
 
 
 public class FileManager
 {
     readonly TrackListEntry tle;
     readonly HashSet<Track> organized = new();
-    string? remoteCommonDir;
+    public string? remoteCommonDir { get; private set; }
 
     public FileManager(TrackListEntry tle)
     {
@@ -28,19 +27,16 @@ public class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string parent = Config.parentDir;
+        string parent = Config.I.parentDir;
         string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
         if (tle.defaultFolderName != null)
         {
-            parent = Path.Join(parent, tle.defaultFolderName.ReplaceInvalidChars(Config.invalidReplaceStr, removeSlash: false));
+            parent = Path.Join(parent, tle.defaultFolderName.ReplaceInvalidChars(Config.I.invalidReplaceStr, removeSlash: false));
         } 
 
-        if (tle.source.Type == TrackType.Album)
+        if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(remoteCommonDir))
         {
-            if (remoteCommonDir == null)
-                throw new NullReferenceException("Remote common dir needs to be configured to organize album files");
-
             string dirname = Path.GetFileName(remoteCommonDir);
             string relpath = Path.GetRelativePath(remoteCommonDir, Utils.NormalizedPath(sourceFname));
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath));
@@ -64,7 +60,7 @@ public class FileManager
             OrganizeAudio(track, track.FirstDownload);
         }
 
-        bool onlyAdditionalImages = Config.nameFormat.Length == 0;
+        bool onlyAdditionalImages = Config.I.nameFormat.Length == 0;
 
         var nonAudioToOrganize = onlyAdditionalImages ? additionalImages : tracks.Where(t => t.IsNotAudio);
 
@@ -88,14 +84,14 @@ public class FileManager
         if (track.DownloadPath.Length == 0 || !Utils.IsMusicFile(track.DownloadPath))
             return;
 
-        if (Config.nameFormat.Length == 0)
+        if (Config.I.nameFormat.Length == 0)
         {
             organized.Add(track);
             return;
         }
 
-        string pathPart = SubstituteValues(Config.nameFormat, track, file);
-        string newFilePath = Path.Join(Config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
+        string pathPart = SubstituteValues(Config.I.nameFormat, track, file);
+        string newFilePath = Path.Join(Config.I.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
 
         try
         {
@@ -140,7 +136,7 @@ public class FileManager
         {
             Directory.CreateDirectory(Path.GetDirectoryName(newPath));
             Utils.Move(oldPath, newPath);
-            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), Config.parentDir);
+            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), Config.I.parentDir);
         }
     }
          
@@ -184,7 +180,7 @@ public class FileManager
                 chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", match =>
                 {
                     if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
-                        return match.Value[1..^1].ReplaceInvalidChars(Config.invalidReplaceStr, removeSlash: false);
+                        return match.Value[1..^1].ReplaceInvalidChars(Config.I.invalidReplaceStr, removeSlash: false);
                     else
                     {
                         TryGetVarValue(match.Value, file, slfile, track, out string res);
@@ -205,7 +201,7 @@ public class FileManager
             char dirsep = Path.DirectorySeparatorChar;
             newName = newName.Replace('/', dirsep).Replace('\\', dirsep);
             var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(Config.invalidReplaceStr).Trim(' ', '.')));
+            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(Config.I.invalidReplaceStr).Trim(' ', '.')));
             return newName;
         }
 
@@ -257,12 +253,14 @@ public class FileManager
                     return true;
                 }
             case "extractor":
-                res = Config.inputType.ToString(); break;
+                res = Config.I.inputType.ToString(); break;
+            case "default-folder":
+                res = tle.defaultFolderName ?? tle.source.ToString(false); break;
             default:
                 res = x; return false;
         }
 
-        res = res.ReplaceInvalidChars(Config.invalidReplaceStr);
+        res = res.ReplaceInvalidChars(Config.I.invalidReplaceStr);
         return true;
     }
 }

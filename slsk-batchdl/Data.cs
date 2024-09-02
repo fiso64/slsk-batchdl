@@ -107,8 +107,8 @@ namespace Data
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
         public string? defaultFolderName = null;
-        public FileConditionsPatch? additionalConds = null;
-        public FileConditionsPatch? additionalPrefConds = null;
+        public FileConditionsMod? additionalConds = null;
+        public FileConditionsMod? additionalPrefConds = null;
 
         public TrackListEntry(TrackType trackType)
         {

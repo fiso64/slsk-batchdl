@@ -26,19 +26,19 @@ namespace Extractors
             var trackLists = new TrackLists();
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
-            YouTube.apiKey = Config.ytKey;
+            YouTube.apiKey = Config.I.ytKey;
 
             string name;
             List<Track>? deleted = null;
             List<Track> tracks = new();
 
-            if (Config.getDeleted)
+            if (Config.I.getDeleted)
             {
                 Console.WriteLine("Getting deleted videos..");
                 var archive = new YouTube.YouTubeArchiveRetriever();
-                deleted = await archive.RetrieveDeleted(input, printFailed: Config.deletedOnly);
+                deleted = await archive.RetrieveDeleted(input, printFailed: Config.I.deletedOnly);
             }
-            if (!Config.deletedOnly)
+            if (!Config.I.deletedOnly)
             {
                 if (YouTube.apiKey.Length > 0)
                 {

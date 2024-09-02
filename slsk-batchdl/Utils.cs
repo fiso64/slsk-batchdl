@@ -89,7 +89,9 @@ public static class Utils
             return path;
         }
 
-        if (path.StartsWith('~'))
+        path = path.Trim();
+
+        if (path[0] == '~' && (path.Length == 1 || path[1] == '\\' || path[1] == '/'))
         {
             string homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             path = Path.Join(homeDirectory, path.Substring(1).TrimStart('/').TrimStart('\\'));

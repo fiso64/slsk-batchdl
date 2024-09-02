@@ -14,10 +14,10 @@ namespace Extractors
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
             var trackLists = new TrackLists();
-            var music = ParseTrackArg(input, Config.album);
+            var music = ParseTrackArg(input, Config.I.album);
             TrackListEntry tle;
 
-            if (Config.album || (music.Title.Length == 0 && music.Album.Length > 0))
+            if (Config.I.album || (music.Title.Length == 0 && music.Album.Length > 0))
             {
                 music.Type = TrackType.Album;
                 tle = new TrackListEntry(music);

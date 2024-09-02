@@ -5,11 +5,11 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 
-static class Config
+public class Config
 {
-    public static FileConditions necessaryCond = new();
+    public FileConditions necessaryCond = new();
 
-    public static FileConditions preferredCond = new()
+    public FileConditions preferredCond = new()
     {
         Formats = new string[] { "mp3" },
         LengthTolerance = 3,
@@ -21,180 +21,174 @@ static class Config
         AcceptNoLength = false,
     };
 
-    public static string parentDir = Directory.GetCurrentDirectory();
-    public static string input = "";
-    public static string m3uFilePath = "";
-    public static string musicDir = "";
-    public static string spotifyId = "";
-    public static string spotifySecret = "";
-    public static string spotifyToken = "";
-    public static string spotifyRefresh = "";
-    public static string ytKey = "";
-    public static string username = "";
-    public static string password = "";
-    public static string artistCol = "";
-    public static string albumCol = "";
-    public static string trackCol = "";
-    public static string ytIdCol = "";
-    public static string descCol = "";
-    public static string trackCountCol = "";
-    public static string lengthCol = "";
-    public static string timeUnit = "s";
-    public static string nameFormat = "";
-    public static string invalidReplaceStr = " ";
-    public static string ytdlpArgument = "";
-    public static string onComplete = "";
-    public static string confPath = "";
-    public static string profile = "";
-    public static string failedAlbumPath = "";
-    public static bool aggregate = false;
-    public static bool album = false;
-    public static bool albumArtOnly = false;
-    public static bool interactiveMode = false;
-    public static bool setAlbumMinTrackCount = true;
-    public static bool setAlbumMaxTrackCount = false;
-    public static bool skipNotFound = false;
-    public static bool desperateSearch = false;
-    public static bool noRemoveSpecialChars = false;
-    public static bool artistMaybeWrong = false;
-    public static bool fastSearch = false;
-    public static bool ytParse = false;
-    public static bool removeFt = false;
-    public static bool removeBrackets = false;
-    public static bool reverse = false;
-    public static bool useYtdlp = false;
-    public static bool skipExisting = false;
-    public static bool removeTracksFromSource = false;
-    public static bool getDeleted = false;
-    public static bool deletedOnly = false;
-    public static bool removeSingleCharacterSearchTerms = false;
-    public static bool relax = false;
-    public static bool debugInfo = false;
-    public static bool noModifyShareCount = false;
-    public static bool useRandomLogin = false;
-    public static bool noBrowseFolder = false;
-    public static bool skipExistingPrefCond = false;
-    public static int downrankOn = -1;
-    public static int ignoreOn = -2;
-    public static int minAlbumTrackCount = -1;
-    public static int maxAlbumTrackCount = -1;
-    public static int fastSearchDelay = 300;
-    public static int minSharesAggregate = 2;
-    public static int maxTracks = int.MaxValue;
-    public static int offset = 0;
-    public static int maxStaleTime = 50000;
-    public static int updateDelay = 100;
-    public static int searchTimeout = 6000;
-    public static int concurrentProcesses = 2;
-    public static int unknownErrorRetries = 2;
-    public static int maxRetriesPerTrack = 30;
-    public static int listenPort = 49998;
-    public static int searchesPerTime = 34;
-    public static int searchRenewTime = 220;
-    public static int aggregateLengthTol = 3;
-    public static double fastSearchMinUpSpeed = 1.0;
-    public static Track regexToReplace = new();
-    public static Track regexReplaceBy = new();
-    public static AlbumArtOption albumArtOption = AlbumArtOption.Default;
-    public static M3uOption m3uOption = M3uOption.Index;
-    public static DisplayMode displayMode = DisplayMode.Single;
-    public static InputType inputType = InputType.None;
-    public static SkipMode skipMode = SkipMode.M3u;
-    public static SkipMode skipModeMusicDir = SkipMode.Name;
-    public static PrintOption printOption = PrintOption.None;
+    public string parentDir = Directory.GetCurrentDirectory();
+    public string input = "";
+    public string m3uFilePath = "";
+    public string musicDir = "";
+    public string spotifyId = "";
+    public string spotifySecret = "";
+    public string spotifyToken = "";
+    public string spotifyRefresh = "";
+    public string ytKey = "";
+    public string username = "";
+    public string password = "";
+    public string artistCol = "";
+    public string albumCol = "";
+    public string trackCol = "";
+    public string ytIdCol = "";
+    public string descCol = "";
+    public string trackCountCol = "";
+    public string lengthCol = "";
+    public string timeUnit = "s";
+    public string nameFormat = "";
+    public string invalidReplaceStr = " ";
+    public string ytdlpArgument = "";
+    public string onComplete = "";
+    public string confPath = "";
+    public string profile = "";
+    public string failedAlbumPath = "";
+    public bool aggregate = false;
+    public bool album = false;
+    public bool albumArtOnly = false;
+    public bool interactiveMode = false;
+    public bool setAlbumMinTrackCount = true;
+    public bool setAlbumMaxTrackCount = false;
+    public bool skipNotFound = false;
+    public bool desperateSearch = false;
+    public bool noRemoveSpecialChars = false;
+    public bool artistMaybeWrong = false;
+    public bool fastSearch = false;
+    public bool ytParse = false;
+    public bool removeFt = false;
+    public bool removeBrackets = false;
+    public bool reverse = false;
+    public bool useYtdlp = false;
+    public bool skipExisting = false;
+    public bool removeTracksFromSource = false;
+    public bool getDeleted = false;
+    public bool deletedOnly = false;
+    public bool removeSingleCharacterSearchTerms = false;
+    public bool relax = false;
+    public bool debugInfo = false;
+    public bool noModifyShareCount = false;
+    public bool useRandomLogin = false;
+    public bool noBrowseFolder = false;
+    public bool skipExistingPrefCond = false;
+    public int downrankOn = -1;
+    public int ignoreOn = -2;
+    public int minAlbumTrackCount = -1;
+    public int maxAlbumTrackCount = -1;
+    public int fastSearchDelay = 300;
+    public int minSharesAggregate = 2;
+    public int maxTracks = int.MaxValue;
+    public int offset = 0;
+    public int maxStaleTime = 50000;
+    public int updateDelay = 100;
+    public int searchTimeout = 6000;
+    public int concurrentProcesses = 2;
+    public int unknownErrorRetries = 2;
+    public int maxRetriesPerTrack = 30;
+    public int listenPort = 49998;
+    public int searchesPerTime = 34;
+    public int searchRenewTime = 220;
+    public int aggregateLengthTol = 3;
+    public double fastSearchMinUpSpeed = 1.0;
+    public Track regexToReplace = new();
+    public Track regexReplaceBy = new();
+    public AlbumArtOption albumArtOption = AlbumArtOption.Default;
+    public M3uOption m3uOption = M3uOption.Index;
+    public DisplayMode displayMode = DisplayMode.Single;
+    public InputType inputType = InputType.None;
+    public SkipMode skipMode = SkipMode.M3u;
+    public SkipMode skipModeMusicDir = SkipMode.Name;
+    public PrintOption printOption = PrintOption.None;
 
-    public static bool HasAutoProfiles { get; private set; } = false;
-    public static bool DoNotDownload => (printOption & (PrintOption.Results | PrintOption.Tracks)) != 0;
-    public static bool PrintTracks => (printOption & PrintOption.Tracks) != 0;
-    public static bool PrintResults => (printOption & PrintOption.Results) != 0;
-    public static bool PrintTracksFull => (printOption & PrintOption.Tracks) != 0 && (printOption & PrintOption.Full) != 0;
-    public static bool PrintResultsFull => (printOption & PrintOption.Results) != 0 && (printOption & PrintOption.Full) != 0;
-    public static bool DeleteAlbumOnFail => failedAlbumPath == "delete";
-    public static bool IgnoreAlbumFail => failedAlbumPath == "disable";
+    public bool HasAutoProfiles { get; private set; } = false;
+    public bool DoNotDownload => (printOption & (PrintOption.Results | PrintOption.Tracks)) != 0;
+    public bool PrintTracks => (printOption & PrintOption.Tracks) != 0;
+    public bool PrintResults => (printOption & PrintOption.Results) != 0;
+    public bool PrintTracksFull => (printOption & PrintOption.Tracks) != 0 && (printOption & PrintOption.Full) != 0;
+    public bool PrintResultsFull => (printOption & PrintOption.Results) != 0 && (printOption & PrintOption.Full) != 0;
+    public bool DeleteAlbumOnFail => failedAlbumPath == "delete";
+    public bool IgnoreAlbumFail => failedAlbumPath == "disable";
 
-    static readonly Dictionary<string, (List<string> args, string? cond)> profiles = new();
-    static readonly HashSet<string> appliedProfiles = new();
-    static bool hasConfiguredM3uMode = false;
-    static bool confPathChanged = false;
-    static string[] arguments;
-    static FileConditions? prevConds = null;
-    static FileConditions? prevPrefConds = null;
+    readonly Dictionary<string, (List<string> args, string? cond)> configProfiles = new();
+    readonly HashSet<string> appliedProfiles = new();
+    bool hasConfiguredM3uMode = false;
+    bool confPathChanged = false;
+    string[] arguments;
+    FileConditions? prevConds = null;
+    FileConditions? prevPrefConds = null;
 
-    public static bool ParseArgsAndReadConfig(string[] args)
+    private static Config Instance = new();
+
+    public static Config I { get { return Instance; } }
+
+    private Config() { }
+
+    private Config(Dictionary<string, (List<string> args, string? cond)> cfg, string[] args) 
+    { 
+        configProfiles = cfg;
+        arguments = args;
+    }
+
+
+    public void Load(string[] args)
     {
-        args = args.SelectMany(arg =>
+        arguments = args.SelectMany(arg =>
         {
-            if (arg.Length > 3 && arg.StartsWith("--") && arg.Contains('='))
+            if (arg.Length > 2 && arg[0] == '-')
             {
-                var parts = arg.Split('=', 2);
-                return new[] { parts[0], parts[1] };
-            }
+                if (arg[1] == '-')
+                {
+                    if (arg.Length > 3 && arg.Contains('='))
+                        return arg.Split('=', 2); // --arg=val becomes --arg val
+                }
+                else if (!arg.Contains(' '))
+                {
+                    return arg[1..].Select(c => $"-{c}"); // -abc becomes -a -b -c
+                }
+            } 
             return new[] { arg };
         }).ToArray();
 
-        SetConfigPath(args);
+        SetConfigPath(arguments);
 
         if (confPath != "none" && (confPathChanged || File.Exists(confPath)))
         {
-            if (File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
-                confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
             ParseConfig(confPath);
+            ApplyDefaultConfig();
         }
 
-        args = args.SelectMany(arg =>
+        int profileIndex = Array.FindLastIndex(arguments, x => x == "--profile");
+
+        if (profileIndex != -1)
         {
-            if (arg.Length > 2 && arg[0] == '-' && arg[1] != '-' && !arg.Contains(' '))
-                return arg[1..].Select(c => $"-{c}");
-            return new[] { arg };
-        }).ToArray();
-
-        arguments = args;
-
-        int profileIndex = Array.FindLastIndex(args, x => x == "--profile");
-
-        if (profileIndex != -1 && profileIndex < args.Length - 1)
-        {
-            profile = args[profileIndex + 1];
+            profile = arguments[profileIndex + 1];
             if (profile == "help")
             {
                 ListProfiles();
-                return false;
+                Environment.Exit(0);
             }
-        }
-
-        if (profiles.ContainsKey("default"))
-        {
-            ProcessArgs(profiles["default"].args);
-            appliedProfiles.Add("default");
-        }
-
-        if (HasAutoProfiles)
-        {
-            ProcessArgs(args);
-            ApplyAutoProfiles();
         }
 
         ApplyProfiles(profile);
 
-        ProcessArgs(args);
-
-        return true;
+        ProcessArgs(arguments);
     }
 
 
-    static void SetConfigPath(string[] args)
+    void SetConfigPath(string[] args)
     {
-        int idx = Array.LastIndexOf(args, "-c");
-        int idx2 = Array.LastIndexOf(args, "--config");
-        idx = idx > idx2 ? idx : idx2;
+        int idx = Array.FindLastIndex(args, x => x == "-c" || x == "--config");
+
         if (idx != -1)
         {
             confPath = Utils.ExpandUser(args[idx + 1]);
-        }
-
-        if (confPath.Length > 0)
-        {
             confPathChanged = true;
+
+            if(File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
+                confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
         }
 
         if (!confPathChanged)
@@ -204,7 +198,6 @@ static class Config
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "sldl", "sldl.conf"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "sldl", "sldl.conf"),
                 Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sldl.conf"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slsk-batchdl.conf"),
             };
 
             foreach (var path in configPaths)
@@ -219,7 +212,7 @@ static class Config
     }
 
 
-    public static void PostProcessArgs()
+    public void PostProcessArgs() // must be run after extracting tracklist
     {
         if (DoNotDownload || debugInfo)
             concurrentProcesses = 1;
@@ -229,6 +222,8 @@ static class Config
         if (DoNotDownload)
             m3uOption = M3uOption.None;
         else if (!hasConfiguredM3uMode && inputType == InputType.String)
+            m3uOption = M3uOption.None;
+        else if (!hasConfiguredM3uMode && !Program.trackLists.Flattened(true, true).Skip(1).Any())
             m3uOption = M3uOption.None;
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
@@ -246,7 +241,7 @@ static class Config
     }
 
 
-    static void ParseConfig(string path)
+    void ParseConfig(string path)
     {
         var lines = File.ReadAllLines(path);
         var curProfile = "default";
@@ -274,13 +269,13 @@ static class Config
             if (val[0] == '"' && val[^1] == '"')
                 val = val[1..^1];
 
-            if (!profiles.ContainsKey(curProfile))
-                profiles[curProfile] = (new List<string>(), null);
+            if (!configProfiles.ContainsKey(curProfile))
+                configProfiles[curProfile] = (new List<string>(), null);
 
             if (key == "profile-cond" && curProfile != "default")
             {
-                var a = profiles[curProfile].args;
-                profiles[curProfile] = (a, val);
+                var a = configProfiles[curProfile].args;
+                configProfiles[curProfile] = (a, val);
                 HasAutoProfiles = true;
             }
             else
@@ -290,8 +285,8 @@ static class Config
                 else
                     key = "--" + key;
 
-                profiles[curProfile].args.Add(key);
-                profiles[curProfile].args.Add(val);
+                configProfiles[curProfile].args.Add(key);
+                configProfiles[curProfile].args.Add(val);
             }
         }
     }
@@ -299,33 +294,70 @@ static class Config
 
     public static void UpdateProfiles(TrackListEntry tle)
     {
-        if (DoNotDownload)
+        if (I.DoNotDownload)
             return;
-        if (!HasAutoProfiles)
+        if (!I.HasAutoProfiles)
             return;
 
-        var newProfiles = ApplyAutoProfiles(tle);
+        bool needUpdate = false;
+        var toApply = new List<(string name, List<string> args)>();
 
-        if (newProfiles.Count > 0)
+        foreach ((var key, var val) in I.configProfiles)
         {
-            //appliedProfiles.Clear();
-            appliedProfiles.UnionWith(newProfiles);
-            ApplyProfiles(profile);
-            ProcessArgs(arguments);
-            PostProcessArgs();
+            if (key == "default" || val.cond == null)
+                continue;
+
+            bool condSatisfied = I.ProfileConditionSatisfied(val.cond, tle);
+            bool alreadyApplied = I.appliedProfiles.Contains(key);
+            
+            if (condSatisfied && !alreadyApplied)
+                needUpdate = true;
+            if (!condSatisfied && alreadyApplied)
+                needUpdate = true;
+            
+            if (condSatisfied)
+                toApply.Add((key, val.args));
+        }
+
+        if (!needUpdate)
+            return;
+
+        // this means that auto profiles can't change --profile and --config
+        var profile = I.profile;
+        Instance = new Config(I.configProfiles, I.arguments);
+        I.ApplyDefaultConfig();
+        I.ApplyProfiles(profile);
+
+        foreach (var (name, args) in toApply)
+        {
+            Console.WriteLine($"Applying auto profile: {name}");
+            I.ProcessArgs(args);
+            I.appliedProfiles.Add(name);
+        }
+
+        I.ProcessArgs(I.arguments);
+    }
+
+
+    void ApplyDefaultConfig()
+    {
+        if (configProfiles.ContainsKey("default"))
+        {
+            ProcessArgs(configProfiles["default"].args);
+            appliedProfiles.Add("default");
         }
     }
 
 
-    static void ApplyProfiles(string names)
+    void ApplyProfiles(string names)
     {
         foreach (var name in names.Split(','))
         {
             if (name.Length > 0 && name != "default")
             {
-                if (profiles.ContainsKey(name))
+                if (configProfiles.ContainsKey(name))
                 {
-                    ProcessArgs(profiles[name].args);
+                    ProcessArgs(configProfiles[name].args);
                     appliedProfiles.Add(name);
                 }
                 else
@@ -335,31 +367,7 @@ static class Config
     }
 
 
-    static HashSet<string> ApplyAutoProfiles(TrackListEntry? tle = null)
-    {
-        var applied = new HashSet<string>();
-
-        if (!HasAutoProfiles)
-            return applied;
-
-        foreach ((var key, var val) in profiles)
-        {
-            if (key == "default" || appliedProfiles.Contains(key))
-                continue;
-            if (val.cond != null && ProfileConditionSatisfied(val.cond, tle))
-            {
-                Console.WriteLine($"Applying auto profile: {key}");
-                ProcessArgs(val.args);
-                appliedProfiles.Add(key);
-                applied.Add(key);
-            }
-        }
-
-        return applied;
-    }
-
-
-    static object GetVarValue(string var, TrackListEntry? tle = null)
+    object GetVarValue(string var, TrackListEntry? tle = null)
     {
         static string toKebab(string input)
         {
@@ -380,7 +388,7 @@ static class Config
     }
 
 
-    public static bool ProfileConditionSatisfied(string cond, TrackListEntry? tle = null)
+    public bool ProfileConditionSatisfied(string cond, TrackListEntry? tle = null)
     {
         var tokens = new Queue<string>(Regex.Split(cond, @"(\s+|\(|\)|&&|\|\||==|!=|!|\"".*?\"")").Where(t => !string.IsNullOrWhiteSpace(t)));
 
@@ -456,10 +464,10 @@ static class Config
     }
 
 
-    static void ListProfiles()
+    void ListProfiles()
     {
         Console.WriteLine("Available profiles:");
-        foreach ((var key, var val) in profiles)
+        foreach ((var key, var val) in configProfiles)
         {
             if (key == "default")
                 continue;
@@ -475,7 +483,7 @@ static class Config
     }
 
 
-    public static void AddTemporaryConditions(FileConditionsPatch? cond, FileConditionsPatch? prefCond)
+    public void AddTemporaryConditions(FileConditionsMod? cond, FileConditionsMod? prefCond)
     {
         if (cond != null)
         {
@@ -489,7 +497,8 @@ static class Config
         }
     }
 
-    public static void RestoreConditions()
+
+    public void RestoreConditions()
     {
         if (prevConds != null)
             necessaryCond = prevConds;
@@ -498,7 +507,7 @@ static class Config
     }
 
 
-    public static FileConditionsPatch ParseConditions(string input)
+    public static FileConditionsMod ParseConditions(string input)
     {
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
@@ -514,7 +523,7 @@ static class Config
                 min = max = int.Parse(value);
         }
 
-        var cond = new FileConditionsPatch();
+        var cond = new FileConditionsMod();
 
         var tr = StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries;
         string[] conditions = input.Split(';', tr);
@@ -583,7 +592,7 @@ static class Config
     }
 
 
-    static void ProcessArgs(IReadOnlyList<string> args)
+    void ProcessArgs(IReadOnlyList<string> args)
     {
         void setFlag(ref bool flag, ref int i, bool trueVal = true)
         {

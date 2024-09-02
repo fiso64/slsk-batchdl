@@ -164,21 +164,21 @@ public static class Printing
         {
             Console.WriteLine(new string('-', 60));
 
-            if (!Config.printOption.HasFlag(PrintOption.Full))
+            if (!Config.I.printOption.HasFlag(PrintOption.Full))
                 Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
             else
                 Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
 
             if (tle.list.Count > 0 && tle.list[0].Count > 0)
             {
-                if (!Config.noBrowseFolder)
+                if (!Config.I.noBrowseFolder)
                     Console.WriteLine("[Skipping full folder retrieval]");
 
                 foreach (var ls in tle.list)
                 {
                     PrintAlbum(ls);
 
-                    if (!Config.printOption.HasFlag(PrintOption.Full))
+                    if (!Config.I.printOption.HasFlag(PrintOption.Full))
                         break;
                 }
             }
@@ -208,14 +208,14 @@ public static class Printing
 
     public static void PrintTracksTbd(List<Track> toBeDownloaded, List<Track> existing, List<Track> notFound, TrackType type, bool summary = true)
     {
-        if (type == TrackType.Normal && !Config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
+        if (type == TrackType.Normal && !Config.I.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
             return;
 
         string notFoundLastTime = notFound.Count > 0 ? $"{notFound.Count} not found" : "";
         string alreadyExist = existing.Count > 0 ? $"{existing.Count} already exist" : "";
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        bool full = Config.printOption.HasFlag(PrintOption.Full);
+        bool full = Config.I.printOption.HasFlag(PrintOption.Full);
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
         if (summary && (type == TrackType.Normal || skippedTracks.Length > 0))
@@ -223,27 +223,26 @@ public static class Printing
 
         if (toBeDownloaded.Count > 0)
         {
-            bool showAll = type != TrackType.Normal || Config.PrintTracks || Config.PrintResults;
-            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: Config.PrintTracks);
+            bool showAll = type != TrackType.Normal || Config.I.PrintTracks || Config.I.PrintResults;
+            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: Config.I.PrintTracks);
 
             if (full && (existing.Count > 0 || notFound.Count > 0))
                 Console.WriteLine("\n-----------------------------------------------\n");
         }
 
-        if (Config.PrintTracks || Config.PrintResults)
+        if (Config.I.PrintTracks || Config.I.PrintResults)
         {
             if (existing.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks already exist:");
-                PrintTracks(existing, fullInfo: full, infoFirst: Config.PrintTracks);
+                PrintTracks(existing, fullInfo: full, infoFirst: Config.I.PrintTracks);
             }
             if (notFound.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks were not found during a prior run:");
-                PrintTracks(notFound, fullInfo: full, infoFirst: Config.PrintTracks);
+                PrintTracks(notFound, fullInfo: full, infoFirst: Config.I.PrintTracks);
             }
         }
-        Console.WriteLine();
     }
 
 
@@ -294,9 +293,7 @@ public static class Printing
 
         res += $" / {totalFileSizeInMB:F2} MB]";
 
-        string gcp = Utils.GreatestCommonDirectory(files.Select(x => x.Filename)).TrimEnd('\\');
-
-        var discPattern = new Regex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$");
+        string gcp = Utils.GreatestCommonDirectorySlsk(files.Select(x => x.Filename)).TrimEnd('\\');
         int lastIndex = gcp.LastIndexOf('\\');
         if (lastIndex != -1)
         {
@@ -315,14 +312,14 @@ public static class Printing
             try { progress.Refresh(current, item); }
             catch { }
         }
-        else if ((Config.displayMode == DisplayMode.Simple || Console.IsOutputRedirected) && print)
+        else if ((Config.I.displayMode == DisplayMode.Simple || Console.IsOutputRedirected) && print)
             Console.WriteLine(item);
     }
 
 
     public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray, bool safe = false, bool debugOnly = false)
     {
-        if (debugOnly && !Config.debugInfo)
+        if (debugOnly && !Config.I.debugInfo)
             return;
         if (!safe)
         {

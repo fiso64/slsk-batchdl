@@ -32,6 +32,7 @@ public class M3uEditor
 
         this.path = Path.GetFullPath(path);
         parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
+
         lines = ReadAllLines().ToList();
         LoadPreviousResults();
     }
@@ -81,7 +82,7 @@ public class M3uEditor
                     if (field == 0)
                     {
                         if (x.StartsWith("./"))
-                            x = System.IO.Path.Join(parent, x[2..]);
+                            x = Path.Join(parent, x[2..]);
                         track.DownloadPath = x;
                     }
                     else if (field == 1)

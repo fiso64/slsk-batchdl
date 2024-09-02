@@ -49,11 +49,21 @@ namespace Extractors
                 if (added >= maxTracks)
                     break;
 
+                bool savedVal = Config.I.album;
+
+                if (line.StartsWith("a:"))
+                {
+                    line = line[2..];
+                    Config.I.album = true;
+                }
+
                 var fields = ParseLine(line);
 
                 var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
 
                 var tl = await ex.GetTracks(fields[0], int.MaxValue, 0, false);
+
+                Config.I.album = savedVal;
 
                 foreach (var tle in tl.lists)
                 {
