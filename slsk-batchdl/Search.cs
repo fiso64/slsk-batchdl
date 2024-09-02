@@ -15,19 +15,38 @@ using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 
+using System.Diagnostics;
+
+class TimerReporter
+{
+    private Stopwatch stopwatch;
+
+    public TimerReporter()
+    {
+        stopwatch = new Stopwatch();
+        stopwatch.Start();
+    }
+
+    public void Report(string message = "")
+    {
+        Console.WriteLine($"Time elapsed: {stopwatch.ElapsedMilliseconds} ms. {message}");
+        stopwatch.Restart();
+    }
+}
+
 static class Search
 {
     public static RateLimitedSemaphore? searchSemaphore;
 
     // very messy function that does everything
-    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, CancellationTokenSource cts)
+    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, CancellationTokenSource? cts = null)
     {
-        if (Config.DoNotDownload)
+        if (Config.I.DoNotDownload)
             throw new Exception();
 
         IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
         var responseData = new ResponseData();
-        var progress = Printing.GetProgressBar(Config.displayMode);
+        var progress = Printing.GetProgressBar(Config.I.displayMode);
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
         using var searchCts = new CancellationTokenSource();
@@ -62,7 +81,7 @@ static class Search
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, cts, searchCts);
+                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, cts?.Token, searchCts);
                 }
             }
         }
@@ -76,17 +95,17 @@ static class Search
                 foreach (var file in r.Files)
                     results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
 
-                if (Config.fastSearch && userSuccessCount.GetValueOrDefault(r.Username, 0) > Config.downrankOn)
+                if (Config.I.fastSearch && userSuccessCount.GetValueOrDefault(r.Username, 0) > Config.I.downrankOn)
                 {
                     var f = r.Files.First();
 
-                    if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= Config.fastSearchMinUpSpeed
-                        && FileConditions.BracketCheck(track, InferTrack(f.Filename, track)) && Config.preferredCond.FileSatisfies(f, track, r))
+                    if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= Config.I.fastSearchMinUpSpeed
+                        && FileConditions.BracketCheck(track, InferTrack(f.Filename, track)) && Config.I.preferredCond.FileSatisfies(f, track, r))
                     {
                         fsResults.TryAdd(r.Username + '\\' + f.Filename, (r, f));
                         if (Interlocked.Exchange(ref fsResultsStarted, 1) == 0)
                         {
-                            Task.Delay(Config.fastSearchDelay).ContinueWith(tt => fastSearchDownload());
+                            Task.Delay(Config.I.fastSearchDelay).ContinueWith(tt => fastSearchDownload());
                         }
                     }
                 }
@@ -98,8 +117,8 @@ static class Search
             return new SearchOptions(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
-                searchTimeout: Config.searchTimeout,
-                removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
+                searchTimeout: Config.I.searchTimeout,
+                removeSingleCharacterSearchTerms: Config.I.removeSingleCharacterSearchTerms,
                 responseFilter: (response) =>
                 {
                     return response.UploadSpeed > 0 && necCond.BannedUsersSatisfies(response);
@@ -117,7 +136,7 @@ static class Search
         searchEnded = true;
         lock (fsDownloadLock) { }
 
-        if (downloading == 0 && results.IsEmpty && !Config.useYtdlp)
+        if (downloading == 0 && results.IsEmpty && !Config.I.useYtdlp)
         {
             notFound = true;
         }
@@ -151,7 +170,7 @@ static class Search
             if (orderedResults == null)
                 orderedResults = OrderedResults(results, track, useInfer: true);
 
-            int trackTries = Config.maxRetriesPerTrack;
+            int trackTries = Config.I.maxRetriesPerTrack;
             async Task<bool> process(SlResponse response, SlFile file)
             {
                 saveFilePath = organizer.GetSavePath(file.Filename);
@@ -159,7 +178,7 @@ static class Search
                 try
                 {
                     downloading = 1;
-                    await Download.DownloadFile(response, file, saveFilePath, track, progress, cts);
+                    await Download.DownloadFile(response, file, saveFilePath, track, progress, cts?.Token);
                     userSuccessCount.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
@@ -172,7 +191,7 @@ static class Search
                     if (!IsConnectedAndLoggedIn())
                         throw;
 
-                    Printing.WriteLine("Error: " + e.Message, ConsoleColor.DarkYellow, true);
+                    Printing.WriteLine("Error: Download Error: " + e.Message, ConsoleColor.DarkYellow, debugOnly: true);
 
                     userSuccessCount.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
                     if (--trackTries <= 0)
@@ -194,7 +213,7 @@ static class Search
                 fr = orderedResults.Skip(1).FirstOrDefault();
                 if (fr != default)
                 {
-                    if (userSuccessCount.GetValueOrDefault(fr.response.Username, 0) > Config.ignoreOn)
+                    if (userSuccessCount.GetValueOrDefault(fr.response.Username, 0) > Config.I.ignoreOn)
                     {
                         success = await process(fr.response, fr.file);
                     }
@@ -202,7 +221,7 @@ static class Search
                     {
                         foreach (var (response, file) in orderedResults.Skip(2))
                         {
-                            if (userSuccessCount.GetValueOrDefault(response.Username, 0) <= Config.ignoreOn)
+                            if (userSuccessCount.GetValueOrDefault(response.Username, 0) <= Config.I.ignoreOn)
                                 continue;
                             success = await process(response, file);
                             if (success) break;
@@ -212,7 +231,7 @@ static class Search
             }
         }
 
-        if (downloading == 0 && Config.useYtdlp)
+        if (downloading == 0 && Config.I.useYtdlp)
         {
             notFound = false;
             try
@@ -224,12 +243,12 @@ static class Search
                 {
                     foreach (var (length, id, title) in ytResults)
                     {
-                        if (Config.necessaryCond.LengthToleranceSatisfies(length, track.Length))
+                        if (Config.I.necessaryCond.LengthToleranceSatisfies(length, track.Length))
                         {
                             string saveFilePathNoExt = organizer.GetSavePathNoExt(title);
                             downloading = 1;
                             Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
-                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, Config.ytdlpArgument);
+                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, Config.I.ytdlpArgument);
                             Printing.RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;
                         }
@@ -271,7 +290,7 @@ static class Search
             new SearchOptions(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
-                removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
+                removeSingleCharacterSearchTerms: Config.I.removeSingleCharacterSearchTerms,
                 searchTimeout: timeout,
                 responseFilter: (response) =>
                 {
@@ -354,10 +373,10 @@ static class Search
         }
 
         int min, max;
-        if (Config.minAlbumTrackCount > -1 || Config.maxAlbumTrackCount > -1)
+        if (Config.I.minAlbumTrackCount > -1 || Config.I.maxAlbumTrackCount > -1)
         {
-            min = Config.minAlbumTrackCount;
-            max = Config.maxAlbumTrackCount;
+            min = Config.I.minAlbumTrackCount;
+            max = Config.I.maxAlbumTrackCount;
         }
         else
         {
@@ -410,7 +429,7 @@ static class Search
             new(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
-                removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
+                removeSingleCharacterSearchTerms: Config.I.removeSingleCharacterSearchTerms,
                 searchTimeout: timeout,
                 responseFilter: (response) =>
                 {
@@ -442,7 +461,7 @@ static class Search
         var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value))
             .Select(x => (x.Item1, OrderedResults(x.Item2, track, false, false, false))).ToList();
 
-        if (!Config.relax)
+        if (!Config.I.relax)
         {
             equivalentFiles = equivalentFiles
                 .Where(x => FileConditions.StrictString(x.Item1.Title, track.Title, ignoreCase: true)
@@ -458,14 +477,14 @@ static class Search
                 kvp.Item1.Downloads = kvp.Item2.ToList();
                 return kvp.Item1;
             }).ToList();
-
+        
         return tracks;
     }
 
 
     public static async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData)
     {
-        int maxDiff = Config.aggregateLengthTol;
+        int maxDiff = Config.I.aggregateLengthTol;
 
         bool lengthsAreSimilar(int[] sorted1, int[] sorted2)
         {
@@ -547,7 +566,7 @@ static class Search
         }
 
         res = res.Select((x, i) => (x, i))
-            .Where(x => usernamesList[x.i].Count >= Config.minSharesAggregate)
+            .Where(x => usernamesList[x.i].Count >= Config.I.minSharesAggregate)
             .OrderByDescending(x => usernamesList[x.i].Count)
             .Select(x => x.x)
             .ToList();
@@ -619,7 +638,7 @@ static class Search
         IEnumerable<(SlResponse, SlFile)> fileResponses, int minShares = -1)
     {
         if (minShares == -1)
-            minShares = Config.minSharesAggregate;
+            minShares = Config.I.minSharesAggregate;
 
         Track inferTrack((SearchResponse r, Soulseek.File f) x)
         {
@@ -629,7 +648,7 @@ static class Search
         }
 
         var groups = fileResponses
-            .GroupBy(inferTrack, new TrackComparer(ignoreCase: true, Config.aggregateLengthTol))
+            .GroupBy(inferTrack, new TrackComparer(ignoreCase: true, Config.I.aggregateLengthTol))
             .Select(x => (x, x.Select(y => y.Item1.Username).Distinct().Count()))
             .Where(x => x.Item2 >= minShares)
             .OrderByDescending(x => x.Item2)
@@ -691,22 +710,22 @@ static class Search
 
         var random = new Random();
         return results.Select(x => (response: x.Item1, file: x.Item2))
-                .Where(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.ignoreOn)
-                .OrderByDescending(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.downrankOn)
-                .ThenByDescending(x => Config.necessaryCond.FileSatisfies(x.file, track, x.response))
-                .ThenByDescending(x => Config.preferredCond.BannedUsersSatisfies(x.response))
-                .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || Config.preferredCond.AcceptNoLength)
+                .Where(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.I.ignoreOn)
+                .OrderByDescending(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.I.downrankOn)
+                .ThenByDescending(x => Config.I.necessaryCond.FileSatisfies(x.file, track, x.response))
+                .ThenByDescending(x => Config.I.preferredCond.BannedUsersSatisfies(x.response))
+                .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || Config.I.preferredCond.AcceptNoLength)
                 .ThenByDescending(x => !useBracketCheck || FileConditions.BracketCheck(track, inferredTrack(x).Item1)) // downrank result if it contains '(' or '[' and the title does not (avoid remixes)
-                .ThenByDescending(x => Config.preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
-                .ThenByDescending(x => !albumMode || Config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
-                .ThenByDescending(x => Config.preferredCond.StrictArtistSatisfies(x.file.Filename, track.Title))
-                .ThenByDescending(x => Config.preferredCond.LengthToleranceSatisfies(x.file, track.Length))
-                .ThenByDescending(x => Config.preferredCond.FormatSatisfies(x.file.Filename))
-                .ThenByDescending(x => albumMode || Config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
-                .ThenByDescending(x => Config.preferredCond.BitrateSatisfies(x.file))
-                .ThenByDescending(x => Config.preferredCond.SampleRateSatisfies(x.file))
-                .ThenByDescending(x => Config.preferredCond.BitDepthSatisfies(x.file))
-                .ThenByDescending(x => Config.preferredCond.FileSatisfies(x.file, track, x.response))
+                .ThenByDescending(x => Config.I.preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
+                .ThenByDescending(x => !albumMode || Config.I.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
+                .ThenByDescending(x => Config.I.preferredCond.StrictArtistSatisfies(x.file.Filename, track.Title))
+                .ThenByDescending(x => Config.I.preferredCond.LengthToleranceSatisfies(x.file, track.Length))
+                .ThenByDescending(x => Config.I.preferredCond.FormatSatisfies(x.file.Filename))
+                .ThenByDescending(x => albumMode || Config.I.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
+                .ThenByDescending(x => Config.I.preferredCond.BitrateSatisfies(x.file))
+                .ThenByDescending(x => Config.I.preferredCond.SampleRateSatisfies(x.file))
+                .ThenByDescending(x => Config.I.preferredCond.BitDepthSatisfies(x.file))
+                .ThenByDescending(x => Config.I.preferredCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
                 .ThenByDescending(x => x.response.UploadSpeed / 1024 / 650)
                 .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.Title))
@@ -730,7 +749,7 @@ static class Search
         string search = GetSearchString(track);
         var searchTasks = new List<Task>();
 
-        var defaultSearchOpts = getSearchOptions(Config.searchTimeout, Config.necessaryCond, Config.preferredCond);
+        var defaultSearchOpts = getSearchOptions(Config.I.searchTimeout, Config.I.necessaryCond, Config.I.preferredCond);
         searchTasks.Add(DoSearch(search, defaultSearchOpts, responseHandler, ct, onSearch));
 
         if (search.RemoveDiacriticsIfExist(out string noDiacrSearch) && !track.ArtistMaybeWrong)
@@ -742,15 +761,15 @@ static class Search
 
         if (results.IsEmpty && track.ArtistMaybeWrong && title)
         {
-            var cond = new FileConditions(Config.necessaryCond);
+            var cond = new FileConditions(Config.I.necessaryCond);
             var infTrack = InferTrack(track.Title, new Track());
             cond.StrictTitle = infTrack.Title == track.Title;
             cond.StrictArtist = false;
-            var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+            var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
             searchTasks.Add(DoSearch($"{infTrack.Artist} {infTrack.Title}", opts, responseHandler, ct, onSearch));
         }
 
-        if (Config.desperateSearch)
+        if (Config.I.desperateSearch)
         {
             await Task.WhenAll(searchTasks);
 
@@ -758,23 +777,23 @@ static class Search
             {
                 if (artist && album && title)
                 {
-                    var cond = new FileConditions(Config.necessaryCond)
+                    var cond = new FileConditions(Config.I.necessaryCond)
                     {
                         StrictTitle = true,
                         StrictAlbum = true
                     };
-                    var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+                    var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
                     searchTasks.Add(DoSearch($"{track.Artist} {track.Album}", opts, responseHandler, ct, onSearch));
                 }
-                if (artist && title && track.Length != -1 && Config.necessaryCond.LengthTolerance != -1)
+                if (artist && title && track.Length != -1 && Config.I.necessaryCond.LengthTolerance != -1)
                 {
-                    var cond = new FileConditions(Config.necessaryCond)
+                    var cond = new FileConditions(Config.I.necessaryCond)
                     {
                         LengthTolerance = -1,
                         StrictTitle = true,
                         StrictArtist = true
                     };
-                    var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+                    var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
                     searchTasks.Add(DoSearch($"{track.Artist} {track.Title}", opts, responseHandler, ct, onSearch));
                 }
             }
@@ -787,36 +806,36 @@ static class Search
 
                 if (track.Album.Length > 3 && album)
                 {
-                    var cond = new FileConditions(Config.necessaryCond)
+                    var cond = new FileConditions(Config.I.necessaryCond)
                     {
                         StrictAlbum = true,
                         StrictTitle = !track.ArtistMaybeWrong,
                         StrictArtist = !track.ArtistMaybeWrong,
                         LengthTolerance = -1
                     };
-                    var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+                    var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
                     searchTasks.Add(DoSearch($"{track.Album}", opts, responseHandler, ct, onSearch));
                 }
                 if (track2.Title.Length > 3 && artist)
                 {
-                    var cond = new FileConditions(Config.necessaryCond)
+                    var cond = new FileConditions(Config.I.necessaryCond)
                     {
                         StrictTitle = !track.ArtistMaybeWrong,
                         StrictArtist = !track.ArtistMaybeWrong,
                         LengthTolerance = -1
                     };
-                    var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+                    var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
                     searchTasks.Add(DoSearch($"{track2.Title}", opts, responseHandler, ct, onSearch));
                 }
                 if (track2.Artist.Length > 3 && title)
                 {
-                    var cond = new FileConditions(Config.necessaryCond)
+                    var cond = new FileConditions(Config.I.necessaryCond)
                     {
                         StrictTitle = !track.ArtistMaybeWrong,
                         StrictArtist = !track.ArtistMaybeWrong,
                         LengthTolerance = -1
                     };
-                    var opts = getSearchOptions(Math.Min(Config.searchTimeout, 5000), cond, Config.preferredCond);
+                    var opts = getSearchOptions(Math.Min(Config.I.searchTimeout, 5000), cond, Config.I.preferredCond);
                     searchTasks.Add(DoSearch($"{track2.Artist}", opts, responseHandler, ct, onSearch));
                 }
             }
@@ -851,15 +870,15 @@ static class Search
                 return new SearchOptions(
                     minimumResponseFileCount: 1,
                     minimumPeerUploadSpeed: 1,
-                    searchTimeout: Config.searchTimeout,
-                    removeSingleCharacterSearchTerms: Config.removeSingleCharacterSearchTerms,
+                    searchTimeout: Config.I.searchTimeout,
+                    removeSingleCharacterSearchTerms: Config.I.removeSingleCharacterSearchTerms,
                     responseFilter: (response) =>
                     {
                         return response.UploadSpeed > 0 && necCond.BannedUsersSatisfies(response);
                     },
                     fileFilter: (file) =>
                     {
-                        return Utils.IsMusicFile(file.Filename) && (necCond.FileSatisfies(file, track, null) || Config.PrintResultsFull);
+                        return Utils.IsMusicFile(file.Filename) && (necCond.FileSatisfies(file, track, null) || Config.I.PrintResultsFull);
                     });
             }
 
@@ -876,7 +895,7 @@ static class Search
 
             await RunSearches(track, results, getSearchOptions, responseHandler);
 
-            if (Config.DoNotDownload && results.IsEmpty)
+            if (Config.I.DoNotDownload && results.IsEmpty)
             {
                 Printing.WriteLine($"No results", ConsoleColor.Yellow);
             }
@@ -888,8 +907,8 @@ static class Search
                 foreach (var (response, file) in orderedResults)
                 {
                     Console.WriteLine(Printing.DisplayString(track, file, response,
-                        Config.PrintResultsFull ? Config.necessaryCond : null, Config.PrintResultsFull ? Config.preferredCond : null,
-                        fullpath: Config.PrintResultsFull, infoFirst: true, showSpeed: Config.PrintResultsFull));
+                        Config.I.PrintResultsFull ? Config.I.necessaryCond : null, Config.I.PrintResultsFull ? Config.I.preferredCond : null,
+                        fullpath: Config.I.PrintResultsFull, infoFirst: true, showSpeed: Config.I.PrintResultsFull));
                     count += 1;
                 }
                 Printing.WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
@@ -924,7 +943,7 @@ static class Search
     static string CleanSearchString(string str)
     {
         string old;
-        if (!Config.noRemoveSpecialChars)
+        if (!Config.I.noRemoveSpecialChars)
         {
             old = str;
             str = str.ReplaceSpecialChars(" ").Trim().RemoveConsecutiveWs();

@@ -1,5 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
+﻿
 using Data;
 
 using SearchResponse = Soulseek.SearchResponse;
@@ -41,57 +40,89 @@ public class FileConditions
         BannedUsers = other.BannedUsers.ToArray();
     }
 
-    public FileConditions With(FileConditionsPatch patch)
+    public FileConditionsMod ApplyMod(FileConditionsMod mod)
     {
-        var cond = new FileConditions(this);
+        var undoMod = new FileConditionsMod();
 
-        if (patch.LengthTolerance != null)
-            cond.LengthTolerance = patch.LengthTolerance.Value;
+        if (mod.LengthTolerance != null)
+        {
+            undoMod.LengthTolerance = LengthTolerance;
+            LengthTolerance = mod.LengthTolerance.Value;
+        }
+        if (mod.MinBitrate != null)
+        {
+            undoMod.MinBitrate = MinBitrate;
+            MinBitrate = mod.MinBitrate.Value;
+        }
+        if (mod.MaxBitrate != null)
+        {
+            undoMod.MaxBitrate = MaxBitrate;
+            MaxBitrate = mod.MaxBitrate.Value;
+        }
+        if (mod.MinSampleRate != null)
+        {
+            undoMod.MinSampleRate = MinSampleRate;
+            MinSampleRate = mod.MinSampleRate.Value;
+        }
+        if (mod.MaxSampleRate != null)
+        {
+            undoMod.MaxSampleRate = MaxSampleRate;
+            MaxSampleRate = mod.MaxSampleRate.Value;
+        }
+        if (mod.MinBitDepth != null)
+        {
+            undoMod.MinBitDepth = MinBitDepth;
+            MinBitDepth = mod.MinBitDepth.Value;
+        }
+        if (mod.MaxBitDepth != null)
+        {
+            undoMod.MaxBitDepth = MaxBitDepth;
+            MaxBitDepth = mod.MaxBitDepth.Value;
+        }
+        if (mod.StrictTitle != null)
+        {
+            undoMod.StrictTitle = StrictTitle;
+            StrictTitle = mod.StrictTitle.Value;
+        }
+        if (mod.StrictArtist != null)
+        {
+            undoMod.StrictArtist = StrictArtist;
+            StrictArtist = mod.StrictArtist.Value;
+        }
+        if (mod.StrictAlbum != null)
+        {
+            undoMod.StrictAlbum = StrictAlbum;
+            StrictAlbum = mod.StrictAlbum.Value;
+        }
+        if (mod.Formats != null)
+        {
+            undoMod.Formats = Formats;
+            Formats = mod.Formats;
+        }
+        if (mod.BannedUsers != null)
+        {
+            undoMod.BannedUsers = BannedUsers;
+            BannedUsers = mod.BannedUsers;
+        }
+        if (mod.StrictStringDiacrRemove != null)
+        {
+            undoMod.StrictStringDiacrRemove = StrictStringDiacrRemove;
+            StrictStringDiacrRemove = mod.StrictStringDiacrRemove.Value;
+        }
+        if (mod.AcceptNoLength != null)
+        {
+            undoMod.AcceptNoLength = AcceptNoLength;
+            AcceptNoLength = mod.AcceptNoLength.Value;
+        }
+        if (mod.AcceptMissingProps != null)
+        {
+            undoMod.AcceptMissingProps = AcceptMissingProps;
+            AcceptMissingProps = mod.AcceptMissingProps.Value;
+        }
 
-        if (patch.MinBitrate != null)
-            cond.MinBitrate = patch.MinBitrate.Value;
-
-        if (patch.MaxBitrate != null)
-            cond.MaxBitrate = patch.MaxBitrate.Value;
-
-        if (patch.MinSampleRate != null)
-            cond.MinSampleRate = patch.MinSampleRate.Value;
-
-        if (patch.MaxSampleRate != null)
-            cond.MaxSampleRate = patch.MaxSampleRate.Value;
-
-        if (patch.MinBitDepth != null)
-            cond.MinBitDepth = patch.MinBitDepth.Value;
-
-        if (patch.MaxBitDepth != null)
-            cond.MaxBitDepth = patch.MaxBitDepth.Value;
-
-        if (patch.StrictTitle != null)
-            cond.StrictTitle = patch.StrictTitle.Value;
-
-        if (patch.StrictArtist != null)
-            cond.StrictArtist = patch.StrictArtist.Value;
-
-        if (patch.StrictAlbum != null)
-            cond.StrictAlbum = patch.StrictAlbum.Value;
-
-        if (patch.Formats != null)
-            cond.Formats = patch.Formats;
-
-        if (patch.BannedUsers != null)
-            cond.BannedUsers = patch.BannedUsers;
-
-        if (patch.StrictStringDiacrRemove != null)
-            cond.StrictStringDiacrRemove = patch.StrictStringDiacrRemove.Value;
-
-        if (patch.AcceptNoLength != null)
-            cond.AcceptNoLength = patch.AcceptNoLength.Value;
-
-        if (patch.AcceptMissingProps != null)
-            cond.AcceptMissingProps = patch.AcceptMissingProps.Value;
-
-        return cond;
+        return undoMod;
     }
+
 
     public override bool Equals(object obj)
     {
@@ -298,7 +329,7 @@ public class FileConditions
 }
 
 
-public class FileConditionsPatch
+public class FileConditionsMod
 {
     public int? LengthTolerance = null;
     public int? MinBitrate = null;

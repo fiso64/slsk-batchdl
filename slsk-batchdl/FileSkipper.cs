@@ -7,7 +7,7 @@ namespace FileSkippers
 {
     public static class FileSkipperRegistry
     {
-        public static FileSkipper GetChecker(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
+        public static FileSkipper GetSkipper(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
         {
             bool noConditions = conditions.Equals(new FileConditions());
             return mode switch

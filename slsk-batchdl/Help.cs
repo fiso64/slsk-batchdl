@@ -29,7 +29,7 @@ public static class Help
         --profile <names>              Configuration profile(s) to use. See --help ""config"".
         --concurrent-downloads <num>   Max concurrent downloads (default: 2)
         --m3u <option>                 Create an m3u8 playlist file in the output directory
-                                       'none' (default for single inputs): Do not create 
+                                       'none' (default for string inputs): Do not create 
                                        'index' (default): Write a line indexing all downloaded 
                                        files, required for skip-not-found or skip-existing=m3u
                                        'all': Write the index and a list of paths and fails
@@ -204,8 +204,8 @@ public static class Help
         Path to a local CSV file: Use a csv file containing track info of the songs to download. 
         The names of the columns should be Artist, Title, Album, Length, although alternative names 
         are usually detected as well. Only the title or album column is required, but extra info may 
-        improve search results. Every row that does not have a title column text will be treated as an
-        album download.
+        improve search result ranking. Every row that does not have a title column text will be treated 
+        as an album download.
             
       YouTube 
         A playlist url: Download songs from a youtube playlist.
@@ -213,10 +213,6 @@ public static class Help
         the ones which are unavailable. To get all video titles, you can use the official API by 
         providing a key with --youtube-key. Get it here https://console.cloud.google.com. Create a 
         new project, click ""Enable Api"" and search for ""youtube data"", then follow the prompts. 
-        
-        Tip: For playlists containing music videos, it may be better to remove all text in parentheses 
-        (to remove (Lyrics), (Official), etc) and disable song duration checking: 
-        --regex ""[\[\(].*?[\]\)]"" --pref-length-tol -1     
 
       Spotify
         A playlist/album url or 'spotify-likes': Download a spotify playlist, album, or your 
@@ -255,7 +251,7 @@ public static class Help
         (like what you would enter into the soulseek search bar), or a comma-separated list of
         properties like 'title=Song Name, artist=Artist Name, length=215'. 
 
-        The following properties are allowed: 
+        The following properties are accepted: 
           title
           artist
           album
@@ -423,6 +419,7 @@ public static class Help
         filename                        Soulseek filename without extension
         foldername                      Soulseek folder name
         extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
+        default-folder                  Default sldl folder name (usually the playlist name)
     ";
 
     const string skipExistingHelp = @"

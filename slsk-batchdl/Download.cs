@@ -1,6 +1,7 @@
 ﻿using Soulseek;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 
 using Data;
 using Enums;
@@ -17,9 +18,9 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 
 static class Download
 {
-    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationTokenSource cts, CancellationTokenSource? searchCts = null)
+    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
-        if (Config.DoNotDownload)
+        if (Config.I.DoNotDownload)
             throw new Exception();
 
         await Program.WaitForLogin();
@@ -42,8 +43,12 @@ static class Download
 
         try
         {
+            using var downloadCts = ct != null ?
+                CancellationTokenSource.CreateLinkedTokenSource((CancellationToken)ct) :
+                new CancellationTokenSource();
+
             using var outputStream = new FileStream(filePath, FileMode.Create);
-            var wrapper = new DownloadWrapper(origPath, response, file, track, cts, progress);
+            var wrapper = new DownloadWrapper(origPath, response, file, track, downloadCts, progress);
             downloads.TryAdd(file.Filename, wrapper);
 
             int maxRetries = 3;
@@ -55,7 +60,7 @@ static class Download
                     await client.DownloadAsync(response.Username, file.Filename,
                         () => Task.FromResult((Stream)outputStream),
                         file.Size, startOffset: outputStream.Position,
-                        options: transferOptions, cancellationToken: cts.Token);
+                        options: transferOptions, cancellationToken: downloadCts.Token);
 
                     break;
                 }
@@ -156,7 +161,12 @@ public class DownloadWrapper
         else if (transfer != null)
         {
             if (queued)
-                state = "Queued";
+            {
+                if ((transfer.State & TransferStates.Remotely) != 0)
+                    state = "Queued (R)";
+                else
+                    state = "Queued (L)";
+            }
             else if ((transfer.State & TransferStates.Initializing) != 0)
                 state = "Initialize";
             else if ((transfer.State & TransferStates.Completed) != 0)

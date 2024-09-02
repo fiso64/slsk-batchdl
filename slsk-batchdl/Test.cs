@@ -79,15 +79,13 @@ namespace Test
         {
             SetCurrentTest("TestAutoProfiles");
 
-            ResetProfiles(); 
-            Config.inputType = InputType.YouTube;
-            Config.interactiveMode = true;
-            Config.album = true;
-            Config.aggregate = false;
-            Config.maxStaleTime = 500000;
+            ResetConfig(); 
+            Config.I.inputType = InputType.YouTube;
+            Config.I.interactiveMode = true;
+            Config.I.aggregate = false;
+            Config.I.maxStaleTime = 50000;
 
             string path = Path.Join(Directory.GetCurrentDirectory(), "test_conf.conf");
-            Config.confPath = path;
 
             string content =  
                 "max-stale-time = 5" +
@@ -111,18 +109,19 @@ namespace Test
 
             File.WriteAllText(path, content);
 
-            Config.ParseArgsAndReadConfig(new string[] { });
+            Config.I.Load(new string[] { "-c", path });
 
-            //Config.PostProcessArgs();
+            var tle = new TrackListEntry(TrackType.Album);
+            Config.UpdateProfiles(tle);
 
-            Assert(Config.maxStaleTime == 10 && !Config.fastSearch && Config.necessaryCond.Formats[0] == "flac");
+            Assert(Config.I.maxStaleTime == 10 && !Config.I.fastSearch && Config.I.necessaryCond.Formats[0] == "flac");
 
-            ResetProfiles();
-            Config.inputType = InputType.CSV;
-            Config.album = true;
-            Config.interactiveMode = true;
-            Config.useYtdlp = false;
-            Config.maxStaleTime = 50000;
+            ResetConfig();
+            Config.I.inputType = InputType.CSV;
+            Config.I.album = true;
+            Config.I.interactiveMode = true;
+            Config.I.useYtdlp = false;
+            Config.I.maxStaleTime = 50000;
             content = 
                 "\n[no-stale]" +
                 "\nprofile-cond = interactive && download-mode == \"album\"" +
@@ -133,16 +132,17 @@ namespace Test
 
             File.WriteAllText(path, content);
 
-            Config.ParseArgsAndReadConfig(new string[] { });
+            
+            Config.I.Load(new string[] { "-c", path });
+            Config.UpdateProfiles(tle);
+            Assert(Config.I.maxStaleTime == 999999 && !Config.I.useYtdlp);
 
-            Assert(Config.maxStaleTime == 999999 && !Config.useYtdlp);
-
-            ResetProfiles();
-            Config.inputType = InputType.YouTube;
-            Config.album = false;
-            Config.interactiveMode = true;
-            Config.useYtdlp = false;
-            Config.maxStaleTime = 50000;
+            ResetConfig();
+            Config.I.inputType = InputType.YouTube;
+            Config.I.album = false;
+            Config.I.interactiveMode = true;
+            Config.I.useYtdlp = false;
+            Config.I.maxStaleTime = 50000;
             content =
                 "\n[no-stale]" +
                 "\nprofile-cond = interactive && download-mode == \"album\"" +
@@ -152,10 +152,10 @@ namespace Test
                 "\nyt-dlp = true";
 
             File.WriteAllText(path, content);
+            Config.I.Load(new string[] { "-c", path });
+            Config.UpdateProfiles(new TrackListEntry(TrackType.Normal));
 
-            Config.ParseArgsAndReadConfig(new string[] { });
-
-            Assert(Config.maxStaleTime == 50000 && Config.useYtdlp);
+            Assert(Config.I.maxStaleTime == 50000 && Config.I.useYtdlp);
 
             if (File.Exists(path))
                 File.Delete(path);
@@ -167,13 +167,15 @@ namespace Test
         {
             SetCurrentTest("TestProfileConditions");
 
-            Config.inputType = InputType.YouTube;
-            Config.interactiveMode = true;
-            Config.album = true;
-            Config.aggregate = false;
+            Config.I.inputType = InputType.YouTube;
+            Config.I.interactiveMode = true;
+            Config.I.album = true;
+            Config.I.aggregate = false;
 
             var conds = new (bool, string)[] 
             {
+                (true,  "input-type == \"youtube\""),
+                (true,  "download-mode == \"album\""),
                 (false, "aggregate"),
                 (true,  "interactive"),
                 (true,  "album"),
@@ -190,7 +192,7 @@ namespace Test
             foreach ((var b, var c) in conds)
             {
                 Console.WriteLine(c);
-                Assert(b == Config.ProfileConditionSatisfied(c));
+                Assert(b == Config.I.ProfileConditionSatisfied(c));
             }
 
             Passed();
@@ -247,29 +249,29 @@ namespace Test
 
             var extractor = new Extractors.StringExtractor();
 
-            Config.aggregate = false;
-            Config.album = false;
+            Config.I.aggregate = false;
+            Config.I.album = false;
 
             Console.WriteLine("Testing songs: ");
             for (int i = 0; i < strings.Count; i++)
             {
-                Config.input = strings[i];
-                Console.WriteLine(Config.input);
-                var res = await extractor.GetTracks(Config.input, 0, 0, false);
+                Config.I.input = strings[i];
+                Console.WriteLine(Config.I.input);
+                var res = await extractor.GetTracks(Config.I.input, 0, 0, false);
                 var t = res[0].list[0][0];
-                Assert(Extractors.StringExtractor.InputMatches(Config.input));
+                Assert(Extractors.StringExtractor.InputMatches(Config.I.input));
                 Assert(t.ToKey() == tracks[i].ToKey());
             }
 
             Console.WriteLine();
             Console.WriteLine("Testing albums");
-            Config.album = true;
+            Config.I.album = true;
             for (int i = 0; i < strings.Count; i++)
             {
-                Config.input = strings[i];
-                Console.WriteLine(Config.input);
-                var t = (await extractor.GetTracks(Config.input, 0, 0, false))[0].source;
-                Assert(Extractors.StringExtractor.InputMatches(Config.input));
+                Config.I.input = strings[i];
+                Console.WriteLine(Config.I.input);
+                var t = (await extractor.GetTracks(Config.I.input, 0, 0, false))[0].source;
+                Assert(Extractors.StringExtractor.InputMatches(Config.I.input));
                 Assert(t.ToKey() == albums[i].ToKey());
             }
 
@@ -280,11 +282,11 @@ namespace Test
         {
             SetCurrentTest("TestM3uEditor");
 
-            Config.m3uOption = M3uOption.All;
-            Config.skipMode = SkipMode.M3u;
-            Config.musicDir = "";
-            Config.printOption = PrintOption.Tracks | PrintOption.Full;
-            Config.skipExisting = true;
+            Config.I.m3uOption = M3uOption.All;
+            Config.I.skipMode = SkipMode.M3u;
+            Config.I.musicDir = "";
+            Config.I.printOption = PrintOption.Tracks | PrintOption.Full;
+            Config.I.skipExisting = true;
 
             string path = Path.Join(Directory.GetCurrentDirectory(), "test_m3u.m3u8");
 
@@ -325,7 +327,7 @@ namespace Test
             foreach (var t in toBeDownloadedInitial)
                 trackLists.AddTrackToLast(t);
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
 
             Program.outputDirSkipper = new M3uSkipper(Program.m3uEditor, false);
 
@@ -337,15 +339,15 @@ namespace Test
             Assert(existing.SequenceEqualUpToPermutation(existingInitial));
             Assert(toBeDownloaded.SequenceEqualUpToPermutation(toBeDownloadedInitial));
 
-            ProgramInvoke("PrintTracksTbd", new object[] { toBeDownloaded, existing, notFound, TrackType.Normal });
+            Printing.PrintTracksTbd(toBeDownloaded, existing, notFound, TrackType.Normal);
 
             Program.m3uEditor.Update();
             string output = File.ReadAllText(path);
             string need = 
                 "#SLDL:./file1.5,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;,,,,-1,0,0,0;" +
                 "\n" +
-                "\n# Failed: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
-                "\n# Failed: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
+                "\n#FAIL: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
+                "\n#FAIL: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
                 "\npath/to/file1" +
                 "\nfile1.5" +
                 "\npath/to/file2" +
@@ -364,20 +366,20 @@ namespace Test
                 "#SLDL:/other/new/file/path,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;" +
                 ",,,,-1,0,0,0;new/file/path,ArtistA,Albumm,TitleA,-1,0,1,0;,ArtistB,Albumm,TitleB,-1,0,2,3;" +
                 "\n" +
-                "\n# Failed: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
-                "\n# Failed: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
+                "\n#FAIL: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
+                "\n#FAIL: Artist,,, ;4 - Title4 [NoSuitableFileFound]" +
                 "\npath/to/file1" +
                 "\n/other/new/file/path" +
                 "\npath/to/file2" +
                 "\nnew/file/path" +
-                "\n# Failed: ArtistB - TitleB [NoSuitableFileFound]" +
+                "\n#FAIL: ArtistB - TitleB [NoSuitableFileFound]" +
                 "\n";
             Assert(output == need);
 
             Console.WriteLine();
             Console.WriteLine(output);
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
 
             foreach (var t in trackLists.Flattened(false, false))
             {
@@ -406,8 +408,8 @@ namespace Test
                 trackLists.AddEntry(new TrackListEntry(t));
 
             File.WriteAllText(path, "");
-            Config.m3uOption = M3uOption.Index;
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+            Config.I.m3uOption = M3uOption.Index;
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
             Program.m3uEditor.Update();
 
             Assert(File.ReadAllText(path) == "");
@@ -420,7 +422,7 @@ namespace Test
 
             Program.m3uEditor.Update();
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.m3uOption);
+            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
 
             foreach (var t in test)
             {
@@ -470,12 +472,13 @@ namespace Test
             }
         }
 
-        public static void ResetProfiles()
+        public static void ResetConfig()
         {
-            var type = typeof(Config);
-            var field = type.GetField("profiles", BindingFlags.NonPublic | BindingFlags.Static);
-            var value = (Dictionary<string, (List<string> args, string? cond)>)field.GetValue(null);
-            value.Clear();
+            var singletonType = typeof(Config);
+            var instanceField = singletonType.GetField("Instance", BindingFlags.Static | BindingFlags.NonPublic);
+            var constructor = singletonType.GetConstructor(BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            var newInstance = constructor.Invoke(null);
+            instanceField.SetValue(null, newInstance);
         }
 
         public static void Passed()

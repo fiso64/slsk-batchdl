@@ -77,15 +77,15 @@ namespace Extractors
                     var track = new Track() { Artist = artist, Album = name, Type = TrackType.Album };
                     trackLists.AddEntry(new TrackListEntry(track));
 
-                    if (Config.setAlbumMinTrackCount || Config.setAlbumMaxTrackCount)
+                    if (Config.I.setAlbumMinTrackCount || Config.I.setAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (Config.setAlbumMinTrackCount)
+                        if (Config.I.setAlbumMinTrackCount)
                             track.MinAlbumTrackCount = n;
 
-                        if (Config.setAlbumMaxTrackCount)
+                        if (Config.I.setAlbumMaxTrackCount)
                             track.MaxAlbumTrackCount = n;
                     }
                 }

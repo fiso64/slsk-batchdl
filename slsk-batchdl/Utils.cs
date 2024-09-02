@@ -89,13 +89,12 @@ public static class Utils
             return path;
         }
 
-        if (path.StartsWith('~'))
+        path = path.Trim();
+
+        if (path.Length > 0 && path[0] == '~' && (path.Length == 1 || path[1] == '\\' || path[1] == '/'))
         {
-            string homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            path = Path.Join(homeDirectory, path.Substring(1).TrimStart('/').TrimStart('\\'));
-            
-            if (path.Length > 0)
-                path = Path.GetFullPath(path);
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            path = Path.Join(home, path[1..].TrimStart('/').TrimStart('\\'));
         }
 
         return path;

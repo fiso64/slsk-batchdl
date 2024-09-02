@@ -25,22 +25,24 @@ namespace Extractors
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            bool needLogin = input == "spotify-likes" || Config.removeTracksFromSource;
-            var tle = new TrackListEntry(TrackType.Normal);
+            bool needLogin = input == "spotify-likes" || Config.I.removeTracksFromSource;
 
-            if (needLogin && Config.spotifyToken.Length == 0 && (Config.spotifyId.Length == 0 || Config.spotifySecret.Length == 0))
+            if (needLogin && Config.I.spotifyToken.Length == 0 && (Config.I.spotifyId.Length == 0 || Config.I.spotifySecret.Length == 0))
             {
                 Console.WriteLine("Error: Credentials are required when downloading liked music or removing from source playlists.");
                 Environment.Exit(1);
             }
 
-            spotifyClient = new Spotify(Config.spotifyId, Config.spotifySecret, Config.spotifyToken, Config.spotifyRefresh);
-            await spotifyClient.Authorize(needLogin, Config.removeTracksFromSource);
+            spotifyClient = new Spotify(Config.I.spotifyId, Config.I.spotifySecret, Config.I.spotifyToken, Config.I.spotifyRefresh);
+            await spotifyClient.Authorize(needLogin, Config.I.removeTracksFromSource);
+
+            TrackListEntry? tle = null;
 
             if (input == "spotify-likes")
             {
                 Console.WriteLine("Loading Spotify likes..");
                 var tracks = await spotifyClient.GetLikes(max, off);
+                tle = new TrackListEntry(TrackType.Normal);
                 tle.defaultFolderName = "Spotify Likes";
                 tle.list.Add(tracks);
             }
@@ -48,12 +50,13 @@ namespace Extractors
             {
                 Console.WriteLine("Loading Spotify album..");
                 (var source, var tracks) = await spotifyClient.GetAlbum(input);
+                tle = new TrackListEntry(TrackType.Album);
                 tle.source = source;
 
-                if (Config.setAlbumMinTrackCount)
+                if (Config.I.setAlbumMinTrackCount)
                     source.MinAlbumTrackCount = tracks.Count;
 
-                if (Config.setAlbumMaxTrackCount)
+                if (Config.I.setAlbumMaxTrackCount)
                     source.MaxAlbumTrackCount = tracks.Count;
             }
             else if (input.Contains("/artist/"))
@@ -65,6 +68,7 @@ namespace Extractors
             else
             {
                 var tracks = new List<Track>();
+                tle = new TrackListEntry(TrackType.Normal);
 
                 try
                 {
@@ -76,7 +80,7 @@ namespace Extractors
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
-                        await spotifyClient.Authorize(true, Config.removeTracksFromSource);
+                        await spotifyClient.Authorize(true, Config.I.removeTracksFromSource);
                         (var playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
                         tle.defaultFolderName = playlistName;
                     }
@@ -219,7 +223,7 @@ namespace Extractors
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Could not make an API call with existing token: {ex}");
+                    Console.WriteLine($"Could not make an API call with existing token: {ex.Message}");
                 }
             }
             if (_clientRefreshToken.Length != 0)
