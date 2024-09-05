@@ -603,7 +603,7 @@ sldl --profile wishlist
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
-- `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations (new windows terminal, git bash). Use another terminal or `--display-mode simple` in case of issues.
+- The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--display-mode simple` in case of issues.
 
 ## Docker
 
