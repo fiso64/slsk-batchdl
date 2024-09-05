@@ -109,7 +109,7 @@ public class DownloadWrapper
 {
     public string savePath;
     public string displayText = "";
-    public int downloadRotatingBarState = 0;
+    public int barState = 0;
     public Soulseek.File file;
     public Transfer? transfer;
     public SearchResponse response;
@@ -145,8 +145,6 @@ public class DownloadWrapper
 
     public void UpdateText()
     {
-        downloadRotatingBarState++;
-        downloadRotatingBarState %= bars.Length;
         float? percentage = bytesTransferred / (float)file.Size;
         queued = (transfer?.State & TransferStates.Queued) != 0;
         string bar;
@@ -156,7 +154,7 @@ public class DownloadWrapper
         if (stalled)
         {
             state = "Stalled";
-            bar = "";
+            bar = "  ";
         }
         else if (transfer != null)
         {
@@ -166,9 +164,13 @@ public class DownloadWrapper
                     state = "Queued (R)";
                 else
                     state = "Queued (L)";
+                bar = "  ";
             }
             else if ((transfer.State & TransferStates.Initializing) != 0)
+            {
                 state = "Initialize";
+                bar = "  ";
+            }
             else if ((transfer.State & TransferStates.Completed) != 0)
             {
                 var flag = transfer.State & (TransferStates.Succeeded | TransferStates.Cancelled
@@ -178,20 +180,28 @@ public class DownloadWrapper
 
                 if (flag == TransferStates.Succeeded)
                     success = true;
+
+                bar = "";
             }
             else
             {
                 state = transfer.State.ToString();
                 if ((transfer.State & TransferStates.InProgress) != 0)
+                {
                     downloading = true;
+                    barState = (barState + 1) % bars.Length;
+                    bar = bars[barState] + " ";
+                }
+                else
+                {
+                    bar = "  ";
+                }
             }
-
-            bar = success ? "" : bars[downloadRotatingBarState] + " ";
         }
         else
         {
             state = "NullState";
-            bar = "";
+            bar = "  ";
         }
 
         string txt = $"{bar}{state}:".PadRight(14) + $" {displayText}";

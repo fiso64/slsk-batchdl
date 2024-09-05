@@ -401,7 +401,7 @@ public static class Help
         ""{artist( - )title|filename}""
             If artist and title are not null, name it 'Artist - Title', otherwise use the original 
             filename.
-        ""{albumartist(/)album(/)track(. )title|(missing-tags/)filename}""  
+        ""{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}""  
             Sort files into artist/album folders if all tags are present, otherwise put them in
             the 'missing-tags' folder. 
         

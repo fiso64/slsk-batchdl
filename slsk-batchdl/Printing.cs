@@ -298,7 +298,7 @@ public static class Printing
         if (lastIndex != -1)
         {
             int secondLastIndex = gcp.LastIndexOf('\\', lastIndex - 1);
-            gcp = secondLastIndex == -1 ? gcp[(lastIndex + 1)..] : gcp[(secondLastIndex + 1)..];
+            gcp = secondLastIndex == -1 ? gcp : gcp[(secondLastIndex + 1)..];
         }
 
         return (gcp, res);

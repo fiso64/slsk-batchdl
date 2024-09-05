@@ -427,7 +427,7 @@ tag1 is null, use tag2. String literals enclosed in parentheses are ignored in t
   - "{artist( - )title|filename}"  
       If artist and title are not null, name it 'Artist - Title', otherwise use the original
       filename.
-  - "{albumartist(/)album(/)track(. )title|(missing-tags/)filename}"  
+  - "{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}"  
       Sort files into artist/album folders if all tags are present, otherwise put them in
       the 'missing-tags' folder.   
 
@@ -582,7 +582,7 @@ sldl "artist=MC MENTAL" --aggregate --album --interactive
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```bash
 echo "title=My Favorite Song, artist=Artist" >> wishlist.txt
-echo "album=Album" "format=mp3" >> wishlist.txt
+echo "album=Album, album-track-count=5" "format=mp3" >> wishlist.txt
 ```
 Add a profile to your `sldl.conf`:
 ```
@@ -603,7 +603,7 @@ sldl --profile wishlist
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
-- `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations. Use `simple` if that's an issue.
+- `--display single` and especially `double` can cause the printed lines to be duplicated or overwritten on some configurations (new windows terminal, git bash). Use another terminal or `--display-mode simple` in case of issues.
 
 ## Docker
 

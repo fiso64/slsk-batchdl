@@ -15,25 +15,6 @@ using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 
-using System.Diagnostics;
-
-class TimerReporter
-{
-    private Stopwatch stopwatch;
-
-    public TimerReporter()
-    {
-        stopwatch = new Stopwatch();
-        stopwatch.Start();
-    }
-
-    public void Report(string message = "")
-    {
-        Console.WriteLine($"Time elapsed: {stopwatch.ElapsedMilliseconds} ms. {message}");
-        stopwatch.Restart();
-    }
-}
-
 static class Search
 {
     public static RateLimitedSemaphore? searchSemaphore;
@@ -604,7 +585,16 @@ static class Search
         int newFiles = 0;
         try
         {
-            var allFiles = await GetAllFilesInFolder(response.Username, folder, cancellationToken);
+            List<(string dir, SlFile file)> allFiles;
+            try
+            {
+                allFiles = await GetAllFilesInFolder(response.Username, folder, cancellationToken);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Error: Error getting all files in directory '{folder}: {e}'");
+                return 0;
+            }
 
             if (allFiles.Count > tracks.Count)
             {

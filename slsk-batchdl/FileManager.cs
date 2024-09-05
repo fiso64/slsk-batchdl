@@ -240,18 +240,20 @@ public class FileManager
             case "filename":
                 res = Utils.GetFileNameWithoutExtSlsk(slfile?.Filename ?? ""); break;
             case "foldername":
-                if (remoteCommonDir ==  null || slfile == null)
+                if (string.IsNullOrEmpty(remoteCommonDir) || slfile == null)
                 {
-                    res = Utils.GetBaseNameSlsk(Utils.GetDirectoryNameSlsk(slfile?.Filename ?? ""));
-                    return true;
+                    if (!string.IsNullOrEmpty(remoteCommonDir))
+                        res = Path.GetFileName(Utils.NormalizedPath(remoteCommonDir));
+                    else
+                        res = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
                 }
                 else
                 {
                     string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
                     string r = Path.GetFileName(remoteCommonDir);
                     res = Path.Join(r, Path.GetRelativePath(remoteCommonDir, d));
-                    return true;
                 }
+                return true;
             case "extractor":
                 res = Config.I.inputType.ToString(); break;
             case "default-folder":
