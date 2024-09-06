@@ -165,14 +165,14 @@ static class Search
                 }
                 catch (Exception e)
                 {
+                    Printing.WriteLine($"Error: Download Error: {e}", ConsoleColor.DarkYellow, debugOnly: true);
+
                     chosenFile = null;
                     saveFilePath = "";
                     downloading = 0;
 
                     if (!IsConnectedAndLoggedIn())
                         throw;
-
-                    Printing.WriteLine("Error: Download Error: " + e.Message, ConsoleColor.DarkYellow, debugOnly: true);
 
                     userSuccessCount.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
                     if (--trackTries <= 0)

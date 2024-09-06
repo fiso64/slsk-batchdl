@@ -305,8 +305,11 @@ Input String                            | Artist   | Title    | Album    | Lengt
 ### List
 A path to a text file where each line has the following form:
 ```
-"some input"      "conditions"                  "preferred conditions"
-"album=Album"     "format=mp3; br > 128"        "br >= 320"
+"some input"                    "conditions"                  "preferred conditions"
+```
+e.g:
+```
+"artist=Artist, album=Album"    "format=mp3; br > 128"        "br >= 320"
 ```
 Where "some input" is any of the above input types. The quotes can be omitted if the field
 contains no spaces. The conditions and preferred conditions fields are added on top of the
