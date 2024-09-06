@@ -30,8 +30,8 @@ public static class Help
         --concurrent-downloads <num>   Max concurrent downloads (default: 2)
         --m3u <option>                 Create an m3u8 playlist file in the output directory
                                        'none' (default for string inputs): Do not create 
-                                       'index' (default): Write a line indexing all downloaded 
-                                       files, required for skip-not-found or skip-existing=m3u
+                                       'index' (default): Write a single line for sldl to index 
+                                       all downloaded files, required for skip-existing=m3u
                                        'all': Write the index and a list of paths and fails
         --m3u-path <path>              Override default m3u path
             

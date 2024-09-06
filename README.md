@@ -53,8 +53,8 @@ Usage: sldl <input> [OPTIONS]
     --concurrent-downloads <num>   Max concurrent downloads (default: 2)
     --m3u <option>                 Create an m3u8 playlist file in the output directory
                                    'none' (default for string input): Do not create
-                                   'index' (default): Write a line indexing all downloaded
-                                   files, required for skip-not-found or skip-existing=m3u
+                                   'index' (default): Write a single line for sldl to index 
+                                   all downloaded files, required for skip-existing=m3u
                                    'all': Write the index and a list of paths and fails
     --m3u-path <path>              Override default m3u path
 
@@ -329,13 +329,13 @@ configured conditions and can also be omitted. List input must be manually activ
 ### Aggregate
 With -g/--aggregate, sldl performs an ordinary search for the input then attempts to
 group the results into distinct songs and download one of each kind, starting with the one
-which is shared by the most users.  
+shared by the most users.  
 Note that --min-shares-aggregate is 2 by default, which means that songs shared by only
 one user will be ignored.
 
 ### Album Aggregate
 Activated when both --album and --aggregate are enabled. sldl will group shares and download
-one of each distinct album, starting with the one shared by the most users. It's
+one of each distinct album, starting with the one shared by the most users. It is
 recommended to pair this with --interactive.  
 Note that --min-shares-aggregate is 2 by default, which means that albums shared by only
 one user will be ignored.
@@ -545,7 +545,19 @@ sldl spotify-likes
 ```
 <br>
 
-Download albums for every song in a spotify playlist:
+Download a specific song by name, preferring lossless:
+```
+sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
+```  
+<br>
+
+Interactive album download:
+```
+sldl "Some Album" --album --interactive
+```
+<br>
+
+Download the album of every song in a spotify playlist:
 ```
 sldl https://spotify/playlist/id --album --skip-existing
 ```
@@ -555,18 +567,6 @@ sldl https://spotify/playlist/id --album --skip-existing
 Retrieve deleted video names, then download from a youtube playlist with fallback to yt-dlp:
 ```
 sldl https://www.youtube.com/playlist/id --get-deleted --yt-dlp
-```
-<br>
-
-Search & download a specific song, preferring lossless:
-```
-sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
-```  
-<br>
-
-Interactive album download:
-```
-sldl "Some Album" --album --interactive
 ```
 <br>
 
@@ -656,7 +656,7 @@ Example => Run `sldl` every Sunday at 1am, search for missing tracks from the sp
 
 ```
 # min   hour    day     month   weekday command
-0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data --music-dir /data --skip-existing"
+0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data --skip-existing --m3u-path /data/index.sldl"
 ```
 
 [crontab.guru](https://crontab.guru/) could be used to help with the scheduling expression.
