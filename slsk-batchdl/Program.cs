@@ -36,15 +36,7 @@ static partial class Program
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        int helpIdx = Array.FindIndex(args, x => x == "--help" || x == "-h");
-        if (args.Length == 0 || helpIdx >= 0)
-        {
-            string option = helpIdx + 1 < args.Length ? args[helpIdx + 1] : "";
-            Help.PrintHelp(option);
-            return;
-        }
-
-        Config.I.Load(args);
+        Config.I.LoadAndParse(args);
 
         if (Config.I.input.Length == 0)
             throw new ArgumentException($"No input provided");

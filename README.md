@@ -20,7 +20,7 @@ See the [examples](#examples-1).
  - [Searching](#searching)
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
- - [Skip existing](#skip-existing)
+ - [Skip-existing](#skip-existing)
  - [Configuration](#configuration)
  - [Examples](#examples-1)
  - [Notes](#notes)
@@ -42,43 +42,32 @@ Usage: sldl <input> [OPTIONS]
 ```
   General Options
     -p, --path <path>              Download directory
-    --input-type <type>            Force set input type, [csv|youtube|spotify|bandcamp|string]
+    --input-type <type>            [csv|youtube|spotify|bandcamp|string|list]
     --name-format <format>         Name format for downloaded tracks. See --help name-format
-
+        
     -n, --number <maxtracks>       Download the first n tracks of a playlist
     -o, --offset <offset>          Skip a specified number of tracks
     -r, --reverse                  Download tracks in reverse order
     -c, --config <path>            Set config file location. Set to 'none' to ignore config
-    --profile <names>              Configuration profile(s) to use. See --help "config".
+    --profile <names>              Configuration profile(s) to use. See --help ""config"".
     --concurrent-downloads <num>   Max concurrent downloads (default: 2)
     --m3u <option>                 Create an m3u8 playlist file in the output directory
-                                   'none' (default for string input): Do not create
+                                   'none' (default for string inputs): Do not create 
                                    'index' (default): Write a single line for sldl to index 
                                    all downloaded files, required for skip-existing=m3u
                                    'all': Write the index and a list of paths and fails
     --m3u-path <path>              Override default m3u path
-
+        
     -s, --skip-existing            Skip if a track matching file conditions is found in the
                                    output folder or your music library (if provided)
     --skip-mode <mode>             [name|tag|m3u|name-cond|tag-cond|m3u-cond]
-                                   See --help "skip-existing".
+                                   See --help ""skip-existing"".
     --music-dir <path>             Specify to also skip downloading tracks found in a music
                                    library. Use with --skip-existing
     --skip-not-found               Skip searching for tracks that weren't found on Soulseek
                                    during the last run. Fails are read from the m3u file.
-    --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing
-
-    --display-mode <option>        Changes how searches and downloads are displayed:
-                                   'single' (default): Show transfer state and percentage
-                                   'double': Transfer state and a large progress bar
-                                   'simple': No download bars or changing percentages
-    --print <option>               Print tracks or search results instead of downloading:
-                                   'tracks': Print all tracks to be downloaded
-                                   'tracks-full': Print extended information about all tracks
-                                   'results': Print search results satisfying file conditions
-                                   'results-full': Print search results including full paths
-    --debug                        Print extra debug info
-
+    --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing    
+        
     --listen-port <port>           Port for incoming connections (default: 49998)
     --on-complete <command>        Run a command whenever a file is downloaded.
                                    Available placeholders: {path} (local save path), {title},
@@ -89,6 +78,14 @@ Usage: sldl <input> [OPTIONS]
                                    E.g: '1:<cmd>' will only run the command if the file is
                                    downloaded successfully. Prepend 's:' to use the system
                                    shell to execute the command.
+
+    --print <option>               Print tracks or search results instead of downloading:
+                                   'tracks': Print all tracks to be downloaded
+                                   'tracks-full': Print extended information about all tracks
+                                   'results': Print search results satisfying file conditions
+                                   'results-full': Print search results including full paths
+    --no-progress                  Disable progress bars/percentages, only simple printing
+    --debug                        Print extra debug info
 ```
 ```
   Searching
@@ -454,7 +451,7 @@ extractor                       Name of the extractor used (CSV/Spotify/YouTube/
 default-folder                  Default sldl folder name (usually the playlist name)
 ```
 
-## Skip existing
+## Skip-existing
 
 sldl can skip downloads that exist in the output directory or a specified directory configured
 with --music-dir.
@@ -606,7 +603,7 @@ sldl --profile wishlist
 
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
-- The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--display-mode simple` in case of issues.
+- The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
 
 ## Docker
 

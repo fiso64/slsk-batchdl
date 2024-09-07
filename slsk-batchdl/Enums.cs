@@ -71,13 +71,6 @@ namespace Enums
         Largest,
     }
 
-    public enum DisplayMode
-    {
-        Single,
-        Double,
-        Simple,
-    }
-
     public enum Verbosity
     {
         Silent,

@@ -74,6 +74,7 @@ public class Config
     public bool useRandomLogin = false;
     public bool noBrowseFolder = false;
     public bool skipExistingPrefCond = false;
+    public bool noProgress = false;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -97,7 +98,6 @@ public class Config
     public Track regexReplaceBy = new();
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
     public M3uOption m3uOption = M3uOption.Index;
-    public DisplayMode displayMode = DisplayMode.Single;
     public InputType inputType = InputType.None;
     public SkipMode skipMode = SkipMode.M3u;
     public SkipMode skipModeMusicDir = SkipMode.Name;
@@ -133,8 +133,16 @@ public class Config
     }
 
 
-    public void Load(string[] args)
+    public void LoadAndParse(string[] args)
     {
+        int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
+        if (args.Length == 0 || helpIdx >= 0)
+        {
+            string option = helpIdx + 1 < args.Length ? args[helpIdx + 1] : "";
+            Help.PrintHelp(option);
+            Environment.Exit(0);
+        }
+
         arguments = args.SelectMany(arg =>
         {
             if (arg.Length > 2 && arg[0] == '-')
@@ -223,7 +231,7 @@ public class Config
             m3uOption = M3uOption.None;
         else if (!hasConfiguredM3uMode && inputType == InputType.String)
             m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && !Program.trackLists.Flattened(true, true).Skip(1).Any())
+        else if (!hasConfiguredM3uMode && Program.trackLists != null && !Program.trackLists.Flattened(true, true).Skip(1).Any())
             m3uOption = M3uOption.None;
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
@@ -1091,16 +1099,9 @@ public class Config
                     case "--desperate":
                         setFlag(ref desperateSearch, ref i);
                         break;
-                    case "--dm":
-                    case "--display":
-                    case "--display-mode":
-                        displayMode = args[++i].ToLower().Trim() switch
-                        {
-                            "single" => DisplayMode.Single,
-                            "double" => DisplayMode.Double,
-                            "simple" => DisplayMode.Simple,
-                            _ => throw new ArgumentException($"Invalid display mode '{args[i]}'"),
-                        };
+                    case "--np":
+                    case "--no-progress":
+                        setFlag(ref noProgress, ref i);
                         break;
                     case "--sm":
                     case "--skip-mode":

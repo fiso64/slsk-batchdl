@@ -27,7 +27,7 @@ static class Search
 
         IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
         var responseData = new ResponseData();
-        var progress = Printing.GetProgressBar(Config.I.displayMode);
+        var progress = Printing.GetProgressBar();
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
         using var searchCts = new CancellationTokenSource();

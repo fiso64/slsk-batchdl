@@ -312,8 +312,10 @@ public static class Printing
             try { progress.Refresh(current, item); }
             catch { }
         }
-        else if ((Config.I.displayMode == DisplayMode.Simple || Console.IsOutputRedirected) && print)
+        else if ((Config.I.noProgress || Console.IsOutputRedirected) && print)
+        {
             Console.WriteLine(item);
+        }
     }
 
 
@@ -342,16 +344,18 @@ public static class Printing
     }
 
 
-    public static ProgressBar? GetProgressBar(DisplayMode style)
+    public static ProgressBar? GetProgressBar()
     {
         lock (consoleLock)
         {
-            ProgressBar? progress = null;
-            if (style == DisplayMode.Double)
-                progress = new ProgressBar(PbStyle.DoubleLine, 100, Console.WindowWidth - 40, character: '―');
-            else if (style != DisplayMode.Simple)
-                progress = new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
-            return progress;
+            if (!Config.I.noProgress)
+            {
+                return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
+            }
+            else
+            {
+                return null;
+            }
         }
     }
 }

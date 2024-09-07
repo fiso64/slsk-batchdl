@@ -109,7 +109,7 @@ namespace Test
 
             File.WriteAllText(path, content);
 
-            Config.I.Load(new string[] { "-c", path });
+            Config.I.LoadAndParse(new string[] { "-c", path });
 
             var tle = new TrackListEntry(TrackType.Album);
             Config.UpdateProfiles(tle);
@@ -133,7 +133,7 @@ namespace Test
             File.WriteAllText(path, content);
 
             
-            Config.I.Load(new string[] { "-c", path });
+            Config.I.LoadAndParse(new string[] { "-c", path });
             Config.UpdateProfiles(tle);
             Assert(Config.I.maxStaleTime == 999999 && !Config.I.useYtdlp);
 
@@ -152,7 +152,7 @@ namespace Test
                 "\nyt-dlp = true";
 
             File.WriteAllText(path, content);
-            Config.I.Load(new string[] { "-c", path });
+            Config.I.LoadAndParse(new string[] { "-c", path });
             Config.UpdateProfiles(new TrackListEntry(TrackType.Normal));
 
             Assert(Config.I.maxStaleTime == 50000 && Config.I.useYtdlp);

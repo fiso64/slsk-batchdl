@@ -43,18 +43,7 @@ public static class Help
                                        library. Use with --skip-existing
         --skip-not-found               Skip searching for tracks that weren't found on Soulseek
                                        during the last run. Fails are read from the m3u file.
-        --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing
-          
-        --display-mode <option>        Changes how searches and downloads are displayed:
-                                       'single' (default): Show transfer state and percentage
-                                       'double': Transfer state and a large progress bar 
-                                       'simple': No download bars or changing percentages
-        --print <option>               Print tracks or search results instead of downloading:
-                                       'tracks': Print all tracks to be downloaded
-                                       'tracks-full': Print extended information about all tracks
-                                       'results': Print search results satisfying file conditions
-                                       'results-full': Print search results including full paths
-        --debug                        Print extra debug info
+        --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing    
           
         --listen-port <port>           Port for incoming connections (default: 49998)
         --on-complete <command>        Run a command whenever a file is downloaded.
@@ -66,6 +55,14 @@ public static class Help
                                        E.g: '1:<cmd>' will only run the command if the file is
                                        downloaded successfully. Prepend 's:' to use the system
                                        shell to execute the command.
+
+        --print <option>               Print tracks or search results instead of downloading:
+                                       'tracks': Print all tracks to be downloaded
+                                       'tracks-full': Print extended information about all tracks
+                                       'results': Print search results satisfying file conditions
+                                       'results-full': Print search results including full paths
+        --no-progress                  Disable progress bars/percentages, only simple printing
+        --debug                        Print extra debug info
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred
@@ -428,7 +425,7 @@ public static class Help
     ";
 
     const string skipExistingHelp = @"
-    Skip existing
+    Skip-existing
 
       sldl can skip downloads that exist in the output directory or a specified directory configured
       with --music-dir.
