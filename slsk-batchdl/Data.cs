@@ -78,9 +78,19 @@ namespace Data
                 if (str.Length > 0)
                     str += " - ";
                 if (Type == TrackType.Album)
-                    str += Album;
-                else if (Title.Length > 0)
-                    str += Title;
+                {
+                    if (Album.Length > 0)
+                        str += Album;
+                    else
+                        str += Title;
+                }
+                else
+                {
+                    if (Title.Length > 0)
+                        str += Title;
+                    else
+                        str += Album;
+                }
                 if (!noInfo)
                 {
                     if (Length > 0)

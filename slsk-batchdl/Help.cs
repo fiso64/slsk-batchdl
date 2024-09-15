@@ -1,7 +1,7 @@
 ﻿
 // undocumented options
 // --login, --random-login, --no-modify-share-count, --unknown-error-retries
-// --invalid-replace-str, --cond, --pref, --danger-words, --pref-danger-words, --strict-title, --strict-artist, --strict-album
+// --invalid-replace-str, --cond, --pref, --strict-title, --strict-artist, --strict-album
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 

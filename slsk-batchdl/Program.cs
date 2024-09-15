@@ -872,7 +872,7 @@ static partial class Program
             Console.WriteLine();
 
             Loop:
-            string userInput = interactiveModeLoop().Trim();
+            string userInput = interactiveModeLoop().Trim().ToLower();
             switch (userInput)
             {
                 case "p":
