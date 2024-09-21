@@ -847,6 +847,8 @@ static partial class Program
                     return "s";
                 else if (key.Key == ConsoleKey.Enter)
                     return userInput;
+                else if (char.IsControl(key.KeyChar))
+                    continue;
                 else
                     userInput += key.KeyChar;
             }
@@ -871,7 +873,7 @@ static partial class Program
             PrintAlbum(tracks);
             Console.WriteLine();
 
-            Loop:
+        Loop:
             string userInput = interactiveModeLoop().Trim().ToLower();
             switch (userInput)
             {
