@@ -618,7 +618,6 @@ static partial class Program
 
     static async Task<List<Track>> DownloadImages(TrackListEntry tle, List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum)
     {
-        var fileManager = new FileManager(tle);
         var downloadedImages = new List<Track>();
         long mSize = 0;
         int mCount = 0;
