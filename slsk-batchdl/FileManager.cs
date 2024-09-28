@@ -38,8 +38,9 @@ public class FileManager
         if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(remoteCommonDir))
         {
             string dirname = Path.GetFileName(remoteCommonDir);
-            string relpath = Path.GetRelativePath(remoteCommonDir, Utils.NormalizedPath(sourceFname));
-            parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath));
+            string normFname = Utils.NormalizedPath(sourceFname);
+            string relpath = normFname.StartsWith(remoteCommonDir) ? Path.GetRelativePath(remoteCommonDir, normFname) : "";
+            parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
         return Path.Join(parent, name);
