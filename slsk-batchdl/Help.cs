@@ -1,7 +1,7 @@
 ﻿
 // undocumented options
 // --login, --random-login, --no-modify-share-count, --unknown-error-retries
-// --invalid-replace-str, --cond, --pref, --strict-title, --strict-artist, --strict-album
+// --invalid-replace-str, --cond, --pref
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 
@@ -136,6 +136,9 @@ public static class Help
         --max-samplerate <rate>        Maximum file sample rate
         --min-bitdepth <depth>         Minimum bit depth
         --max-bitdepth <depth>         Maximum bit depth
+        --strict-title                 File name must contain title
+        --strict-artist                File path must contain artist name
+        --strict-album                 File path must contain album name
         --banned-users <list>          Comma-separated list of users to ignore
           
         --pref-format <formats>        Preferred file format(s), comma-separated (default: mp3)

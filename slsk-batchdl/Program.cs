@@ -540,7 +540,7 @@ static partial class Program
         if (Config.I.albumArtOnly || succeeded && Config.I.albumArtOption != AlbumArtOption.Default)
         {
             Console.WriteLine($"\nDownloading additional images:");
-            additionalImages = await DownloadImages(tle.list, Config.I.albumArtOption, tracks, organizer);
+            additionalImages = await DownloadImages(tle, tle.list, Config.I.albumArtOption, tracks);
             tracks?.AddRange(additionalImages);
         }
 
@@ -616,11 +616,19 @@ static partial class Program
     }
 
 
-    static async Task<List<Track>> DownloadImages(List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum, FileManager fileManager)
+    static async Task<List<Track>> DownloadImages(TrackListEntry tle, List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum)
     {
         var downloadedImages = new List<Track>();
         long mSize = 0;
         int mCount = 0;
+
+        var fileManager = new FileManager(tle);
+
+        if (chosenAlbum != null)
+        {
+            string dir = Utils.GreatestCommonDirectorySlsk(chosenAlbum.Select(t => t.FirstDownload.Filename));
+            fileManager.SetDefaultFolderName(Path.GetFileName(Utils.NormalizedPath(dir)));
+        }
 
         if (option == AlbumArtOption.Default)
             return downloadedImages;
@@ -710,10 +718,7 @@ static partial class Program
                 PrintAlbum(tracks);
             }
 
-            if (fileManager.remoteCommonDir == null)
-            {
-                fileManager.SetRemoteCommonDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
-            }
+            fileManager.SetRemoteCommonDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
 
             bool allSucceeded = true;
             var semaphore = new SemaphoreSlim(1);

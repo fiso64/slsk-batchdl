@@ -14,6 +14,7 @@ public class FileManager
     readonly TrackListEntry tle;
     readonly HashSet<Track> organized = new();
     public string? remoteCommonDir { get; private set; }
+    public string? defaultFolderName { get; private set; }
 
     public FileManager(TrackListEntry tle)
     {
@@ -37,9 +38,10 @@ public class FileManager
 
         if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(remoteCommonDir))
         {
-            string dirname = Path.GetFileName(remoteCommonDir);
-            string relpath = Path.GetRelativePath(remoteCommonDir, Utils.NormalizedPath(sourceFname));
-            parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath));
+            string dirname = defaultFolderName != null ? defaultFolderName : Path.GetFileName(remoteCommonDir);
+            string normFname = Utils.NormalizedPath(sourceFname);
+            string relpath = normFname.StartsWith(remoteCommonDir) ? Path.GetRelativePath(remoteCommonDir, normFname) : "";
+            parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
         return Path.Join(parent, name);
@@ -48,6 +50,11 @@ public class FileManager
     public void SetRemoteCommonDir(string? remoteCommonDir)
     {
         this.remoteCommonDir = remoteCommonDir != null ? Utils.NormalizedPath(remoteCommonDir) : null;
+    }
+
+    public void SetDefaultFolderName(string? defaultFolderName)
+    {
+        this.defaultFolderName = defaultFolderName != null ? Utils.NormalizedPath(defaultFolderName) : null;
     }
 
     public void OrganizeAlbum(List<Track> tracks, List<Track>? additionalImages, bool remainingOnly = true)
