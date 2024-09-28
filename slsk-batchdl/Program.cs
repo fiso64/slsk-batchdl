@@ -627,7 +627,7 @@ static partial class Program
         if (chosenAlbum != null)
         {
             string dir = Utils.GreatestCommonDirectorySlsk(chosenAlbum.Select(t => t.FirstDownload.Filename));
-            fileManager.SetDefaultFolderName(Path.GetFileName(Utils.NormalizedPath(dir)));
+            fileManager.SetDefaultFolderName(Path.GetFileName(Utils.NormalizedPath(dir))); 
         }
 
         if (option == AlbumArtOption.Default)
