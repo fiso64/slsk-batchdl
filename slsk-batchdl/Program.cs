@@ -493,7 +493,7 @@ static partial class Program
                 PrintAlbum(tracks);
             }
 
-            var semaphore = new SemaphoreSlim(999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
+            var semaphore = new SemaphoreSlim(Config.I.concurrentProcesses == -2 ? 1 : 999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
             using var cts = new CancellationTokenSource();
 
             try

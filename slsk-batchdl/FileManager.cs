@@ -33,7 +33,7 @@ public class FileManager
 
         if (tle.defaultFolderName != null)
         {
-            parent = Path.Join(parent, tle.defaultFolderName.ReplaceInvalidChars(Config.I.invalidReplaceStr, removeSlash: false));
+            parent = Path.Join(parent, tle.defaultFolderName);
         } 
 
         if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(remoteCommonDir))
@@ -44,7 +44,7 @@ public class FileManager
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
-        return Path.Join(parent, name);
+        return Path.Join(parent, name).CleanPath(Config.I.invalidReplaceStr);
     }
 
     public void SetRemoteCommonDir(string? remoteCommonDir)

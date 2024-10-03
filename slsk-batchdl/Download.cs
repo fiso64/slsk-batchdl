@@ -28,6 +28,8 @@ static class Download
         string origPath = filePath;
         filePath += ".incomplete";
 
+        Printing.WriteLine($"Downloading: {track} to '{filePath}'", debugOnly: true);
+
         var transferOptions = new TransferOptions(
             stateChanged: (state) =>
             {

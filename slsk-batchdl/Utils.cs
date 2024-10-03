@@ -272,6 +272,34 @@ public static class Utils
         return str;
     }
 
+    public static string CleanPath(this string fullPath, string replaceWith)
+    {
+        fullPath = Utils.NormalizedPath(fullPath);
+
+        string[] pathParts = fullPath.Split('/');
+
+        foreach (char badChar in Path.GetInvalidPathChars())
+        {
+            if (badChar != ':')
+            {
+                pathParts[0] = pathParts[0].Replace(badChar.ToString(), replaceWith);
+            }
+        }
+
+        var chars = Path.GetInvalidFileNameChars();
+
+        for (int i = 1; i < pathParts.Length; i++)
+        {
+            foreach (char badChar in chars)
+            {
+                pathParts[i] = pathParts[i].Replace(badChar.ToString(), replaceWith);
+            }
+        }
+
+        return string.Join('/', pathParts);
+    }
+
+
     public static string ReplaceSpecialChars(this string str, string replaceStr)
     {
         if (str.Length == 0)
