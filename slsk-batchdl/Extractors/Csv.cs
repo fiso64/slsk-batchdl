@@ -23,7 +23,7 @@ namespace Extractors
 
             csvFilePath = input;
 
-            var tracks = await ParseCsvIntoTrackInfo(input, Config.I.artistCol, Config.I.trackCol, Config.I.lengthCol, 
+            var tracks = await ParseCsvIntoTrackInfo(input, Config.I.artistCol, Config.I.titleCol, Config.I.lengthCol, 
                 Config.I.albumCol, Config.I.descCol, Config.I.ytIdCol, Config.I.trackCountCol, Config.I.timeUnit, Config.I.ytParse);
 
             if (reverse)

@@ -34,7 +34,7 @@ public class Config
     public string password = "";
     public string artistCol = "";
     public string albumCol = "";
-    public string trackCol = "";
+    public string titleCol = "";
     public string ytIdCol = "";
     public string descCol = "";
     public string trackCountCol = "";
@@ -713,7 +713,8 @@ public class Config
                         break;
                     case "--tc":
                     case "--track-col":
-                        trackCol = args[++i];
+                    case "--title-col":
+                        titleCol = args[++i];
                         break;
                     case "--alc":
                     case "--album-col":
