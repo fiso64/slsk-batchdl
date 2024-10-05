@@ -52,38 +52,38 @@ Usage: sldl <input> [OPTIONS]
     --profile <names>              Configuration profile(s) to use. See --help ""config"".
     --concurrent-downloads <num>   Max concurrent downloads (default: 2)
     --m3u <option>                 Create an m3u playlist file in the output directory
-                                    'none' (default for string inputs): Do not create 
-                                    'index'(default): Write a single line for sldl to index 
-                                    downloaded files. Required for skip-existing=m3u.
-                                    'all': Create a playable m3u playlist file and sldl index.
+                                   'none' (default for string inputs): Do not create 
+                                   'index'(default): Write a single line for sldl to index 
+                                   downloaded files. Required for skip-existing=m3u.
+                                   'all': Create a playable m3u playlist file and sldl index.
     --m3u-path <path>              Override default m3u path
         
     -s, --skip-existing            Skip if a track matching file conditions is found in the
-                                    output folder or your music library (if provided)
+                                   output folder or your music library (if provided)
     --skip-mode <mode>             [name|tag|m3u|name-cond|tag-cond|m3u-cond]. See --help
-                                    skip-existing.
+                                   skip-existing.
     --music-dir <path>             Specify to also skip downloading tracks found in a music
-                                    library. Use with --skip-existing
+                                   library. Use with --skip-existing
     --skip-not-found               Skip searching for tracks that weren't found on Soulseek
-                                    during the last run. Fails are read from the m3u file.
+                                   during the last run. Fails are read from the m3u file.
     --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing    
         
     --listen-port <port>           Port for incoming connections (default: 49998)
     --on-complete <command>        Run a command whenever a file is downloaded.
-                                    Available placeholders: {path} (local save path), {title},
-                                    {artist},{album},{uri},{length},{failure-reason},{state}.
-                                    Prepend a state number to only run in specific cases:
-                                    1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
-                                    NotFoundLastTime states respectively. 
-                                    E.g: '1:<cmd>' will only run the command if the file is
-                                    downloaded successfully. Prepend 's:' to use the system
-                                    shell to execute the command.
+                                   Available placeholders: {path} (local save path), {title},
+                                   {artist},{album},{uri},{length},{failure-reason},{state}.
+                                   Prepend a state number to only run in specific cases:
+                                   1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
+                                   NotFoundLastTime states respectively. 
+                                   E.g: '1:<cmd>' will only run the command if the file is
+                                   downloaded successfully. Prepend 's:' to use the system
+                                   shell to execute the command.
 
     --print <option>               Print tracks or search results instead of downloading:
-                                    'tracks': Print all tracks to be downloaded
-                                    'tracks-full': Print extended information about all tracks
-                                    'results': Print search results satisfying file conditions
-                                    'results-full': Print search results including full paths.
+                                   'tracks': Print all tracks to be downloaded
+                                   'tracks-full': Print extended information about all tracks
+                                   'results': Print search results satisfying file conditions
+                                   'results-full': Print search results including full paths.
     --no-progress                  Disable progress bars/percentages, only simple printing
     --debug                        Print extra debug info
 ```
