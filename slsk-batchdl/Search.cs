@@ -2,13 +2,9 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
-using Data;
+using Models;
 using Enums;
 using static Program;
-
-using File = System.IO.File;
-using Directory = System.IO.Directory;
-using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
@@ -1159,18 +1155,6 @@ public class SearchAndDownloadException : Exception
 {
     public FailureReason reason;
     public SearchAndDownloadException(FailureReason reason, string text = "") : base(text) { this.reason = reason; }
-}
-
-public class SearchInfo
-{
-    public ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results;
-    public ProgressBar progress;
-
-    public SearchInfo(ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results, ProgressBar progress)
-    {
-        this.results = results;
-        this.progress = progress;
-    }
 }
 
 

@@ -8,7 +8,7 @@ using System.Diagnostics;
 using HtmlAgilityPack;
 using System.Collections.Concurrent;
 
-using Data;
+using Models;
 using Enums;
 
 namespace Extractors

@@ -1,21 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Konsole;
-using Soulseek;
-using System.Text.RegularExpressions;
+﻿using Konsole;
 
-using Data;
+using Models;
 using Enums;
-
-using Directory = System.IO.Directory;
-using File = System.IO.File;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
-using SlResponse = Soulseek.SearchResponse;
 
 public static class Printing
 {

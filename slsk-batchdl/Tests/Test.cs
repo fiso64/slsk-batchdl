@@ -1,12 +1,12 @@
-﻿using Data;
+﻿using Models;
 using Enums;
 using FileSkippers;
 using System.Diagnostics;
 using System.Reflection;
 
-using static Test.Helpers;
+using static Tests.Helpers;
 
-namespace Test
+namespace Tests
 {
     static class Test
     {
@@ -26,10 +26,10 @@ namespace Test
             SetCurrentTest("TestStringUtils");
 
             // RemoveFt
-            Assert("blah blah ft. blah blah"    .RemoveFt() == "blah blah");
-            Assert("blah blah feat. blah blah"  .RemoveFt() == "blah blah");
+            Assert("blah blah ft. blah blah".RemoveFt() == "blah blah");
+            Assert("blah blah feat. blah blah".RemoveFt() == "blah blah");
             Assert("blah (feat. blah blah) blah".RemoveFt() == "blah blah");
-            Assert("blah (ft. blah blah) blah"  .RemoveFt() == "blah blah");
+            Assert("blah (ft. blah blah) blah".RemoveFt() == "blah blah");
 
             // RemoveConsecutiveWs
             Assert(" blah    blah  blah blah ".RemoveConsecutiveWs() == " blah blah blah blah ");
@@ -79,7 +79,7 @@ namespace Test
         {
             SetCurrentTest("TestAutoProfiles");
 
-            ResetConfig(); 
+            ResetConfig();
             Config.I.inputType = InputType.YouTube;
             Config.I.interactiveMode = true;
             Config.I.aggregate = false;
@@ -87,7 +87,7 @@ namespace Test
 
             string path = Path.Join(Directory.GetCurrentDirectory(), "test_conf.conf");
 
-            string content =  
+            string content =
                 "max-stale-time = 5" +
                 "\nfast-search = true" +
                 "\nformat = flac" +
@@ -122,7 +122,7 @@ namespace Test
             Config.I.interactiveMode = true;
             Config.I.useYtdlp = false;
             Config.I.maxStaleTime = 50000;
-            content = 
+            content =
                 "\n[no-stale]" +
                 "\nprofile-cond = interactive && download-mode == \"album\"" +
                 "\nmax-stale-time = 999999" +
@@ -132,7 +132,7 @@ namespace Test
 
             File.WriteAllText(path, content);
 
-            
+
             Config.I.LoadAndParse(new string[] { "-c", path });
             Config.UpdateProfiles(tle);
             Assert(Config.I.maxStaleTime == 999999 && !Config.I.useYtdlp);
@@ -172,7 +172,7 @@ namespace Test
             Config.I.album = true;
             Config.I.aggregate = false;
 
-            var conds = new (bool, string)[] 
+            var conds = new (bool, string)[]
             {
                 (true,  "input-type == \"youtube\""),
                 (true,  "download-mode == \"album\""),
@@ -343,7 +343,7 @@ namespace Test
 
             Program.m3uEditor.Update();
             string output = File.ReadAllText(path);
-            string need = 
+            string need =
                 "#SLDL:./file1.5,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;,,,,-1,0,0,0;" +
                 "\n" +
                 "\n#FAIL: Artist; ,3 - Title3 ;a [NoSuitableFileFound]" +
@@ -362,7 +362,7 @@ namespace Test
 
             Program.m3uEditor.Update();
             output = File.ReadAllText(path);
-            need = 
+            need =
                 "#SLDL:/other/new/file/path,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;" +
                 ",,,,-1,0,0,0;new/file/path,ArtistA,Albumm,TitleA,-1,0,1,0;,ArtistB,Albumm,TitleB,-1,0,2,3;" +
                 "\n" +

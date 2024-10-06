@@ -1,5 +1,5 @@
 ﻿
-using Data;
+using Models;
 using Enums;
 
 namespace Extractors

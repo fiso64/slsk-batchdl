@@ -1,5 +1,4 @@
 ﻿using AngleSharp.Text;
-using Konsole;
 using Soulseek;
 using System.Collections.Concurrent;
 using System.Data;
@@ -7,7 +6,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Net.Sockets;
 
-using Data;
+using Models;
 using Enums;
 using FileSkippers;
 using Extractors;

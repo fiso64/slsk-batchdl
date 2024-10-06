@@ -2,9 +2,8 @@
 using SpotifyAPI.Web.Auth;
 using Swan;
 
-using Data;
+using Models;
 using Enums;
-using System.Security;
 
 namespace Extractors
 {

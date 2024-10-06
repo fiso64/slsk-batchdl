@@ -1,5 +1,4 @@
-﻿using Data;
-using Enums;
+﻿using Models;
 using System.Text.RegularExpressions;
 
 namespace Extractors
