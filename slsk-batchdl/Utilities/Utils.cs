@@ -5,7 +5,9 @@ using System.Text.RegularExpressions;
 public static class Utils
 {
     public static readonly string[] musicExtensions = new string[] { ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac" };
-    public static readonly string[] imageExtensions = new string[] { ".jpg", ".png", ".jpeg" };
+    public static readonly string[] imageExtensions = new string[] { ".jpg", ".png", ".jpeg", ".gif", ".webp" };
+    public static readonly string[] videoExtensions = new string[] { ".mp4", ".mkv", ".avi", ".mov", ".webm", ".mpeg" };
+
 
     public static bool IsMusicExtension(string extension)
     {
@@ -25,6 +27,16 @@ public static class Utils
     public static bool IsImageFile(string fileName)
     {
         return imageExtensions.Contains(Path.GetExtension(fileName).ToLower());
+    }
+
+    public static bool IsVideoExtension(string extension)
+    {
+        return videoExtensions.Contains(extension.ToLower());
+    }
+
+    public static bool IsVideoFile(string fileName)
+    {
+        return videoExtensions.Contains(Path.GetExtension(fileName).ToLower());
     }
 
     public static bool IsInternetUrl(this string str)

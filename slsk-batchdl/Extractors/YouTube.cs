@@ -672,13 +672,12 @@ namespace Extractors
                 return savePathNoExt + ".opus";
 
             string parentDirectory = Path.GetDirectoryName(savePathNoExt);
-            string[] musicFiles = Directory.GetFiles(parentDirectory, "*", SearchOption.TopDirectoryOnly)
-                                            .Where(file => Utils.IsMusicFile(file))
-                                            .ToArray();
-            if (musicFiles.Length > 0)
-                return musicFiles[0];
+            var musicFiles = Directory.GetFiles(parentDirectory, savePathNoExt + ".*", SearchOption.TopDirectoryOnly)
+                .Where(file => Utils.IsMusicFile(file) || Utils.IsVideoFile(file))
+                .OrderByDescending(file => Utils.IsMusicFile(file))
+                .ThenBy(file => Utils.IsVideoFile(file));
 
-            return "";
+            return musicFiles.FirstOrDefault() ?? "";
         }
     }
 }
