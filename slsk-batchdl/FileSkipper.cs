@@ -45,7 +45,7 @@ namespace FileSkippers
             s = s.RemoveFt();
             s = s.Replace(ignore, " ");
             s = s.ReplaceInvalidChars(' ', false, removeSlash);
-            s = s.RemoveConsecutiveWs();
+            s = s.RemoveConsecutiveWs().Trim();
             return s;
         }
 
@@ -117,7 +117,7 @@ namespace FileSkippers
             s = s.RemoveFt();
             s = s.Replace(ignore, " ");
             s = s.ReplaceInvalidChars(' ', false, removeSlash);
-            s = s.RemoveConsecutiveWs();
+            s = s.RemoveConsecutiveWs().Trim();
             return s;
         }
 
