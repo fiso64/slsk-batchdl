@@ -10,9 +10,10 @@ namespace Models
         public bool sourceCanBeSkipped = false;
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
+        public bool enablesIndexByDefault = false;
         public string? defaultFolderName = null;
-        public FileConditionsMod? additionalConds = null;
-        public FileConditionsMod? additionalPrefConds = null;
+        public FileConditions? additionalConds = null;
+        public FileConditions? additionalPrefConds = null;
 
         public TrackListEntry(TrackType trackType)
         {

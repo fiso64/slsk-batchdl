@@ -22,12 +22,9 @@ namespace Enums
     public enum SkipMode
     {
         Name = 0,
-        NameCond = 1,
         Tag = 2,
-        TagCond = 3, 
         // non file-based skip modes are >= 4
-        M3u = 4,
-        M3uCond = 5,
+        Index = 4,
     }
 
     public enum InputType
@@ -53,6 +50,7 @@ namespace Enums
     {
         None,
         Index,
+        Playlist,
         All,
     }
 

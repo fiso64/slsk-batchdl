@@ -43,6 +43,7 @@ namespace Extractors
                 var tracks = await spotifyClient.GetLikes(max, off);
                 tle = new TrackListEntry(TrackType.Normal);
                 tle.defaultFolderName = "Spotify Likes";
+                tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
             }
             else if (input.Contains("/album/"))
@@ -69,19 +70,19 @@ namespace Extractors
                 var tracks = new List<Track>();
                 tle = new TrackListEntry(TrackType.Normal);
 
+                string? playlistName = null;
+
                 try
                 {
                     Console.WriteLine("Loading Spotify playlist");
-                    (var playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
-                    tle.defaultFolderName = playlistName;
+                    (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
                 }
                 catch (SpotifyAPI.Web.APIException)
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
                         await spotifyClient.Authorize(true, Config.I.removeTracksFromSource);
-                        (var playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
-                        tle.defaultFolderName = playlistName;
+                        (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
                     }
                     else if (!needLogin)
                     {
@@ -91,6 +92,8 @@ namespace Extractors
                     else throw;
                 }
 
+                tle.defaultFolderName = playlistName;
+                tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
             }
 

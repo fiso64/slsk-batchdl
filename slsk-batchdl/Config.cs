@@ -1,4 +1,5 @@
 ﻿
+using AngleSharp.Css;
 using Enums;
 using Models;
 using System.Text;
@@ -24,7 +25,8 @@ public class Config
     public string parentDir = Directory.GetCurrentDirectory();
     public string input = "";
     public string m3uFilePath = "";
-    public string musicDir = "";
+    public string indexFilePath = "";
+    public string skipMusicDir = "";
     public string spotifyId = "";
     public string spotifySecret = "";
     public string spotifyToken = "";
@@ -63,7 +65,6 @@ public class Config
     public bool removeBrackets = false;
     public bool reverse = false;
     public bool useYtdlp = false;
-    public bool skipExisting = false;
     public bool removeTracksFromSource = false;
     public bool getDeleted = false;
     public bool deletedOnly = false;
@@ -73,8 +74,12 @@ public class Config
     public bool noModifyShareCount = false;
     public bool useRandomLogin = false;
     public bool noBrowseFolder = false;
-    public bool skipExistingPrefCond = false;
+    public bool skipCheckCond = false;
+    public bool skipCheckPrefCond = false;
     public bool noProgress = false;
+    public bool writePlaylist = false;
+    public bool skipExisting = true;
+    public bool writeIndex = true;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -97,9 +102,8 @@ public class Config
     public Track regexToReplace = new();
     public Track regexReplaceBy = new();
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
-    public M3uOption m3uOption = M3uOption.Index;
     public InputType inputType = InputType.None;
-    public SkipMode skipMode = SkipMode.M3u;
+    public SkipMode skipMode = SkipMode.Index;
     public SkipMode skipModeMusicDir = SkipMode.Name;
     public PrintOption printOption = PrintOption.None;
 
@@ -114,11 +118,11 @@ public class Config
 
     readonly Dictionary<string, (List<string> args, string? cond)> configProfiles = new();
     readonly HashSet<string> appliedProfiles = new();
-    bool hasConfiguredM3uMode = false;
+    bool hasConfiguredIndex = false;
     bool confPathChanged = false;
     string[] arguments;
-    FileConditionsMod? undoTempConds = null;
-    FileConditionsMod? undoTempPrefConds = null;
+    FileConditions? undoTempConds = null;
+    FileConditions? undoTempPrefConds = null;
 
     private static Config Instance = new();
 
@@ -228,11 +232,13 @@ public class Config
         ignoreOn = Math.Min(ignoreOn, downrankOn);
 
         if (DoNotDownload)
-            m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && inputType == InputType.String)
-            m3uOption = M3uOption.None;
-        else if (!hasConfiguredM3uMode && Program.trackLists != null && !Program.trackLists.Flattened(true, true).Skip(1).Any())
-            m3uOption = M3uOption.None;
+        {
+            writeIndex = false;   
+        }
+        else if (!hasConfiguredIndex && Program.trackLists != null && !Program.trackLists.lists.Any(x => x.enablesIndexByDefault))
+        {
+            writeIndex = false;
+        }    
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
@@ -241,7 +247,7 @@ public class Config
 
         parentDir = Utils.ExpandUser(parentDir);
         m3uFilePath = Utils.ExpandUser(m3uFilePath);
-        musicDir = Utils.ExpandUser(musicDir);
+        skipMusicDir = Utils.ExpandUser(skipMusicDir);
         failedAlbumPath = Utils.ExpandUser(failedAlbumPath);
 
         if (failedAlbumPath.Length == 0)
@@ -494,25 +500,25 @@ public class Config
     }
 
 
-    public void AddTemporaryConditions(FileConditionsMod? cond, FileConditionsMod? prefCond)
+    public void AddTemporaryConditions(FileConditions? cond, FileConditions? prefCond)
     {
         if (cond != null)
-            undoTempConds = necessaryCond.ApplyMod(cond);
+            undoTempConds = necessaryCond.AddConditions(cond);
         if (prefCond != null)
-            undoTempPrefConds = preferredCond.ApplyMod(prefCond);
+            undoTempPrefConds = preferredCond.AddConditions(prefCond);
     }
 
 
     public void RestoreConditions()
     {
         if (undoTempConds != null)
-            necessaryCond.ApplyMod(undoTempConds);
+            necessaryCond.AddConditions(undoTempConds);
         if (undoTempPrefConds != null)
-            preferredCond.ApplyMod(undoTempPrefConds);
+            preferredCond.AddConditions(undoTempPrefConds);
     }
 
 
-    public static FileConditionsMod ParseConditions(string input)
+    public static FileConditions ParseConditions(string input)
     {
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
@@ -528,7 +534,7 @@ public class Config
                 min = max = int.Parse(value);
         }
 
-        var cond = new FileConditionsMod();
+        var cond = new FileConditions();
 
         var tr = StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries;
         string[] conditions = input.Split(';', tr);
@@ -617,6 +623,25 @@ public class Config
                 flag = trueVal;
         }
 
+        void setNullableFlag(ref bool? flag, ref int i, bool trueVal = true)
+        {
+            if (i >= args.Count - 1 || args[i + 1].StartsWith('-'))
+                flag = trueVal;
+            else if (args[i + 1] == "false")
+            {
+                flag = !trueVal;
+                i++;
+            }
+            else if (args[i + 1] == "true")
+            {
+                flag = trueVal;
+                i++;
+            }
+            else
+                flag = trueVal;
+        }
+
+
         bool inputSet = false;
 
         for (int i = 0; i < args.Count; i++)
@@ -645,16 +670,16 @@ public class Config
                         break;
                     case "-p":
                     case "--path":
+                    case "--parent":
                         parentDir = args[++i];
                         break;
                     case "-c":
                     case "--config":
                         confPath = args[++i];
                         break;
-                    case "-m":
-                    case "--md":
-                    case "--music-dir":
-                        musicDir = args[++i];
+                    case "--smd":
+                    case "--skip-music-dir":
+                        skipMusicDir = args[++i];
                         break;
                     case "-g":
                     case "--aggregate":
@@ -791,10 +816,9 @@ public class Config
                     case "--yt-dlp":
                         setFlag(ref useYtdlp, ref i);
                         break;
-                    case "-s":
-                    case "--se":
-                    case "--skip-existing":
-                        setFlag(ref skipExisting, ref i);
+                    case "--nse":
+                    case "--no-skip-existing":
+                        setFlag(ref skipExisting, ref i, false);
                         break;
                     case "--snf":
                     case "--skip-not-found":
@@ -858,20 +882,23 @@ public class Config
                     case "--reverse":
                         setFlag(ref reverse, ref i);
                         break;
-                    case "--m3u":
-                    case "--m3u8":
-                        hasConfiguredM3uMode = true;
-                        m3uOption = args[++i].ToLower().Trim() switch
-                        {
-                            "none" => M3uOption.None,
-                            "index" => M3uOption.Index,
-                            "all" => M3uOption.All,
-                            _ => throw new ArgumentException($"Invalid m3u option '{args[i]}'"),
-                        };
+                    case "--wp":
+                    case "--write-playlist":
+                        setFlag(ref writePlaylist, ref i);
                         break;
-                    case "--m3up":
-                    case "--m3u-path":
+                    case "--pp":
+                    case "--playlist-path":
                         m3uFilePath = args[++i];
+                        break;
+                    case "--nwi":
+                    case "--no-write-index":
+                        hasConfiguredIndex = true;
+                        setFlag(ref writeIndex, ref i, false);
+                        break;
+                    case "--ip":
+                    case "--index-path":
+                        hasConfiguredIndex = true;
+                        indexFilePath = args[++i];
                         break;
                     case "--lp":
                     case "--port":
@@ -1011,19 +1038,19 @@ public class Config
                     case "--pst":
                     case "--pstt":
                     case "--pref-strict-title":
-                        setFlag(ref preferredCond.StrictTitle, ref i);
+                        setNullableFlag(ref preferredCond.StrictTitle, ref i);
                         break;
                     case "--psa":
                     case "--pref-strict-artist":
-                        setFlag(ref preferredCond.StrictArtist, ref i);
+                        setNullableFlag(ref preferredCond.StrictArtist, ref i);
                         break;
                     case "--psal":
                     case "--pref-strict-album":
-                        setFlag(ref preferredCond.StrictAlbum, ref i);
+                        setNullableFlag(ref preferredCond.StrictAlbum, ref i);
                         break;
                     case "--panl":
                     case "--pref-accept-no-length":
-                        setFlag(ref preferredCond.AcceptNoLength, ref i);
+                        setNullableFlag(ref preferredCond.AcceptNoLength, ref i);
                         break;
                     case "--pbu":
                     case "--pref-banned-users":
@@ -1065,15 +1092,15 @@ public class Config
                         break;
                     case "--stt":
                     case "--strict-title":
-                        setFlag(ref necessaryCond.StrictTitle, ref i);
+                        setNullableFlag(ref necessaryCond.StrictTitle, ref i);
                         break;
                     case "--sa":
                     case "--strict-artist":
-                        setFlag(ref necessaryCond.StrictArtist, ref i);
+                        setNullableFlag(ref necessaryCond.StrictArtist, ref i);
                         break;
                     case "--sal":
                     case "--strict-album":
-                        setFlag(ref necessaryCond.StrictAlbum, ref i);
+                        setNullableFlag(ref necessaryCond.StrictAlbum, ref i);
                         break;
                     case "--bu":
                     case "--banned-users":
@@ -1081,16 +1108,16 @@ public class Config
                         break;
                     case "--anl":
                     case "--accept-no-length":
-                        setFlag(ref necessaryCond.AcceptNoLength, ref i);
+                        setNullableFlag(ref necessaryCond.AcceptNoLength, ref i);
                         break;
                     case "--cond":
                     case "--conditions":
-                        necessaryCond.ApplyMod(ParseConditions(args[++i]));
+                        necessaryCond.AddConditions(ParseConditions(args[++i]));
                         break;
                     case "--pc":
                     case "--pref":
                     case "--preferred-conditions":
-                        preferredCond.ApplyMod(ParseConditions(args[++i]));
+                        preferredCond.AddConditions(ParseConditions(args[++i]));
                         break;
                     case "--nmsc":
                     case "--no-modify-share-count":
@@ -1104,17 +1131,14 @@ public class Config
                     case "--no-progress":
                         setFlag(ref noProgress, ref i);
                         break;
-                    case "--sm":
-                    case "--skip-mode":
+                    case "--smod":
+                    case "--skip-mode-output-dir":
                         skipMode = args[++i].ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
-                            "name-cond" => SkipMode.NameCond,
                             "tag" => SkipMode.Tag,
-                            "tag-cond" => SkipMode.TagCond,
-                            "m3u" => SkipMode.M3u,
-                            "m3u-cond" => SkipMode.M3uCond,
-                            _ => throw new ArgumentException($"Invalid skip mode '{args[i]}'"),
+                            "index" => SkipMode.Index,
+                            _ => throw new ArgumentException($"Invalid output dir skip mode '{args[i]}'"),
                         };
                         break;
                     case "--smmd":
@@ -1122,9 +1146,7 @@ public class Config
                         skipModeMusicDir = args[++i].ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
-                            "name-cond" => SkipMode.NameCond,
                             "tag" => SkipMode.Tag,
-                            "tag-cond" => SkipMode.TagCond,
                             _ => throw new ArgumentException($"Invalid music dir skip mode '{args[i]}'"),
                         };
                         break;
@@ -1154,8 +1176,8 @@ public class Config
                     case "--sc":
                     case "--strict":
                     case "--strict-conditions":
-                        setFlag(ref preferredCond.AcceptMissingProps, ref i, false);
-                        setFlag(ref necessaryCond.AcceptMissingProps, ref i, false);
+                        setNullableFlag(ref preferredCond.AcceptMissingProps, ref i, false);
+                        setNullableFlag(ref necessaryCond.AcceptMissingProps, ref i, false);
                         break;
                     case "--yda":
                     case "--yt-dlp-argument":
@@ -1188,9 +1210,13 @@ public class Config
                     case "--no-browse-folder":
                         setFlag(ref noBrowseFolder, ref i);
                         break;
-                    case "--sepc":
-                    case "--skip-existing-pref-cond":
-                        setFlag(ref skipExistingPrefCond, ref i);
+                    case "--scc":
+                    case "--skip-check-cond":
+                        setFlag(ref skipCheckCond, ref i);
+                        break;
+                    case "--scpc":
+                    case "--skip-check-pref-cond":
+                        setFlag(ref skipCheckPrefCond, ref i);
                         break;
                     case "--alt":
                     case "--aggregate-length-tol":

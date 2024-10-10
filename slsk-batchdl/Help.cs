@@ -4,6 +4,7 @@
 // --invalid-replace-str, --cond, --pref
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
+// --skip-mode-music-dir, --skip-mode-output-dir
 
 public static class Help
 {
@@ -28,22 +29,18 @@ public static class Help
         -c, --config <path>            Set config file location. Set to 'none' to ignore config
         --profile <names>              Configuration profile(s) to use. See --help ""config"".
         --concurrent-downloads <num>   Max concurrent downloads (default: 2)
-        --m3u <option>                 Create an m3u playlist file in the output directory
-                                       'none' (default for string inputs): Do not create 
-                                       'index'(default): Write a single line for sldl to index 
-                                       downloaded files. Required for skip-existing=m3u.
-                                       'all': Create a playable m3u playlist file and sldl index.
-        --m3u-path <path>              Override default m3u path
-            
-        -s, --skip-existing            Skip if a track matching file conditions is found in the
-                                       output folder or your music library (if provided)
-        --skip-mode <mode>             [name|tag|m3u|name-cond|tag-cond|m3u-cond]. See --help
-                                       skip-existing.
-        --music-dir <path>             Specify to also skip downloading tracks found in a music
-                                       library. Use with --skip-existing
+        --write-playlist               Create an m3u playlist file in the output directory
+        --playlist-path <path>         Override default path for m3u playlist file
+
+        --no-skip-existing             Do not skip downloaded tracks
+        --no-write-index               Do not create a file indexing all downloaded tracks
+        --index-path <path>            Override default path for sldl index
+        --skip-check-cond              Check file conditions when skipping existing files
+        --skip-check-pref-cond         Check preferred conditions when skipping existing files  
+        --skip-music-dir <path>        Also skip downloading tracks found in a music library by
+                                       comparing filenames. Not 100% reliable.
         --skip-not-found               Skip searching for tracks that weren't found on Soulseek
-                                       during the last run. Fails are read from the m3u file.
-        --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing    
+                                       during the last run.
           
         --listen-port <port>           Port for incoming connections (default: 49998)
         --on-complete <command>        Run a command whenever a file is downloaded.
@@ -89,8 +86,8 @@ public static class Help
         --yt-dlp-argument <str>        The command line arguments when running yt-dlp. Default:
                                        ""{id}"" -f bestaudio/best -cix -o ""{savepath}.%(ext)s""
                                        Available vars are: {id}, {savedir}, {savepath} (w/o ext).
-                                       Note that with -x, yt-dlp will download webms in case
-                                       ffmpeg is unavailable.
+                                       Note that -x causes yt-dlp to download webms in case ffmpeg
+                                       is unavailable.
           
         --search-timeout <ms>          Max search time in ms (default: 6000)
         --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
@@ -184,7 +181,7 @@ public static class Help
 
       Help
         -h, --help [option]            [all|input|download-modes|search|name-format|
-                                       file-conditions|skip-existing|config]
+                                       file-conditions|config]
           
       Notes 
         Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
@@ -287,7 +284,7 @@ public static class Help
     Download modes
           
       Normal
-        The program will download a single file for every input entry.
+        The default. Downloads a single file for every input entry.
 
       Album
         sldl will search for the album and download an entire folder including non-audio files.
@@ -427,38 +424,6 @@ public static class Help
         default-folder                  Default sldl folder name (usually the playlist name)
     ";
 
-    const string skipExistingHelp = @"
-    Skip-existing
-
-      sldl can skip downloads that exist in the output directory or a specified directory configured
-      with --music-dir.
-      The following modes are available for --skip-mode:
-
-      m3u
-        Default when checking in the output directory.  
-        Checks whether the output m3u file contains the track in the '#SLDL' line. Does not check if
-        the audio file exists or satisfies the file conditions (use m3u-cond for that). m3u and
-        m3u-cond are the only modes that can skip album downloads.
-
-      name
-        Default when checking in the music directory.  
-        Compares filenames to the track title and artist name to determine if a track already exists.
-        Specifically, a track will be skipped if there exists a file whose name contains the title
-        and whose full path contains the artist name.
-
-      tag
-        Compares file tags to the track title and artist name. A track is skipped if there is a file 
-        whose artist tag contains the track artist and whose title tag equals the track title 
-        (ignoring case and ws). Slower than name mode as it needs to read all file tags.
-
-      m3u-cond, name-cond, tag-cond
-        Same as the above modes but also checks whether the found file satisfies the configured 
-        conditions. Uses necessary conditions by default, run with --skip-existing-pref-cond to use 
-        preferred conditions instead. Equivalent to the above modes if no necessary conditions have 
-        been specified (except m3u-cond, which always checks if the file exists). 
-        May be slower and use a lot of memory for large libraries.
-    ";
-
     const string configHelp = @"
     Configuration
       Config Location:
@@ -519,7 +484,6 @@ public static class Help
             { "search", searchHelp },
             { "file-conditions", fileConditionsHelp },
             { "name-format", nameFormatHelp },
-            { "skip-existing", skipExistingHelp },
             { "config", configHelp },
         };
 

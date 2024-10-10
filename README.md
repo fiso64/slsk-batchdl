@@ -1,7 +1,9 @@
-# slsk-batchdl
+# sldl
 
 An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls.  
-See the [examples](#examples-1).
+Supports playlist and album downloads; selects the best files according to user-configured file conditions and some heuristics.
+
+See the usage [examples](#examples-1).
 
 ## Index
  - [Options](#options)
@@ -20,7 +22,6 @@ See the [examples](#examples-1).
  - [Searching](#searching)
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
- - [Skip-existing](#skip-existing)
  - [Configuration](#configuration)
  - [Examples](#examples-1)
  - [Notes](#notes)
@@ -31,16 +32,17 @@ See the [examples](#examples-1).
 
 ```
 Usage: sldl <input> [OPTIONS]
-
-  Required Arguments
+```
+#### Required Arguments
+```
     <input>                        A url, search string, or path to a local CSV file.
                                    Run --help "input" to view the accepted inputs.
                                    Can also be passed with -i, --input <input>
     --user <username>              Soulseek username
     --pass <password>              Soulseek password
 ```
+#### General Options
 ```
-  General Options
     -p, --path <path>              Download directory
     --input-type <type>            [csv|youtube|spotify|bandcamp|string|list]
     --name-format <format>         Name format for downloaded tracks. See --help name-format
@@ -51,22 +53,18 @@ Usage: sldl <input> [OPTIONS]
     -c, --config <path>            Set config file location. Set to 'none' to ignore config
     --profile <names>              Configuration profile(s) to use. See --help ""config"".
     --concurrent-downloads <num>   Max concurrent downloads (default: 2)
-    --m3u <option>                 Create an m3u playlist file in the output directory
-                                   'none' (default for string inputs): Do not create 
-                                   'index'(default): Write a single line for sldl to index 
-                                   downloaded files. Required for skip-existing=m3u.
-                                   'all': Create a playable m3u playlist file and sldl index.
-    --m3u-path <path>              Override default m3u path
-        
-    -s, --skip-existing            Skip if a track matching file conditions is found in the
-                                   output folder or your music library (if provided)
-    --skip-mode <mode>             [name|tag|m3u|name-cond|tag-cond|m3u-cond]. See --help
-                                   skip-existing.
-    --music-dir <path>             Specify to also skip downloading tracks found in a music
-                                   library. Use with --skip-existing
+    --write-playlist               Create an m3u playlist file in the output directory
+    --playlist-path <path>         Override default path for m3u playlist file
+
+    --no-skip-existing             Do not skip downloaded tracks
+    --no-write-index               Do not create a file indexing all downloaded tracks
+    --index-path <path>            Override default path for sldl index
+    --skip-check-cond              Check file conditions when skipping existing files
+    --skip-check-pref-cond         Check preferred conditions when skipping existing files  
+    --skip-music-dir <path>        Also skip downloading tracks found in a music library by
+                                   comparing filenames. Not 100% reliable.
     --skip-not-found               Skip searching for tracks that weren't found on Soulseek
-                                   during the last run. Fails are read from the m3u file.
-    --skip-existing-pref-cond      Use preferred instead of necessary conds for skip-existing    
+                                   during the last run.
         
     --listen-port <port>           Port for incoming connections (default: 49998)
     --on-complete <command>        Run a command whenever a file is downloaded.
@@ -87,8 +85,8 @@ Usage: sldl <input> [OPTIONS]
     --no-progress                  Disable progress bars/percentages, only simple printing
     --debug                        Print extra debug info
 ```
+#### Search Options
 ```
-  Searching
     --fast-search                  Begin downloading as soon as a file satisfying the preferred
                                    conditions is found. Only for normal download mode.
     --remove-ft                    Remove 'feat.' and everything after before searching
@@ -113,8 +111,8 @@ Usage: sldl <input> [OPTIONS]
     --yt-dlp-argument <str>        The command line arguments when running yt-dlp. Default:
                                    "{id}" -f bestaudio/best -cix -o "{savepath}.%(ext)s"
                                    Available vars are: {id}, {savedir}, {savepath} (w/o ext).
-                                   Note that with -x, yt-dlp will download webms in case
-                                   ffmpeg is unavailable.
+                                   Note that -x causes yt-dlp to download webms in case ffmpeg
+                                   is unavailable.
 
     --search-timeout <ms>          Max search time in ms (default: 6000)
     --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
@@ -123,23 +121,23 @@ Usage: sldl <input> [OPTIONS]
     --searches-renew-time <sec>    Controls how often available searches are replenished.
                                    See --help "search". (default: 220)
 ```
+#### Spotify Options
 ```
-  Spotify
     --spotify-id <id>              Spotify client ID
     --spotify-secret <secret>      Spotify client secret
     --spotify-token <token>        Spotify access token
     --spotify-refresh <token>      Spotify refresh token
     --remove-from-source           Remove downloaded tracks from source playlist
 ```
+#### YouTube Options 
 ```
-  YouTube
     --youtube-key <key>            Youtube data API key
     --get-deleted                  Attempt to retrieve titles of deleted videos from wayback
                                    machine. Requires yt-dlp.
     --deleted-only                 Only retrieve & download deleted music.
 ```
+#### CSV File Options
 ```
-  CSV Files
     --artist-col                   Artist column name
     --title-col                    Track title column name
     --album-col                    Album column name
@@ -154,8 +152,8 @@ Usage: sldl <input> [OPTIONS]
                                    names; attempt to parse them into title and artist names.
     --remove-from-source           Remove downloaded tracks from source CSV file
 ```
+#### File Condition Options
 ```
-  File Conditions
     --format <formats>             Accepted file format(s), comma-separated, without periods
     --length-tol <sec>             Length tolerance in seconds
     --min-bitrate <rate>           Minimum file bitrate
@@ -183,8 +181,8 @@ Usage: sldl <input> [OPTIONS]
                                    default; if --min-bitrate is set, ignores any files with
                                    unknown bitrate.
 ```
+#### Album Download Options
 ```
-  Album Download
     -a, --album                    Album download mode: Download a folder
     -t, --interactive              Interactive mode, allows to select the folder and images
     --album-track-count <num>      Specify the exact number of tracks in the album. Add a + or
@@ -201,8 +199,8 @@ Usage: sldl <input> [OPTIONS]
                                    the files instead. Set to 'disable' keep it where it is.
                                    Default: {configured output dir}/failed
 ```
+#### Aggregate Download Options
 ```
-  Aggregate Download
     -g, --aggregate                Aggregate download mode: Find and download all distinct
                                    songs associated with the provided artist, album, or title.
     --aggregate-length-tol <tol>   Max length tolerance in seconds to consider two tracks or
@@ -212,19 +210,12 @@ Usage: sldl <input> [OPTIONS]
     --relax-filtering              Slightly relax file filtering in aggregate mode to include
                                    more results
 ```
-```
-  Help
-    -h, --help [option]            [all|input|download-modes|search|name-format|
-                                   file-conditions|skip-existing|config]
-```
-```
-  Notes
-    Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
-    contains the word 'max' then the m should be uppercase. 'bitrate', 'sameplerate' and
-    'bitdepth' should be all treated as two separate words, e.g --Mbr for --max-bitrate.
+### Notes
+Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
+contains the word 'max' then the m should be uppercase. 'bitrate', 'sameplerate' and
+'bitdepth' should be all treated as two separate words, e.g --Mbr for --max-bitrate.
 
-    Flags can be explicitly disabled by setting them to false, e.g '--interactive false'
-```
+Flags can be explicitly disabled by setting them to false, e.g '--interactive false'
 
 ## Input types
 
@@ -319,7 +310,7 @@ configured conditions and can also be omitted. List input must be manually activ
 ## Download modes
 
 ### Normal
-  The program will download a single file for every input entry.
+  The default. Downloads a single file for every input entry.
 
 ### Album
   sldl will search for the album and download an entire folder including non-audio
@@ -454,36 +445,6 @@ extractor                       Name of the extractor used (CSV/Spotify/YouTube/
 default-folder                  Default sldl folder name (usually the playlist name)
 ```
 
-## Skip-existing
-
-sldl can skip downloads that exist in the output directory or a specified directory configured
-with --music-dir.
-The following modes are available for --skip-mode:
-
-### m3u
-Default when checking in the output directory.  
-Checks whether the output m3u file contains the track in the '#SLDL' line. Does not check if
-the audio file exists or satisfies the file conditions (use m3u-cond for that). m3u and
-m3u-cond are the only modes that can skip album downloads.
-
-### name
-Default when checking in the music directory.   
-  Compares filenames to the track title and artist name to determine if a track already exists.
-  Specifically, a track will be skipped if there exists a file whose name contains the title
-  and whose full path contains the artist name.
-
-### tag
-  Compares file tags to the track title and artist name. A track is skipped if there is a file
-  whose artist tag contains the track artist and whose title tag equals the track title
-  (ignoring case and ws). Slower than name mode as it needs to read all file tags.
-
-### m3u-cond, name-cond, tag-cond
-Same as the above modes but also checks whether the found file satisfies the configured 
-conditions. Uses necessary conditions by default, run with --skip-existing-pref-cond to use 
-preferred conditions instead. Equivalent to the above modes if no necessary conditions have 
-been specified (except m3u-cond, which always checks if the file exists). 
-May be slower and use a lot of memory for large libraries.
-
 ## Configuration
 ### Config Location:
   sldl will look for a file named sldl.conf in the following locations:
@@ -559,7 +520,7 @@ sldl "Some Album" --album --interactive
 
 Download the album of every song in a spotify playlist:
 ```
-sldl https://spotify/playlist/id --album --skip-existing
+sldl https://spotify/playlist/id --album
 ```
 
 <br>
@@ -572,7 +533,7 @@ sldl https://www.youtube.com/playlist/id --get-deleted --yt-dlp
 
 Print all songs by an artist which are not in your library:
 ```
-sldl "artist=MC MENTAL" --aggregate --skip-existing --music-dir "path/to/music" --print tracks-full
+sldl "artist=MC MENTAL" --aggregate --skip-music-dir "path/to/music" --print results-full
 ```
 <br>
 
@@ -584,20 +545,17 @@ sldl "artist=MC MENTAL" --aggregate --album --interactive
 #### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```bash
-echo "title=My Favorite Song, artist=Artist" >> wishlist.txt
-echo "album=Album, album-track-count=5" "format=mp3" >> wishlist.txt
+echo "Artist - My Favorite Song" >> wishlist.txt
+echo "a:Artist - Some Album, album-track-count=5" "format=flac" >> wishlist.txt
 ```
 Add a profile to your `sldl.conf`:
 ```
 [wishlist]
 input = wishlist.txt 
-input-type = list 
-skip-existing = true
-skip-mode = m3u
-m3u = index 
-m3u-path = wishlist-archive.sldl
+input-type = list
+index-path = wishlist-index.sldl
 ```
-This will create a global archive file `wishlist-archive.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded. You can also use `--skip-mode m3u-cond` together with `--skip-existing-pref-cond` and specify some preferred conditions to (e.g) only stop searching for an item once a lossless version is downloaded.  
+This will create a global archive file `wishlist-index.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded. If you want to continue searching until a version satisfying the preferred conditions is downloaded, also add `skip-check-pref-cond = true` (note that this requires the files to remain in the same spot after being downloaded).  
 Finally, set up a cron job (or a scheduled task on windows) to periodically run sldl with the following option:
 ```
 sldl --profile wishlist

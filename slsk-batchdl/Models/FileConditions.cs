@@ -6,21 +6,20 @@ namespace Models
 {
     public class FileConditions
     {
-        public int LengthTolerance = -1;
-        public int MinBitrate = -1;
-        public int MaxBitrate = -1;
-        public int MinSampleRate = -1;
-        public int MaxSampleRate = -1;
-        public int MinBitDepth = -1;
-        public int MaxBitDepth = -1;
-        public bool StrictTitle = false;
-        public bool StrictArtist = false;
-        public bool StrictAlbum = false;
-        public string[] Formats = Array.Empty<string>();
-        public string[] BannedUsers = Array.Empty<string>();
-        public bool StrictStringDiacrRemove = true;
-        public bool AcceptNoLength = true;
-        public bool AcceptMissingProps = true;
+        public int? LengthTolerance;
+        public int? MinBitrate;
+        public int? MaxBitrate;
+        public int? MinSampleRate;
+        public int? MaxSampleRate;
+        public int? MinBitDepth;
+        public int? MaxBitDepth;
+        public bool? StrictTitle;
+        public bool? StrictArtist;
+        public bool? StrictAlbum;
+        public string[]? Formats;
+        public string[]? BannedUsers;
+        public bool? AcceptNoLength;
+        public bool? AcceptMissingProps;
 
         public FileConditions() { }
 
@@ -38,14 +37,20 @@ namespace Models
             MinBitDepth = other.MinBitDepth;
             MaxBitDepth = other.MaxBitDepth;
             AcceptMissingProps = other.AcceptMissingProps;
-            StrictStringDiacrRemove = other.StrictStringDiacrRemove;
-            Formats = other.Formats.ToArray();
-            BannedUsers = other.BannedUsers.ToArray();
+            Formats = other.Formats?.ToArray();
+            BannedUsers = other.BannedUsers?.ToArray();
         }
 
-        public FileConditionsMod ApplyMod(FileConditionsMod mod)
+        public FileConditions With(FileConditions other)
         {
-            var undoMod = new FileConditionsMod();
+            var res = new FileConditions(this);
+            res.AddConditions(other);
+            return res;
+        }
+
+        public FileConditions AddConditions(FileConditions mod)
+        {
+            var undoMod = new FileConditions();
 
             if (mod.LengthTolerance != null)
             {
@@ -107,11 +112,6 @@ namespace Models
                 undoMod.BannedUsers = BannedUsers;
                 BannedUsers = mod.BannedUsers;
             }
-            if (mod.StrictStringDiacrRemove != null)
-            {
-                undoMod.StrictStringDiacrRemove = StrictStringDiacrRemove;
-                StrictStringDiacrRemove = mod.StrictStringDiacrRemove.Value;
-            }
             if (mod.AcceptNoLength != null)
             {
                 undoMod.AcceptNoLength = AcceptNoLength;
@@ -126,38 +126,37 @@ namespace Models
             return undoMod;
         }
 
-
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (obj is FileConditions other)
-            {
-                return LengthTolerance == other.LengthTolerance &&
-                       MinBitrate == other.MinBitrate &&
-                       MaxBitrate == other.MaxBitrate &&
-                       MinSampleRate == other.MinSampleRate &&
-                       MaxSampleRate == other.MaxSampleRate &&
-                       MinBitDepth == other.MinBitDepth &&
-                       MaxBitDepth == other.MaxBitDepth &&
-                       StrictTitle == other.StrictTitle &&
-                       StrictArtist == other.StrictArtist &&
-                       StrictAlbum == other.StrictAlbum &&
-                       StrictStringDiacrRemove == other.StrictStringDiacrRemove &&
-                       AcceptNoLength == other.AcceptNoLength &&
-                       AcceptMissingProps == other.AcceptMissingProps &&
-                       Formats.SequenceEqual(other.Formats) &&
-                       BannedUsers.SequenceEqual(other.BannedUsers);
-            }
-            return false;
+            if (obj == null || GetType() != obj.GetType())
+                return false;
+
+            var other = (FileConditions)obj;
+
+            return LengthTolerance == other.LengthTolerance
+                && MinBitrate == other.MinBitrate
+                && MaxBitrate == other.MaxBitrate
+                && MinSampleRate == other.MinSampleRate
+                && MaxSampleRate == other.MaxSampleRate
+                && MinBitDepth == other.MinBitDepth
+                && MaxBitDepth == other.MaxBitDepth
+                && StrictTitle == other.StrictTitle
+                && StrictArtist == other.StrictArtist
+                && StrictAlbum == other.StrictAlbum
+                && AcceptNoLength == other.AcceptNoLength
+                && AcceptMissingProps == other.AcceptMissingProps
+                && ((Formats == null && other.Formats == null) || (Formats != null && other.Formats != null && Formats.SequenceEqual(other.Formats)))
+                && ((BannedUsers == null && other.BannedUsers == null) || (BannedUsers != null && other.BannedUsers != null && BannedUsers.SequenceEqual(other.BannedUsers)));
         }
 
         public void UnsetClientSpecificFields()
         {
-            MinBitrate = -1;
-            MaxBitrate = -1;
-            MinSampleRate = -1;
-            MaxSampleRate = -1;
-            MinBitDepth = -1;
-            MaxBitDepth = -1;
+            MinBitrate = null;
+            MaxBitrate = null;
+            MinSampleRate = null;
+            MaxSampleRate = null;
+            MinBitDepth = null;
+            MaxBitDepth = null;
         }
 
         public bool FileSatisfies(Soulseek.File file, Track track, SearchResponse? response)
@@ -186,27 +185,27 @@ namespace Models
 
         public bool StrictTitleSatisfies(string fname, string tname, bool noPath = true)
         {
-            if (!StrictTitle || tname.Length == 0)
+            if (StrictTitle == null || !StrictTitle.Value || tname.Length == 0)
                 return true;
 
             fname = noPath ? Utils.GetFileNameWithoutExtSlsk(fname) : fname;
-            return StrictString(fname, tname, StrictStringDiacrRemove, ignoreCase: true);
+            return StrictString(fname, tname, diacrRemove: true, ignoreCase: true);
         }
 
         public bool StrictArtistSatisfies(string fname, string aname)
         {
-            if (!StrictArtist || aname.Length == 0)
+            if (StrictArtist == null || !StrictArtist.Value || aname.Length == 0)
                 return true;
 
-            return StrictString(fname, aname, StrictStringDiacrRemove, ignoreCase: true, boundarySkipWs: false);
+            return StrictString(fname, aname, diacrRemove: true, ignoreCase: true, boundarySkipWs: false);
         }
 
         public bool StrictAlbumSatisfies(string fname, string alname)
         {
-            if (!StrictAlbum || alname.Length == 0)
+            if (StrictAlbum == null || !StrictAlbum.Value || alname.Length == 0)
                 return true;
 
-            return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, StrictStringDiacrRemove, ignoreCase: true, boundarySkipWs: true);
+            return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, diacrRemove: true, ignoreCase: true, boundarySkipWs: true);
         }
 
         public static string StrictStringPreprocess(string str, bool diacrRemove = true)
@@ -246,7 +245,7 @@ namespace Models
 
         public bool FormatSatisfies(string fname)
         {
-            if (Formats.Length == 0)
+            if (Formats == null || Formats.Length == 0)
                 return true;
 
             string ext = Path.GetExtension(fname).TrimStart('.').ToLower();
@@ -258,10 +257,10 @@ namespace Models
         public bool LengthToleranceSatisfies(SimpleFile file, int wantedLength) => LengthToleranceSatisfies(file.Length, wantedLength);
         public bool LengthToleranceSatisfies(int? length, int wantedLength)
         {
-            if (LengthTolerance < 0 || wantedLength < 0)
+            if (LengthTolerance == null || LengthTolerance < 0 || wantedLength < 0)
                 return true;
             if (length == null || length < 0)
-                return AcceptNoLength && AcceptMissingProps;
+                return AcceptNoLength == null || AcceptNoLength.Value;
             return Math.Abs((int)length - wantedLength) <= LengthTolerance;
         }
 
@@ -289,20 +288,20 @@ namespace Models
             return BoundCheck(bitdepth, MinBitDepth, MaxBitDepth);
         }
 
-        public bool BoundCheck(int? num, int min, int max)
+        public bool BoundCheck(int? num, int? min, int? max)
         {
-            if (max < 0 && min < 0)
+            if (max == null && min == null)
                 return true;
-            if (num == null || num < 0)
-                return AcceptMissingProps;
-            if (num < min || max != -1 && num > max)
+            if (num == null)
+                return AcceptMissingProps == null || AcceptMissingProps.Value;
+            if ((min != null && num < min) || (max != null && num > max))
                 return false;
             return true;
         }
 
         public bool BannedUsersSatisfies(SearchResponse? response)
         {
-            return response == null || !BannedUsers.Any(x => x == response.Username);
+            return response == null || BannedUsers == null || !BannedUsers.Any(x => x == response.Username);
         }
 
         public string GetNotSatisfiedName(Soulseek.File file, Track track, SearchResponse? response)
@@ -329,25 +328,5 @@ namespace Models
                 return "BitDepth fails";
             return "Satisfied";
         }
-    }
-
-
-    public class FileConditionsMod
-    {
-        public int? LengthTolerance = null;
-        public int? MinBitrate = null;
-        public int? MaxBitrate = null;
-        public int? MinSampleRate = null;
-        public int? MaxSampleRate = null;
-        public int? MinBitDepth = null;
-        public int? MaxBitDepth = null;
-        public bool? StrictTitle = null;
-        public bool? StrictArtist = null;
-        public bool? StrictAlbum = null;
-        public string[]? Formats = null;
-        public string[]? BannedUsers = null;
-        public bool? StrictStringDiacrRemove = null;
-        public bool? AcceptNoLength = null;
-        public bool? AcceptMissingProps = null;
     }
 }

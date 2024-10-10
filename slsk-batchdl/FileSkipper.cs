@@ -6,17 +6,15 @@ namespace FileSkippers
 {
     public static class FileSkipperRegistry
     {
-        public static FileSkipper GetSkipper(SkipMode mode, string dir, FileConditions conditions, M3uEditor m3uEditor)
+        public static FileSkipper GetSkipper(SkipMode mode, string dir, FileConditions? conditions, M3uEditor indexEditor)
         {
-            bool noConditions = conditions.Equals(new FileConditions());
+            bool useConditions = conditions != null && !conditions.Equals(new FileConditions());
             return mode switch
             {
-                SkipMode.Name => new NameSkipper(dir),
-                SkipMode.NameCond => noConditions ? new NameSkipper(dir) : new NameConditionalSkipper(dir, conditions),
-                SkipMode.Tag => new TagSkipper(dir),
-                SkipMode.TagCond => noConditions ? new TagSkipper(dir) : new TagConditionalSkipper(dir, conditions),
-                SkipMode.M3u => new M3uSkipper(m3uEditor, false),
-                SkipMode.M3uCond => noConditions ? new M3uSkipper(m3uEditor, true) : new M3uConditionalSkipper(m3uEditor, conditions),
+                SkipMode.Name => useConditions ? new NameConditionalSkipper(dir, conditions) : new NameSkipper(dir),
+                SkipMode.Tag => useConditions ? new TagConditionalSkipper(dir, conditions) : new TagSkipper(dir),
+                SkipMode.Index => useConditions ? new IndexConditionalSkipper(indexEditor, conditions) : new IndexSkipper(indexEditor, conditions != null),
+                _ => throw new ArgumentException("Invalid SkipMode")
             };
         }
     }
@@ -306,14 +304,14 @@ namespace FileSkippers
         }
     }
 
-    public class M3uSkipper : FileSkipper
+    public class IndexSkipper : FileSkipper
     {
-        M3uEditor m3uEditor;
+        M3uEditor indexEditor;
         bool checkFileExists;
         
-        public M3uSkipper(M3uEditor m3UEditor, bool checkFileExists) 
+        public IndexSkipper(M3uEditor m3UEditor, bool checkFileExists) 
         {
-            this.m3uEditor = m3UEditor;
+            this.indexEditor = m3UEditor;
             this.checkFileExists = checkFileExists;
             IndexIsBuilt = true;
         }
@@ -321,7 +319,7 @@ namespace FileSkippers
         public override bool TrackExists(Track track, out string? foundPath)
         {
             foundPath = null;
-            var t = m3uEditor.PreviousRunResult(track);
+            var t = indexEditor.PreviousRunResult(track);
             if (t != null && (t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
             {
                 if (checkFileExists)
@@ -348,14 +346,14 @@ namespace FileSkippers
         }
     }
 
-    public class M3uConditionalSkipper : FileSkipper
+    public class IndexConditionalSkipper : FileSkipper
     {
-        M3uEditor m3uEditor;
+        M3uEditor indexEditor;
         FileConditions conditions;
 
-        public M3uConditionalSkipper(M3uEditor m3UEditor, FileConditions conditions)
+        public IndexConditionalSkipper(M3uEditor m3UEditor, FileConditions conditions)
         {
-            this.m3uEditor = m3UEditor;
+            this.indexEditor = m3UEditor;
             this.conditions = conditions;
             IndexIsBuilt = true;
         }
@@ -363,7 +361,7 @@ namespace FileSkippers
         public override bool TrackExists(Track track, out string? foundPath)
         {
             foundPath = null;
-            var t = m3uEditor.PreviousRunResult(track);
+            var t = indexEditor.PreviousRunResult(track);
 
             if (t == null || t.DownloadPath.Length == 0)
                 return false;

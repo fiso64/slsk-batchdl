@@ -704,7 +704,7 @@ static class Search
                 .OrderByDescending(x => userSuccessCount.GetValueOrDefault(x.response.Username, 0) > Config.I.downrankOn)
                 .ThenByDescending(x => Config.I.necessaryCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => Config.I.preferredCond.BannedUsersSatisfies(x.response))
-                .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || Config.I.preferredCond.AcceptNoLength)
+                .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || Config.I.preferredCond.AcceptNoLength == null || Config.I.preferredCond.AcceptNoLength.Value)
                 .ThenByDescending(x => !useBracketCheck || FileConditions.BracketCheck(track, inferredTrack(x).Item1)) // downrank result if it contains '(' or '[' and the title does not (avoid remixes)
                 .ThenByDescending(x => Config.I.preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
                 .ThenByDescending(x => !albumMode || Config.I.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))

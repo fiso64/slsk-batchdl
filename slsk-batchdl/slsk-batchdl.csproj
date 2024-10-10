@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
      <Nullable>enable</Nullable> 
     <AssemblyName>sldl</AssemblyName>
-	<VersionPrefix>2.3</VersionPrefix>
+	<VersionPrefix>2.3.1</VersionPrefix>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

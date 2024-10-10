@@ -1,23 +1,28 @@
 ﻿using Models;
 using Enums;
 using System.Text;
+using System.Diagnostics;
 
 
-public class M3uEditor
+public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 {
     public string path { get; private set; }
     public M3uOption option = M3uOption.Index;
     string parent;
     List<string> lines;
     bool needFirstUpdate = false;
+    int offset = 0;
     readonly TrackLists trackLists;
     readonly Dictionary<string, Track> previousRunData = new(); // { track.ToKey(), track }
 
-    public M3uEditor(TrackLists trackLists, M3uOption option)
+    private readonly object locker = new();
+
+    public M3uEditor(TrackLists trackLists, M3uOption option, int offset = 0)
     {
         this.trackLists = trackLists;
         this.option = option;
-        this.needFirstUpdate = option == M3uOption.All;
+        this.offset = offset;
+        this.needFirstUpdate = option == M3uOption.All || option == M3uOption.Playlist;
     }
 
     public M3uEditor(string path, TrackLists trackLists, M3uOption option) : this(trackLists, option)
@@ -123,10 +128,10 @@ public class M3uEditor
         if (option == M3uOption.None)
             return;
 
-        lock (trackLists)
+        lock (trackLists) lock (locker)
         {
             bool needUpdate = false;
-            int index = 1;
+            int index = 1 + offset;
 
             bool updateLine(string newLine)
             {
@@ -146,8 +151,11 @@ public class M3uEditor
                     || Utils.NormalizedPath(indexTrack.DownloadPath) != Utils.NormalizedPath(track.DownloadPath);
             }
 
-            void updateTrackIfNeeded(Track track)
+            void updateIndexTrackIfNeeded(Track track)
             {
+                if (option == M3uOption.Playlist)
+                    return;
+
                 var key = track.ToKey();
 
                 previousRunData.TryGetValue(key, out Track? indexTrack);
@@ -174,7 +182,7 @@ public class M3uEditor
                 {
                     if (tle.source.State != TrackState.Initial)
                     {
-                        updateTrackIfNeeded(tle.source);
+                        updateIndexTrackIfNeeded(tle.source);
                     }
                 }
 
@@ -184,12 +192,19 @@ public class M3uEditor
                     {
                         var track = tle.list[k][j];
 
-                        if (track.IsNotAudio || track.State == TrackState.Initial)
+                        if (track.IsNotAudio)
+                        {
                             continue;
+                        }
+                        else if (track.State == TrackState.Initial)
+                        {
+                            index++;
+                            continue;
+                        }
 
-                        updateTrackIfNeeded(track);
+                        updateIndexTrackIfNeeded(track);
 
-                        if (option == M3uOption.All)
+                        if (option == M3uOption.All || option == M3uOption.Playlist)
                         {
                             needUpdate |= updateLine(TrackToLine(track));
                             index++;
@@ -206,22 +221,42 @@ public class M3uEditor
         }
     }
 
+    class Writer // temporary fix because streamwriter sometimes writes garbled text (for unknown reasons)
+    {
+        private StringBuilder sb = new();
+        public void Write(string s) => sb.Append(s);
+        public void Write(char c) => sb.Append(c);
+        public override string ToString() => sb.ToString();
+    }
+
     private void WriteAllLines()
     {
         if (!Directory.Exists(parent))
             Directory.CreateDirectory(parent);
 
-        using var fileStream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
-        using var writer = new StreamWriter(fileStream);
-        WriteSldlLine(writer);
-        foreach (var line in lines)
+        //using var fileStream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write/*, FileShare.ReadWrite*/);
+        //using var writer = new StreamWriter(fileStream, encoding: Encoding.UTF8);
+        //using var writer = TextWriter.Synchronized(new StreamWriter(fileStream, encoding: Encoding.UTF8));
+        var writer = new Writer();
+
+        if (option != M3uOption.Playlist)
         {
-            writer.Write(line);
-            writer.Write('\n');
+            WriteSldlLine(writer);
         }
+        
+        if (option != M3uOption.Index)
+        {
+            foreach (var line in lines)
+            {
+                writer.Write(line);
+                writer.Write('\n');
+            }
+        }
+
+        File.WriteAllText(path, writer.ToString());
     }
 
-    private void WriteSldlLine(StreamWriter writer)
+    private void WriteSldlLine(Writer writer)
     {
         // Format:
         // #SLDL:<trackinfo>;<trackinfo>; ... 
@@ -327,7 +362,7 @@ public class M3uEditor
         if (!File.Exists(path))
             return "";
         using var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var streamReader = new StreamReader(fileStream);
+        using var streamReader = new StreamReader(fileStream, encoding: Encoding.UTF8);
         return streamReader.ReadToEnd();
     }
 

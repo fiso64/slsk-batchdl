@@ -58,6 +58,7 @@ namespace Extractors
                     };
                     var tle = new TrackListEntry(track);
                     tle.defaultFolderName = track.Artist;
+                    tle.enablesIndexByDefault = true;
                     trackLists.AddEntry(tle);
                 }
             }

@@ -64,6 +64,7 @@ namespace Extractors
 
             var tle = new TrackListEntry(TrackType.Normal);
 
+            tle.enablesIndexByDefault = true;
             tle.defaultFolderName = name;
             tle.list.Add(tracks);
 

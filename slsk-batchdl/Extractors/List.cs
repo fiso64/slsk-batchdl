@@ -68,6 +68,7 @@ namespace Extractors
                         tle.additionalPrefConds = Config.ParseConditions(fields[2]);
 
                     tle.defaultFolderName = foldername;
+                    tle.enablesIndexByDefault = true;
                 }
 
                 if (tl.lists.Count == 1)

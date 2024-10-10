@@ -282,9 +282,8 @@ namespace Tests
         {
             SetCurrentTest("TestM3uEditor");
 
-            Config.I.m3uOption = M3uOption.All;
-            Config.I.skipMode = SkipMode.M3u;
-            Config.I.musicDir = "";
+            Config.I.skipMode = SkipMode.Index;
+            Config.I.skipMusicDir = "";
             Config.I.printOption = PrintOption.Tracks | PrintOption.Full;
             Config.I.skipExisting = true;
 
@@ -327,9 +326,9 @@ namespace Tests
             foreach (var t in toBeDownloadedInitial)
                 trackLists.AddTrackToLast(t);
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
+            Program.indexEditor = new M3uEditor(path, trackLists, M3uOption.All);
 
-            Program.outputDirSkipper = new M3uSkipper(Program.m3uEditor, false);
+            Program.outputDirSkipper = new IndexSkipper(Program.indexEditor, false);
 
             var notFound = (List<Track>)ProgramInvoke("DoSkipNotFound", new object[] { trackLists[0].list[0] });
             var existing = (List<Track>)ProgramInvoke("DoSkipExisting", new object[] { trackLists[0].list[0] });
@@ -341,7 +340,7 @@ namespace Tests
 
             Printing.PrintTracksTbd(toBeDownloaded, existing, notFound, TrackType.Normal);
 
-            Program.m3uEditor.Update();
+            Program.indexEditor.Update();
             string output = File.ReadAllText(path);
             string need =
                 "#SLDL:./file1.5,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;,,,,-1,0,0,0;" +
@@ -360,7 +359,7 @@ namespace Tests
             toBeDownloaded[1].FailureReason = FailureReason.NoSuitableFileFound;
             existing[1].DownloadPath = "/other/new/file/path";
 
-            Program.m3uEditor.Update();
+            Program.indexEditor.Update();
             output = File.ReadAllText(path);
             need =
                 "#SLDL:/other/new/file/path,\"Artist, 1.5\",,\"Title, , 1.5\",-1,0,3,0;path/to/file1,\"Artist, 1\",,\"Title, , 1\",-1,0,3,0;path/to/file2,\"Artist, 2\",,Title2,-1,0,3,0;,\"Artist; ,3\",,Title3 ;a,-1,0,4,0;,\"Artist,,, ;4\",,Title4,-1,0,4,3;" +
@@ -379,11 +378,11 @@ namespace Tests
             Console.WriteLine();
             Console.WriteLine(output);
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
+            Program.indexEditor = new M3uEditor(path, trackLists, M3uOption.All);
 
             foreach (var t in trackLists.Flattened(false, false))
             {
-                Program.m3uEditor.TryGetPreviousRunResult(t, out var prev);
+                Program.indexEditor.TryGetPreviousRunResult(t, out var prev);
                 Assert(prev != null);
                 Assert(prev.ToKey() == t.ToKey());
                 Assert(prev.DownloadPath == t.DownloadPath);
@@ -391,7 +390,7 @@ namespace Tests
                 Assert(prev.FailureReason == t.FailureReason);
             }
 
-            Program.m3uEditor.Update();
+            Program.indexEditor.Update();
             output = File.ReadAllText(path);
             Assert(output == need);
 
@@ -408,9 +407,8 @@ namespace Tests
                 trackLists.AddEntry(new TrackListEntry(t));
 
             File.WriteAllText(path, "");
-            Config.I.m3uOption = M3uOption.Index;
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
-            Program.m3uEditor.Update();
+            Program.indexEditor = new M3uEditor(path, trackLists, M3uOption.Index);
+            Program.indexEditor.Update();
 
             Assert(File.ReadAllText(path) == "");
 
@@ -420,13 +418,13 @@ namespace Tests
             test[1].FailureReason = FailureReason.NoSuitableFileFound;
             test[2].State = TrackState.AlreadyExists;
 
-            Program.m3uEditor.Update();
+            Program.indexEditor.Update();
 
-            Program.m3uEditor = new M3uEditor(path, trackLists, Config.I.m3uOption);
+            Program.indexEditor = new M3uEditor(path, trackLists, M3uOption.Index);
 
             foreach (var t in test)
             {
-                Program.m3uEditor.TryGetPreviousRunResult(t, out var tt);
+                Program.indexEditor.TryGetPreviousRunResult(t, out var tt);
                 Assert(tt != null);
                 Assert(tt.ToKey() == t.ToKey());
                 t.DownloadPath = "this should not change tt.DownloadPath";

@@ -21,11 +21,12 @@ static partial class Program
     public static bool skipUpdate = false;
     public static bool initialized = false;
     public static IExtractor? extractor;
-    public static FileSkipper? outputDirSkipper;
-    public static FileSkipper? musicDirSkipper;
     public static SoulseekClient? client;
     public static TrackLists? trackLists;
-    public static M3uEditor? m3uEditor;
+    public static M3uEditor? playlistEditor;
+    public static M3uEditor? indexEditor;
+    public static FileSkipper? outputDirSkipper = null;
+    public static FileSkipper? musicDirSkipper = null;
     public static readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public static readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public static readonly ConcurrentDictionary<string, int> userSuccessCount = new();
@@ -53,7 +54,8 @@ static partial class Program
         trackLists.UpgradeListTypes(Config.I.aggregate, Config.I.album);
         trackLists.SetListEntryOptions();
 
-        m3uEditor = new M3uEditor(trackLists, Config.I.m3uOption);
+        playlistEditor = new M3uEditor(trackLists, Config.I.writePlaylist ? M3uOption.Playlist : M3uOption.None, Config.I.offset);
+        indexEditor = new M3uEditor(trackLists, Config.I.writeIndex ? M3uOption.Index : M3uOption.None);
 
         await MainLoop();
 
@@ -108,16 +110,25 @@ static partial class Program
     {
         if (Config.I.skipExisting)
         {
-            var cond = Config.I.skipExistingPrefCond ? Config.I.preferredCond : Config.I.necessaryCond;
+            FileConditions? cond = null;
 
-            outputDirSkipper = FileSkipperRegistry.GetSkipper(Config.I.skipMode, Config.I.parentDir, cond, m3uEditor);
-
-            if (Config.I.musicDir.Length > 0)
+            if (Config.I.skipCheckPrefCond)
             {
-                if (!Directory.Exists(Config.I.musicDir))
+                cond = Config.I.necessaryCond.With(Config.I.preferredCond);
+            }
+            else if (Config.I.skipCheckCond)
+            {
+                cond = Config.I.necessaryCond;
+            }
+
+            outputDirSkipper = FileSkipperRegistry.GetSkipper(Config.I.skipMode, Config.I.parentDir, cond, indexEditor);
+
+            if (Config.I.skipMusicDir.Length > 0)
+            {
+                if (!Directory.Exists(Config.I.skipMusicDir))
                     Console.WriteLine("Error: Music directory does not exist");
                 else
-                    musicDirSkipper = FileSkipperRegistry.GetSkipper(Config.I.skipModeMusicDir, Config.I.musicDir, cond, m3uEditor);
+                    musicDirSkipper = FileSkipperRegistry.GetSkipper(Config.I.skipModeMusicDir, Config.I.skipMusicDir, cond, indexEditor);
             }
         }
     }
@@ -176,15 +187,30 @@ static partial class Program
 
         Config.I.AddTemporaryConditions(tle.additionalConds, tle.additionalPrefConds);
 
-        string m3uPath;
+        string m3uPath, indexPath;
 
         if (Config.I.m3uFilePath.Length > 0)
             m3uPath = Config.I.m3uFilePath;
         else
-            m3uPath = Path.Join(Config.I.parentDir, tle.defaultFolderName, "sldl.m3u8");
+            m3uPath = Path.Join(Config.I.parentDir, tle.defaultFolderName, "_playlist.m3u8");
 
-        m3uEditor.option = Config.I.m3uOption;
-        m3uEditor.SetPathAndLoad(m3uPath); // does nothing if the path is the same
+        if (Config.I.indexFilePath.Length > 0)
+            indexPath = Config.I.indexFilePath;
+        else
+            indexPath = Path.Join(Config.I.parentDir, tle.defaultFolderName, "_index.sldl");
+
+        indexEditor.option = Config.I.writeIndex ? M3uOption.Index : M3uOption.None;
+        indexEditor.SetPathAndLoad(indexPath);  // does nothing if the path is unchanged
+
+        if (Config.I.writePlaylist)
+        {
+            playlistEditor.option = M3uOption.Playlist;
+            playlistEditor.SetPathAndLoad(m3uPath);
+        }
+        else
+        {
+            playlistEditor.option = M3uOption.None;
+        }
 
         if (changed || isFirstEntry)
         {
@@ -305,7 +331,7 @@ static partial class Program
                     {
                         tle.source.State = TrackState.Failed;
                         tle.source.FailureReason = FailureReason.NoSuitableFileFound;
-                        m3uEditor.Update();
+                        indexEditor.Update();
                     }
                     
                     continue;
@@ -329,7 +355,8 @@ static partial class Program
                 continue;
             }
 
-            m3uEditor.Update();
+            indexEditor.Update();
+            playlistEditor.Update();
 
             if (tle.source.Type != TrackType.Album)
             {
@@ -427,7 +454,7 @@ static partial class Program
 
     static bool SetNotFoundLastTime(Track track)
     {
-        if (m3uEditor.TryGetPreviousRunResult(track, out var prevTrack))
+        if (indexEditor.TryGetPreviousRunResult(track, out var prevTrack))
         {
             if (prevTrack.FailureReason == FailureReason.NoSuitableFileFound || prevTrack.State == TrackState.NotFoundLastTime)
             {
@@ -451,7 +478,8 @@ static partial class Program
         {
             using var cts = new CancellationTokenSource();
             await DownloadTask(tle, track, semaphore, organizer, cts, false, true, true);
-            m3uEditor.Update();
+            indexEditor.Update();
+            playlistEditor.Update();
         });
 
         await Task.WhenAll(downloadTasks);
@@ -492,7 +520,7 @@ static partial class Program
                 PrintAlbum(tracks);
             }
 
-            var semaphore = new SemaphoreSlim(Config.I.concurrentProcesses == -2 ? 1 : 999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
+            var semaphore = new SemaphoreSlim(999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
             using var cts = new CancellationTokenSource();
 
             try
@@ -548,7 +576,8 @@ static partial class Program
             organizer.OrganizeAlbum(tracks, additionalImages);
         }
 
-        m3uEditor.Update();
+        indexEditor.Update();
+        playlistEditor.Update();
     }
 
 
@@ -822,7 +851,10 @@ static partial class Program
 
         if (track.State == TrackState.Downloaded && organize)
         {
-            organizer?.OrganizeAudio(track, chosenFile);
+            lock (trackLists)
+            {
+                organizer?.OrganizeAudio(track, chosenFile);
+            }
         }
 
         if (Config.I.onComplete.Length > 0)

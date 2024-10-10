@@ -34,6 +34,7 @@ namespace Extractors
             foreach (var tle in trackLists.lists)
             {
                 tle.defaultFolderName = csvName;
+                tle.enablesIndexByDefault = true;
             }
 
             return trackLists;
