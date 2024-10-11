@@ -245,10 +245,12 @@ public class Config
         
         nameFormat = nameFormat.Trim();
 
-        parentDir = Utils.ExpandUser(parentDir);
-        m3uFilePath = Utils.ExpandUser(m3uFilePath);
-        skipMusicDir = Utils.ExpandUser(skipMusicDir);
-        failedAlbumPath = Utils.ExpandUser(failedAlbumPath);
+        confPath        = Path.GetFullPath(Utils.ExpandUser(confPath));
+        parentDir       = Path.GetFullPath(Utils.ExpandUser(parentDir));
+        m3uFilePath     = Path.GetFullPath(Utils.ExpandUser(m3uFilePath));
+        indexFilePath   = Path.GetFullPath(Utils.ExpandUser(indexFilePath));
+        skipMusicDir    = Path.GetFullPath(Utils.ExpandUser(skipMusicDir));
+        failedAlbumPath = Path.GetFullPath(Utils.ExpandUser(failedAlbumPath));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");
