@@ -16,12 +16,12 @@ namespace Extractors
 
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
-            if (!File.Exists(input))
-                throw new FileNotFoundException($"List file '{input}' not found");
+            listFilePath = Utils.ExpandUser(input);
+            
+            if (!File.Exists(listFilePath))
+                throw new FileNotFoundException($"List file '{listFilePath}' not found");
 
-            listFilePath = input;
-
-            var lines = File.ReadAllLines(input);
+            var lines = File.ReadAllLines(listFilePath);
 
             var trackLists = new TrackLists();
 
@@ -30,7 +30,7 @@ namespace Extractors
             int count = 0;
             int added = 0;
 
-            string foldername = Path.GetFileNameWithoutExtension(input);
+            string foldername = Path.GetFileNameWithoutExtension(listFilePath);
 
             for (int i = start; i < lines.Length && i >= 0; i += step)
             {

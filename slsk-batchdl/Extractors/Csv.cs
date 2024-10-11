@@ -17,19 +17,19 @@ namespace Extractors
 
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
         {
-            if (!File.Exists(input))
-                throw new FileNotFoundException($"CSV file '{input}' not found");
+            csvFilePath = Utils.ExpandUser(input);
 
-            csvFilePath = input;
+            if (!File.Exists(csvFilePath))
+                throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(input, Config.I.artistCol, Config.I.titleCol, Config.I.lengthCol, 
+            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, Config.I.artistCol, Config.I.titleCol, Config.I.lengthCol, 
                 Config.I.albumCol, Config.I.descCol, Config.I.ytIdCol, Config.I.trackCountCol, Config.I.timeUnit, Config.I.ytParse);
 
             if (reverse)
                 tracks.Reverse();
 
             var trackLists = TrackLists.FromFlattened(tracks.Skip(offset).Take(maxTracks));
-            var csvName = Path.GetFileNameWithoutExtension(input);
+            var csvName = Path.GetFileNameWithoutExtension(csvFilePath);
             
             foreach (var tle in trackLists.lists)
             {
