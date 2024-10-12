@@ -58,6 +58,14 @@ public static class Utils
         }
     }
 
+    public static string GetFullPath(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return path;
+
+        return Path.GetFullPath(path);
+    }
+
     public static string GetAsPathSlsk(string fname)
     {
         return fname.Replace('\\', Path.DirectorySeparatorChar);
@@ -620,6 +628,9 @@ public static class Utils
 
     public static string NormalizedPath(string path)
     {
+        if (string.IsNullOrEmpty(path))
+            return path;
+
         return path.Replace('\\', '/').TrimEnd('/').Trim();
     }
 

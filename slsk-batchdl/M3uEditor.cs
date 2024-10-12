@@ -32,10 +32,13 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
     public void SetPathAndLoad(string path)
     {
+        if (string.IsNullOrEmpty(path))
+            return;
+
         if (this.path != null && Utils.NormalizedPath(this.path) == Utils.NormalizedPath(path))
             return;
 
-        this.path = Path.GetFullPath(path);
+        this.path = Utils.GetFullPath(path);
         parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
 
         lines = ReadAllLines().ToList();

@@ -256,7 +256,7 @@ static class Search
             }
         }
 
-        return (Path.GetFullPath(saveFilePath), chosenFile);
+        return (Utils.GetFullPath(saveFilePath), chosenFile);
     }
 
 
