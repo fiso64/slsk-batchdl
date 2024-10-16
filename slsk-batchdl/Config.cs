@@ -908,11 +908,11 @@ public class Config
                         listenPort = int.Parse(args[++i]);
                         break;
                     case "--st":
-                    case "--timeout":
+                    case "--search-time":
                     case "--search-timeout":
                         searchTimeout = int.Parse(args[++i]);
                         break;
-                    case "--mst":
+                    case "--Mst":
                     case "--stale-time":
                     case "--max-stale-time":
                         maxStaleTime = int.Parse(args[++i]);
@@ -932,7 +932,7 @@ public class Config
                     case "--searches-renew-time":
                         searchRenewTime = int.Parse(args[++i]);
                         break;
-                    case "--mr":
+                    case "--Mr":
                     case "--retries":
                     case "--max-retries":
                         maxRetriesPerTrack = int.Parse(args[++i]);
