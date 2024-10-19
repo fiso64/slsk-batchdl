@@ -45,7 +45,7 @@ public static class Printing
     }
 
 
-    public static void PrintTracks(List<Track> tracks, int number = int.MaxValue, bool fullInfo = false, bool pathsOnly = false, bool showAncestors = true, bool infoFirst = false, bool showUser = true)
+    public static void PrintTracks(List<Track> tracks, int number = int.MaxValue, bool fullInfo = false, bool pathsOnly = false, bool showAncestors = true, bool infoFirst = false, bool showUser = true, bool indices = false)
     {
         if (tracks.Count == 0)
             return;
@@ -63,6 +63,12 @@ public static class Printing
             {
                 foreach (var x in tracks[i].Downloads)
                 {
+                    if (indices)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"[{i + 1:D2}]");
+                        Console.ResetColor(); 
+                    }
                     if (ancestor.Length == 0)
                         Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
                     else
@@ -235,7 +241,7 @@ public static class Printing
     }
 
 
-    public static void PrintAlbum(List<Track> albumTracks)
+    public static void PrintAlbum(List<Track> albumTracks, bool indices = false)
     {
         if (albumTracks.Count == 0 && albumTracks[0].Downloads.Count == 0)
             return;
@@ -245,7 +251,7 @@ public static class Printing
         var (parents, props) = FolderInfo(albumTracks.Select(x => x.FirstDownload));
 
         WriteLine($"User  : {userInfo}\nFolder: {parents}\nProps : {props}", ConsoleColor.White);
-        PrintTracks(albumTracks.ToList(), pathsOnly: true, showAncestors: false, showUser: false);
+        PrintTracks(albumTracks.ToList(), pathsOnly: true, showAncestors: false, showUser: false, indices: true);
     }
 
 

@@ -496,19 +496,23 @@ static partial class Program
         var retrievedFolders = new HashSet<string>();
         bool succeeded = false;
         string? soulseekDir = null;
+        int index = 0;
 
         while (tle.list.Count > 0 && !Config.I.albumArtOnly)
         {
-            int index = 0;
             bool wasInteractive = Config.I.interactiveMode;
+            bool retrieveCurrent = true;
+            index = 0;
 
             if (Config.I.interactiveMode)
             {
-                index = await InteractiveModeAlbum(tle.list, !Config.I.noBrowseFolder, retrievedFolders);
+                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(tle.list, !Config.I.noBrowseFolder, retrievedFolders);
                 if (index == -1) break;
             }
-
-            tracks = tle.list[index];
+            else
+            {
+                tracks = tle.list[index];
+            }
 
             soulseekDir = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
 
@@ -527,7 +531,7 @@ static partial class Program
             {
                 await RunAlbumDownloads(tle, organizer, tracks, semaphore, cts);
 
-                if (!Config.I.noBrowseFolder && !retrievedFolders.Contains(soulseekDir))
+                if (!Config.I.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
                     Console.WriteLine("Getting all files in folder...");
 
@@ -567,7 +571,7 @@ static partial class Program
         if (Config.I.albumArtOnly || succeeded && Config.I.albumArtOption != AlbumArtOption.Default)
         {
             Console.WriteLine($"\nDownloading additional images:");
-            additionalImages = await DownloadImages(tle, tle.list, Config.I.albumArtOption, tracks);
+            additionalImages = await DownloadImages(tle, tle.list, Config.I.albumArtOption, tle.list[index]);
             tracks?.AddRange(additionalImages);
         }
 
@@ -724,14 +728,18 @@ static partial class Program
         {
             int index = 0;
             bool wasInteractive = Config.I.interactiveMode;
+            List<Track> tracks;
 
             if (Config.I.interactiveMode)
             {
-                index = await InteractiveModeAlbum(albumArtLists, false, null);
+                (index, tracks, _) = await InteractiveModeAlbum(albumArtLists, false, null);
                 if (index == -1) break;
             }
+            else
+            {
+                tracks = albumArtLists[index];
+            }
 
-            var tracks = albumArtLists[index];
             albumArtLists.RemoveAt(index);
 
             if (!needImageDownload(tracks))
@@ -866,10 +874,10 @@ static partial class Program
     }
 
 
-    static async Task<int> InteractiveModeAlbum(List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
+    static async Task<(int index, List<Track> tracks, bool retrieveFolder)> InteractiveModeAlbum(List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
     {
         int aidx = 0;
-        static string interactiveModeLoop()
+        static string interactiveModeLoop() // bug: characters don't disappear when backspacing
         {
             string userInput = "";
             while (true)
@@ -889,14 +897,20 @@ static partial class Program
                     userInput += key.KeyChar;
             }
         }
+        
+        void writeHelp()
+        {
+            string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
+            string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
+            Console.WriteLine();
+            WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
+            WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
+            Console.WriteLine();
+            WriteLine($" d:1,2,3 to download individual files", ConsoleColor.Green);
+            Console.WriteLine();
+        }
 
-        string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
-        string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
-
-        Console.WriteLine();
-        WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
-        WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
-        Console.WriteLine();
+        writeHelp();
 
         while (true)
         {
@@ -906,11 +920,19 @@ static partial class Program
 
             WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
 
-            PrintAlbum(tracks);
+            PrintAlbum(tracks, indices: true);
             Console.WriteLine();
 
         Loop:
             string userInput = interactiveModeLoop().Trim().ToLower();
+            string options = "";
+
+            if (userInput.StartsWith("d:"))
+            {
+                options = userInput.Substring(2).Trim();
+                userInput = "d";
+            }
+
             switch (userInput)
             {
                 case "p":
@@ -920,10 +942,10 @@ static partial class Program
                     aidx = (aidx + 1) % list.Count;
                     break;
                 case "s":
-                    return -1;
+                    return (-1, new List<Track>(), false);
                 case "q":
                     Config.I.interactiveMode = false;
-                    return aidx;
+                    return (aidx, tracks, true);
                 case "r":
                     if (!retrieveFolder)
                         break;
@@ -944,8 +966,24 @@ static partial class Program
                         }
                     }
                     break;
+                case "d":
+                    if (options.Length == 0)
+                        return (aidx, tracks, true);
+                    try 
+                    { 
+                        var indices = options.Split(',').Select(int.Parse).ToArray(); 
+                        return (aidx, indices.Select(i => tracks[i - 1]).ToList(), false);
+                    }
+                    catch 
+                    { 
+                        writeHelp(); 
+                        goto Loop; 
+                    }
                 case "":
-                    return aidx;
+                    return (aidx, tracks, true);
+                default:
+                    writeHelp();
+                    goto Loop;
             }
         }
     }
