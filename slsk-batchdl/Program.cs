@@ -906,7 +906,7 @@ static partial class Program
             WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
             WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
             Console.WriteLine();
-            WriteLine($" d:1,2,3 to download individual files", ConsoleColor.Green);
+            WriteLine($" d:1,2,3 or d:start:end to download individual files", ConsoleColor.Green);
             Console.WriteLine();
         }
 
@@ -970,8 +970,21 @@ static partial class Program
                     if (options.Length == 0)
                         return (aidx, tracks, true);
                     try 
-                    { 
-                        var indices = options.Split(',').Select(int.Parse).ToArray(); 
+                    {
+                        var indices = options.Split(',')
+                            .SelectMany(option =>
+                            {
+                                if (option.Contains(':'))
+                                {
+                                    var parts = option.Split(':');
+                                    int start = string.IsNullOrEmpty(parts[0]) ? 1 : int.Parse(parts[0]);
+                                    int end = string.IsNullOrEmpty(parts[1]) ? tracks.Count : int.Parse(parts[1]);
+                                    return Enumerable.Range(start, end - start + 1);
+                                }
+                                return new[] { int.Parse(option) };
+                            })
+                            .Distinct()
+                            .ToArray();
                         return (aidx, indices.Select(i => tracks[i - 1]).ToList(), false);
                     }
                     catch 

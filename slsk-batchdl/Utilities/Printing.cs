@@ -66,7 +66,7 @@ public static class Printing
                     if (indices)
                     {
                         Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write($"[{i + 1:D2}]");
+                        Console.Write($" [{i + 1:D2}]");
                         Console.ResetColor(); 
                     }
                     if (ancestor.Length == 0)
