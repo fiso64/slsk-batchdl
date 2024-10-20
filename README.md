@@ -506,21 +506,21 @@ sldl spotify-likes
 ```
 <br>
 
+Interactive album download:
+```
+sldl "Some Album" -a -t
+```
+<br>
+
 Download a specific song by name, preferring lossless:
 ```
 sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
 ```  
 <br>
 
-Interactive album download:
-```
-sldl "Some Album" --album --interactive
-```
-<br>
-
 Download the album of every song in a spotify playlist:
 ```
-sldl https://spotify/playlist/id --album
+sldl https://spotify/playlist/id -a
 ```
 
 <br>
@@ -539,7 +539,7 @@ sldl "artist=MC MENTAL" --aggregate --skip-music-dir "path/to/music" --print res
 
 Download all albums by an artist found on soulseek:
 ```
-sldl "artist=MC MENTAL" --aggregate --album --interactive
+sldl "artist=MC MENTAL" -a -g -t
 ```
 
 #### Advanced example: Automatic wishlist downloader
