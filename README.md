@@ -546,8 +546,8 @@ sldl "artist=MC MENTAL" -a -g -t
 #### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```bash
-echo "Artist - My Favorite Song" >> wishlist.txt
-echo a:"Artist - Some Album, album-track-count=5" "format=flac" >> wishlist.txt
+"Artist - My Favorite Song"
+a:"Artist - Some Album, album-track-count=5" "format=flac"
 ```
 Add a profile to your `sldl.conf`:
 ```
