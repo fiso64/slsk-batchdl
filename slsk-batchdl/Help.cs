@@ -473,7 +473,7 @@ public static class Help
           interactive       (bool)
     ";
 
-    public static void PrintHelp(string option = "")
+    public static void PrintHelp(string? option = null)
     {
         string text = helpText;
 
@@ -487,17 +487,27 @@ public static class Help
             { "config", configHelp },
         };
 
-        if (dict.ContainsKey(option))
+        if (option != null && dict.ContainsKey(option))
             text = dict[option];
         else if (option == "all")
             text = $"{helpText}\n{string.Join('\n', dict.Values)}";
-        else if (option.Length > 0)
+        else if (option != null)
             Console.WriteLine($"Unrecognized help option '{option}'");
 
         var lines = text.Split('\n').Skip(1);
         int minIndent = lines.Where(line => line.Trim().Length > 0).Min(line => line.TakeWhile(char.IsWhiteSpace).Count());
         text = string.Join("\n", lines.Select(line => line.Length > minIndent ? line[minIndent..] : line));
         Console.WriteLine(text);
+    }
+
+    public static void PrintHelpAndExitIfNeeded(string[] args)
+    {
+        int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
+        if (args.Length == 0 || helpIdx >= 0)
+        {
+            PrintHelp(helpIdx + 1 < args.Length ? args[helpIdx + 1] : null);
+            Environment.Exit(0);
+        }
     }
 }
 

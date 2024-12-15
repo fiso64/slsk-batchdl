@@ -18,22 +18,22 @@ namespace Extractors
             return input == "spotify-likes" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             var trackLists = new TrackLists();
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            bool needLogin = input == "spotify-likes" || Config.I.removeTracksFromSource;
+            bool needLogin = input == "spotify-likes" || config.removeTracksFromSource;
 
-            if (needLogin && Config.I.spotifyToken.Length == 0 && (Config.I.spotifyId.Length == 0 || Config.I.spotifySecret.Length == 0))
+            if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
             {
                 Console.WriteLine("Error: Credentials are required when downloading liked music or removing from source playlists.");
                 Environment.Exit(1);
             }
 
-            spotifyClient = new Spotify(Config.I.spotifyId, Config.I.spotifySecret, Config.I.spotifyToken, Config.I.spotifyRefresh);
-            await spotifyClient.Authorize(needLogin, Config.I.removeTracksFromSource);
+            spotifyClient = new Spotify(config.spotifyId, config.spotifySecret, config.spotifyToken, config.spotifyRefresh);
+            await spotifyClient.Authorize(needLogin, config.removeTracksFromSource);
 
             TrackListEntry? tle = null;
 
@@ -53,10 +53,10 @@ namespace Extractors
                 tle = new TrackListEntry(TrackType.Album);
                 tle.source = source;
 
-                if (Config.I.setAlbumMinTrackCount)
+                if (config.setAlbumMinTrackCount)
                     source.MinAlbumTrackCount = tracks.Count;
 
-                if (Config.I.setAlbumMaxTrackCount)
+                if (config.setAlbumMaxTrackCount)
                     source.MaxAlbumTrackCount = tracks.Count;
             }
             else if (input.Contains("/artist/"))
@@ -81,7 +81,7 @@ namespace Extractors
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
-                        await spotifyClient.Authorize(true, Config.I.removeTracksFromSource);
+                        await spotifyClient.Authorize(true, config.removeTracksFromSource);
                         (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
                     }
                     else if (!needLogin)
@@ -117,7 +117,7 @@ namespace Extractors
             }
             catch (Exception e) 
             {
-                Printing.WriteLine($"Error removing from source: {e}", debugOnly: true);
+                Printing.WriteLine($"Error removing from source: {e}");
             }
         }
     }

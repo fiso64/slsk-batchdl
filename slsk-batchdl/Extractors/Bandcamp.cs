@@ -15,7 +15,7 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             var trackLists = new TrackLists();
             bool isTrack = input.Contains("/track/");
@@ -77,15 +77,15 @@ namespace Extractors
                     var track = new Track() { Artist = artist, Album = name, Type = TrackType.Album };
                     trackLists.AddEntry(new TrackListEntry(track));
 
-                    if (Config.I.setAlbumMinTrackCount || Config.I.setAlbumMaxTrackCount)
+                    if (config.setAlbumMinTrackCount || config.setAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (Config.I.setAlbumMinTrackCount)
+                        if (config.setAlbumMinTrackCount)
                             track.MinAlbumTrackCount = n;
 
-                        if (Config.I.setAlbumMaxTrackCount)
+                        if (config.setAlbumMaxTrackCount)
                             track.MaxAlbumTrackCount = n;
                     }
                 }

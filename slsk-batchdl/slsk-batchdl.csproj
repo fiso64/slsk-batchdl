@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
      <Nullable>enable</Nullable> 
     <AssemblyName>sldl</AssemblyName>
-	<VersionPrefix>2.3.1</VersionPrefix>
+	<VersionPrefix>2.4.0</VersionPrefix>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -27,7 +27,7 @@
     <PackageReference Include="SpotifyAPI.Web" Version="7.1.1" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.1.1" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="YoutubeExplode" Version="6.4.3" />
+    <PackageReference Include="YoutubeExplode" Version="6.5.0" />
   </ItemGroup>
   
   <ItemGroup>

@@ -10,10 +10,12 @@ public class FileManager
     readonly HashSet<Track> organized = new();
     public string? remoteCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }
+    private readonly Config config;
 
-    public FileManager(TrackListEntry tle)
+    public FileManager(TrackListEntry tle, Config config)
     {
         this.tle = tle;
+        this.config = config;
     }
 
     public string GetSavePath(string sourceFname)
@@ -23,7 +25,7 @@ public class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string parent = Config.I.parentDir;
+        string parent = config.parentDir;
         string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
         if (tle.defaultFolderName != null)
@@ -39,7 +41,7 @@ public class FileManager
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
-        return Path.Join(parent, name).CleanPath(Config.I.invalidReplaceStr);
+        return Path.Join(parent, name).CleanPath(config.invalidReplaceStr);
     }
 
     public void SetRemoteCommonDir(string? remoteCommonDir)
@@ -62,7 +64,7 @@ public class FileManager
             OrganizeAudio(track, track.FirstDownload);
         }
 
-        bool onlyAdditionalImages = Config.I.nameFormat.Length == 0;
+        bool onlyAdditionalImages = config.nameFormat.Length == 0;
 
         var nonAudioToOrganize = onlyAdditionalImages ? additionalImages : tracks.Where(t => t.IsNotAudio);
 
@@ -86,14 +88,14 @@ public class FileManager
         if (track.DownloadPath.Length == 0 || !Utils.IsMusicFile(track.DownloadPath))
             return;
 
-        if (Config.I.nameFormat.Length == 0)
+        if (config.nameFormat.Length == 0)
         {
             organized.Add(track);
             return;
         }
 
-        string pathPart = SubstituteValues(Config.I.nameFormat, track, file);
-        string newFilePath = Path.Join(Config.I.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
+        string pathPart = SubstituteValues(config.nameFormat, track, file);
+        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
 
         try
         {
@@ -132,13 +134,13 @@ public class FileManager
         organized.Add(track);
     }
 
-    static void MoveAndDeleteParent(string oldPath, string newPath)
+    void MoveAndDeleteParent(string oldPath, string newPath)
     {
         if (Utils.NormalizedPath(oldPath) != Utils.NormalizedPath(newPath))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(newPath));
             Utils.Move(oldPath, newPath);
-            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), Config.I.parentDir);
+            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), config.parentDir);
         }
     }
          
@@ -182,7 +184,7 @@ public class FileManager
                 chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", match =>
                 {
                     if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
-                        return match.Value[1..^1].ReplaceInvalidChars(Config.I.invalidReplaceStr, removeSlash: false);
+                        return match.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
                     else
                     {
                         TryGetVarValue(match.Value, file, slfile, track, out string res);
@@ -203,7 +205,7 @@ public class FileManager
             char dirsep = Path.DirectorySeparatorChar;
             newName = newName.Replace('/', dirsep).Replace('\\', dirsep);
             var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(Config.I.invalidReplaceStr).Trim(' ', '.')));
+            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(config.invalidReplaceStr).Trim(' ', '.')));
             return newName;
         }
 
@@ -257,15 +259,14 @@ public class FileManager
                 }
                 return true;
             case "extractor":
-                res = Config.I.inputType.ToString(); break;
+                res = config.inputType.ToString(); break;
             case "default-folder":
                 res = tle.defaultFolderName ?? tle.source.ToString(false); break;
             default:
                 res = x; return false;
         }
 
-        res = res.ReplaceInvalidChars(Config.I.invalidReplaceStr);
+        res = res.ReplaceInvalidChars(config.invalidReplaceStr);
         return true;
     }
 }
-

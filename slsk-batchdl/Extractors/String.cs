@@ -11,13 +11,21 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
+            bool isAlbum = config.album;
+
+            if (input.StartsWith("album://"))
+            {
+                isAlbum = true;
+                input = input[8..];
+            }
+
             var trackLists = new TrackLists();
-            var music = ParseTrackArg(input, Config.I.album);
+            var music = ParseTrackArg(input, isAlbum);
             TrackListEntry tle;
 
-            if (Config.I.album || (music.Title.Length == 0 && music.Album.Length > 0))
+            if (isAlbum || (music.Title.Length == 0 && music.Album.Length > 0))
             {
                 music.Type = TrackType.Album;
                 tle = new TrackListEntry(music);

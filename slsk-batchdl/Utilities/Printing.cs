@@ -141,39 +141,39 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound)
+    public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound, Config config)
     {
-        await Program.InitClientAndUpdateIfNeeded();
+        await Program.InitClientAndUpdateIfNeeded(config);
 
         if (tle.source.Type == TrackType.Normal)
         {
-            await Search.SearchAndPrintResults(tle.list[0]);
+            await Search.SearchAndPrintResults(tle.list[0], config);
         }
         else if (tle.source.Type == TrackType.Aggregate)
         {
             Console.WriteLine(new string('-', 60));
             Console.WriteLine($"Results for aggregate {tle.source.ToString(true)}:");
-            PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type);
+            PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
         }
         else if (tle.source.Type == TrackType.Album)
         {
             Console.WriteLine(new string('-', 60));
 
-            if (!Config.I.printOption.HasFlag(PrintOption.Full))
+            if (!config.printOption.HasFlag(PrintOption.Full))
                 Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
             else
                 Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
 
             if (tle.list.Count > 0 && tle.list[0].Count > 0)
             {
-                if (!Config.I.noBrowseFolder)
+                if (!config.noBrowseFolder)
                     Console.WriteLine("[Skipping full folder retrieval]");
 
                 foreach (var ls in tle.list)
                 {
                     PrintAlbum(ls);
 
-                    if (!Config.I.printOption.HasFlag(PrintOption.Full))
+                    if (!config.printOption.HasFlag(PrintOption.Full))
                         break;
                 }
             }
@@ -201,16 +201,16 @@ public static class Printing
     }
 
 
-    public static void PrintTracksTbd(List<Track> toBeDownloaded, List<Track> existing, List<Track> notFound, TrackType type, bool summary = true)
+    public static void PrintTracksTbd(List<Track> toBeDownloaded, List<Track> existing, List<Track> notFound, TrackType type, Config config, bool summary = true)
     {
-        if (type == TrackType.Normal && !Config.I.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
+        if (type == TrackType.Normal && !config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
             return;
 
         string notFoundLastTime = notFound.Count > 0 ? $"{notFound.Count} not found" : "";
         string alreadyExist = existing.Count > 0 ? $"{existing.Count} already exist" : "";
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        bool full = Config.I.printOption.HasFlag(PrintOption.Full);
+        bool full = config.printOption.HasFlag(PrintOption.Full);
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
         if (summary && (type == TrackType.Normal || skippedTracks.Length > 0))
@@ -218,24 +218,24 @@ public static class Printing
 
         if (toBeDownloaded.Count > 0)
         {
-            bool showAll = type != TrackType.Normal || Config.I.PrintTracks || Config.I.PrintResults;
-            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: Config.I.PrintTracks);
+            bool showAll = type != TrackType.Normal || config.PrintTracks || config.PrintResults;
+            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: config.PrintTracks);
 
             if (full && (existing.Count > 0 || notFound.Count > 0))
                 Console.WriteLine("\n-----------------------------------------------\n");
         }
 
-        if (Config.I.PrintTracks || Config.I.PrintResults)
+        if (config.PrintTracks || config.PrintResults)
         {
             if (existing.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks already exist:");
-                PrintTracks(existing, fullInfo: full, infoFirst: Config.I.PrintTracks);
+                PrintTracks(existing, fullInfo: full, infoFirst: config.PrintTracks);
             }
             if (notFound.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks were not found during a prior run:");
-                PrintTracks(notFound, fullInfo: full, infoFirst: Config.I.PrintTracks);
+                PrintTracks(notFound, fullInfo: full, infoFirst: config.PrintTracks);
             }
         }
     }
@@ -307,17 +307,15 @@ public static class Printing
             try { progress.Refresh(current, item); }
             catch { }
         }
-        else if ((Config.I.noProgress || Console.IsOutputRedirected) && print)
+        else if ((progress == null || Console.IsOutputRedirected) && print)
         {
             Console.WriteLine(item);
         }
     }
 
 
-    public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray, bool safe = false, bool debugOnly = false)
+    public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray, bool safe = false)
     {
-        if (debugOnly && !Config.I.debugInfo)
-            return;
         if (!safe)
         {
             Console.ForegroundColor = color;
@@ -339,11 +337,18 @@ public static class Printing
     }
 
 
-    public static ProgressBar? GetProgressBar()
+    public static void WriteLineIf(string value, bool condition, ConsoleColor color = ConsoleColor.Gray)
+    {
+        if (condition)
+            Printing.WriteLine(value, color); 
+    }
+
+
+    public static ProgressBar? GetProgressBar(Config config)
     {
         lock (consoleLock)
         {
-            if (!Config.I.noProgress)
+            if (!config.noProgress)
             {
                 return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
             }

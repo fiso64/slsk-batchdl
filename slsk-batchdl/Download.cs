@@ -11,17 +11,14 @@ using SearchResponse = Soulseek.SearchResponse;
 
 static class Download
 {
-    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
+    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
-        if (Config.I.DoNotDownload)
-            throw new Exception();
-
-        await Program.WaitForLogin();
+        await Program.WaitForLogin(config);
         Directory.CreateDirectory(Path.GetDirectoryName(filePath));
         string origPath = filePath;
         filePath += ".incomplete";
 
-        Printing.WriteLine($"Downloading: {track} to '{filePath}'", debugOnly: true);
+        Printing.WriteLineIf($"Downloading: {track} to '{filePath}'", config.debugInfo);
 
         var transferOptions = new TransferOptions(
             stateChanged: (state) =>
@@ -63,12 +60,12 @@ static class Download
                 {
                     retryCount++;
 
-                    Printing.WriteLine($"Error while downloading: {e}", ConsoleColor.DarkYellow, debugOnly: true);
+                    Printing.WriteLineIf($"Error while downloading: {e}", config.debugInfo, ConsoleColor.DarkYellow);
 
                     if (retryCount >= maxRetries || IsConnectedAndLoggedIn())
                         throw;
 
-                    await WaitForLogin();
+                    await WaitForLogin(config);
                 }
             }
         }

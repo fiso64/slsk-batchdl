@@ -23,5 +23,11 @@ if exist slsk-batchdl\bin\Release\net6.0\linux-x64\publish\*.pdb del /F /Q slsk-
 if exist slsk-batchdl\bin\zips\sldl_linux-x64.zip del /F /Q slsk-batchdl\bin\zips\sldl_linux-x64.zip
 powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\linux-x64\publish', 'slsk-batchdl\bin\zips\sldl_linux-x64.zip'); }"
 
+REM linux-arm
+dotnet publish -c Release -r linux-arm -p:PublishSingleFile=true -p:PublishTrimmed=true --self-contained true
+if exist slsk-batchdl\bin\Release\net6.0\linux-arm\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\net6.0\linux-arm\publish\*.pdb 
+if exist slsk-batchdl\bin\zips\sldl_linux-arm.zip del /F /Q slsk-batchdl\bin\zips\sldl_linux-arm.zip
+powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\linux-arm\publish', 'slsk-batchdl\bin\zips\sldl_linux-arm.zip'); }"
+
 
 endlocal

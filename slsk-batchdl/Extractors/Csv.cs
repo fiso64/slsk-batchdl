@@ -15,15 +15,15 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             csvFilePath = Utils.ExpandUser(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, Config.I.artistCol, Config.I.titleCol, Config.I.lengthCol, 
-                Config.I.albumCol, Config.I.descCol, Config.I.ytIdCol, Config.I.trackCountCol, Config.I.timeUnit, Config.I.ytParse);
+            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, config.artistCol, config.titleCol, config.lengthCol, 
+                config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
 
             if (reverse)
                 tracks.Reverse();
@@ -58,7 +58,7 @@ namespace Extractors
                     }
                     catch (Exception e)
                     {
-                        Printing.WriteLine($"Error removing from source: {e}", debugOnly: true);
+                        Printing.WriteLine($"Error removing from source: {e}");
                     }
                 }
             }

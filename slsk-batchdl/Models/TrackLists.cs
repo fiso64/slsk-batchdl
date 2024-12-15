@@ -5,6 +5,7 @@ namespace Models
     public class TrackLists
     {
         public List<TrackListEntry> lists = new();
+        public int Count => lists.Count;
 
         public TrackLists() { }
 

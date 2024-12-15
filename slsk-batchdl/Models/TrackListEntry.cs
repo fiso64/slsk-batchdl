@@ -1,4 +1,5 @@
 using Enums;
+using FileSkippers;
 
 namespace Models
 {
@@ -12,8 +13,14 @@ namespace Models
         public bool gotoNextAfterSearch = false;
         public bool enablesIndexByDefault = false;
         public string? defaultFolderName = null;
-        public FileConditions? additionalConds = null;
-        public FileConditions? additionalPrefConds = null;
+
+        public Config config = null!;
+        public FileConditions? extractorCond = null;
+        public FileConditions? extractorPrefCond = null;
+        public M3uEditor? playlistEditor = null;
+        public M3uEditor? indexEditor = null;
+        public FileSkipper? outputDirSkipper = null;
+        public FileSkipper? musicDirSkipper = null;
 
         public TrackListEntry(TrackType trackType)
         {

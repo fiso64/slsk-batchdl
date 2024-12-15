@@ -14,7 +14,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse)
+        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandUser(input);
             
@@ -44,28 +44,31 @@ namespace Extractors
                 if (added >= maxTracks)
                     break;
 
-                bool savedVal = Config.I.album;
+                bool isAlbum = false;
 
                 if (line.StartsWith("a:"))
                 {
                     line = line[2..];
-                    Config.I.album = true;
+                    isAlbum = true;
                 }
 
                 var fields = ParseLine(line);
 
+                if (isAlbum) 
+                {
+                    fields[0] = "album://" + fields[0];
+                }
+
                 var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
 
-                var tl = await ex.GetTracks(fields[0], int.MaxValue, 0, false);
-
-                Config.I.album = savedVal;
+                var tl = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
 
                 foreach (var tle in tl.lists)
                 {
                     if (fields.Count >= 2)
-                        tle.additionalConds = Config.ParseConditions(fields[1]);
+                        tle.extractorCond = Config.ParseConditions(fields[1]);
                     if (fields.Count >= 3)
-                        tle.additionalPrefConds = Config.ParseConditions(fields[2]);
+                        tle.extractorPrefCond = Config.ParseConditions(fields[2]);
 
                     tle.defaultFolderName = foldername;
                     tle.enablesIndexByDefault = true;
@@ -143,7 +146,7 @@ namespace Extractors
                     }
                     catch (Exception e)
                     {
-                        Printing.WriteLine($"Error removing from source: {e}", debugOnly: true);
+                        Printing.WriteLine($"Error removing from source: {e}");
                     }
                 }
             }

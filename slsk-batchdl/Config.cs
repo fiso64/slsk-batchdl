@@ -1,5 +1,4 @@
-﻿
-using AngleSharp.Css;
+﻿using AngleSharp.Css;
 using Enums;
 using Models;
 using System.Text;
@@ -89,7 +88,6 @@ public class Config
     public int maxTracks = int.MaxValue;
     public int offset = 0;
     public int maxStaleTime = 50000;
-    public int updateDelay = 100;
     public int searchTimeout = 6000;
     public int concurrentProcesses = 2;
     public int unknownErrorRetries = 2;
@@ -116,36 +114,19 @@ public class Config
     public bool DeleteAlbumOnFail => failedAlbumPath == "delete";
     public bool IgnoreAlbumFail => failedAlbumPath == "disable";
 
-    readonly Dictionary<string, (List<string> args, string? cond)> configProfiles = new();
-    readonly HashSet<string> appliedProfiles = new();
+    private Dictionary<string, (List<string> args, string? cond)> configProfiles;
+    private HashSet<string> appliedProfiles;
+    private string[] arguments;
     bool hasConfiguredIndex = false;
     bool confPathChanged = false;
-    string[] arguments;
     FileConditions? undoTempConds = null;
     FileConditions? undoTempPrefConds = null;
 
-    private static Config Instance = new();
-
-    public static Config I { get { return Instance; } }
-
-    private Config() { }
-
-    private Config(Dictionary<string, (List<string> args, string? cond)> cfg, string[] args) 
-    { 
-        configProfiles = cfg;
-        arguments = args;
-    }
-
-
-    public void LoadAndParse(string[] args)
+    public Config(string[] args)
     {
-        int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
-        if (args.Length == 0 || helpIdx >= 0)
-        {
-            string option = helpIdx + 1 < args.Length ? args[helpIdx + 1] : "";
-            Help.PrintHelp(option);
-            Environment.Exit(0);
-        }
+        configProfiles = new Dictionary<string, (List<string> args, string? cond)>();
+        appliedProfiles = new HashSet<string>();
+        arguments = args;
 
         arguments = args.SelectMany(arg =>
         {
@@ -189,6 +170,28 @@ public class Config
         ProcessArgs(arguments);
     }
 
+    public Config Copy() // deep copies all fields except configProfiles and arguments
+    {
+        var copy = (Config)this.MemberwiseClone();
+
+        copy.necessaryCond = new FileConditions(necessaryCond);
+        copy.preferredCond = new FileConditions(preferredCond);
+
+        if (undoTempConds != null)
+            copy.undoTempConds = new FileConditions(undoTempConds);
+        if (undoTempPrefConds != null)
+            copy.undoTempPrefConds = new FileConditions(undoTempPrefConds);
+
+        copy.regexToReplace = new Track(regexToReplace);
+        copy.regexReplaceBy = new Track(regexReplaceBy);
+
+        copy.appliedProfiles = new HashSet<string>(appliedProfiles);
+
+        copy.configProfiles = configProfiles;
+        copy.arguments = arguments;
+
+        return copy;
+    }
 
     void SetConfigPath(string[] args)
     {
@@ -308,23 +311,50 @@ public class Config
     }
 
 
-    public static bool UpdateProfiles(TrackListEntry tle)
+    public bool NeedUpdateProfiles(TrackListEntry tle)
     {
-        if (I.DoNotDownload)
+        if (DoNotDownload)
             return false;
-        if (!I.HasAutoProfiles)
+        if (!HasAutoProfiles)
             return false;
 
-        bool needUpdate = false;
-        var toApply = new List<(string name, List<string> args)>();
-
-        foreach ((var key, var val) in I.configProfiles)
+        foreach ((var key, var val) in configProfiles)
         {
             if (key == "default" || val.cond == null)
                 continue;
 
-            bool condSatisfied = I.ProfileConditionSatisfied(val.cond, tle);
-            bool alreadyApplied = I.appliedProfiles.Contains(key);
+            bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
+            bool alreadyApplied = appliedProfiles.Contains(key);
+            
+            if (condSatisfied && !alreadyApplied)
+                return true;
+            if (!condSatisfied && alreadyApplied)
+                return true;
+        }
+
+        return false;
+    }
+
+
+    public bool NeedUpdateProfiles(TrackListEntry tle, out List<(string name, List<string> args)>? toApply)
+    {
+        toApply = null;
+
+        if (DoNotDownload)
+            return false;
+        if (!HasAutoProfiles)
+            return false;
+
+        bool needUpdate = false;
+        toApply = new List<(string name, List<string> args)>();
+
+        foreach ((var key, var val) in configProfiles)
+        {
+            if (key == "default" || val.cond == null)
+                continue;
+
+            bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
+            bool alreadyApplied = appliedProfiles.Contains(key);
             
             if (condSatisfied && !alreadyApplied)
                 needUpdate = true;
@@ -335,26 +365,27 @@ public class Config
                 toApply.Add((key, val.args));
         }
 
-        if (!needUpdate)
-            return false;
+        return needUpdate;
+    }
 
-        // this means that auto profiles can't change --profile and --config
-        var profile = I.profile;
-        Instance = new Config(I.configProfiles, I.arguments);
-        I.ApplyDefaultConfig();
-        I.ApplyProfiles(profile);
+
+    public void UpdateProfiles(TrackListEntry tle)
+    {
+        if (!NeedUpdateProfiles(tle, out var toApply))
+            return;
+
+        ApplyDefaultConfig();
+        ApplyProfiles(profile);
 
         foreach (var (name, args) in toApply)
         {
             Console.WriteLine($"Applying auto profile: {name}");
-            I.ProcessArgs(args);
-            I.appliedProfiles.Add(name);
+            ProcessArgs(args);
+            appliedProfiles.Add(name);
         }
 
-        I.ProcessArgs(I.arguments);
-        I.PostProcessArgs();
-
-        return true;
+        ProcessArgs(arguments);
+        PostProcessArgs();
     }
 
 
@@ -504,6 +535,7 @@ public class Config
 
     public void AddTemporaryConditions(FileConditions? cond, FileConditions? prefCond)
     {
+        throw new NotImplementedException("Code has been refactored; probably does not work.");
         if (cond != null)
             undoTempConds = necessaryCond.AddConditions(cond);
         if (prefCond != null)
@@ -513,6 +545,7 @@ public class Config
 
     public void RestoreConditions()
     {
+        throw new NotImplementedException("Code has been refactored; probably does not work.");
         if (undoTempConds != null)
             necessaryCond.AddConditions(undoTempConds);
         if (undoTempPrefConds != null)
