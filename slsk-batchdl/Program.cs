@@ -5,6 +5,7 @@ using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Net.Sockets;
+using Konsole;
 
 using Models;
 using Enums;
@@ -15,7 +16,6 @@ using static Printing;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
-using Konsole;
 
 static partial class Program
 {
@@ -393,7 +393,7 @@ static partial class Program
                     await parallelSearchSemaphore.WaitAsync();
 
                     progress = enableParallelSearch ? Printing.GetProgressBar(config) : null;
-                    Printing.RefreshOrPrint(progress, 0, $"{tle.source.Type} download: {tle.source.ToString(true)}, searching..", print: true);
+                    Printing.RefreshOrPrint(progress, 0, $"  {tle.source.Type} download: {tle.source.ToString(true)}, searching..", print: true);
 
                     bool foundSomething = false;
                     var responseData = new ResponseData();
@@ -428,8 +428,12 @@ static partial class Program
                     if (!foundSomething)
                     {
                         var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
-                        var str = progress != null ? $"{tle.source}: " : "";
-                        Printing.RefreshOrPrint(progress, 0, $"{str}No results.{lockedFiles}", true);
+                        var str = progress != null ? $": {tle.source}" : "";
+                        Printing.RefreshOrPrint(progress, 0, $"No results{str}{lockedFiles}", true);
+                    }
+                    else if (progress != null)
+                    {
+                        Printing.RefreshOrPrint(progress, 0, $"Found results: {tle.source}", true);
                     }
 
                     parallelSearchSemaphore.Release();
@@ -532,8 +536,6 @@ static partial class Program
         async Task parallelDownloads()
         {
             await Task.WhenAll(parallelSearches.Select(x => x.task));
-
-            Console.WriteLine();
 
             foreach (var (tle, task) in parallelSearches)
             {

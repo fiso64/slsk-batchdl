@@ -557,6 +557,7 @@ Add a profile to your `sldl.conf`:
 input = ~/sldl/wishlist.txt 
 input-type = list
 index-path = ~/sldl/wishlist-index.sldl
+album-parallel-search = true
 ```
 This will create a global index file `wishlist-index.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded. If you want to continue searching until a version satisfying the preferred conditions is downloaded, also add `skip-check-pref-cond = true` (note that this requires the files to remain in the same spot after being downloaded).  
 Finally, set up a cron job (or a scheduled task on windows) to periodically run sldl with the following option:

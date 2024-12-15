@@ -13,7 +13,6 @@ namespace Tests
         public static async Task RunAllTests()
         {
             TestStringUtils();
-            throw new NotImplementedException("Outdated test code");
             //TestAutoProfiles();
             //TestProfileConditions();
             //await TestStringExtractor();
@@ -80,11 +79,11 @@ namespace Tests
         //{
         //    SetCurrentTest("TestAutoProfiles");
 
-        //    ResetConfig();
-        //    Config.I.inputType = InputType.YouTube;
-        //    Config.I.interactiveMode = true;
-        //    Config.I.aggregate = false;
-        //    Config.I.maxStaleTime = 50000;
+        //    var config = new Config();
+        //    config.inputType = InputType.YouTube;
+        //    config.interactiveMode = true;
+        //    config.aggregate = false;
+        //    config.maxStaleTime = 50000;
 
         //    string path = Path.Join(Directory.GetCurrentDirectory(), "test_conf.conf");
 
@@ -110,19 +109,19 @@ namespace Tests
 
         //    File.WriteAllText(path, content);
 
-        //    Config.I.LoadAndParse(new string[] { "-c", path });
+        //    config.LoadAndParse(new string[] { "-c", path });
 
         //    var tle = new TrackListEntry(TrackType.Album);
         //    Config.UpdateProfiles(tle);
 
-        //    Assert(Config.I.maxStaleTime == 10 && !Config.I.fastSearch && Config.I.necessaryCond.Formats[0] == "flac");
+        //    Assert(config.maxStaleTime == 10 && !config.fastSearch && config.necessaryCond.Formats[0] == "flac");
 
         //    ResetConfig();
-        //    Config.I.inputType = InputType.CSV;
-        //    Config.I.album = true;
-        //    Config.I.interactiveMode = true;
-        //    Config.I.useYtdlp = false;
-        //    Config.I.maxStaleTime = 50000;
+        //    config.inputType = InputType.CSV;
+        //    config.album = true;
+        //    config.interactiveMode = true;
+        //    config.useYtdlp = false;
+        //    config.maxStaleTime = 50000;
         //    content =
         //        "\n[no-stale]" +
         //        "\nprofile-cond = interactive && download-mode == \"album\"" +
@@ -134,16 +133,16 @@ namespace Tests
         //    File.WriteAllText(path, content);
 
 
-        //    Config.I.LoadAndParse(new string[] { "-c", path });
+        //    config.LoadAndParse(new string[] { "-c", path });
         //    Config.UpdateProfiles(tle);
-        //    Assert(Config.I.maxStaleTime == 999999 && !Config.I.useYtdlp);
+        //    Assert(config.maxStaleTime == 999999 && !config.useYtdlp);
 
         //    ResetConfig();
-        //    Config.I.inputType = InputType.YouTube;
-        //    Config.I.album = false;
-        //    Config.I.interactiveMode = true;
-        //    Config.I.useYtdlp = false;
-        //    Config.I.maxStaleTime = 50000;
+        //    config.inputType = InputType.YouTube;
+        //    config.album = false;
+        //    config.interactiveMode = true;
+        //    config.useYtdlp = false;
+        //    config.maxStaleTime = 50000;
         //    content =
         //        "\n[no-stale]" +
         //        "\nprofile-cond = interactive && download-mode == \"album\"" +
@@ -153,10 +152,10 @@ namespace Tests
         //        "\nyt-dlp = true";
 
         //    File.WriteAllText(path, content);
-        //    Config.I.LoadAndParse(new string[] { "-c", path });
+        //    config.LoadAndParse(new string[] { "-c", path });
         //    Config.UpdateProfiles(new TrackListEntry(TrackType.Normal));
 
-        //    Assert(Config.I.maxStaleTime == 50000 && Config.I.useYtdlp);
+        //    Assert(config.maxStaleTime == 50000 && config.useYtdlp);
 
         //    if (File.Exists(path))
         //        File.Delete(path);
@@ -168,10 +167,10 @@ namespace Tests
         //{
         //    SetCurrentTest("TestProfileConditions");
 
-        //    Config.I.inputType = InputType.YouTube;
-        //    Config.I.interactiveMode = true;
-        //    Config.I.album = true;
-        //    Config.I.aggregate = false;
+        //    config.inputType = InputType.YouTube;
+        //    config.interactiveMode = true;
+        //    config.album = true;
+        //    config.aggregate = false;
 
         //    var conds = new (bool, string)[]
         //    {
@@ -193,7 +192,7 @@ namespace Tests
         //    foreach ((var b, var c) in conds)
         //    {
         //        Console.WriteLine(c);
-        //        Assert(b == Config.I.ProfileConditionSatisfied(c));
+        //        Assert(b == config.ProfileConditionSatisfied(c));
         //    }
 
         //    Passed();
@@ -250,29 +249,29 @@ namespace Tests
 
         //    var extractor = new Extractors.StringExtractor();
 
-        //    Config.I.aggregate = false;
-        //    Config.I.album = false;
+        //    config.aggregate = false;
+        //    config.album = false;
 
         //    Console.WriteLine("Testing songs: ");
         //    for (int i = 0; i < strings.Count; i++)
         //    {
-        //        Config.I.input = strings[i];
-        //        Console.WriteLine(Config.I.input);
-        //        var res = await extractor.GetTracks(Config.I.input, 0, 0, false);
+        //        config.input = strings[i];
+        //        Console.WriteLine(config.input);
+        //        var res = await extractor.GetTracks(config.input, 0, 0, false);
         //        var t = res[0].list[0][0];
-        //        Assert(Extractors.StringExtractor.InputMatches(Config.I.input));
+        //        Assert(Extractors.StringExtractor.InputMatches(config.input));
         //        Assert(t.ToKey() == tracks[i].ToKey());
         //    }
 
         //    Console.WriteLine();
         //    Console.WriteLine("Testing albums");
-        //    Config.I.album = true;
+        //    config.album = true;
         //    for (int i = 0; i < strings.Count; i++)
         //    {
-        //        Config.I.input = strings[i];
-        //        Console.WriteLine(Config.I.input);
-        //        var t = (await extractor.GetTracks(Config.I.input, 0, 0, false))[0].source;
-        //        Assert(Extractors.StringExtractor.InputMatches(Config.I.input));
+        //        config.input = strings[i];
+        //        Console.WriteLine(config.input);
+        //        var t = (await extractor.GetTracks(config.input, 0, 0, false))[0].source;
+        //        Assert(Extractors.StringExtractor.InputMatches(config.input));
         //        Assert(t.ToKey() == albums[i].ToKey());
         //    }
 
@@ -283,10 +282,10 @@ namespace Tests
         //{
         //    SetCurrentTest("TestM3uEditor");
 
-        //    Config.I.skipMode = SkipMode.Index;
-        //    Config.I.skipMusicDir = "";
-        //    Config.I.printOption = PrintOption.Tracks | PrintOption.Full;
-        //    Config.I.skipExisting = true;
+        //    config.skipMode = SkipMode.Index;
+        //    config.skipMusicDir = "";
+        //    config.printOption = PrintOption.Tracks | PrintOption.Full;
+        //    config.skipExisting = true;
 
         //    string path = Path.Join(Directory.GetCurrentDirectory(), "test_m3u.m3u8");
 

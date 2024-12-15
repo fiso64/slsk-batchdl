@@ -175,6 +175,11 @@ public class Config
         ProcessArgs(arguments);
     }
 
+    public Config()
+    {
+
+    }
+
     public Config Copy() // deep copies all fields except configProfiles and arguments
     {
         var copy = (Config)this.MemberwiseClone();
