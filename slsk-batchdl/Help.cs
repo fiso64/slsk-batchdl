@@ -4,7 +4,7 @@
 // --invalid-replace-str, --cond, --pref
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
-// --skip-mode-music-dir, --skip-mode-output-dir
+// --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count
 
 public static class Help
 {
@@ -168,6 +168,7 @@ public static class Help
                                        the directory fails to download. Set to 'delete' to delete
                                        the files instead. Set to the empty string """" to disable.
                                        Default: {configured output dir}/failed
+        --album-parallel-search        Run album searches in parallel
           
       Aggregate Download
         -g, --aggregate                Aggregate download mode: Find and download all distinct 
@@ -333,7 +334,8 @@ public static class Help
         --concurrent-downloads - set it to 4 or more
         --max-stale-time is set to 50 seconds by default, so it will wait a long time before giving
           up on a file
-        --searches-per-time - increase at the risk of bans.
+        --searches-per-time - increase at the risk of bans
+        --album-parallel-search - enables parallel searching for album entries
     ";
 
     const string fileConditionsHelp = @"

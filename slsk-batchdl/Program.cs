@@ -15,6 +15,7 @@ using static Printing;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
+using Konsole;
 
 static partial class Program
 {
@@ -54,9 +55,7 @@ static partial class Program
         trackLists.UpgradeListTypes(config.aggregate, config.album);
         trackLists.SetListEntryOptions();
 
-        InitConfigs(config);
-
-        await MainLoop();
+        await MainLoop(config);
 
         WriteLineIf("Mainloop done", config.debugInfo);
     }
@@ -105,63 +104,63 @@ static partial class Program
     }
 
 
+    static void InitEditors(TrackListEntry tle, Config config)
+    {
+        tle.playlistEditor = new M3uEditor(trackLists, config.writePlaylist ? M3uOption.Playlist : M3uOption.None, config.offset);
+        tle.indexEditor = new M3uEditor(trackLists, config.writeIndex ? M3uOption.Index : M3uOption.None);
+    }
+
+    static void InitFileSkippers(TrackListEntry tle, Config config)
+    {
+        if (config.skipExisting)
+        {
+            FileConditions? cond = null;
+
+            if (config.skipCheckPrefCond)
+            {
+                cond = config.necessaryCond.With(config.preferredCond);
+            }
+            else if (config.skipCheckCond)
+            {
+                cond = config.necessaryCond;
+            }
+
+            tle.outputDirSkipper = FileSkipperRegistry.GetSkipper(config.skipMode, config.parentDir, cond, tle.indexEditor);
+
+            if (config.skipMusicDir.Length > 0)
+            {
+                if (!Directory.Exists(config.skipMusicDir))
+                    Console.WriteLine("Error: Music directory does not exist");
+                else
+                    tle.musicDirSkipper = FileSkipperRegistry.GetSkipper(config.skipModeMusicDir, config.skipMusicDir, cond, tle.indexEditor);
+            }
+        }
+    }
+
     static void InitConfigs(Config defaultConfig)
     {
-        if (trackLists.Count == 0)
-            return;
+        //if (trackLists.Count == 0)
+        //    return;
 
-        void initEditors(TrackListEntry tle, Config config)
-        {
-            tle.playlistEditor = new M3uEditor(trackLists, config.writePlaylist ? M3uOption.Playlist : M3uOption.None, config.offset);
-            tle.indexEditor = new M3uEditor(trackLists, config.writeIndex ? M3uOption.Index : M3uOption.None);
-        }
+        //foreach (var tle in trackLists.lists)
+        //{
+        //    tle.config = defaultConfig.Copy();
+        //    tle.config.UpdateProfiles(tle);
 
-        void initFileSkippers(TrackListEntry tle, Config config)
-        {
-            if (config.skipExisting)
-            {
-                FileConditions? cond = null;
+        //    if (tle.extractorCond != null)
+        //    {
+        //        tle.config.necessaryCond = tle.config.necessaryCond.With(tle.extractorCond);
+        //        tle.extractorCond = null;
+        //    }
+        //    if (tle.extractorPrefCond != null)
+        //    {
+        //        tle.config.preferredCond = tle.config.preferredCond.With(tle.extractorPrefCond);
+        //        tle.extractorPrefCond = null;
+        //    }
 
-                if (config.skipCheckPrefCond)
-                {
-                    cond = config.necessaryCond.With(config.preferredCond);
-                }
-                else if (config.skipCheckCond)
-                {
-                    cond = config.necessaryCond;
-                }
-
-                tle.outputDirSkipper = FileSkipperRegistry.GetSkipper(config.skipMode, config.parentDir, cond, tle.indexEditor);
-
-                if (config.skipMusicDir.Length > 0)
-                {
-                    if (!Directory.Exists(config.skipMusicDir))
-                        Console.WriteLine("Error: Music directory does not exist");
-                    else
-                        tle.musicDirSkipper = FileSkipperRegistry.GetSkipper(config.skipModeMusicDir, config.skipMusicDir, cond, tle.indexEditor);
-                }
-            }
-        }
-
-        foreach (var tle in trackLists.lists)
-        {
-            tle.config = defaultConfig.Copy();
-            tle.config.UpdateProfiles(tle);
-
-            if (tle.extractorCond != null)
-            {
-                tle.config.necessaryCond = tle.config.necessaryCond.With(tle.extractorCond);
-                tle.extractorCond = null;
-            }
-            if (tle.extractorPrefCond != null)
-            {
-                tle.config.preferredCond = tle.config.preferredCond.With(tle.extractorPrefCond);
-                tle.extractorPrefCond = null;
-            }
-
-            initEditors(tle, tle.config);
-            initFileSkippers(tle, tle.config);
-        }
+        //    initEditors(tle, tle.config);
+        //    initFileSkippers(tle, tle.config);
+        //}
 
         //defaultConfig.UpdateProfiles(trackLists[0]);
         //trackLists[0].config = defaultConfig;
@@ -266,39 +265,65 @@ static partial class Program
     }
 
 
-    static void PrepareListEntry(Config config, TrackListEntry tle, bool isFirstEntry)
+    static void PrepareListEntry(Config prevConfig, TrackListEntry tle)
     {
+        tle.config = prevConfig.Copy();
+        tle.config.UpdateProfiles(tle);
+
+        if (tle.extractorCond != null)
+        {
+            tle.config.necessaryCond = tle.config.necessaryCond.With(tle.extractorCond);
+            tle.extractorCond = null;
+        }
+        if (tle.extractorPrefCond != null)
+        {
+            tle.config.preferredCond = tle.config.preferredCond.With(tle.extractorPrefCond);
+            tle.extractorPrefCond = null;
+        }
+
+        InitEditors(tle, tle.config);
+        InitFileSkippers(tle, tle.config);
+
         string m3uPath, indexPath;
 
-        if (config.m3uFilePath.Length > 0)
-            m3uPath = config.m3uFilePath;
+        if (tle.config.m3uFilePath.Length > 0)
+            m3uPath = tle.config.m3uFilePath;
         else
-            m3uPath = Path.Join(config.parentDir, tle.defaultFolderName, "_playlist.m3u8");
+            m3uPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_playlist.m3u8");
 
-        if (config.indexFilePath.Length > 0)
-            indexPath = config.indexFilePath;
+        if (tle.config.indexFilePath.Length > 0)
+            indexPath = tle.config.indexFilePath;
         else
-            indexPath = Path.Join(config.parentDir, tle.defaultFolderName, "_index.sldl");
+            indexPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_index.sldl");
 
-        if (config.writePlaylist)
+        if (tle.config.writePlaylist)
             tle.playlistEditor?.SetPathAndLoad(m3uPath);
-        if (config.writeIndex)
+        if (tle.config.writeIndex)
             tle.indexEditor?.SetPathAndLoad(indexPath);
 
-        PreprocessTracks(config, tle);
+        PreprocessTracks(tle.config, tle);
     }
 
 
-    static async Task MainLoop()
+    static async Task MainLoop(Config defaultConfig)
     {
+        if (trackLists.Count == 0) return;
+
+        PrepareListEntry(defaultConfig, trackLists[0]);
+        var firstConfig = trackLists.lists[0].config;
+
+        bool enableParallelSearch = firstConfig.parallelAlbumSearch && !firstConfig.PrintResults && !firstConfig.PrintTracks && trackLists.lists.Any(x => x.CanParallelSearch);
+        var parallelSearches = new List<(TrackListEntry tle, Task<(bool, ResponseData)> task)>();
+        var parallelSearchSemaphore = new SemaphoreSlim(firstConfig.parallelAlbumSearchProcesses);
+
         for (int i = 0; i < trackLists.lists.Count; i++)
         {
-            Console.WriteLine();
+            if (!enableParallelSearch) Console.WriteLine();
+
+            if (i > 0) PrepareListEntry(trackLists[i-1].config, trackLists[i]);
 
             var tle = trackLists[i];
             var config = tle.config;
-
-            PrepareListEntry(config, tle, isFirstEntry: i == 0);
 
             var existing = new List<Track>();
             var notFound = new List<Track>();
@@ -361,59 +386,87 @@ static partial class Program
             {
                 await InitClientAndUpdateIfNeeded(config);
 
-                Console.WriteLine($"{tle.source.Type} download: {tle.source.ToString(true)}, searching..");
+                ProgressBar? progress = null;
 
-                bool foundSomething = false;
-                var responseData = new ResponseData();
+                async Task<(bool, ResponseData)> sourceSearch()
+                {
+                    await parallelSearchSemaphore.WaitAsync();
 
-                if (tle.source.Type == TrackType.Album)
-                {
-                    tle.list = await Search.GetAlbumDownloads(tle.source, responseData, config);
-                    foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
-                }
-                else if (tle.source.Type == TrackType.Aggregate)
-                {
-                    tle.list.Insert(0, await Search.GetAggregateTracks(tle.source, responseData, config));
-                    foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
-                }
-                else if (tle.source.Type == TrackType.AlbumAggregate)
-                {
-                    var res = await Search.GetAggregateAlbums(tle.source, responseData, config);
+                    progress = enableParallelSearch ? Printing.GetProgressBar(config) : null;
+                    Printing.RefreshOrPrint(progress, 0, $"{tle.source.Type} download: {tle.source.ToString(true)}, searching..", print: true);
 
-                    foreach (var item in res)
+                    bool foundSomething = false;
+                    var responseData = new ResponseData();
+
+                    if (tle.source.Type == TrackType.Album)
                     {
-                        var newSource = new Track(tle.source) { Type = TrackType.Album };
-                        var albumTle = new TrackListEntry(item, newSource, needSourceSearch: false, sourceCanBeSkipped: true);
-                        albumTle.defaultFolderName = tle.defaultFolderName;
-                        trackLists.AddEntry(albumTle);
+                        tle.list = await Search.GetAlbumDownloads(tle.source, responseData, config);
+                        foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
+                    }
+                    else if (tle.source.Type == TrackType.Aggregate)
+                    {
+                        tle.list.Insert(0, await Search.GetAggregateTracks(tle.source, responseData, config));
+                        foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
+                    }
+                    else if (tle.source.Type == TrackType.AlbumAggregate)
+                    {
+                        var res = await Search.GetAggregateAlbums(tle.source, responseData, config);
+
+                        foreach (var item in res)
+                        {
+                            var newSource = new Track(tle.source) { Type = TrackType.Album };
+                            var albumTle = new TrackListEntry(item, newSource, needSourceSearch: false, sourceCanBeSkipped: true);
+                            albumTle.defaultFolderName = tle.defaultFolderName;
+                            trackLists.AddEntry(albumTle);
+                        }
+
+                        foundSomething = res.Count > 0;
                     }
 
-                    foundSomething = res.Count > 0;
-                }
+                    tle.needSourceSearch = false;
 
-                if (!foundSomething)
-                {
-                    var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
-                    Console.WriteLine($"No results.{lockedFiles}");
-
-                    if (!config.PrintResults) 
+                    if (!foundSomething)
                     {
-                        tle.source.State = TrackState.Failed;
-                        tle.source.FailureReason = FailureReason.NoSuitableFileFound;
-                        tle.indexEditor?.Update();
+                        var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
+                        var str = progress != null ? $"{tle.source}: " : "";
+                        Printing.RefreshOrPrint(progress, 0, $"{str}No results.{lockedFiles}", true);
                     }
-                    
-                    continue;
+
+                    parallelSearchSemaphore.Release();
+
+                    return (foundSomething, responseData);
                 }
 
-                if (config.skipExisting && tle.needSkipExistingAfterSearch)
+                if (!enableParallelSearch || !tle.CanParallelSearch)
                 {
-                    foreach (var tracks in tle.list)
-                        existing.AddRange(DoSkipExisting(tle, config, tracks));
-                }
+                    (bool foundSomething, ResponseData responseData) = await sourceSearch();
 
-                if (tle.gotoNextAfterSearch)
+                    if (!foundSomething)
+                    {
+                        if (!config.PrintResults)
+                        {
+                            tle.source.State = TrackState.Failed;
+                            tle.source.FailureReason = FailureReason.NoSuitableFileFound;
+                            tle.indexEditor?.Update();
+                        }
+
+                        continue;
+                    }
+
+                    if (config.skipExisting && tle.needSkipExistingAfterSearch)
+                    {
+                        foreach (var tracks in tle.list)
+                            existing.AddRange(DoSkipExisting(tle, config, tracks));
+                    }
+
+                    if (tle.gotoNextAfterSearch)
+                    {
+                        continue;
+                    }
+                }
+                else
                 {
+                    parallelSearches.Add((tle, sourceSearch()));
                     continue;
                 }
             }
@@ -424,6 +477,29 @@ static partial class Program
                 continue;
             }
 
+            if (parallelSearches.Count > 0 && !tle.CanParallelSearch)
+            {
+                await parallelDownloads();
+            }
+
+            if (!enableParallelSearch || !tle.CanParallelSearch)
+            {
+                await download(tle, config, notFound, existing);
+            }
+        }
+
+        if (parallelSearches.Count > 0)
+        {
+            await parallelDownloads();
+        }
+
+        if (!trackLists[^1].config.DoNotDownload && (trackLists.lists.Count > 0 || trackLists.Flattened(false, false).Skip(1).Any()))
+        {
+            PrintComplete(trackLists);
+        }
+
+        async Task download(TrackListEntry tle, Config config, List<Track>? notFound, List<Track>? existing)
+        {
             tle.indexEditor?.Update();
             tle.playlistEditor?.Update();
 
@@ -432,9 +508,9 @@ static partial class Program
                 PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
             }
 
-            if (notFound.Count + existing.Count >= tle.list.Sum(x => x.Count))
+            if (notFound != null && existing != null && notFound.Count + existing.Count >= tle.list.Sum(x => x.Count))
             {
-                continue;
+                return;
             }
 
             await InitClientAndUpdateIfNeeded(config);
@@ -453,9 +529,38 @@ static partial class Program
             }
         }
 
-        if (!trackLists[^1].config.DoNotDownload && (trackLists.lists.Count > 0 || trackLists.Flattened(false, false).Skip(1).Any()))
+        async Task parallelDownloads()
         {
-            PrintComplete(trackLists);
+            await Task.WhenAll(parallelSearches.Select(x => x.task));
+
+            Console.WriteLine();
+
+            foreach (var (tle, task) in parallelSearches)
+            {
+                (bool foundSomething, var responseData) = task.Result;
+
+                if (foundSomething)
+                {
+                    Console.WriteLine($"Downloading: {tle.source}");
+                    await download(tle, tle.config, null, null);
+                }
+                else
+                {
+                    if (!tle.config.PrintResults)
+                    {
+                        tle.source.State = TrackState.Failed;
+                        tle.source.FailureReason = FailureReason.NoSuitableFileFound;
+                        tle.indexEditor?.Update();
+                    }
+                    if (tle.config.skipExisting && tle.needSkipExistingAfterSearch)
+                    {
+                        foreach (var tracks in tle.list)
+                            DoSkipExisting(tle, tle.config, tracks);
+                    }
+                }
+            }
+
+            parallelSearches.Clear();
         }
     }
 
@@ -747,6 +852,11 @@ static partial class Program
         if (!albumArts.Any())
         {
             Console.WriteLine("No images found");
+            return downloadedImages;
+        }
+        else if (!albumArts.Skip(1).Any() && albumArts.First().All(y => y.State != TrackState.Initial))
+        {
+            Console.WriteLine("No additional images found");
             return downloadedImages;
         }
 

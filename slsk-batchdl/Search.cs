@@ -102,7 +102,7 @@ static class Search
                 },
                 fileFilter: (file) =>
                 {
-                    return Utils.IsMusicFile(file.Filename) && necCond.FileSatisfies(file, track, null);
+                    return necCond.FileSatisfies(file, track, null);
                 });
         }
 
@@ -214,7 +214,7 @@ static class Search
             try
             {
                 Printing.RefreshOrPrint(progress, 0, $"yt-dlp search: {track}", true);
-                var ytResults = await Extractors.YouTube.YtdlpSearch(track);
+                var ytResults = await Extractors.YouTube.YtdlpSearch(track, printCommand: config.debugInfo);
 
                 if (ytResults.Count > 0)
                 {
@@ -224,8 +224,8 @@ static class Search
                         {
                             string saveFilePathNoExt = organizer.GetSavePathNoExt(title);
                             downloading = 1;
-                            Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
-                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, config.ytdlpArgument);
+                            Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}, filename: {saveFilePathNoExt}", true);
+                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, config.ytdlpArgument, printCommand: config.debugInfo);
                             Printing.RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;
                         }
@@ -418,7 +418,7 @@ static class Search
                 },
                 fileFilter: (file) =>
                 {
-                    return Utils.IsMusicFile(file.Filename) && nec.FileSatisfies(file, track, null);
+                    return nec.FileSatisfies(file, track, null);
                 }
             );
         void handler(SlResponse r)
@@ -678,6 +678,7 @@ static class Search
         bool albumMode = false)
     {
         bool useBracketCheck = true;
+
         if (albumMode)
         {
             useBracketCheck = false;
@@ -881,7 +882,7 @@ static class Search
                     },
                     fileFilter: (file) =>
                     {
-                        return Utils.IsMusicFile(file.Filename) && (necCond.FileSatisfies(file, track, null) || config.PrintResultsFull);
+                        return (necCond.FileSatisfies(file, track, null) || config.PrintResultsFull);
                     });
             }
 

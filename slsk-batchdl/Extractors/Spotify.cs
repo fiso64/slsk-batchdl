@@ -92,7 +92,7 @@ namespace Extractors
                     else throw;
                 }
 
-                tle.defaultFolderName = playlistName;
+                tle.defaultFolderName = playlistName.ReplaceInvalidChars(' ').Trim();
                 tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
             }

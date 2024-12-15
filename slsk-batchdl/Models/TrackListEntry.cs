@@ -22,6 +22,8 @@ namespace Models
         public FileSkipper? outputDirSkipper = null;
         public FileSkipper? musicDirSkipper = null;
 
+        public bool CanParallelSearch => source.Type == TrackType.Album || source.Type == TrackType.Aggregate;
+
         public TrackListEntry(TrackType trackType)
         {
             list = new List<List<Track>>();

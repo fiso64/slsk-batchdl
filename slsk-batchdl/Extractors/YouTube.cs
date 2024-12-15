@@ -607,7 +607,7 @@ namespace Extractors
             }
         }
 
-        public static async Task<List<(int length, string id, string title)>> YtdlpSearch(Track track)
+        public static async Task<List<(int length, string id, string title)>> YtdlpSearch(Track track, bool printCommand = false)
         {
             Process process = new Process();
             ProcessStartInfo startInfo = new ProcessStartInfo();
@@ -622,6 +622,8 @@ namespace Extractors
             process.StartInfo = startInfo;
             process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
             process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+
+            Printing.WriteLineIf($"{startInfo.FileName} {startInfo.Arguments}", printCommand);
 
             process.Start();
 
@@ -644,7 +646,7 @@ namespace Extractors
             return results;
         }
 
-        public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "")
+        public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "", bool printCommand = false)
         {
             Process process = new Process();
             ProcessStartInfo startInfo = new ProcessStartInfo();
@@ -665,6 +667,8 @@ namespace Extractors
             process.StartInfo = startInfo;
             //process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
             //process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+
+            Printing.WriteLineIf($"{startInfo.FileName} {startInfo.Arguments}", printCommand);
 
             process.Start();
             process.WaitForExit();

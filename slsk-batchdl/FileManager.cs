@@ -117,7 +117,14 @@ public class FileManager
         if (track.DownloadPath.Length == 0)
             return;
 
-        string newFilePath = Path.Join(parent, Path.GetFileName(track.DownloadPath));
+        string? part = null;
+
+        if (remoteCommonDir != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(track.FirstDownload.Filename), remoteCommonDir, true))
+        {
+            part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(track.FirstDownload.Filename));
+        }
+
+        string newFilePath = Path.Join(parent, part, Path.GetFileName(track.DownloadPath));
 
         try
         {

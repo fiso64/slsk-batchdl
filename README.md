@@ -198,6 +198,7 @@ Usage: sldl <input> [OPTIONS]
                                    the directory fails to download. Set to 'delete' to delete
                                    the files instead. Set to 'disable' keep it where it is.
                                    Default: {configured output dir}/failed
+    --album-parallel-search        Run album searches in parallel
 ```
 #### Aggregate Download Options
 ```
@@ -357,7 +358,8 @@ The search query is determined as follows:
   - --concurrent-downloads - set it to 4 or more
   - --max-stale-time is set to 50 seconds by default, so it will wait a long time before giving
     up on a file
-  - --searches-per-time - increase at the risk of bans.
+  - --searches-per-time - increase at the risk of bans
+  - --album-parallel-search - enables parallel searching for album entries
 
 ## File conditions
 

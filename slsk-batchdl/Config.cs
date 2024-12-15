@@ -7,7 +7,10 @@ using System.Text.RegularExpressions;
 
 public class Config
 {
-    public FileConditions necessaryCond = new();
+    public FileConditions necessaryCond = new() 
+    {
+        Formats = new string[] { ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac" },
+    };
 
     public FileConditions preferredCond = new()
     {
@@ -79,6 +82,7 @@ public class Config
     public bool writePlaylist = false;
     public bool skipExisting = true;
     public bool writeIndex = true;
+    public bool parallelAlbumSearch = false;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -96,6 +100,7 @@ public class Config
     public int searchesPerTime = 34;
     public int searchRenewTime = 220;
     public int aggregateLengthTol = 3;
+    public int parallelAlbumSearchProcesses = 5;
     public double fastSearchMinUpSpeed = 1.0;
     public Track regexToReplace = new();
     public Track regexReplaceBy = new();
@@ -1256,6 +1261,14 @@ public class Config
                     case "--alt":
                     case "--aggregate-length-tol":
                         aggregateLengthTol = int.Parse(args[++i]);
+                        break;
+                    case "--aps":
+                    case "--album-parallel-search":
+                        setFlag(ref parallelAlbumSearch, ref i);
+                        break;
+                    case "--apsc":
+                    case "--album-parallel-search-count":
+                        parallelAlbumSearchProcesses = int.Parse(args[++i]);
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");

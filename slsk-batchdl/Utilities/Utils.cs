@@ -634,6 +634,13 @@ public static class Utils
         return path.Replace('\\', '/').TrimEnd('/').Trim();
     }
 
+    public static bool IsInDirectory(string path, string dir, bool strict)
+    {
+        path = NormalizedPath(path);
+        dir = NormalizedPath(dir);
+        return strict ? path.StartsWith(dir + '/') : path.StartsWith(dir);
+    }
+
     public static bool SequenceEqualUpToPermutation<T>(this IEnumerable<T> list1, IEnumerable<T> list2)
     {
         var cnt = new Dictionary<T, int>();
