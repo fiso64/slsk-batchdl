@@ -304,9 +304,10 @@ e.g:
 "artist=Artist, album=Album"    "format=mp3; br > 128"        "br >= 320"
 ```
 Where "some input" is any of the above input types. The quotes can be omitted if the field
-contains no spaces. The conditions and preferred conditions fields are added on top of the
+contains no spaces. The condition fields are added on top of the
 configured conditions and can also be omitted. List input must be manually activated with
---input-type=list.
+--input-type=list.  
+It also accepts a shorthand for album downloads: `a:"Artist - Album"`. Note that the `a:` must appear outside the quotes.
 
 ## Download modes
 
@@ -547,8 +548,8 @@ sldl "artist=MC MENTAL" -a -g -t
 #### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```bash
-echo "Artist - My Favorite Song" >> wishlist.txt
-echo "a:Artist - Some Album, album-track-count=5" "format=flac" >> wishlist.txt
+"Artist - My Favorite Song"
+a:"Artist - Some Album, album-track-count=5" "format=flac"
 ```
 Add a profile to your `sldl.conf`:
 ```
