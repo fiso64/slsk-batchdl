@@ -103,17 +103,20 @@ public static class Utils
 
     public static string ExpandUser(string path)
     {
-        if (string.IsNullOrEmpty(path))
-        {
+        if (string.IsNullOrWhiteSpace(path))
             return path;
-        }
 
-        path = path.Trim();
+        path = NormalizedPath(path);
 
-        if (path.Length > 0 && path[0] == '~' && (path.Length == 1 || path[1] == '\\' || path[1] == '/'))
+        if (path[0] == '~' && (path.Length == 1 || path[1] == '/'))
         {
             string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            path = Path.Join(home, path[1..].TrimStart('/').TrimStart('\\'));
+            path = Path.Join(home, path[1..].TrimStart('/'));
+        }
+        else if (path.StartsWith("{bindir}") && (path.Length == 8 || path[8] == '/'))
+        {
+            string bindir = AppDomain.CurrentDomain.BaseDirectory;
+            path = Path.Join(bindir, path[8..].TrimStart('/'));
         }
 
         return path;

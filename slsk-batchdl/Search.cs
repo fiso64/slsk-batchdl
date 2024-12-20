@@ -224,7 +224,7 @@ static class Search
                         {
                             string saveFilePathNoExt = organizer.GetSavePathNoExt(title);
                             downloading = 1;
-                            Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}, filename: {saveFilePathNoExt}", true);
+                            Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
                             saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, config.ytdlpArgument, printCommand: config.debugInfo);
                             Printing.RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;

@@ -55,7 +55,9 @@ static partial class Program
         trackLists.UpgradeListTypes(config.aggregate, config.album);
         trackLists.SetListEntryOptions();
 
-        await MainLoop(config);
+        PrepareListEntries(config);
+
+        await MainLoop();
 
         WriteLineIf("Mainloop done", config.debugInfo);
     }
@@ -104,125 +106,36 @@ static partial class Program
     }
 
 
-    static void InitEditors(TrackListEntry tle, Config config)
+    static void PreprocessTracks(TrackListEntry tle)
     {
-        tle.playlistEditor = new M3uEditor(trackLists, config.writePlaylist ? M3uOption.Playlist : M3uOption.None, config.offset);
-        tle.indexEditor = new M3uEditor(trackLists, config.writeIndex ? M3uOption.Index : M3uOption.None);
-    }
-
-    static void InitFileSkippers(TrackListEntry tle, Config config)
-    {
-        if (config.skipExisting)
+        static void preprocessTrack(Config config, Track track)
         {
-            FileConditions? cond = null;
-
-            if (config.skipCheckPrefCond)
+            if (config.removeFt)
             {
-                cond = config.necessaryCond.With(config.preferredCond);
+                track.Title = track.Title.RemoveFt();
+                track.Artist = track.Artist.RemoveFt();
             }
-            else if (config.skipCheckCond)
+            if (config.removeBrackets)
             {
-                cond = config.necessaryCond;
+                track.Title = track.Title.RemoveSquareBrackets();
+            }
+            if (config.regexToReplace.Title.Length + config.regexToReplace.Artist.Length + config.regexToReplace.Album.Length > 0)
+            {
+                track.Title = Regex.Replace(track.Title, config.regexToReplace.Title, config.regexReplaceBy.Title);
+                track.Artist = Regex.Replace(track.Artist, config.regexToReplace.Artist, config.regexReplaceBy.Artist);
+                track.Album = Regex.Replace(track.Album, config.regexToReplace.Album, config.regexReplaceBy.Album);
+            }
+            if (config.artistMaybeWrong)
+            {
+                track.ArtistMaybeWrong = true;
             }
 
-            tle.outputDirSkipper = FileSkipperRegistry.GetSkipper(config.skipMode, config.parentDir, cond, tle.indexEditor);
-
-            if (config.skipMusicDir.Length > 0)
-            {
-                if (!Directory.Exists(config.skipMusicDir))
-                    Console.WriteLine("Error: Music directory does not exist");
-                else
-                    tle.musicDirSkipper = FileSkipperRegistry.GetSkipper(config.skipModeMusicDir, config.skipMusicDir, cond, tle.indexEditor);
-            }
+            track.Artist = track.Artist.Trim();
+            track.Album = track.Album.Trim();
+            track.Title = track.Title.Trim();
         }
-    }
 
-    static void InitConfigs(Config defaultConfig)
-    {
-        //if (trackLists.Count == 0)
-        //    return;
-
-        //foreach (var tle in trackLists.lists)
-        //{
-        //    tle.config = defaultConfig.Copy();
-        //    tle.config.UpdateProfiles(tle);
-
-        //    if (tle.extractorCond != null)
-        //    {
-        //        tle.config.necessaryCond = tle.config.necessaryCond.With(tle.extractorCond);
-        //        tle.extractorCond = null;
-        //    }
-        //    if (tle.extractorPrefCond != null)
-        //    {
-        //        tle.config.preferredCond = tle.config.preferredCond.With(tle.extractorPrefCond);
-        //        tle.extractorPrefCond = null;
-        //    }
-
-        //    initEditors(tle, tle.config);
-        //    initFileSkippers(tle, tle.config);
-        //}
-
-        //defaultConfig.UpdateProfiles(trackLists[0]);
-        //trackLists[0].config = defaultConfig;
-        //initEditors(trackLists[0], defaultConfig);
-        //initFileSkippers(trackLists[0], defaultConfig);
-
-        //var configs = new Dictionary<Config, TrackListEntry?>() { { defaultConfig, trackLists[0] } };
-
-        //// configs, skippers, and editors are assigned to every individual tle (since they may change based
-        //// on auto-profiles). This loop re-uses existing configs/skippers/editors whenever autoprofiles
-        //// don't change. Otherwise, a new file skipper would be created for every tle, and would require
-        //// indexing every time, even if the directory to be indexed is unchanged.
-        //foreach (var tle in trackLists.lists.Skip(1)) 
-        //{
-        //    bool needUpdate = true;
-
-        //    foreach (var (config, exampleTle) in configs) 
-        //    {
-        //        if (!config.NeedUpdateProfiles(tle)) 
-        //        {
-        //            tle.config = config;
-                    
-        //            if (exampleTle == null) 
-        //            {
-        //                initEditors(tle, config);
-        //                initFileSkippers(tle, config);
-        //                configs[config] = tle;
-        //            }
-        //            else 
-        //            {
-        //                tle.playlistEditor = exampleTle.playlistEditor;
-        //                tle.indexEditor = exampleTle.indexEditor;
-        //                tle.outputDirSkipper = exampleTle.outputDirSkipper;
-        //                tle.musicDirSkipper = exampleTle.musicDirSkipper;
-        //            }
-                    
-        //            needUpdate = false;
-        //            break;
-        //        }
-        //    }
-
-        //    bool hasExtractorConditions = tle.extractorCond != null || tle.extractorPrefCond != null;
-            
-        //    if (!needUpdate)
-        //        continue;
-
-        //    var newConfig = defaultConfig.Copy();
-        //    newConfig.UpdateProfiles(tle);
-        //    configs[newConfig] = tle;
-
-        //    tle.config = newConfig;
-
-        //    // todo: only create new instances if a relevant config item has changed
-        //    initEditors(tle, newConfig);
-        //    initFileSkippers(tle, newConfig);
-        //}
-    }
-
-
-    static void PreprocessTracks(Config config, TrackListEntry tle)
-    {
-        PreprocessTrack(config, tle.source);
+        preprocessTrack(tle.config, tle.source);
         
         for (int k = 0; k < tle.list.Count; k++)
         {
@@ -230,100 +143,126 @@ static partial class Program
             {
                 for (int i = 0; i < ls.Count; i++)
                 {
-                    PreprocessTrack(config, ls[i]);
+                    preprocessTrack(tle.config, ls[i]);
                 }
             }
         }
     }
-    
 
-    static void PreprocessTrack(Config config, Track track)
+
+    static void PrepareListEntries(Config startConfig)
     {
-        if (config.removeFt)
-        {
-            track.Title = track.Title.RemoveFt();
-            track.Artist = track.Artist.RemoveFt();
-        }
-        if (config.removeBrackets)
-        {
-            track.Title = track.Title.RemoveSquareBrackets();
-        }
-        if (config.regexToReplace.Title.Length + config.regexToReplace.Artist.Length + config.regexToReplace.Album.Length > 0)
-        {
-            track.Title = Regex.Replace(track.Title, config.regexToReplace.Title, config.regexReplaceBy.Title);
-            track.Artist = Regex.Replace(track.Artist, config.regexToReplace.Artist, config.regexReplaceBy.Artist);
-            track.Album = Regex.Replace(track.Album, config.regexToReplace.Album, config.regexReplaceBy.Album);
-        }
-        if (config.artistMaybeWrong)
-        {
-            track.ArtistMaybeWrong = true;
-        }
+        var editors = new Dictionary<(string path, M3uOption option), M3uEditor>();
+        var skippers = new Dictionary<(string dir, SkipMode mode, bool checkCond), FileSkipper>();
 
-        track.Artist = track.Artist.Trim();
-        track.Album = track.Album.Trim();
-        track.Title = track.Title.Trim();
+        foreach (var tle in trackLists.lists)
+        {
+            tle.config = startConfig.Copy();
+            tle.config.UpdateProfiles(tle);
+            startConfig = tle.config;
+
+            if (tle.extractorCond != null)
+            {
+                tle.config.necessaryCond.AddConditions(tle.extractorCond);
+                tle.extractorCond = null;
+            }
+            if (tle.extractorPrefCond != null)
+            {
+                tle.config.preferredCond.AddConditions(tle.extractorPrefCond);
+                tle.extractorPrefCond = null;
+            }
+
+            var indexOption = tle.config.writeIndex ? M3uOption.Index : M3uOption.None;
+            if (indexOption != M3uOption.None || (tle.config.skipExisting && tle.config.skipMode == SkipMode.Index) || tle.config.skipNotFound)
+            {
+                string indexPath;
+                if (tle.config.indexFilePath.Length > 0)
+                    indexPath = tle.config.indexFilePath;
+                else
+                    indexPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_index.sldl");
+
+                if (editors.TryGetValue((indexPath, indexOption), out var indexEditor))
+                {
+                    tle.indexEditor = indexEditor;
+                }
+                else
+                {
+                    tle.indexEditor = new M3uEditor(indexPath, trackLists, indexOption, true);
+                    editors.Add((indexPath, indexOption), tle.indexEditor);
+                }
+            }
+
+            var playlistOption = tle.config.writePlaylist ? M3uOption.Playlist : M3uOption.None;
+            if (playlistOption != M3uOption.None)
+            {
+                string m3uPath;
+                if (tle.config.m3uFilePath.Length > 0)
+                    m3uPath = tle.config.m3uFilePath;
+                else
+                    m3uPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_playlist.m3u8");
+
+                if (editors.TryGetValue((m3uPath, playlistOption), out var playlistEditor))
+                {
+                    tle.playlistEditor = playlistEditor;
+                }
+                else
+                {
+                    tle.playlistEditor = new M3uEditor(m3uPath, trackLists, playlistOption, false);
+                    editors.Add((m3uPath, playlistOption), tle.playlistEditor);
+                }
+            }
+
+            if (tle.config.skipExisting)
+            {
+                bool checkCond = tle.config.skipCheckCond || tle.config.skipCheckPrefCond;
+
+                if (skippers.TryGetValue((tle.config.parentDir, tle.config.skipMode, checkCond), out var outputDirSkipper))
+                {
+                    tle.outputDirSkipper = outputDirSkipper;
+                }
+                else
+                {
+                    tle.outputDirSkipper = FileSkipperRegistry.GetSkipper(tle.config.skipMode, tle.config.parentDir, checkCond);
+                    skippers.Add((tle.config.parentDir, tle.config.skipMode, checkCond), tle.outputDirSkipper);
+                }
+
+                if (tle.config.skipMusicDir.Length > 0)
+                {
+                    if (skippers.TryGetValue((tle.config.skipMusicDir, tle.config.skipModeMusicDir, checkCond), out var musicDirSkipper))
+                    {
+                        tle.musicDirSkipper = musicDirSkipper;
+                    }
+                    else
+                    {
+                        tle.musicDirSkipper = FileSkipperRegistry.GetSkipper(tle.config.skipModeMusicDir, tle.config.skipMusicDir, checkCond);
+                        skippers.Add((tle.config.skipMusicDir, tle.config.skipModeMusicDir, checkCond), tle.musicDirSkipper);
+                    }
+                }
+            }
+        }
     }
 
 
-    static void PrepareListEntry(Config prevConfig, TrackListEntry tle)
-    {
-        tle.config = prevConfig.Copy();
-        tle.config.UpdateProfiles(tle);
-
-        if (tle.extractorCond != null)
-        {
-            tle.config.necessaryCond = tle.config.necessaryCond.With(tle.extractorCond);
-            tle.extractorCond = null;
-        }
-        if (tle.extractorPrefCond != null)
-        {
-            tle.config.preferredCond = tle.config.preferredCond.With(tle.extractorPrefCond);
-            tle.extractorPrefCond = null;
-        }
-
-        InitEditors(tle, tle.config);
-        InitFileSkippers(tle, tle.config);
-
-        string m3uPath, indexPath;
-
-        if (tle.config.m3uFilePath.Length > 0)
-            m3uPath = tle.config.m3uFilePath;
-        else
-            m3uPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_playlist.m3u8");
-
-        if (tle.config.indexFilePath.Length > 0)
-            indexPath = tle.config.indexFilePath;
-        else
-            indexPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_index.sldl");
-
-        if (tle.config.writePlaylist)
-            tle.playlistEditor?.SetPathAndLoad(m3uPath);
-        if (tle.config.writeIndex)
-            tle.indexEditor?.SetPathAndLoad(indexPath);
-
-        PreprocessTracks(tle.config, tle);
-    }
-
-
-    static async Task MainLoop(Config defaultConfig)
+    static async Task MainLoop()
     {
         if (trackLists.Count == 0) return;
 
-        PrepareListEntry(defaultConfig, trackLists[0]);
-        var firstConfig = trackLists.lists[0].config;
-
-        bool enableParallelSearch = firstConfig.parallelAlbumSearch && !firstConfig.PrintResults && !firstConfig.PrintTracks && trackLists.lists.Any(x => x.CanParallelSearch);
+        var tle0 = trackLists.lists[0];
+        bool enableParallelSearch = tle0.config.parallelAlbumSearch && !tle0.config.PrintResults && !tle0.config.PrintTracks && trackLists.lists.Any(x => x.CanParallelSearch);
         var parallelSearches = new List<(TrackListEntry tle, Task<(bool, ResponseData)> task)>();
-        var parallelSearchSemaphore = new SemaphoreSlim(firstConfig.parallelAlbumSearchProcesses);
+        var parallelSearchSemaphore = new SemaphoreSlim(tle0.config.parallelAlbumSearchProcesses);
+
+        tle0.PrintLines();
 
         for (int i = 0; i < trackLists.lists.Count; i++)
         {
             if (!enableParallelSearch) Console.WriteLine();
 
-            if (i > 0) PrepareListEntry(trackLists[i-1].config, trackLists[i]);
-
             var tle = trackLists[i];
             var config = tle.config;
+
+            PreprocessTracks(tle);
+            if (!enableParallelSearch) tle.PrintLines();
 
             var existing = new List<Track>();
             var notFound = new List<Track>();
@@ -342,13 +281,13 @@ static partial class Program
 
             if (config.skipExisting && !config.PrintResults && tle.source.State != TrackState.NotFoundLastTime)
             {
-                if (tle.sourceCanBeSkipped && SetExisting(tle, config, tle.source))
+                if (tle.sourceCanBeSkipped && SetExisting(tle, FileSkipperContext.FromTrackListEntry(tle), tle.source))
                     existing.Add(tle.source);
 
                 if (tle.source.State != TrackState.AlreadyExists && !tle.needSourceSearch)
                 {
                     foreach (var tracks in tle.list)
-                        existing.AddRange(DoSkipExisting(tle, config, tracks));
+                        existing.AddRange(DoSkipExisting(tle, tracks));
                 }
             }
 
@@ -393,7 +332,8 @@ static partial class Program
                     await parallelSearchSemaphore.WaitAsync();
 
                     progress = enableParallelSearch ? Printing.GetProgressBar(config) : null;
-                    Printing.RefreshOrPrint(progress, 0, $"  {tle.source.Type} download: {tle.source.ToString(true)}, searching..", print: true);
+                    var part = progress == null ? "" : "  ";
+                    Printing.RefreshOrPrint(progress, 0, $"{part}{tle.source.Type} download: {tle.source.ToString(true)}, searching..", print: true);
 
                     bool foundSomething = false;
                     var responseData = new ResponseData();
@@ -460,7 +400,7 @@ static partial class Program
                     if (config.skipExisting && tle.needSkipExistingAfterSearch)
                     {
                         foreach (var tracks in tle.list)
-                            existing.AddRange(DoSkipExisting(tle, config, tracks));
+                            existing.AddRange(DoSkipExisting(tle, tracks));
                     }
 
                     if (tle.gotoNextAfterSearch)
@@ -557,7 +497,7 @@ static partial class Program
                     if (tle.config.skipExisting && tle.needSkipExistingAfterSearch)
                     {
                         foreach (var tracks in tle.list)
-                            DoSkipExisting(tle, tle.config, tracks);
+                            DoSkipExisting(tle, tracks);
                     }
                 }
             }
@@ -567,12 +507,13 @@ static partial class Program
     }
 
 
-    static List<Track> DoSkipExisting(TrackListEntry tle, Config config, List<Track> tracks)
+    static List<Track> DoSkipExisting(TrackListEntry tle, List<Track> tracks)
     {
+        var context = FileSkipperContext.FromTrackListEntry(tle);
         var existing = new List<Track>();
         foreach (var track in tracks)
         {
-            if (SetExisting(tle, config, track))
+            if (SetExisting(tle, context, track))
             {
                 existing.Add(track);
             }
@@ -581,7 +522,7 @@ static partial class Program
     }
 
 
-    static bool SetExisting(TrackListEntry tle, Config config, Track track)
+    static bool SetExisting(TrackListEntry tle, FileSkipperContext context, Track track)
     {
         string? path = null;
 
@@ -590,7 +531,7 @@ static partial class Program
             if (!tle.outputDirSkipper.IndexIsBuilt)
                 tle.outputDirSkipper.BuildIndex();
 
-            tle.outputDirSkipper.TrackExists(track, out path);
+            tle.outputDirSkipper.TrackExists(track, context, out path);
         }
 
         if (path == null && tle.musicDirSkipper != null)
@@ -601,7 +542,7 @@ static partial class Program
                 tle.musicDirSkipper.BuildIndex();
             }
 
-            tle.musicDirSkipper.TrackExists(track, out path);
+            tle.musicDirSkipper.TrackExists(track, context, out path);
         }
 
         if (path != null)
@@ -753,11 +694,13 @@ static partial class Program
 
         if (tracks != null && tle.source.DownloadPath.Length > 0)
         {
-            organizer.OrganizeAlbum(tracks, additionalImages);
+            organizer.OrganizeAlbum(tle.source, tracks, additionalImages);
         }
 
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
+
+        OnComplete(config, config.onComplete, tle.source, true);
     }
 
 
@@ -1046,10 +989,7 @@ static partial class Program
             }
         }
 
-        if (config.onComplete.Length > 0)
-        {
-            OnComplete(config, config.onComplete, track);
-        }
+        OnComplete(config, config.onComplete, track, false);
 
         semaphore.Release();
     }
@@ -1300,48 +1240,63 @@ static partial class Program
     }
 
 
-    static void OnComplete(Config config, string onComplete, Track track)
+    static void OnComplete(Config config, string onComplete, Track track, bool isAlbumOnComplete)
     {
         if (onComplete.Length == 0)
             return;
 
         bool useShellExecute = false;
+        bool createNoWindow = false;
         int count = 0;
 
-        while (onComplete.Length > 2 && count++ < 2)
+        while (onComplete.Length > 2 && count++ < 4)
         {
-            if (onComplete[0] == 's' && onComplete[1] == ':')
+            if (onComplete[1] == ':')
             {
-                useShellExecute = true;
-            }
-            else if (onComplete[0].IsDigit() && onComplete[1] == ':')
-            {
-                if ((int)track.State != int.Parse(onComplete[0].ToString()))
-                    return;
+                if (onComplete[0] == 's')
+                {
+                    useShellExecute = true;
+                }
+                else if (onComplete[0] == 'a')
+                {
+                    if (!isAlbumOnComplete) return;
+                }
+                else if (onComplete[0] == 'w')
+                {
+                    createNoWindow = true;
+                }
+                else if (onComplete[0].IsDigit())
+                {
+                    if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
+                }
+
+                onComplete = onComplete[2..];
             }
             else
             {
                 break;
             }
-            onComplete = onComplete[2..];
         }
 
         var process = new Process();
         var startInfo = new ProcessStartInfo();
 
-        onComplete = onComplete.Replace("{title}", track.Title)
-                           .Replace("{artist}", track.Artist)
-                           .Replace("{album}", track.Album)
-                           .Replace("{uri}", track.URI)
-                           .Replace("{length}", track.Length.ToString())
-                           .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
-                           .Replace("{type}", track.Type.ToString())
-                           .Replace("{is-not-audio}", track.IsNotAudio.ToString())
-                           .Replace("{failure-reason}", track.FailureReason.ToString())
-                           .Replace("{path}", track.DownloadPath)
-                           .Replace("{state}", track.State.ToString())
-                           .Replace("{extractor}", config.inputType.ToString())
-                           .Trim();
+        onComplete = onComplete
+            .Replace("{title}", track.Title)
+            .Replace("{artist}", track.Artist)
+            .Replace("{album}", track.Album)
+            .Replace("{uri}", track.URI)
+            .Replace("{length}", track.Length.ToString())
+            .Replace("{row}", (track.CsvOrListRow == -1 ? -1 : track.CsvOrListRow + 1).ToString())
+            .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
+            .Replace("{type}", track.Type.ToString())
+            .Replace("{is-not-audio}", track.IsNotAudio.ToString())
+            .Replace("{failure-reason}", track.FailureReason.ToString())
+            .Replace("{path}", track.DownloadPath.TrimEnd('/').TrimEnd('\\'))
+            .Replace("{state}", track.State.ToString())
+            .Replace("{extractor}", config.inputType.ToString())
+            .Replace("{bindir}", AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\'))
+            .Trim();
 
         if (onComplete[0] == '"')
         {
@@ -1367,6 +1322,8 @@ static partial class Program
         {
             startInfo.RedirectStandardOutput = true;
             startInfo.RedirectStandardError = true;
+            if (!createNoWindow)
+                startInfo.CreateNoWindow = false;
         }
 
         startInfo.UseShellExecute = useShellExecute;

@@ -187,7 +187,7 @@ public static class Printing
 
     public static void PrintComplete(TrackLists trackLists)
     {
-        var ls = trackLists.Flattened(true, true);
+        var ls = trackLists.Flattened(true, false);
         int successes = 0, fails = 0;
         foreach (var x in ls)
         {

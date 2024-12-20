@@ -1,33 +1,22 @@
 @echo off
 setlocal
 
-set DOTNET_CLI_TELEMETRY_OPTOUT=1
+set FRAMEWORK=net6.0
 
 if not exist slsk-batchdl\bin\zips mkdir slsk-batchdl\bin\zips
- 
-REM win-x86
-dotnet publish -c Release -r win-x86 -p:PublishSingleFile=true -p:DefineConstants=WINDOWS --self-contained false
-if exist slsk-batchdl\bin\Release\net6.0\win-x86\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\net6.0\win-x86\publish\*.pdb 
-if exist slsk-batchdl\bin\zips\sldl_win-x86.zip del /F /Q slsk-batchdl\bin\zips\sldl_win-x86.zip
-powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\win-x86\publish', 'slsk-batchdl\bin\zips\sldl_win-x86.zip'); }"
 
-REM win-x86 self-contained
-dotnet publish -c Release -r win-x86 -p:PublishSingleFile=true -p:PublishTrimmed=true -p:DefineConstants=WINDOWS --self-contained true
-if exist slsk-batchdl\bin\Release\net6.0\win-x86\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\net6.0\win-x86\publish\*.pdb 
-if exist slsk-batchdl\bin\zips\sldl_win-x86_self-contained.zip del /F /Q slsk-batchdl\bin\zips\sldl_win-x86_self-contained.zip
-powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\win-x86\publish', 'slsk-batchdl\bin\zips\sldl_win-x86_self-contained.zip'); }"
-
-REM linux-x64
-dotnet publish -c Release -r linux-x64 -p:PublishSingleFile=true -p:PublishTrimmed=true --self-contained true
-if exist slsk-batchdl\bin\Release\net6.0\linux-x64\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\net6.0\linux-x64\publish\*.pdb 
-if exist slsk-batchdl\bin\zips\sldl_linux-x64.zip del /F /Q slsk-batchdl\bin\zips\sldl_linux-x64.zip
-powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\linux-x64\publish', 'slsk-batchdl\bin\zips\sldl_linux-x64.zip'); }"
-
-REM linux-arm
-dotnet publish -c Release -r linux-arm -p:PublishSingleFile=true -p:PublishTrimmed=true --self-contained true
-if exist slsk-batchdl\bin\Release\net6.0\linux-arm\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\net6.0\linux-arm\publish\*.pdb 
-if exist slsk-batchdl\bin\zips\sldl_linux-arm.zip del /F /Q slsk-batchdl\bin\zips\sldl_linux-arm.zip
-powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\net6.0\linux-arm\publish', 'slsk-batchdl\bin\zips\sldl_linux-arm.zip'); }"
-
+call :publish_and_zip win-x86 	false 	sldl_win-x86.zip
+call :publish_and_zip win-x86 	true 	sldl_win-x86_self-contained.zip
+call :publish_and_zip linux-x64 true 	sldl_linux-x64.zip
+call :publish_and_zip linux-arm true 	sldl_linux-arm.zip
 
 endlocal
+exit /b
+
+:publish_and_zip
+dotnet publish -c Release -r %1 -p:PublishSingleFile=true -p:PublishTrimmed=%2 -p:DefineConstants=WINDOWS --self-contained=%2
+if exist slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish\*.pdb
+if exist slsk-batchdl\bin\zips\%3 del /F /Q slsk-batchdl\bin\zips\%3
+powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish', 'slsk-batchdl\bin\zips\%3'); }"
+exit /b
+

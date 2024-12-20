@@ -54,7 +54,7 @@ public class FileManager
         this.defaultFolderName = defaultFolderName != null ? Utils.NormalizedPath(defaultFolderName) : null;
     }
 
-    public void OrganizeAlbum(List<Track> tracks, List<Track>? additionalImages, bool remainingOnly = true)
+    public void OrganizeAlbum(Track source, List<Track> tracks, List<Track>? additionalImages, bool remainingOnly = true)
     {
         foreach (var track in tracks.Where(t => !t.IsNotAudio))
         {
@@ -63,6 +63,8 @@ public class FileManager
 
             OrganizeAudio(track, track.FirstDownload);
         }
+
+        source.DownloadPath = Utils.GreatestCommonDirectory(tracks.Where(t => !t.IsNotAudio).Select(t => t.DownloadPath));
 
         bool onlyAdditionalImages = config.nameFormat.Length == 0;
 

@@ -24,6 +24,8 @@ namespace Models
 
         public bool CanParallelSearch => source.Type == TrackType.Album || source.Type == TrackType.Aggregate;
 
+        private List<string>? printLines = null;
+
         public TrackListEntry(TrackType trackType)
         {
             list = new List<List<Track>>();
@@ -75,6 +77,21 @@ namespace Models
                 list.Add(new List<Track>() { track });
             else
                 list[0].Add(track);
+        }
+
+        public void AddPrintLine(string line)
+        {
+            if (printLines == null)
+                printLines = new List<string>();
+            printLines.Add(line);
+        }
+
+        public void PrintLines()
+        {
+            if (printLines == null) return;
+            foreach (var line in printLines)
+                Console.WriteLine(line);
+            printLines = null;
         }
     }
 }

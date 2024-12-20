@@ -3,7 +3,7 @@
 An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls.  
 Supports playlist and album downloads; selects the best files according to user-configured file conditions and heuristics.
 
-See the usage [examples](#examples-1).
+See the [usage examples](#examples-1).
 
 ## Index
  - [Options](#options)
@@ -68,14 +68,15 @@ Usage: sldl <input> [OPTIONS]
         
     --listen-port <port>           Port for incoming connections (default: 49998)
     --on-complete <command>        Run a command whenever a file is downloaded.
-                                   Available placeholders: {path} (local save path), {title},
+                                   Available placeholders: {path} (local path),{title},{row}
                                    {artist},{album},{uri},{length},{failure-reason},{state}.
                                    Prepend a state number to only run in specific cases:
                                    1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
                                    NotFoundLastTime states respectively. 
                                    E.g: '1:<cmd>' will only run the command if the file is
                                    downloaded successfully. Prepend 's:' to use the system
-                                   shell to execute the command.
+                                   shell to execute the command. Prepend 'a:' to run it only
+                                   whenever an album downloads or fails.
 
     --print <option>               Print tracks or search results instead of downloading:
                                    'tracks': Print all tracks to be downloaded
@@ -198,7 +199,7 @@ Usage: sldl <input> [OPTIONS]
                                    the directory fails to download. Set to 'delete' to delete
                                    the files instead. Set to 'disable' keep it where it is.
                                    Default: {configured output dir}/failed
-    --album-parallel-search        Run album searches in parallel
+    --album-parallel-search        Run album searches in parallel, then download sequentially.
 ```
 #### Aggregate Download Options
 ```
@@ -274,33 +275,22 @@ Name of the track, album, or artist to search for: Can either be any typical sea
 (like what you would enter into the soulseek search bar), or a comma-separated list of
 properties like 'title=Song Name, artist=Artist Name, length=215'.
 
-The following properties are accepted:
-```
-title
-artist
-album
-length (in seconds)
-artist-maybe-wrong
-album-track-count
-```
+The following properties are accepted: title, artist, album, length (in seconds), 
+artist-maybe-wrong, album-track-count.
+
 Example inputs and their interpretations:
-  ```
-Input String                            | Artist   | Title    | Album    | Length
----------------------------------------------------------------------------------
-'Foo Bar'   (without any hyphens)       |          | Foo Bar  |          |
-'Foo - Bar'                             | Foo      | Bar      |          |
-'Foo - Bar' (with --album enabled)      | Foo      |          | Bar      |
-'Artist - Title, length=42'             | Artist   | Title    |          | 42
-'artist=AR, title=T, album=AL'          | AR       | T        | AL       |
-```
+| Input String                            | Artist   | Title    | Album    | Length |
+|-----------------------------------------|----------|----------|----------|--------|
+| 'Foo Bar' (without any hyphens)         |          | Foo Bar  |          |        |
+| 'Foo - Bar'                             | Foo      | Bar      |          |        |
+| 'Foo - Bar' (with --album enabled)      | Foo      |          | Bar      |        |
+| 'Artist - Title, length=42'             | Artist   | Title    |          | 42     |
+| 'artist=AR, title=T, album=AL'          | AR       | T        | AL       |        |
 
 ### List
 A path to a text file where each line has the following form:
-```
-"some input"                    "conditions"                  "preferred conditions"
-```
-e.g:
-```
+```bash
+# input                         conditions                    pref. conditions
 "artist=Artist, album=Album"    "format=mp3; br > 128"        "br >= 320"
 ```
 Where "some input" is any of the above input types. The quotes can be omitted if the field
@@ -389,7 +379,7 @@ a file that only satisfies strict-title (if enabled) will always be preferred ov
 only satisfies the format condition. Run with --print "results-full" to reveal the sorting logic.
 
 Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g
---cond "br >= 320; format = mp3,ogg; sr < 96000".
+`--cond "br >= 320; format = mp3,ogg; sr < 96000"`.
 
 ### Filtering irrelevant results
   The options --strict-title, --strict-artist and --strict-album will filter any file that
@@ -418,13 +408,13 @@ Name format supports subdirectories as well as conditional expressions like {tag
 tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check.
 
 ### Examples:
-  - "{artist} - {title}"  
+  - `{artist} - {title}`  
       Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
       following is generally preferred:
-  - "{artist( - )title|filename}"  
+  - `{artist( - )title|filename}`  
       If artist and title are not null, name it 'Artist - Title', otherwise use the original
       filename.
-  - "{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}"  
+  - `{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}`  
       Sort files into artist/album folders if all tags are present, otherwise put them in
       the 'missing-tags' folder.   
 
@@ -466,7 +456,7 @@ pref-format = flac
 fast-search = true
 ```
   Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user
-  directory.
+  directory. The path variable `{bindir}` stores the directory of the sldl binary.
 
 ### Configuration profiles:
   Profiles are supported:
@@ -547,12 +537,12 @@ sldl "artist=MC MENTAL" -a -g -t
 
 #### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
-```bash
-"Artist - My Favorite Song"
-a:"Artist - Some Album, album-track-count=5" "format=flac"
+```
+"Artist - My Favorite Song"    "format=flac"
+a:"Artist - Some Album, album-track-count=5"
 ```
 Add a profile to your `sldl.conf`:
-```
+```bash
 [wishlist]
 input = ~/sldl/wishlist.txt 
 input-type = list
@@ -618,7 +608,7 @@ Example => Run `sldl` every Sunday at 1am, search for missing tracks from the sp
 
 ```
 # min   hour    day     month   weekday command
-0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data --skip-existing --m3u-path /data/index.sldl"
+0 1 * * 0 sldl https://open.spotify.com/playlist/6sf1WR5grXGJ6dET -c /config -p /data --index-path /data/index.sldl
 ```
 
 [crontab.guru](https://crontab.guru/) could be used to help with the scheduling expression.

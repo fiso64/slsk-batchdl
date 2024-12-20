@@ -17,7 +17,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
     private readonly object locker = new();
 
-    public M3uEditor(TrackLists trackLists, M3uOption option, int offset = 0)
+    private M3uEditor(TrackLists trackLists, M3uOption option, int offset = 0)
     {
         this.trackLists = trackLists;
         this.option = option;
@@ -25,12 +25,12 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         this.needFirstUpdate = option == M3uOption.All || option == M3uOption.Playlist;
     }
 
-    public M3uEditor(string path, TrackLists trackLists, M3uOption option) : this(trackLists, option)
+    public M3uEditor(string path, TrackLists trackLists, M3uOption option, bool loadPreviousResults) : this(trackLists, option)
     {
-        SetPathAndLoad(path);
+        SetPathAndLoad(path, loadPreviousResults);
     }
 
-    public void SetPathAndLoad(string path)
+    private void SetPathAndLoad(string path, bool loadPreviousResults)
     {
         if (string.IsNullOrEmpty(path))
             return;
@@ -42,87 +42,104 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
 
         lines = ReadAllLines().ToList();
-        LoadPreviousResults();
+        
+        if (loadPreviousResults)
+            LoadPreviousResults();
     }
 
     private void LoadPreviousResults()
     {
-        // Format:
-        // #SLDL:<trackinfo>;<trackinfo>; ... 
-        // where <trackinfo>  = filepath,artist,album,title,length(int),tracktype(int),state(int),failurereason(int)
-
-        if (lines.Count == 0 || !lines[0].StartsWith("#SLDL:"))
+        if (lines.Count == 0 || !lines.Any(x => x.Trim() != ""))
             return;
 
-        string sldlLine = lines[0];
-        lines = lines.Skip(1).ToList();
+        bool useOldFormat = lines[0].StartsWith("#SLDL:");
 
-        int k = "#SLDL:".Length;
+        var indexLines = useOldFormat ? new string[] { lines[0] } : lines.Skip(1);
         var currentItem = new StringBuilder();
-        bool inQuotes = false;
+        
+        if (useOldFormat) lines = lines.Skip(1).ToList();
+        int offset = useOldFormat ? "#SLDL:".Length : 0;
 
-        for (; k < sldlLine.Length && sldlLine[k] == ' '; k++);
-
-        for (; k < sldlLine.Length; k++)
+        foreach (var sldlLine in indexLines)
         {
-            var track = new Track();
-            int field = 0;
-            for (int i = k; i < sldlLine.Length; i++)
-            {
-                char c = sldlLine[i];
+            if (string.IsNullOrWhiteSpace(sldlLine)) 
+                continue;
 
-                if (c == '"' && (i == k || sldlLine[i - 1] != '\\'))
+            int k = offset;
+            bool inQuotes = false;
+
+            for (; k < sldlLine.Length && sldlLine[k] == ' '; k++);
+
+            for (; k < sldlLine.Length; k++)
+            {
+                var track = new Track();
+                int field = 0;
+                for (int i = k; i < sldlLine.Length; i++)
                 {
-                    if (inQuotes && i + 1 < sldlLine.Length && sldlLine[i + 1] == '"')
+                    char c = sldlLine[i];
+
+                    if (c == '"' && (i == k || sldlLine[i - 1] != '\\'))
                     {
-                        currentItem.Append('"');
-                        i++;
+                        if (inQuotes && i + 1 < sldlLine.Length && sldlLine[i + 1] == '"')
+                        {
+                            currentItem.Append('"');
+                            i++;
+                        }
+                        else
+                        {
+                            inQuotes = !inQuotes;
+                        }
+                    }
+                    else if (field <= 6 && c == ',' && !inQuotes)
+                    {
+                        var x = currentItem.ToString();
+
+                        if (field == 0)
+                        {
+                            if (x.StartsWith("./"))
+                                x = Path.Join(parent, x[2..]);
+                            track.DownloadPath = x;
+                        }
+                        else if (field == 1)
+                            track.Artist = x;
+                        else if (field == 2)
+                            track.Album = x;
+                        else if (field == 3)
+                            track.Title = x;
+                        else if (field == 4)
+                            track.Length = int.Parse(x);
+                        else if (field == 5)
+                            track.Type = (TrackType)int.Parse(currentItem.ToString());
+                        else if (field == 6)
+                            track.State = (TrackState)int.Parse(x);
+
+                        currentItem.Clear();
+                        field++;
+                    }
+                    else if (field == 7 && c == ';' && useOldFormat)
+                    {
+                        track.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
+                        currentItem.Clear();
+                        k = i;
+                        break;
                     }
                     else
                     {
-                        inQuotes = !inQuotes;
+                        currentItem.Append(c);
                     }
                 }
-                else if (field <= 6 && c == ',' && !inQuotes)
-                {
-                    var x = currentItem.ToString();
 
-                    if (field == 0)
-                    {
-                        if (x.StartsWith("./"))
-                            x = Path.Join(parent, x[2..]);
-                        track.DownloadPath = x;
-                    }
-                    else if (field == 1)
-                        track.Artist = x;
-                    else if (field == 2)
-                        track.Album = x;
-                    else if (field == 3)
-                        track.Title = x;
-                    else if (field == 4)
-                        track.Length = int.Parse(x);
-                    else if (field == 5)
-                        track.Type = (TrackType)int.Parse(currentItem.ToString());
-                    else if (field == 6)
-                        track.State = (TrackState)int.Parse(x);
-
-                    currentItem.Clear();
-                    field++;
-                }
-                else if (field == 7 && c == ';')
+                if (!useOldFormat)
                 {
                     track.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
                     currentItem.Clear();
-                    k = i;
-                    break;
                 }
-                else
-                {
-                    currentItem.Append(c);
-                }
-            }
 
-            previousRunData[track.ToKey()] = track;
+                previousRunData[track.ToKey()] = track;
+
+                if (!useOldFormat)
+                    break;
+            }
         }
     }
 
@@ -261,10 +278,6 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
     private void WriteSldlLine(Writer writer)
     {
-        // Format:
-        // #SLDL:<trackinfo>;<trackinfo>; ... 
-        // where <trackinfo>  = filepath,artist,album,title,length(int),tracktype(int),state(int),failurereason(int)
-
         void writeCsvLine(string[] items)
         {
             bool comma = false;
@@ -288,7 +301,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             }
         }
 
-        writer.Write("#SLDL:");
+        //writer.Write("#SLDL:");
+        writer.Write("filepath,artist,album,title,length,tracktype,state,failurereason\n");
 
         foreach (var val in previousRunData.Values)
         {
@@ -309,7 +323,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             };
 
             writeCsvLine(items);
-            writer.Write(';');
+            //writer.Write(';');
+            writer.Write('\n');
         }
 
         writer.Write('\n');

@@ -50,9 +50,9 @@ namespace Extractors
                     {
                         string[] lines = File.ReadAllLines(csvFilePath, System.Text.Encoding.UTF8);
 
-                        if (track.CsvRow > -1 && track.CsvRow < lines.Length)
+                        if (track.CsvOrListRow > -1 && track.CsvOrListRow < lines.Length)
                         {
-                            lines[track.CsvRow] = new string(',', Math.Max(0, csvColumnCount - 1));
+                            lines[track.CsvOrListRow] = new string(',', Math.Max(0, csvColumnCount - 1));
                             Utils.WriteAllLines(csvFilePath, lines, '\n');
                         }
                     }
@@ -135,7 +135,7 @@ namespace Extractors
                     csvColumnCount = values.Count;
 
                 var desc = "";
-                var track = new Track() { CsvRow = index };
+                var track = new Track() { CsvOrListRow = index };
 
                 if (artistIndex >= 0) track.Artist = values[artistIndex];
                 if (trackIndex >= 0) track.Title = values[trackIndex];

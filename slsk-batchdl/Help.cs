@@ -44,14 +44,15 @@ public static class Help
           
         --listen-port <port>           Port for incoming connections (default: 49998)
         --on-complete <command>        Run a command whenever a file is downloaded.
-                                       Available placeholders: {path} (local save path), {title},
+                                       Available placeholders: {path} (local path),{title},{row}
                                        {artist},{album},{uri},{length},{failure-reason},{state}.
                                        Prepend a state number to only run in specific cases:
                                        1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
                                        NotFoundLastTime states respectively. 
                                        E.g: '1:<cmd>' will only run the command if the file is
                                        downloaded successfully. Prepend 's:' to use the system
-                                       shell to execute the command.
+                                       shell to execute the command. Prepend 'a:' to run it only
+                                       whenever an album downloads or fails.
 
         --print <option>               Print tracks or search results instead of downloading:
                                        'tracks': Print all tracks to be downloaded
@@ -168,7 +169,7 @@ public static class Help
                                        the directory fails to download. Set to 'delete' to delete
                                        the files instead. Set to the empty string """" to disable.
                                        Default: {configured output dir}/failed
-        --album-parallel-search        Run album searches in parallel
+        --album-parallel-search        Run album searches in parallel, then download sequentially.
           
       Aggregate Download
         -g, --aggregate                Aggregate download mode: Find and download all distinct 
@@ -249,13 +250,8 @@ public static class Help
         (like what you would enter into the soulseek search bar), or a comma-separated list of
         properties like 'title=Song Name, artist=Artist Name, length=215'. 
 
-        The following properties are accepted: 
-          title
-          artist
-          album
-          length (in seconds)
-          artist-maybe-wrong
-          album-track-count
+        The following properties are accepted: title, artist, album, length (in seconds), 
+        artist-maybe-wrong, album-track-count.
 
         Example inputs and their interpretations:
           Input String                            | Artist   | Title    | Album    | Length
@@ -271,7 +267,7 @@ public static class Help
         
         ""some input""                    ""conditions""                  ""preferred conditions""
         
-        e.g:
+        for example:
         
         ""artist=Artist, album=Album""    ""format=mp3; br > 128""        ""br >= 320""
         
@@ -447,7 +443,7 @@ public static class Help
           fast-search = true
         
         Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user 
-        directory.
+        directory. The path variable {bindir} stores the directory of the sldl binary.
 
       Configuration profiles:
         Profiles are supported:

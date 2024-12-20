@@ -16,7 +16,7 @@ namespace Models
         public bool IsNotAudio = false;
         public string DownloadPath = "";
         public string Other = "";
-        public int CsvRow = -1;
+        public int CsvOrListRow = -1;
         public TrackType Type = TrackType.Normal;
         public FailureReason FailureReason = FailureReason.None;
         public TrackState State = TrackState.Initial;

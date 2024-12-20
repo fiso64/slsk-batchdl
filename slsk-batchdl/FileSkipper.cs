@@ -6,22 +6,46 @@ namespace FileSkippers
 {
     public static class FileSkipperRegistry
     {
-        public static FileSkipper GetSkipper(SkipMode mode, string dir, FileConditions? conditions, M3uEditor indexEditor)
+        public static FileSkipper GetSkipper(SkipMode mode, string dir, bool useConditions)
         {
-            bool useConditions = conditions != null && !conditions.Equals(new FileConditions());
             return mode switch
             {
-                SkipMode.Name => useConditions ? new NameConditionalSkipper(dir, conditions) : new NameSkipper(dir),
-                SkipMode.Tag => useConditions ? new TagConditionalSkipper(dir, conditions) : new TagSkipper(dir),
-                SkipMode.Index => useConditions ? new IndexConditionalSkipper(indexEditor, conditions) : new IndexSkipper(indexEditor, conditions != null),
+                SkipMode.Name => useConditions ? new NameConditionalSkipper(dir) : new NameSkipper(dir),
+                SkipMode.Tag => useConditions ? new TagConditionalSkipper(dir) : new TagSkipper(dir),
+                SkipMode.Index => useConditions ? new IndexConditionalSkipper() : new IndexSkipper(),
                 _ => throw new ArgumentException("Invalid SkipMode")
             };
         }
     }
 
+    public struct FileSkipperContext
+    {
+        public FileConditions? conditions;
+        public M3uEditor? indexEditor;
+        public bool checkFileExists;
+
+        public static FileSkipperContext FromTrackListEntry(TrackListEntry tle)
+        {
+            FileConditions? cond = null;
+            if (tle.config.skipCheckPrefCond)
+                cond = tle.config.necessaryCond.With(tle.config.preferredCond);
+            else if (tle.config.skipCheckCond)
+                cond = tle.config.necessaryCond;
+
+            var context = new FileSkipperContext
+            {
+                checkFileExists = cond != null,
+                indexEditor = tle.indexEditor,
+                conditions = cond,
+            };
+
+            return context;
+        }
+    }
+
     public abstract class FileSkipper
     {
-        public abstract bool TrackExists(Track track, out string? foundPath);
+        public abstract bool TrackExists(Track track, FileSkipperContext context, out string? foundPath);
         public virtual void BuildIndex() { IndexIsBuilt = true; }
         public bool IndexIsBuilt { get; protected set; } = false;
     }
@@ -72,7 +96,7 @@ namespace FileSkippers
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
 
@@ -101,12 +125,10 @@ namespace FileSkippers
         readonly string[] ignore = new string[] { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedPath, PreprocessedName, file)
-        FileConditions conditions;
 
-        public NameConditionalSkipper(string dir, FileConditions conditions)
+        public NameConditionalSkipper(string dir)
         {
             this.dir = dir;
-            this.conditions = conditions;
         }
 
         private string Preprocess(string s, bool removeSlash)
@@ -148,7 +170,7 @@ namespace FileSkippers
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
 
@@ -160,7 +182,7 @@ namespace FileSkippers
 
             foreach ((var ppath, var pname, var musicFile) in index)
             {
-                if (pname.ContainsWithBoundary(title) && ppath.ContainsWithBoundary(artist) && conditions.FileSatisfies(musicFile, track))
+                if (pname.ContainsWithBoundary(title) && ppath.ContainsWithBoundary(artist) && context.conditions.FileSatisfies(musicFile, track))
                 {
                     foundPath = musicFile.Path;
                     return true;
@@ -214,7 +236,7 @@ namespace FileSkippers
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
 
@@ -241,12 +263,10 @@ namespace FileSkippers
     {
         readonly string dir;
         readonly List<(string, string, SimpleFile)> index = new(); // (PreprocessedArtist, PreprocessedTitle, file)
-        FileConditions conditions;
 
-        public TagConditionalSkipper(string dir, FileConditions conditions)
+        public TagConditionalSkipper(string dir)
         {
             this.dir = dir;
-            this.conditions = conditions;
         }
 
         private string Preprocess(string s)
@@ -281,7 +301,7 @@ namespace FileSkippers
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
 
@@ -293,7 +313,7 @@ namespace FileSkippers
 
             foreach ((var partist, var ptitle, var musicFile) in index)
             {
-                if (title == ptitle && partist.Contains(artist) && conditions.FileSatisfies(musicFile, track))
+                if (title == ptitle && partist.Contains(artist) && context.conditions.FileSatisfies(musicFile, track))
                 {
                     foundPath = musicFile.Path;
                     return true;
@@ -306,23 +326,18 @@ namespace FileSkippers
 
     public class IndexSkipper : FileSkipper
     {
-        M3uEditor indexEditor;
-        bool checkFileExists;
-        
-        public IndexSkipper(M3uEditor m3UEditor, bool checkFileExists) 
+        public IndexSkipper() 
         {
-            this.indexEditor = m3UEditor;
-            this.checkFileExists = checkFileExists;
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
-            var t = indexEditor.PreviousRunResult(track);
+            var t = context.indexEditor.PreviousRunResult(track);
             if (t != null && (t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
             {
-                if (checkFileExists)
+                if (context.checkFileExists)
                 {
                     if (t.DownloadPath.Length == 0)
                         return false;
@@ -348,20 +363,15 @@ namespace FileSkippers
 
     public class IndexConditionalSkipper : FileSkipper
     {
-        M3uEditor indexEditor;
-        FileConditions conditions;
-
-        public IndexConditionalSkipper(M3uEditor m3UEditor, FileConditions conditions)
+        public IndexConditionalSkipper()
         {
-            this.indexEditor = m3UEditor;
-            this.conditions = conditions;
             IndexIsBuilt = true;
         }
 
-        public override bool TrackExists(Track track, out string? foundPath)
+        public override bool TrackExists(Track track, FileSkipperContext context, out string? foundPath)
         {
             foundPath = null;
-            var t = indexEditor.PreviousRunResult(track);
+            var t = context.indexEditor.PreviousRunResult(track);
 
             if (t == null || t.DownloadPath.Length == 0)
                 return false;
@@ -375,7 +385,7 @@ namespace FileSkippers
                 try 
                 { 
                     musicFile = TagLib.File.Create(t.DownloadPath);
-                    if (conditions.FileSatisfies(musicFile, track, false))
+                    if (context.conditions.FileSatisfies(musicFile, track, false))
                     {
                         foundPath = t.DownloadPath;
                         return true;
@@ -415,7 +425,7 @@ namespace FileSkippers
                         try { musicFile = TagLib.File.Create(path); }
                         catch { return false; }
 
-                        if (!conditions.FileSatisfies(musicFile, track))
+                        if (!context.conditions.FileSatisfies(musicFile, track))
                             return false;
                     }
                 }

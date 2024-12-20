@@ -66,16 +66,20 @@ namespace Extractors
                 foreach (var tle in tl.lists)
                 {
                     if (fields.Count >= 2)
-                        tle.extractorCond = Config.ParseConditions(fields[1]);
+                    {
+                        tle.extractorCond = Config.ParseConditions(fields[1], tle.source);
+                    }
                     if (fields.Count >= 3)
+                    {
                         tle.extractorPrefCond = Config.ParseConditions(fields[2]);
+                    }
 
                     tle.defaultFolderName = foldername;
                     tle.enablesIndexByDefault = true;
                 }
 
                 if (tl.lists.Count == 1)
-                    tl[0].source.CsvRow = i;
+                    tl[0].source.CsvOrListRow = i;
 
                 trackLists.lists.AddRange(tl.lists);
 
@@ -138,9 +142,9 @@ namespace Extractors
                     {
                         string[] lines = File.ReadAllLines(listFilePath, Encoding.UTF8);
 
-                        if (track.CsvRow > -1 && track.CsvRow < lines.Length)
+                        if (track.CsvOrListRow > -1 && track.CsvOrListRow < lines.Length)
                         {
-                            lines[track.CsvRow] = "";
+                            lines[track.CsvOrListRow] = "";
                             Utils.WriteAllLines(listFilePath, lines, '\n');
                         }
                     }

@@ -648,8 +648,8 @@ namespace Extractors
 
         public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "", bool printCommand = false)
         {
-            Process process = new Process();
-            ProcessStartInfo startInfo = new ProcessStartInfo();
+            var process = new Process();
+            var startInfo = new ProcessStartInfo();
 
             if (ytdlpArgument.Length == 0)
                 ytdlpArgument = "\"{id}\" -f bestaudio/best -ci -o \"{savepath-noext}.%(ext)s\" -x";

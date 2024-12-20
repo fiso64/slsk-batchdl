@@ -9,7 +9,7 @@ public class Config
 {
     public FileConditions necessaryCond = new() 
     {
-        Formats = new string[] { ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac" },
+        Formats = new string[] { "mp3", "flac", "ogg", "m4a", "opus", "wav", "aac", "alac" },
     };
 
     public FileConditions preferredCond = new()
@@ -175,11 +175,6 @@ public class Config
         ProcessArgs(arguments);
     }
 
-    public Config()
-    {
-
-    }
-
     public Config Copy() // deep copies all fields except configProfiles and arguments
     {
         var copy = (Config)this.MemberwiseClone();
@@ -209,9 +204,12 @@ public class Config
 
         if (idx != -1)
         {
-            confPath = Utils.ExpandUser(args[idx + 1]);
             confPathChanged = true;
 
+            if (confPath == "none")
+                return;
+
+            confPath = Utils.ExpandUser(args[idx + 1]);
             if(File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
                 confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
         }
@@ -389,7 +387,7 @@ public class Config
 
         foreach (var (name, args) in toApply)
         {
-            Console.WriteLine($"Applying auto profile: {name}");
+            tle.AddPrintLine($"Applying auto profile: {name}");
             ProcessArgs(args);
             appliedProfiles.Add(name);
         }
@@ -421,7 +419,7 @@ public class Config
                     appliedProfiles.Add(name);
                 }
                 else
-                    Console.WriteLine($"Error: No profile '{name}' found in config");
+                    Console.WriteLine($"Warning: No profile '{name}' found in config");
             }
         }
     }
@@ -563,7 +561,7 @@ public class Config
     }
 
 
-    public static FileConditions ParseConditions(string input)
+    public static FileConditions ParseConditions(string input, Track? track = null)
     {
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
@@ -577,6 +575,15 @@ public class Config
                 max = int.Parse(value) - 1;
             else if (condition.Contains('='))
                 min = max = int.Parse(value);
+        }
+
+        static void UpdateMinMax2(string value, string condition, ref int min, ref int max)
+        {
+            int? nullableMin = min;
+            int? nullableMax = max;
+            UpdateMinMax(value, condition, ref nullableMin, ref nullableMax);
+            min = nullableMin ?? min;
+            max = nullableMax ?? max;
         }
 
         var cond = new FileConditions();
@@ -638,6 +645,10 @@ public class Config
                 case "acceptmissing":
                 case "acceptmissingprops":
                     cond.AcceptMissingProps = bool.Parse(value);
+                    break;
+                case "albumtrackcount":
+                    if (track != null)
+                        UpdateMinMax2(value, condition, ref track.MinAlbumTrackCount, ref track.MaxAlbumTrackCount);
                     break;
                 default:
                     throw new ArgumentException($"Unknown condition '{condition}'");
@@ -721,6 +732,10 @@ public class Config
                     case "-c":
                     case "--config":
                         confPath = args[++i];
+                        break;
+                    case "--nc":
+                    case "--no-config":
+                        confPath = "none";
                         break;
                     case "--smd":
                     case "--skip-music-dir":
