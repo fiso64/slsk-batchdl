@@ -1136,7 +1136,7 @@ static partial class Program
                         foreach (var (key, val) in searches)
                         {
                             if (val == null)
-                                searches.TryRemove(key, out _); // reminder: removing from a dict in a foreach is allowed in newer .net versions
+                                searches.TryRemove(key, out _);
                         }
 
                         foreach (var (key, val) in downloads)

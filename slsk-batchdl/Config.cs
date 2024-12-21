@@ -124,8 +124,6 @@ public class Config
     private string[] arguments;
     bool hasConfiguredIndex = false;
     bool confPathChanged = false;
-    FileConditions? undoTempConds = null;
-    FileConditions? undoTempPrefConds = null;
 
     public Config(string[] args)
     {
@@ -181,11 +179,6 @@ public class Config
 
         copy.necessaryCond = new FileConditions(necessaryCond);
         copy.preferredCond = new FileConditions(preferredCond);
-
-        if (undoTempConds != null)
-            copy.undoTempConds = new FileConditions(undoTempConds);
-        if (undoTempPrefConds != null)
-            copy.undoTempPrefConds = new FileConditions(undoTempPrefConds);
 
         copy.regexToReplace = new Track(regexToReplace);
         copy.regexReplaceBy = new Track(regexReplaceBy);
@@ -538,26 +531,6 @@ public class Config
             }
             Console.WriteLine();
         }
-    }
-
-
-    public void AddTemporaryConditions(FileConditions? cond, FileConditions? prefCond)
-    {
-        throw new NotImplementedException("Code has been refactored; probably does not work.");
-        if (cond != null)
-            undoTempConds = necessaryCond.AddConditions(cond);
-        if (prefCond != null)
-            undoTempPrefConds = preferredCond.AddConditions(prefCond);
-    }
-
-
-    public void RestoreConditions()
-    {
-        throw new NotImplementedException("Code has been refactored; probably does not work.");
-        if (undoTempConds != null)
-            necessaryCond.AddConditions(undoTempConds);
-        if (undoTempPrefConds != null)
-            preferredCond.AddConditions(undoTempPrefConds);
     }
 
 

@@ -76,7 +76,7 @@ Usage: sldl <input> [OPTIONS]
                                    E.g: '1:<cmd>' will only run the command if the file is
                                    downloaded successfully. Prepend 's:' to use the system
                                    shell to execute the command. Prepend 'a:' to run it only
-                                   whenever an album downloads or fails.
+                                   on album downloads.
 
     --print <option>               Print tracks or search results instead of downloading:
                                    'tracks': Print all tracks to be downloaded
@@ -526,11 +526,11 @@ sldl https://www.youtube.com/playlist/id --get-deleted --yt-dlp
 
 Print all songs by an artist which are not in your library:
 ```
-sldl "artist=MC MENTAL" --aggregate --skip-music-dir "path/to/music" --print results-full
+sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results-full
 ```
 <br>
 
-Download all albums by an artist found on soulseek:
+Download all albums by an artist interactively:
 ```
 sldl "artist=MC MENTAL" -a -g -t
 ```

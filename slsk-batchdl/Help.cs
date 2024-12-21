@@ -52,7 +52,7 @@ public static class Help
                                        E.g: '1:<cmd>' will only run the command if the file is
                                        downloaded successfully. Prepend 's:' to use the system
                                        shell to execute the command. Prepend 'a:' to run it only
-                                       whenever an album downloads or fails.
+                                       on album downloads.
 
         --print <option>               Print tracks or search results instead of downloading:
                                        'tracks': Print all tracks to be downloaded
