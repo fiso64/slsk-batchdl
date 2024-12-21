@@ -256,7 +256,7 @@ static partial class Program
 
         for (int i = 0; i < trackLists.lists.Count; i++)
         {
-            if (!enableParallelSearch) Console.WriteLine();
+            if (!enableParallelSearch && i > 0) Console.WriteLine();
 
             var tle = trackLists[i];
             var config = tle.config;

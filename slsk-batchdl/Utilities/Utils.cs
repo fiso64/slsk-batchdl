@@ -181,7 +181,13 @@ public static class Utils
         if (File.Exists(sourceFilePath))
         {
             if (File.Exists(destinationFilePath))
+            {
+                if (Path.GetFullPath(sourceFilePath) == Path.GetFullPath(destinationFilePath))
+                {
+                    return;
+                }
                 File.Delete(destinationFilePath);
+            }
             File.Move(sourceFilePath, destinationFilePath);
         }
     }
@@ -203,6 +209,16 @@ public static class Utils
             
             if (prev.Length == y.Length)
                 break;
+        }
+    }
+
+    public static void MoveAndDeleteParent(string oldPath, string newPath, string recurseUntil)
+    {
+        if (Path.GetFullPath(oldPath) != Path.GetFullPath(newPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(newPath));
+            Move(oldPath, newPath);
+            DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), recurseUntil);
         }
     }
 
@@ -634,7 +650,12 @@ public static class Utils
         if (string.IsNullOrEmpty(path))
             return path;
 
-        return path.Replace('\\', '/').TrimEnd('/').Trim();
+        path = path.Replace('\\', '/').TrimEnd('/').Trim();
+
+        while (path.Contains("//"))
+            path = path.Replace("//", "/");
+
+        return path;
     }
 
     public static bool IsInDirectory(string path, string dir, bool strict)

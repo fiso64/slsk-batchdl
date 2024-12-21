@@ -101,7 +101,7 @@ public class FileManager
 
         try
         {
-            MoveAndDeleteParent(track.DownloadPath, newFilePath);
+            Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
         }
         catch (Exception ex)
         {
@@ -130,7 +130,7 @@ public class FileManager
 
         try
         {
-            MoveAndDeleteParent(track.DownloadPath, newFilePath);
+            Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
         }
         catch (Exception ex)
         {
@@ -141,16 +141,6 @@ public class FileManager
         track.DownloadPath = newFilePath;
 
         organized.Add(track);
-    }
-
-    void MoveAndDeleteParent(string oldPath, string newPath)
-    {
-        if (Utils.NormalizedPath(oldPath) != Utils.NormalizedPath(newPath))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(newPath));
-            Utils.Move(oldPath, newPath);
-            Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), config.parentDir);
-        }
     }
          
     string SubstituteValues(string format, Track track, Soulseek.File? slfile)
