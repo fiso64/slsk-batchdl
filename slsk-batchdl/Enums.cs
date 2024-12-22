@@ -8,6 +8,7 @@ namespace Enums
         OutOfDownloadRetries = 2,
         NoSuitableFileFound = 3,
         AllDownloadsFailed = 4,
+        Other = 5,
     }
 
     public enum TrackState

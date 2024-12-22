@@ -183,7 +183,7 @@ public static class Help
 
       Help
         -h, --help [option]            [all|input|download-modes|search|name-format|
-                                       file-conditions|config]
+                                       file-conditions|config|shortcuts]
           
       Notes 
         Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
@@ -473,6 +473,28 @@ public static class Help
           interactive       (bool)
     ";
 
+    const string shortcutsHelp = @"
+    Shortcuts & interactive mode
+      Shortcuts
+        To cancel a running album download, press `C`.
+
+      Interactive mode
+        Interactive mode for albums can be enabled with `-t`/`--interactive`. It enables users 
+        to choose the desired folder or download specific files from it.
+
+        Key bindings:
+
+          Up/p            previous folder
+          Down/n          next folder
+          Enter/d         download selected folder
+          q               download folder and disable interactive mode
+          r               retrieve all files in the folder
+          Esc/s           skip current album
+
+          d:1,2,3         download specific files
+          d:start:end     download a range of files
+    ";
+
     public static void PrintHelp(string? option = null)
     {
         string text = helpText;
@@ -485,6 +507,7 @@ public static class Help
             { "file-conditions", fileConditionsHelp },
             { "name-format", nameFormatHelp },
             { "config", configHelp },
+            { "shortcuts", shortcutsHelp },
         };
 
         if (option != null && dict.ContainsKey(option))

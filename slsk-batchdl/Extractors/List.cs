@@ -16,7 +16,7 @@ namespace Extractors
 
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            listFilePath = Utils.ExpandUser(input);
+            listFilePath = Utils.ExpandVariables(input);
             
             if (!File.Exists(listFilePath))
                 throw new FileNotFoundException($"List file '{listFilePath}' not found");

@@ -101,7 +101,7 @@ public static class Utils
         return Path.GetDirectoryName(fname);
     }
 
-    public static string ExpandUser(string path)
+    public static string ExpandVariables(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return path;

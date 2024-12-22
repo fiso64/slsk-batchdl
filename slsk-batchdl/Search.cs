@@ -16,7 +16,7 @@ static class Search
     public static RateLimitedSemaphore? searchSemaphore;
 
     // very messy function that does everything
-    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, Config config, CancellationTokenSource? cts = null)
+    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, TrackListEntry tle, Config config, CancellationTokenSource? cts = null)
     {
         if (config.DoNotDownload)
             throw new Exception();
@@ -58,7 +58,7 @@ static class Search
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, config, cts?.Token, searchCts);
+                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
                 }
             }
         }
@@ -155,12 +155,15 @@ static class Search
                 try
                 {
                     downloading = 1;
-                    await Download.DownloadFile(response, file, saveFilePath, track, progress, config, cts?.Token);
+                    await Download.DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
                     userSuccessCounts.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
                 catch (Exception e)
                 {
+                    if (e is OperationCanceledException && cts != null && cts.IsCancellationRequested)
+                        throw;
+
                     Printing.WriteLineIf($"Error: Download Error: {e}", config.debugInfo, ConsoleColor.DarkYellow);
 
                     chosenFile = null;

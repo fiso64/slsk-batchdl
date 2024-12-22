@@ -23,6 +23,7 @@ See the [usage examples](#examples-1).
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
  - [Configuration](#configuration)
+ - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
  - [Examples](#examples-1)
  - [Notes](#notes)
  - [Docker](#docker)
@@ -407,7 +408,7 @@ Variables enclosed in {} will be replaced by the corresponding file tag value.
 Name format supports subdirectories as well as conditional expressions like {tag1|tag2} - If
 tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check.
 
-### Examples:
+### Examples
   - `{artist} - {title}`  
       Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
       following is generally preferred:
@@ -418,7 +419,7 @@ tag1 is null, use tag2. String literals enclosed in parentheses are ignored in t
       Sort files into artist/album folders if all tags are present, otherwise put them in
       the 'missing-tags' folder.   
 
-### Available variables:
+### Available variables
 ```
 artist                          First artist (from the file tags)
 sartist                         Source artist (as on CSV/Spotify/YouTube/etc)
@@ -439,7 +440,7 @@ default-folder                  Default sldl folder name (usually the playlist n
 ```
 
 ## Configuration
-### Config Location:
+### Config Location
   sldl will look for a file named sldl.conf in the following locations:
 ```
 ~/AppData/Roaming/sldl/sldl.conf
@@ -447,7 +448,7 @@ default-folder                  Default sldl folder name (usually the playlist n
 ```
   as well as in the directory of the executable.
 
-### Syntax:
+### Syntax
   Example config file:
 ```
 username = your-username
@@ -458,7 +459,7 @@ fast-search = true
   Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user
   directory. The path variable `{bindir}` stores the directory of the sldl binary.
 
-### Configuration profiles:
+### Configuration profiles
   Profiles are supported:
 ```
 [lossless]
@@ -485,6 +486,28 @@ input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
 download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
 interactive       (bool)
   ```
+
+## Shortcuts & interactive mode
+
+### Shortcuts
+To cancel a running album download, press `C`.
+
+### Interactive mode
+Interactive mode for albums can be enabled with `-t`/`--interactive`. It enables users to choose the desired folder or download specific files from it.
+
+Key bindings:
+```
+Up/p            previous folder
+Down/n          next folder
+Enter/d         download selected folder
+q               download folder and disable interactive mode
+r               retrieve all files in the folder
+Esc/s           skip current album
+
+d:1,2,3         download specific files
+d:start:end     download a range of files
+```
+
 ## Examples
 
 Download tracks from a csv file:

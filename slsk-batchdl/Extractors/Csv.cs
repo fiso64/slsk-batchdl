@@ -17,7 +17,7 @@ namespace Extractors
 
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            csvFilePath = Utils.ExpandUser(input);
+            csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");

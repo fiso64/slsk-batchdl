@@ -11,7 +11,7 @@ using SearchResponse = Soulseek.SearchResponse;
 
 static class Download
 {
-    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
+    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, TrackListEntry tle, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
         await Program.WaitForLogin(config);
         Directory.CreateDirectory(Path.GetDirectoryName(filePath));
@@ -40,7 +40,7 @@ static class Download
                 new CancellationTokenSource();
 
             using var outputStream = new FileStream(filePath, FileMode.Create);
-            var wrapper = new DownloadWrapper(origPath, response, file, track, downloadCts, progress);
+            var wrapper = new DownloadWrapper(origPath, response, file, track, downloadCts, progress, tle);
             downloads.TryAdd(file.Filename, wrapper);
 
             int maxRetries = 3;

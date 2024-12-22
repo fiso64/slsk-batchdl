@@ -15,6 +15,7 @@ namespace Models
         public SearchResponse response;
         public ProgressBar progress;
         public Track track;
+        public TrackListEntry tle;
         public long bytesTransferred = 0;
         public bool stalled = false;
         public bool queued = false;
@@ -29,12 +30,13 @@ namespace Models
         bool updatedTextSuccess = false;
         readonly char[] bars = { '|', '/', '—', '\\' };
 
-        public DownloadWrapper(string savePath, SearchResponse response, Soulseek.File file, Track track, CancellationTokenSource cts, ProgressBar progress)
+        public DownloadWrapper(string savePath, SearchResponse response, Soulseek.File file, Track track, CancellationTokenSource cts, ProgressBar progress, TrackListEntry tle)
         {
             this.savePath = savePath;
             this.response = response;
             this.file = file;
             this.cts = cts;
+            this.tle = tle;
             this.track = track;
             this.progress = progress;
             this.displayText = Printing.DisplayString(track, file, response);

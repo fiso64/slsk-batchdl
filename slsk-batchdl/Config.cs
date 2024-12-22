@@ -202,7 +202,7 @@ public class Config
             if (confPath == "none")
                 return;
 
-            confPath = Utils.ExpandUser(args[idx + 1]);
+            confPath = Utils.ExpandVariables(args[idx + 1]);
             if(File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
                 confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
         }
@@ -249,12 +249,12 @@ public class Config
         
         nameFormat = nameFormat.Trim();
 
-        confPath        = Utils.GetFullPath(Utils.ExpandUser(confPath));
-        parentDir       = Utils.GetFullPath(Utils.ExpandUser(parentDir));
-        m3uFilePath     = Utils.GetFullPath(Utils.ExpandUser(m3uFilePath));
-        indexFilePath   = Utils.GetFullPath(Utils.ExpandUser(indexFilePath));
-        skipMusicDir    = Utils.GetFullPath(Utils.ExpandUser(skipMusicDir));
-        failedAlbumPath = Utils.GetFullPath(Utils.ExpandUser(failedAlbumPath));
+        confPath        = Utils.GetFullPath(Utils.ExpandVariables(confPath));
+        parentDir       = Utils.GetFullPath(Utils.ExpandVariables(parentDir));
+        m3uFilePath     = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
+        indexFilePath   = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
+        skipMusicDir    = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
+        failedAlbumPath = Utils.GetFullPath(Utils.ExpandVariables(failedAlbumPath));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");

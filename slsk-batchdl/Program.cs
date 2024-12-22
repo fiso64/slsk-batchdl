@@ -22,6 +22,8 @@ static partial class Program
     const int updateInterval = 100;
     private static bool initialized = false;
     public static bool skipUpdate = false;
+    public static bool interceptKeys = false;
+    public static event EventHandler<ConsoleKey>? keyPressed;
 
     public static IExtractor extractor = null!;
     public static TrackLists trackLists = null!;
@@ -615,6 +617,15 @@ static partial class Program
         string? soulseekDir = null;
         int index = 0;
 
+        async Task runAlbumDownloads(List<Track> tracks, SemaphoreSlim semaphore, CancellationTokenSource cts)
+        {
+            var downloadTasks = tracks.Select(async track =>
+            {
+                await DownloadTask(config, tle, track, semaphore, organizer, cts, true, true, true);
+            });
+            await Task.WhenAll(downloadTasks);
+        }
+
         while (tle.list.Count > 0 && !config.albumArtOnly)
         {
             bool wasInteractive = config.interactiveMode;
@@ -641,12 +652,24 @@ static partial class Program
                 PrintAlbum(tracks);
             }
 
-            var semaphore = new SemaphoreSlim(999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
+            using var semaphore = new SemaphoreSlim(999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
             using var cts = new CancellationTokenSource();
+
+            bool userCancelled = false;
+            void onKeyPressed(object? sender, ConsoleKey key)
+            {
+                if (key == ConsoleKey.C)
+                {
+                    userCancelled = true;
+                    cts.Cancel();
+                }
+            }
+            interceptKeys = true;
+            keyPressed += onKeyPressed;
 
             try
             {
-                await RunAlbumDownloads(config, tle, organizer, tracks, semaphore, cts);
+                await runAlbumDownloads(tracks, semaphore, cts);
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
@@ -657,8 +680,8 @@ static partial class Program
 
                     if (newFilesFound > 0)
                     {
-                        Console.WriteLine($"Found {newFilesFound} more files in the directory, downloading:");
-                        await RunAlbumDownloads(config, tle, organizer, tracks, semaphore, cts);
+                        Console.WriteLine($"Found {newFilesFound} more files, downloading:");
+                        await runAlbumDownloads(tracks, semaphore, cts);
                     }
                     else
                     {
@@ -671,16 +694,52 @@ static partial class Program
             }
             catch (OperationCanceledException)
             {
-                OnAlbumFail(config, tracks);
+                if (userCancelled)
+                {
+                    Console.Write("\nDownload cancelled.");
+                    if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
+                    {
+                        Console.WriteLine("Delete files? [Y/n] (default: album fail action): ");
+                        var res = Console.ReadLine().Trim().ToLower();
+                        if (res == "y") 
+                            OnAlbumFail(tracks, true, config);
+                        else if (res == "" && !config.IgnoreAlbumFail) 
+                            OnAlbumFail(tracks, config.DeleteAlbumOnFail, config);
+                    }
+                }
+                else
+                {
+                    if (!config.IgnoreAlbumFail) 
+                        OnAlbumFail(tracks, config.DeleteAlbumOnFail, config); 
+                }
             }
-
-            organizer.SetRemoteCommonDir(null);
-            tle.list.RemoveAt(index);
+            finally
+            {
+                organizer.SetRemoteCommonDir(null);
+                tle.list.RemoveAt(index);
+                interceptKeys = false;
+                keyPressed -= onKeyPressed;
+            }
         }
 
         if (succeeded)
         {
-            await OnAlbumSuccess(config, tle, tracks);
+            tle.source.State = TrackState.Downloaded;
+
+            var downloadedAudio = tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0);
+            if (downloadedAudio.Any())
+            {
+                tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
+
+                if (config.removeTracksFromSource)
+                {
+                    await extractor.RemoveTrackFromSource(tle.source);
+                }
+            }
+        }
+        else if (index != -1)
+        {
+            tle.source.State = TrackState.Failed;
         }
 
         List<Track>? additionalImages = null;
@@ -704,40 +763,9 @@ static partial class Program
     }
 
 
-    static async Task RunAlbumDownloads(Config config, TrackListEntry tle, FileManager organizer, List<Track> tracks, SemaphoreSlim semaphore, CancellationTokenSource cts)
+    static void OnAlbumFail(List<Track>? tracks, bool deleteDownloaded, Config config)
     {
-        var downloadTasks = tracks.Select(async track =>
-        {
-            await DownloadTask(config, tle, track, semaphore, organizer, cts, true, true, true);
-        });
-        await Task.WhenAll(downloadTasks);
-    }
-
-
-    static async Task OnAlbumSuccess(Config config, TrackListEntry tle, List<Track>? tracks)
-    {
-        if (tracks == null)
-            return;
-
-        var downloadedAudio = tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0);
-
-        if (downloadedAudio.Any())
-        {
-            tle.source.State = TrackState.Downloaded;
-            tle.source.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(t => t.DownloadPath));
-
-            if (config.removeTracksFromSource)
-            {
-                await extractor.RemoveTrackFromSource(tle.source);
-            }
-        }
-    }
-
-
-    static void OnAlbumFail(Config config, List<Track>? tracks)
-    {
-        if (tracks == null || config.IgnoreAlbumFail)
-            return;
+        if (tracks == null) return;
 
         foreach (var track in tracks)
         {
@@ -745,7 +773,7 @@ static partial class Program
             {
                 try
                 {
-                    if (config.DeleteAlbumOnFail)
+                    if (deleteDownloaded || track.DownloadPath.EndsWith(".incomplete"))
                     {
                         File.Delete(track.DownloadPath);
                     }
@@ -881,17 +909,54 @@ static partial class Program
             fileManager.SetRemoteCommonDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
 
             bool allSucceeded = true;
-            var semaphore = new SemaphoreSlim(1);
+            using var semaphore = new SemaphoreSlim(1);
+            using var cts = new CancellationTokenSource();
 
-            foreach (var track in tracks)
+            bool userCancelled = false;
+            void onKeyPressed(object? sender, ConsoleKey key)
             {
-                using var cts = new CancellationTokenSource();
-                await DownloadTask(config, tle, track, semaphore, fileManager, cts, false, false, false);
+                if (key == ConsoleKey.C)
+                {
+                    userCancelled = true;
+                    cts.Cancel();
+                }
+            }
+            interceptKeys = true;
+            keyPressed += onKeyPressed;
 
-                if (track.State == TrackState.Downloaded)
-                    downloadedImages.Add(track);
+            try
+            {
+                foreach (var track in tracks)
+                {
+                    await DownloadTask(config, tle, track, semaphore, fileManager, cts, false, false, false);
+
+                    if (track.State == TrackState.Downloaded)
+                        downloadedImages.Add(track);
+                    else
+                        allSucceeded = false;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (userCancelled)
+                {
+                    Console.Write("\nDownload cancelled.");
+                    if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
+                    {
+                        Console.WriteLine("Delete files? [Y/n]: ");
+                        if (Console.ReadLine().Trim().ToLower() == "y")
+                            OnAlbumFail(tracks, true, config);
+                    }
+                }
                 else
-                    allSucceeded = false;
+                {
+                    throw;
+                }
+            }
+            finally
+            {
+                interceptKeys = false;
+                keyPressed -= onKeyPressed;
             }
 
             if (allSucceeded)
@@ -902,7 +967,7 @@ static partial class Program
     }
 
 
-    static async Task DownloadTask(Config config, TrackListEntry? tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource? cts, bool cancelOnFail, bool removeFromSource, bool organize)
+    static async Task DownloadTask(Config config, TrackListEntry tle, Track track, SemaphoreSlim semaphore, FileManager organizer, CancellationTokenSource cts, bool cancelOnFail, bool removeFromSource, bool organize)
     {
         if (track.State != TrackState.Initial)
             return;
@@ -921,7 +986,7 @@ static partial class Program
 
             try
             {
-                (savedFilePath, chosenFile) = await Search.SearchAndDownload(track, organizer, config, cts);
+                (savedFilePath, chosenFile) = await Search.SearchAndDownload(track, organizer, tle, config, cts);
             }
             catch (Exception ex)
             {
@@ -944,6 +1009,15 @@ static partial class Program
                         throw new OperationCanceledException();
                     }
                 }
+                else if (ex is OperationCanceledException && cts.IsCancellationRequested)
+                {
+                    lock (trackLists)
+                    {
+                        track.State = TrackState.Failed;
+                        track.FailureReason = FailureReason.Other;
+                    }
+                    throw;
+                }
                 else
                 {
                     tries--;
@@ -956,6 +1030,12 @@ static partial class Program
 
         if (tries == 0 && cancelOnFail)
         {
+            lock (trackLists)
+            {
+                track.State = TrackState.Failed;
+                track.FailureReason = FailureReason.Other;
+            }
+
             cts.Cancel();
             throw new OperationCanceledException();
         }
@@ -1026,8 +1106,6 @@ static partial class Program
             Console.WriteLine();
             WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
             WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
-            Console.WriteLine();
-            WriteLine($" d:1,2,3 or d:start:end to download individual files", ConsoleColor.Green);
             Console.WriteLine();
         }
 
@@ -1123,7 +1201,7 @@ static partial class Program
     }
 
 
-    static async Task Update(Config config)
+    static async Task Update(Config startConfig)
     {
         while (true)
         {
@@ -1145,7 +1223,7 @@ static partial class Program
                             {
                                 lock (val)
                                 {
-                                    if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > config.maxStaleTime)
+                                    if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > val.tle.config.maxStaleTime)
                                     {
                                         val.stalled = true;
                                         val.UpdateText();
@@ -1172,10 +1250,10 @@ static partial class Program
                             && !client.State.HasFlag(SoulseekClientStates.Connecting))
                         {
                             WriteLine($"\nDisconnected, logging in\n", ConsoleColor.DarkYellow, true);
-                            try { await Login(config, config.useRandomLogin); }
+                            try { await Login(startConfig, startConfig.useRandomLogin); }
                             catch (Exception ex)
                             {
-                                string banMsg = config.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
+                                string banMsg = startConfig.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
                                 WriteLine($"{ex.Message}{banMsg}", ConsoleColor.DarkYellow, true);
                             }
                         }
@@ -1192,6 +1270,12 @@ static partial class Program
                 catch (Exception ex)
                 {
                     WriteLine($"\n{ex.Message}\n", ConsoleColor.DarkYellow, true);
+                }
+
+                if (interceptKeys && Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(intercept: true).Key;
+                    keyPressed?.Invoke(null, key);
                 }
             }
 
