@@ -181,9 +181,10 @@ public static class Help
         --relax-filtering              Slightly relax file filtering in aggregate mode to include
                                        more results
 
-      Help
+      Other
         -h, --help [option]            [all|input|download-modes|search|name-format|
                                        file-conditions|config|shortcuts]
+        --version                      Print program version and exit
           
       Notes 
         Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
@@ -523,12 +524,22 @@ public static class Help
         Console.WriteLine(text);
     }
 
-    public static void PrintHelpAndExitIfNeeded(string[] args)
+    public static void PrintVersion()
+    {
+        Console.WriteLine(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version);
+    }
+
+    public static void PrintAndExitIfNeeded(string[] args)
     {
         int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
         if (args.Length == 0 || helpIdx >= 0)
         {
             PrintHelp(helpIdx + 1 < args.Length ? args[helpIdx + 1] : null);
+            Environment.Exit(0);
+        }
+        else if (args.Contains("--version"))
+        {
+            PrintVersion();
             Environment.Exit(0);
         }
     }

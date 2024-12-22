@@ -37,7 +37,7 @@ static partial class Program
     {
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        Help.PrintHelpAndExitIfNeeded(args);
+        Help.PrintAndExitIfNeeded(args);
 
         var config = new Config(args);
 
