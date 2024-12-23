@@ -12,6 +12,7 @@ namespace Models
         public bool needSkipExistingAfterSearch = false;
         public bool gotoNextAfterSearch = false;
         public bool enablesIndexByDefault = false;
+        public bool preprocessTracks = true;
         public string? defaultFolderName = null;
 
         public Config config = null!;
@@ -47,8 +48,8 @@ namespace Models
             SetDefaults();
         }
 
-        public TrackListEntry(List<List<Track>> list, Track source, bool needSourceSearch = false, bool sourceCanBeSkipped = false,
-            bool needSkipExistingAfterSearch = false, bool gotoNextAfterSearch = false, string? defaultFoldername = null)
+        public TrackListEntry(List<List<Track>> list, Track source, Config config, bool needSourceSearch = false, bool sourceCanBeSkipped = false,
+            bool needSkipExistingAfterSearch = false, bool gotoNextAfterSearch = false, string? defaultFoldername = null, bool preprocessTracks = true)
         {
             this.list = list;
             this.source = source;
@@ -57,6 +58,8 @@ namespace Models
             this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
             this.gotoNextAfterSearch = gotoNextAfterSearch;
             this.defaultFolderName = defaultFoldername;
+            this.config = config;
+            this.preprocessTracks = preprocessTracks;
         }
 
         public void SetDefaults()

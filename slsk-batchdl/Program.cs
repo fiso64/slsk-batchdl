@@ -263,7 +263,7 @@ static partial class Program
             var tle = trackLists[i];
             var config = tle.config;
 
-            PreprocessTracks(tle);
+            if (tle.preprocessTracks) PreprocessTracks(tle);
             if (!enableParallelSearch) tle.PrintLines();
 
             var existing = new List<Track>();
@@ -357,7 +357,7 @@ static partial class Program
                         foreach (var item in res)
                         {
                             var newSource = new Track(tle.source) { Type = TrackType.Album };
-                            var albumTle = new TrackListEntry(item, newSource, needSourceSearch: false, sourceCanBeSkipped: true);
+                            var albumTle = new TrackListEntry(item, newSource, config, needSourceSearch: false, sourceCanBeSkipped: true, preprocessTracks: false);
                             albumTle.defaultFolderName = tle.defaultFolderName;
                             trackLists.AddEntry(albumTle);
                         }
