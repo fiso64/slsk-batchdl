@@ -349,7 +349,6 @@ instability:
 - `--concurrent-downloads` - set it to 4 or more
 - `--max-stale-time` is set to 50 seconds by default, sldl will wait a long time before giving
   up on a file
-- `--searches-per-time` - increase at the risk of bans, see above
 - `--album-parallel-search` - enables parallel searching for album entries
 
 ## File conditions
