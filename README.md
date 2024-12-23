@@ -13,7 +13,7 @@ See the [usage examples](#examples-1).
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
    - [Search string](#search-string)
-   - [List](#list)
+   - [List file](#list-file)
  - [Download modes](#download-modes)
    - [Normal](#normal)
    - [Album](#album)
@@ -279,6 +279,7 @@ The following properties are accepted: title, artist, album, length (in seconds)
 artist-maybe-wrong, album-track-count.
 
 Example inputs:
+```
 | Input String                            | Artist   | Title    | Album    | Length |
 |-----------------------------------------|----------|----------|----------|--------|
 | Foo Bar (without hyphens)               |          | Foo Bar  |          |        |
@@ -286,8 +287,8 @@ Example inputs:
 | Foo - Bar (with --album)                | Foo      |          | Bar      |        |
 | Artist - Title, length=42               | Artist   | Title    |          | 42     |
 | artist=AR, title=T, album=AL            | AR       | T        | AL       |        |
-
-### List
+```
+### List file
 List input must be manually activated with `--input-type=list`. The input is a path to a text
 file containing lines of the following form:
 ```bash
@@ -313,14 +314,15 @@ string or csv row has no track title, or when `-a/--album` is enabled.
 With `-g/--aggregate`, sldl performs an ordinary search for the input, then attempts to
 group the results into distinct songs and download one of each, starting with the one shared
 by the most users. Note that `--min-shares-aggregate` is 2 by default, meaning that songs
-shared by only one user will be ignored.
+shared by only one user will be ignored. Aggregate mode can be used to (for example) download
+all songs by an artist.  
 
 ### Album Aggregate
 Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
-download one of each distinct album, starting with the one shared by the most users. It is
-recommended to pair this with `--interactive`. Note that `--min-shares-aggregate` is 2 by
-default, meaning that albums shared by only one user will be ignored.
-
+download one of each distinct album, starting with the one shared by the most users. Note
+that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
+will be ignored. Album-aggregate mode can be used to (for example) download all albums by an
+artist. It is recommended to pair it with `--interactive`.
 
 ## Searching
 

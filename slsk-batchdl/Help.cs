@@ -287,13 +287,15 @@ public static class Help
         With `-g/--aggregate`, sldl performs an ordinary search for the input, then attempts to
         group the results into distinct songs and download one of each, starting with the one shared
         by the most users. Note that `--min-shares-aggregate` is 2 by default, meaning that songs
-        shared by only one user will be ignored.
+        shared by only one user will be ignored. Aggregate mode can be used to (for example) download
+        all songs by an artist.  
 
       Album Aggregate
         Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
-        download one of each distinct album, starting with the one shared by the most users. It is
-        recommended to pair this with `--interactive`. Note that `--min-shares-aggregate` is 2 by
-        default, meaning that albums shared by only one user will be ignored.
+        download one of each distinct album, starting with the one shared by the most users. Note
+        that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
+        will be ignored. Album-aggregate mode can be used to (for example) download all albums by an
+        artist. It is recommended to pair it with `--interactive`.
     ";
 
     const string searchHelp = @"
