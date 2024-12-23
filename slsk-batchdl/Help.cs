@@ -155,7 +155,7 @@ public static class Help
           
       Album Download
         -a, --album                    Album download mode: Download a folder
-        -t, --interactive              Interactive mode, allows to select the folder and images
+        -t, --interactive              Interactively select folders. See --help shortcuts.
         --album-track-count <num>      Specify the exact number of tracks in the album. Add a + or
                                        - for inequalities, e.g '5+' for five or more tracks.
         --album-art <option>           Retrieve additional images after downloading the album:
@@ -197,29 +197,26 @@ public static class Help
     const string inputHelp = @"
     Input types
 
-      The input type is usually determined automatically. To force a specific input type, set
-      --input-type [spotify|youtube|csv|string|bandcamp|list]. The following input types are available:
+      The input type is usually determined automatically, however it's possible to manually set it
+      with `--input-type`. The following input types are available:
             
       CSV file            
-        Path to a local CSV file: Use a csv file containing track info of the songs to download. 
-        The names of the columns should be Artist, Title, Album, Length, although alternative names 
-        are usually detected as well. Only the title or album column is required, but extra info may 
-        improve search result ranking. Every row that does not have a title column text will be treated 
-        as an album download.
+        Path to a local CSV file. Use a csv file containing track information to download a list of
+        songs or albums. Only the title or album column is required, but extra info may improve search
+        result ranking. If the columns have common names ('Artist', 'Title', 'Album', 'Length', etc)
+        then it's not required to manually specify them. Rows that do not have any text in the title
+        column will be treated as album downloads.
             
       YouTube 
-        A playlist url: Download songs from a youtube playlist.
-        The default method to retrieve playlists doesn't always return all videos, especially not 
-        the ones which are unavailable. To get all video titles, you can use the official API by 
-        providing a key with --youtube-key. Get it here https://console.cloud.google.com. Create a 
-        new project, click ""Enable Api"" and search for ""youtube data"", then follow the prompts. 
+        A YouTube playlist url. Download songs from a youtube playlist.
+        The default method to retrieve playlists does not reliably return all videos. To get all
+        video titles, you can use the official API by providing a key with `--youtube-key`. A key can
+        be obtained at https://console.cloud.google.com. Create a new project, click 'Enable Api' and
+        search for 'youtube data', then follow the prompts.
 
       Spotify
-        A playlist/album url or 'spotify-likes': Download a spotify playlist, album, or your 
-        liked songs. --spotify-id and --spotify-secret are required in addition when downloading
-        a private playlist or liked music.
-        The id and secret can be obtained at https://developer.spotify.com/dashboard/applications. 
-        Create an app and add http://localhost:48721/callback as a redirect url in its settings.
+        A playlist/album url, or 'spotify-likes'. Download a spotify playlist, album, or your
+        liked songs. Credentials are required when downloading a private playlist or liked music.
 
           Using Credentials
             Create a Spotify application at https://developer.spotify.com/dashboard/applications with a 
@@ -242,42 +239,37 @@ public static class Help
             access every time it is run (and can be used without including spotify-token).
 
       Bandcamp 
-        A bandcamp url: Download a single track, an album, or an artist's entire discography. 
-        Extracts the artist name, album name and sets --album-track-count=""n+"", where n is the 
-        number of visible tracks on the bandcamp page.
+        A bandcamp track, album, or artist url. Download a single track, an album, or an artist's
+        entire discography.
 
       Search string
-        Name of the track, album, or artist to search for: Can either be any typical search string 
-        (like what you would enter into the soulseek search bar), or a comma-separated list of
-        properties like 'title=Song Name, artist=Artist Name, length=215'. 
+        Name of the track, album, or artist to search for. The input can either be an arbitrary
+        search string (like what you would type in the soulseek search bar), or a comma-separated
+        list of properties of the form `title=Song Name, artist=Artist Name, length=215`.
 
         The following properties are accepted: title, artist, album, length (in seconds), 
         artist-maybe-wrong, album-track-count.
 
-        Example inputs and their interpretations:
-          Input String                            | Artist   | Title    | Album    | Length
-          ---------------------------------------------------------------------------------
-          'Foo Bar'   (without any hyphens)       |          | Foo Bar  |          |
-          'Foo - Bar'                             | Foo      | Bar      |          |
-          'Foo - Bar' (with --album enabled)      | Foo      |          | Bar      |
-          'Artist - Title, length=42'             | Artist   | Title    |          | 42
-          'artist=AR, title=T, album=AL'          | AR       | T        | AL       |
+        Example inputs:
+          | Input String                            | Artist   | Title    | Album    | Length |
+          |-----------------------------------------|----------|----------|----------|--------|
+          | Foo Bar (without hyphens)               |          | Foo Bar  |          |        |
+          | Foo - Bar                               | Foo      | Bar      |          |        |
+          | Foo - Bar (with --album)                | Foo      |          | Bar      |        |
+          | Artist - Title, length=42               | Artist   | Title    |          | 42     |
+          | artist=AR, title=T, album=AL            | AR       | T        | AL       |        |
         
       List
-        A path to a text file where each line has the following form:
+        List input must be manually activated with `--input-type=list`. The input is a path to a text
+        file containing lines of the following form:
         
-        ""some input""                    ""conditions""                  ""preferred conditions""
+          # input                         conditions                    pref. conditions
+          artist=Artist,album=Album       format=mp3;br>128             ""br >= 320""
         
-        for example:
-        
-        ""artist=Artist, album=Album""    ""format=mp3; br > 128""        ""br >= 320""
-        
-        Where ""some input"" is any of the above input types. The quotes can be omitted if the field
-        contains no spaces. The condition fields are added on top of the
-        configured conditions and can also be omitted. List input must be manually activated with
-        --input-type=list.  
-        It also accepts a shorthand for album downloads: a:""Artist - Album"". Note that the a: must
-        appear outside the quotes.
+        The inputs can be any of the above input types. The conditions are added on top of the
+        configured conditions and can be omitted.   
+        For album downloads, the above example can be written briefly as `a:""Artist - Album""` (note
+        that `a:` must appear outside the quotes).
     ";
 
     const string downloadModesHelp = @"
@@ -287,23 +279,21 @@ public static class Help
         The default. Downloads a single file for every input entry.
 
       Album
-        sldl will search for the album and download an entire folder including non-audio files.
-        Activated when the input is a link to a spotify or bandcamp album, when the input string
-        or csv row has no track title, or when -a/--album is enabled.
+        sldl will search for the album and download an entire folder including non-audio
+        files. Activated when the input is a link to a spotify or bandcamp album, when the input
+        string or csv row has no track title, or when `-a/--album` is enabled.
         
       Aggregate
-        With -g/--aggregate, sldl performs an ordinary search for the input then attempts to
-        group the results into distinct songs and download one of each kind, starting with the one
-        which is shared by the most users.  
-        Note that --min-shares-aggregate is 2 by default, which means that songs shared by only
-        one user will be ignored.
+        With `-g/--aggregate`, sldl performs an ordinary search for the input, then attempts to
+        group the results into distinct songs and download one of each, starting with the one shared
+        by the most users. Note that `--min-shares-aggregate` is 2 by default, meaning that songs
+        shared by only one user will be ignored.
 
       Album Aggregate
-        Activated when both --album and --aggregate are enabled. sldl will group shares and download
-        one of each distinct album, starting with the one shared by the most users. It's
-        recommended to pair this with --interactive.  
-        Note that --min-shares-aggregate is 2 by default, which means that albums shared by only
-        one user will be ignored.
+        Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
+        download one of each distinct album, starting with the one shared by the most users. It is
+        recommended to pair this with `--interactive`. Note that `--min-shares-aggregate` is 2 by
+        default, meaning that albums shared by only one user will be ignored.
     ";
 
     const string searchHelp = @"
@@ -318,32 +308,31 @@ public static class Help
           Otherwise, search for 'Artist Album'
 
       Soulseek's rate limits
-        The server will ban you for 30 minutes if too many searches are performed within a short 
-        timespan. The program has a search limiter which can be adjusted with --searches-per-time 
-        and --searches-renew-time (when the limit is reached, the status of the downloads will be 
-        ""Waiting""). By default it is configured to allow up to 34 searches every 220 seconds. 
+        The server may ban users for 30 minutes if too many searches are performed within a short
+        timespan. sldl has a search limiter which can be adjusted with `--searches-per-time`
+        and `--searches-renew-time` (when the limit is reached, the status of the downloads will be
+        'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
         The default values were determined through experimentation, so they may be incorrect.
 
       Speeding things up
         The following options will make it go faster, but may decrease search result quality or cause
         instability:
-        
-        --fast-search skips waiting until the search completes and downloads as soon as a file
-          matching the preferred conditions is found
-        --concurrent-downloads - set it to 4 or more
-        --max-stale-time is set to 50 seconds by default, so it will wait a long time before giving
-          up on a file
-        --searches-per-time - increase at the risk of bans
-        --album-parallel-search - enables parallel searching for album entries
+          - `--fast-search` skips waiting until the search completes and downloads as soon as a file
+            matching the preferred conditions is found
+          - `--concurrent-downloads` - set it to 4 or more
+          - `--max-stale-time` is set to 50 seconds by default, sldl will wait a long time before giving
+            up on a file
+          - `--searches-per-time` - increase at the risk of bans, see above
+          - `--album-parallel-search` - enables parallel searching for album entries
     ";
 
     const string fileConditionsHelp = @"
     File conditions
 
-      Files not satisfying the required conditions will not be downloaded. Files satisfying pref- 
-      conditions will be preferred; setting --pref-format ""flac,wav"" will make it download lossless 
-      files if available, and only download lossy files if there's nothing else. 
-        
+      Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
+      will be preferred: With `--pref-format flac,wav` sldl will try to download lossless files if
+      available, but still accept lossy files.
+
       There are no default required conditions. The default preferred conditions are:
 
         pref-format = mp3
@@ -356,36 +345,32 @@ public static class Help
         pref-accept-no-length = false
 
       sldl will therefore prefer mp3 files with bitrate between 200 and 2500 kbps, and whose length
-      differs from the supplied length by no more than 3 seconds. It will also prefer files whose
-      paths contain the supplied title and album (ignoring case, and bounded by boundary characters)
-      and which have non-null length. Changing the last three preferred conditions is not recommended.
-      Note that files satisfying a subset of the preferred conditions will still be preferred over files
-      that don't satisfy any condition, but some conditions have precedence over others. For instance,
-      a file that only satisfies strict-title (if enabled) will always be preferred over a file that
-      only satisfies the format condition. Run with --print ""results-full"" to reveal the sorting logic.
+      differs from the supplied length by no more than 3 seconds. Additionally, it will prefer files
+      whose paths contain the supplied title and album and which have non-null length. Changing the
+      last three preferred conditions is not recommended.  
 
-      Conditions can also be supplied as a semicolon-delimited string with --cond and --pref, e.g
-      --cond ""br >= 320; format = mp3,ogg; sr < 96000"".
+      Note that files satisfying only a subset of the conditions will be preferred over files that don't
+      satisfy any condition. Run a search with `--print results-full` to reveal the sorting logic.
+
+      Conditions can also be supplied as a semicolon-delimited string with `--cond` and `--pref`, e.g
+      `--cond ""br>=320; format=mp3,ogg; sr<96000""`.
 
       Filtering irrelevant results
-        The options --strict-title, --strict-artist and --strict-album will filter any file that
-        does not contain the title/artist/album in the filename (ignoring case, bounded by boundary
-        chars).  
-        Another way to prevent false downloads is to set --length-tol to 3 or less to make it ignore
+        The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that
+        does not contain the title/artist/album in the path (ignoring case, bounded by boundary chars).  
+        Another way to prevent false downloads is to set `--length-tol` to 3 or less to make it ignore
         any songs that differ from the input by more than 3 seconds. However, all 4 options are already
-        enabled as 'preferred' conditions by default, meaning that such files will only be downloaded
-        as a last resort anyways. Hence it is only recommended to enable them if you need to minimize
-        false downloads as much as possible, or for special cases like tracks or albums whose name
-        is just one or a two characters.
+        enabled as 'preferred' conditions by default. Hence it is only recommended to enable them for
+        special cases, like albums whose name is just one or two characters.
         
       Important note
-        Some info may be unavailable depending on the client used by the peer. For example, the standard 
-        Soulseek client does not share the file bitrate. If (e.g) --min-bitrate is set, then sldl will 
-        still accept any file with unknown bitrate. You can configure it to reject all files where one 
-        or more of the checked properties is null (unknown) by enabling --strict-conditions. 
-        As a consequence, if --min-bitrate is also set then any files shared by users with the default 
-        client will be ignored. Also note that the default preferred conditions will already affect
-        ranking with this option due to the bitrate and samplerate checks.
+        Some info may be unavailable depending on the client used by the peer. If (e.g) `--min-bitrate`
+        is set, then sldl will still accept any file with unknown bitrate. To reject all files where one
+        or more of the checked properties is null (unknown), enable `--strict-conditions`.  
+        As a consequence, if `--min-bitrate` is also set then any files shared by users with the default
+        client will be ignored, since the default client does not broadcast the bitrate. Also note that
+        the default preferred conditions will already affect ranking with this option due to the bitrate
+        and samplerate checks.
     ";
 
     const string nameFormatHelp = @"
