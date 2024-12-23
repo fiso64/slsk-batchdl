@@ -13,7 +13,7 @@ See the [usage examples](#examples-1).
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
    - [Search string](#search-string)
-   - [List](#list)
+   - [List file](#list-file)
  - [Download modes](#download-modes)
    - [Normal](#normal)
    - [Album](#album)
@@ -279,6 +279,7 @@ The following properties are accepted: title, artist, album, length (in seconds)
 artist-maybe-wrong, album-track-count.
 
 Example inputs:
+```
 | Input String                            | Artist   | Title    | Album    | Length |
 |-----------------------------------------|----------|----------|----------|--------|
 | Foo Bar (without hyphens)               |          | Foo Bar  |          |        |
@@ -286,8 +287,8 @@ Example inputs:
 | Foo - Bar (with --album)                | Foo      |          | Bar      |        |
 | Artist - Title, length=42               | Artist   | Title    |          | 42     |
 | artist=AR, title=T, album=AL            | AR       | T        | AL       |        |
-
-### List
+```
+### List file
 List input must be manually activated with `--input-type=list`. The input is a path to a text
 file containing lines of the following form:
 ```bash
