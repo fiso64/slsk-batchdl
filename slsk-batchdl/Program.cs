@@ -42,7 +42,7 @@ static partial class Program
         var config = new Config(args);
 
         if (config.input.Length == 0)
-            throw new ArgumentException($"No input provided");
+            Config.InputError($"No input provided");
 
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
@@ -90,7 +90,7 @@ static partial class Program
             client = new SoulseekClient(clientOptions);
 
             if (!config.useRandomLogin && (string.IsNullOrEmpty(config.username) || string.IsNullOrEmpty(config.password)))
-                throw new ArgumentException("No soulseek username or password");
+                Config.InputError("No soulseek username or password");
 
             await Login(config, config.useRandomLogin);
 

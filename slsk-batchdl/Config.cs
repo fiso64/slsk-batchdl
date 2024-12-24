@@ -289,7 +289,7 @@ public class Config
 
             int idx = l.IndexOf('=');
             if (idx <= 0 || idx == l.Length - 1)
-                throw new ArgumentException($"Error parsing config '{path}' at line {i}");
+                InputError($"Error parsing config '{path}' at line {i}");
 
             var x = l.Split('=', 2, StringSplitOptions.TrimEntries);
             string key = x[0];
@@ -443,7 +443,7 @@ public class Config
             "interactive" => interactiveMode,
             "album" => album,
             "aggregate" => aggregate,
-            _ => throw new ArgumentException($"Unrecognized profile condition variable {var}")
+            _ => InputError<object>($"Unrecognized profile condition variable {var}")
         };
     }
 
@@ -507,7 +507,7 @@ public class Config
                 return !ParsePrimaryExpression();
 
             if (token.StartsWith("\""))
-                throw new ArgumentException("Invalid token at this position: " + token);
+                InputError("Invalid token at this position: " + token);
 
             if (tokens.Count > 0 && (tokens.Peek() == "==" || tokens.Peek() == "!="))
             {
@@ -633,7 +633,8 @@ public class Config
                         UpdateMinMax2(value, condition, ref track.MinAlbumTrackCount, ref track.MaxAlbumTrackCount);
                     break;
                 default:
-                    throw new ArgumentException($"Unknown condition '{condition}'");
+                    InputError($"Unknown condition '{condition}'");
+                    break;
             }
         }
 
@@ -691,7 +692,7 @@ public class Config
         {
             i++;
             if (i < 0 || i >= args.Count) 
-                throw new ArgumentException("Option requires parameter");
+                InputError("Option requires parameter");
             return args[i];
         }
 
@@ -718,7 +719,7 @@ public class Config
                             "bandcamp" => InputType.Bandcamp,
                             "string" => InputType.String,
                             "list" => InputType.List,
-                            _ => throw new ArgumentException($"Invalid input type '{args[i]}'"),
+                            _ => InputError<InputType>($"Invalid input type '{args[i]}'"),
                         };
                         break;
                     case "-p":
@@ -846,7 +847,7 @@ public class Config
                             "results" => PrintOption.Results,
                             "tracks-full" => PrintOption.Tracks | PrintOption.Full,
                             "results-full" => PrintOption.Results | PrintOption.Full,
-                            _ => throw new ArgumentException($"Invalid print option '{args[i]}'"),
+                            _ => InputError<PrintOption>($"Invalid print option '{args[i]}'"),
                         };
                         break;
                     case "--pt":
@@ -1037,7 +1038,7 @@ public class Config
                             "default" => AlbumArtOption.Default,
                             "largest" => AlbumArtOption.Largest,
                             "most" => AlbumArtOption.Most,
-                            _ => throw new ArgumentException($"Invalid album art download mode '{args[i]}'"),
+                            _ => InputError<AlbumArtOption>($"Invalid album art download mode '{args[i]}'"),
                         };
                         break;
                     case "--aao":
@@ -1195,7 +1196,7 @@ public class Config
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
                             "index" => SkipMode.Index,
-                            _ => throw new ArgumentException($"Invalid output dir skip mode '{args[i]}'"),
+                            _ => InputError<SkipMode>($"Invalid output dir skip mode '{args[i]}'"),
                         };
                         break;
                     case "--smmd":
@@ -1204,7 +1205,7 @@ public class Config
                         {
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
-                            _ => throw new ArgumentException($"Invalid music dir skip mode '{args[i]}'"),
+                            _ => InputError<SkipMode>($"Invalid music dir skip mode '{args[i]}'"),
                         };
                         break;
                     case "--nrsc":
@@ -1288,7 +1289,8 @@ public class Config
                         parallelAlbumSearchProcesses = int.Parse(getParameter(ref i));
                         break;
                     default:
-                        throw new ArgumentException($"Unknown argument: {args[i]}");
+                        InputError($"Unknown argument: {args[i]}");
+                        break;
                 }
             }
             else
@@ -1299,7 +1301,7 @@ public class Config
                     inputSet = true;
                 }
                 else
-                    throw new ArgumentException($"Invalid argument \'{args[i]}\'. Input is already set to \'{input}\'");
+                    InputError($"Invalid argument \'{args[i]}\'. Input is already set to \'{input}\'");
             }
         }
     }
@@ -1339,5 +1341,19 @@ public class Config
         }
 
         return args.ToArray();
+    }
+
+
+    public static void InputError(string message)
+    {
+        Printing.WriteLine($"Input error: {message}", ConsoleColor.Red);
+        Environment.Exit(1);
+    }
+
+
+    public static T InputError<T>(string message)
+    {
+        InputError(message);
+        return default;
     }
 }

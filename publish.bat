@@ -15,7 +15,6 @@ exit /b
 
 :publish_and_zip
 dotnet publish -c Release -r %1 -p:PublishSingleFile=true -p:PublishTrimmed=%2 -p:DefineConstants=WINDOWS --self-contained=%2
-if exist slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish\*.pdb del /F /Q slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish\*.pdb
 if exist slsk-batchdl\bin\zips\%3 del /F /Q slsk-batchdl\bin\zips\%3
 powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish', 'slsk-batchdl\bin\zips\%3'); }"
 exit /b
