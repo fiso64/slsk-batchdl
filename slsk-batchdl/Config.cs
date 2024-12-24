@@ -637,7 +637,9 @@ public class Config
         void setFlag(ref bool flag, ref int i, bool trueVal = true)
         {
             if (i >= args.Count - 1 || args[i + 1].StartsWith('-'))
+            {
                 flag = trueVal;
+            }
             else if (args[i + 1] == "false")
             {
                 flag = !trueVal;
@@ -649,13 +651,17 @@ public class Config
                 i++;
             }
             else
+            {
                 flag = trueVal;
+            }
         }
 
         void setNullableFlag(ref bool? flag, ref int i, bool trueVal = true)
         {
             if (i >= args.Count - 1 || args[i + 1].StartsWith('-'))
+            {
                 flag = trueVal;
+            }
             else if (args[i + 1] == "false")
             {
                 flag = !trueVal;
@@ -667,9 +673,18 @@ public class Config
                 i++;
             }
             else
+            {
                 flag = trueVal;
+            }
         }
 
+        string getParameter(ref int i)
+        {
+            i++;
+            if (i < 0 || i >= args.Count) 
+                throw new ArgumentException("Option requires parameter");
+            return args[i];
+        }
 
         bool inputSet = false;
 
@@ -681,11 +696,11 @@ public class Config
                 {
                     case "-i":
                     case "--input":
-                        input = args[++i];
+                        input = getParameter(ref i);
                         break;
                     case "--it":
                     case "--input-type":
-                        inputType = args[++i].ToLower().Trim() switch
+                        inputType = getParameter(ref i).ToLower().Trim() switch
                         {
                             "none" => InputType.None,
                             "csv" => InputType.CSV,
@@ -700,11 +715,11 @@ public class Config
                     case "-p":
                     case "--path":
                     case "--parent":
-                        parentDir = args[++i];
+                        parentDir = getParameter(ref i);
                         break;
                     case "-c":
                     case "--config":
-                        confPath = args[++i];
+                        confPath = getParameter(ref i);
                         break;
                     case "--nc":
                     case "--no-config":
@@ -712,7 +727,7 @@ public class Config
                         break;
                     case "--smd":
                     case "--skip-music-dir":
-                        skipMusicDir = args[++i];
+                        skipMusicDir = getParameter(ref i);
                         break;
                     case "-g":
                     case "--aggregate":
@@ -720,7 +735,7 @@ public class Config
                         break;
                     case "--msa":
                     case "--min-shares-aggregate":
-                        minSharesAggregate = int.Parse(args[++i]);
+                        minSharesAggregate = int.Parse(getParameter(ref i));
                         break;
                     case "--rf":
                     case "--relax":
@@ -729,37 +744,37 @@ public class Config
                         break;
                     case "--si":
                     case "--spotify-id":
-                        spotifyId = args[++i];
+                        spotifyId = getParameter(ref i);
                         break;
                     case "--ss":
                     case "--spotify-secret":
-                        spotifySecret = args[++i];
+                        spotifySecret = getParameter(ref i);
                         break;
                     case "--stk":
                     case "--spotify-token":
-                        spotifyToken = args[++i];
+                        spotifyToken = getParameter(ref i);
                         break;
                     case "--str":
                     case "--spotify-refresh":
-                        spotifyRefresh = args[++i];
+                        spotifyRefresh = getParameter(ref i);
                         break;
                     case "--yk":
                     case "--youtube-key":
-                        ytKey = args[++i];
+                        ytKey = getParameter(ref i);
                         break;
                     case "-l":
                     case "--login":
-                        var login = args[++i].Split(';', 2);
+                        var login = getParameter(ref i).Split(';', 2);
                         username = login[0];
                         password = login[1];
                         break;
                     case "--user":
                     case "--username":
-                        username = args[++i];
+                        username = getParameter(ref i);
                         break;
                     case "--pass":
                     case "--password":
-                        password = args[++i];
+                        password = getParameter(ref i);
                         break;
                     case "--rl":
                     case "--random-login":
@@ -767,55 +782,55 @@ public class Config
                         break;
                     case "--ac":
                     case "--artist-col":
-                        artistCol = args[++i];
+                        artistCol = getParameter(ref i);
                         break;
                     case "--tc":
                     case "--track-col":
                     case "--title-col":
-                        titleCol = args[++i];
+                        titleCol = getParameter(ref i);
                         break;
                     case "--alc":
                     case "--album-col":
-                        albumCol = args[++i];
+                        albumCol = getParameter(ref i);
                         break;
                     case "--ydc":
                     case "--yt-desc-col":
-                        descCol = args[++i];
+                        descCol = getParameter(ref i);
                         break;
                     case "--atcc":
                     case "--album-track-count-col":
-                        trackCountCol = args[++i];
+                        trackCountCol = getParameter(ref i);
                         break;
                     case "--yic":
                     case "--yt-id-col":
-                        ytIdCol = args[++i];
+                        ytIdCol = getParameter(ref i);
                         break;
                     case "--lc":
                     case "--length-col":
-                        lengthCol = args[++i];
+                        lengthCol = getParameter(ref i);
                         break;
                     case "--tf":
                     case "--time-format":
-                        timeUnit = args[++i];
+                        timeUnit = getParameter(ref i);
                         break;
                     case "-n":
                     case "--number":
-                        maxTracks = int.Parse(args[++i]);
+                        maxTracks = int.Parse(getParameter(ref i));
                         break;
                     case "-o":
                     case "--offset":
-                        offset = int.Parse(args[++i]);
+                        offset = int.Parse(getParameter(ref i));
                         break;
                     case "--nf":
                     case "--name-format":
-                        nameFormat = args[++i];
+                        nameFormat = getParameter(ref i);
                         break;
                     case "--irs":
                     case "--invalid-replace-str":
-                        invalidReplaceStr = args[++i];
+                        invalidReplaceStr = getParameter(ref i);
                         break;
                     case "--print":
-                        printOption = args[++i].ToLower().Trim() switch
+                        printOption = getParameter(ref i).ToLower().Trim() switch
                         {
                             "none" => PrintOption.None,
                             "tracks" => PrintOption.Tracks,
@@ -882,7 +897,7 @@ public class Config
                         break;
                     case "--re":
                     case "--regex":
-                        string s = args[++i].Replace("\\;", "<<semicol>>");
+                        string s = getParameter(ref i).Replace("\\;", "<<semicol>>");
                         string applyTo = "TAL";
 
                         if (s.Length > 2 && s[1] == ':' && (s[0] == 'T' || s[0] == 'A' || s[0] == 'L'))
@@ -921,7 +936,7 @@ public class Config
                         break;
                     case "--pp":
                     case "--playlist-path":
-                        m3uFilePath = args[++i];
+                        m3uFilePath = getParameter(ref i);
                         break;
                     case "--nwi":
                     case "--no-write-index":
@@ -931,46 +946,46 @@ public class Config
                     case "--ip":
                     case "--index-path":
                         hasConfiguredIndex = true;
-                        indexFilePath = args[++i];
+                        indexFilePath = getParameter(ref i);
                         break;
                     case "--lp":
                     case "--port":
                     case "--listen-port":
-                        listenPort = int.Parse(args[++i]);
+                        listenPort = int.Parse(getParameter(ref i));
                         break;
                     case "--st":
                     case "--search-time":
                     case "--search-timeout":
-                        searchTimeout = int.Parse(args[++i]);
+                        searchTimeout = int.Parse(getParameter(ref i));
                         break;
                     case "--Mst":
                     case "--stale-time":
                     case "--max-stale-time":
-                        maxStaleTime = int.Parse(args[++i]);
+                        maxStaleTime = int.Parse(getParameter(ref i));
                         break;
                     case "--cp":
                     case "--cd":
                     case "--processes":
                     case "--concurrent-processes":
                     case "--concurrent-downloads":
-                        concurrentProcesses = int.Parse(args[++i]);
+                        concurrentProcesses = int.Parse(getParameter(ref i));
                         break;
                     case "--spt":
                     case "--searches-per-time":
-                        searchesPerTime = int.Parse(args[++i]);
+                        searchesPerTime = int.Parse(getParameter(ref i));
                         break;
                     case "--srt":
                     case "--searches-renew-time":
-                        searchRenewTime = int.Parse(args[++i]);
+                        searchRenewTime = int.Parse(getParameter(ref i));
                         break;
                     case "--Mr":
                     case "--retries":
                     case "--max-retries":
-                        maxRetriesPerTrack = int.Parse(args[++i]);
+                        maxRetriesPerTrack = int.Parse(getParameter(ref i));
                         break;
                     case "--atc":
                     case "--album-track-count":
-                        string a = args[++i];
+                        string a = getParameter(ref i);
                         if (a == "-1")
                         {
                             minAlbumTrackCount = -1;
@@ -992,11 +1007,11 @@ public class Config
                         break;
                     case "--matc":
                     case "--min-album-track-count":
-                        minAlbumTrackCount = int.Parse(args[++i]);
+                        minAlbumTrackCount = int.Parse(getParameter(ref i));
                         break;
                     case "--Matc":
                     case "--max-album-track-count":
-                        maxAlbumTrackCount = int.Parse(args[++i]);
+                        maxAlbumTrackCount = int.Parse(getParameter(ref i));
                         break;
                     case "--eMtc":
                     case "--extract-max-track-count":
@@ -1008,7 +1023,7 @@ public class Config
                         break;
                     case "--aa":
                     case "--album-art":
-                        albumArtOption = args[++i].ToLower().Trim() switch
+                        albumArtOption = getParameter(ref i).ToLower().Trim() switch
                         {
                             "default" => AlbumArtOption.Default,
                             "largest" => AlbumArtOption.Largest,
@@ -1027,7 +1042,7 @@ public class Config
                         break;
                     case "--fap":
                     case "--failed-album-path":
-                        failedAlbumPath = args[++i];
+                        failedAlbumPath = getParameter(ref i);
                         break;
                     case "-t":
                     case "--interactive":
@@ -1036,37 +1051,37 @@ public class Config
                     case "--pf":
                     case "--paf":
                     case "--pref-format":
-                        preferredCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                        preferredCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--plt":
                     case "--pref-tolerance":
                     case "--pref-length-tol":
                     case "--pref-length-tolerance":
-                        preferredCond.LengthTolerance = int.Parse(args[++i]);
+                        preferredCond.LengthTolerance = int.Parse(getParameter(ref i));
                         break;
                     case "--pmbr":
                     case "--pref-min-bitrate":
-                        preferredCond.MinBitrate = int.Parse(args[++i]);
+                        preferredCond.MinBitrate = int.Parse(getParameter(ref i));
                         break;
                     case "--pMbr":
                     case "--pref-max-bitrate":
-                        preferredCond.MaxBitrate = int.Parse(args[++i]);
+                        preferredCond.MaxBitrate = int.Parse(getParameter(ref i));
                         break;
                     case "--pmsr":
                     case "--pref-min-samplerate":
-                        preferredCond.MinSampleRate = int.Parse(args[++i]);
+                        preferredCond.MinSampleRate = int.Parse(getParameter(ref i));
                         break;
                     case "--pMsr":
                     case "--pref-max-samplerate":
-                        preferredCond.MaxSampleRate = int.Parse(args[++i]);
+                        preferredCond.MaxSampleRate = int.Parse(getParameter(ref i));
                         break;
                     case "--pmbd":
                     case "--pref-min-bitdepth":
-                        preferredCond.MinBitDepth = int.Parse(args[++i]);
+                        preferredCond.MinBitDepth = int.Parse(getParameter(ref i));
                         break;
                     case "--pMbd":
                     case "--pref-max-bitdepth":
-                        preferredCond.MaxBitDepth = int.Parse(args[++i]);
+                        preferredCond.MaxBitDepth = int.Parse(getParameter(ref i));
                         break;
                     case "--pst":
                     case "--pstt":
@@ -1087,41 +1102,41 @@ public class Config
                         break;
                     case "--pbu":
                     case "--pref-banned-users":
-                        preferredCond.BannedUsers = args[++i].Split(',');
+                        preferredCond.BannedUsers = getParameter(ref i).Split(',');
                         break;
                     case "--af":
                     case "--format":
-                        necessaryCond.Formats = args[++i].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                        necessaryCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--lt":
                     case "--tolerance":
                     case "--length-tol":
                     case "--length-tolerance":
-                        necessaryCond.LengthTolerance = int.Parse(args[++i]);
+                        necessaryCond.LengthTolerance = int.Parse(getParameter(ref i));
                         break;
                     case "--mbr":
                     case "--min-bitrate":
-                        necessaryCond.MinBitrate = int.Parse(args[++i]);
+                        necessaryCond.MinBitrate = int.Parse(getParameter(ref i));
                         break;
                     case "--Mbr":
                     case "--max-bitrate":
-                        necessaryCond.MaxBitrate = int.Parse(args[++i]);
+                        necessaryCond.MaxBitrate = int.Parse(getParameter(ref i));
                         break;
                     case "--msr":
                     case "--min-samplerate":
-                        necessaryCond.MinSampleRate = int.Parse(args[++i]);
+                        necessaryCond.MinSampleRate = int.Parse(getParameter(ref i));
                         break;
                     case "--Msr":
                     case "--max-samplerate":
-                        necessaryCond.MaxSampleRate = int.Parse(args[++i]);
+                        necessaryCond.MaxSampleRate = int.Parse(getParameter(ref i));
                         break;
                     case "--mbd":
                     case "--min-bitdepth":
-                        necessaryCond.MinBitDepth = int.Parse(args[++i]);
+                        necessaryCond.MinBitDepth = int.Parse(getParameter(ref i));
                         break;
                     case "--Mbd":
                     case "--max-bitdepth":
-                        necessaryCond.MaxBitDepth = int.Parse(args[++i]);
+                        necessaryCond.MaxBitDepth = int.Parse(getParameter(ref i));
                         break;
                     case "--stt":
                     case "--strict-title":
@@ -1137,7 +1152,7 @@ public class Config
                         break;
                     case "--bu":
                     case "--banned-users":
-                        necessaryCond.BannedUsers = args[++i].Split(',');
+                        necessaryCond.BannedUsers = getParameter(ref i).Split(',');
                         break;
                     case "--anl":
                     case "--accept-no-length":
@@ -1145,12 +1160,12 @@ public class Config
                         break;
                     case "--cond":
                     case "--conditions":
-                        necessaryCond.AddConditions(ParseConditions(args[++i]));
+                        necessaryCond.AddConditions(ParseConditions(getParameter(ref i)));
                         break;
                     case "--pc":
                     case "--pref":
                     case "--preferred-conditions":
-                        preferredCond.AddConditions(ParseConditions(args[++i]));
+                        preferredCond.AddConditions(ParseConditions(getParameter(ref i)));
                         break;
                     case "--nmsc":
                     case "--no-modify-share-count":
@@ -1166,7 +1181,7 @@ public class Config
                         break;
                     case "--smod":
                     case "--skip-mode-output-dir":
-                        skipMode = args[++i].ToLower().Trim() switch
+                        skipMode = getParameter(ref i).ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
@@ -1176,7 +1191,7 @@ public class Config
                         break;
                     case "--smmd":
                     case "--skip-mode-music-dir":
-                        skipModeMusicDir = args[++i].ToLower().Trim() switch
+                        skipModeMusicDir = getParameter(ref i).ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
@@ -1197,11 +1212,11 @@ public class Config
                         break;
                     case "--fsd":
                     case "--fast-search-delay":
-                        fastSearchDelay = int.Parse(args[++i]);
+                        fastSearchDelay = int.Parse(getParameter(ref i));
                         break;
                     case "--fsmus":
                     case "--fast-search-min-up-speed":
-                        fastSearchMinUpSpeed = double.Parse(args[++i]);
+                        fastSearchMinUpSpeed = double.Parse(getParameter(ref i));
                         break;
                     case "--debug":
                         setFlag(ref debugInfo, ref i);
@@ -1214,7 +1229,7 @@ public class Config
                         break;
                     case "--yda":
                     case "--yt-dlp-argument":
-                        ytdlpArgument = args[++i];
+                        ytdlpArgument = getParameter(ref i);
                         break;
                     case "-a":
                     case "--album":
@@ -1222,22 +1237,22 @@ public class Config
                         break;
                     case "--oc":
                     case "--on-complete":
-                        onComplete = args[++i];
+                        onComplete = getParameter(ref i);
                         break;
                     case "--ftd":
                     case "--fails-to-downrank":
-                        downrankOn = -int.Parse(args[++i]);
+                        downrankOn = -int.Parse(getParameter(ref i));
                         break;
                     case "--fti":
                     case "--fails-to-ignore":
-                        ignoreOn = -int.Parse(args[++i]);
+                        ignoreOn = -int.Parse(getParameter(ref i));
                         break;
                     case "--uer":
                     case "--unknown-error-retries":
-                        unknownErrorRetries = int.Parse(args[++i]);
+                        unknownErrorRetries = int.Parse(getParameter(ref i));
                         break;
                     case "--profile":
-                        profile = args[++i];
+                        profile = getParameter(ref i);
                         break;
                     case "--nbf":
                     case "--no-browse-folder":
@@ -1253,7 +1268,7 @@ public class Config
                         break;
                     case "--alt":
                     case "--aggregate-length-tol":
-                        aggregateLengthTol = int.Parse(args[++i]);
+                        aggregateLengthTol = int.Parse(getParameter(ref i));
                         break;
                     case "--aps":
                     case "--album-parallel-search":
@@ -1261,7 +1276,7 @@ public class Config
                         break;
                     case "--apsc":
                     case "--album-parallel-search-count":
-                        parallelAlbumSearchProcesses = int.Parse(args[++i]);
+                        parallelAlbumSearchProcesses = int.Parse(getParameter(ref i));
                         break;
                     default:
                         throw new ArgumentException($"Unknown argument: {args[i]}");
