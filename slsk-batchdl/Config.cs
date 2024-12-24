@@ -193,16 +193,25 @@ public class Config
 
     void SetConfigPath(string[] args)
     {
-        int idx = Array.FindLastIndex(args, x => x == "-c" || x == "--config");
+        int idx1 = Array.FindLastIndex(args, x => x == "--nc" || x == "--no-config");
 
-        if (idx != -1)
+        if (idx1 != -1 && !(idx1 < args.Length - 1 && args[idx1 + 1] == "false"))
+        {
+            confPath = "none";
+            confPathChanged = true;
+            return;
+        }
+
+        int idx2 = Array.FindLastIndex(args, x => x == "-c" || x == "--config");
+
+        if (idx2 != -1)
         {
             confPathChanged = true;
 
             if (confPath == "none")
                 return;
 
-            confPath = Utils.ExpandVariables(args[idx + 1]);
+            confPath = Utils.ExpandVariables(args[idx2 + 1]);
             if(File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
                 confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
         }
