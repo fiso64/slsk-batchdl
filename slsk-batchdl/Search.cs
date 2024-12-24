@@ -341,19 +341,36 @@ static class Search
             }
         }
 
-        foreach ((var key, var val) in directoryStructure)
+        var sortedKeys = directoryStructure.Keys.OrderBy(key => key).ToList();
+        var toRemove = new HashSet<string>();
+
+        for (int i = 0; i < sortedKeys.Count; i++)
         {
-            foreach ((var key2, var val2) in directoryStructure)
+            var key = sortedKeys[i];
+            if (toRemove.Contains(key)) 
+                continue;
+
+            for (int j = i + 1; j < sortedKeys.Count; j++)
             {
-                if (key == key2)
+                var key2 = sortedKeys[j];
+                if (toRemove.Contains(key2)) 
                     continue;
 
                 if ((key2 + '\\').StartsWith(key + '\\'))
                 {
-                    val.AddRange(val2);
-                    directoryStructure.Remove(key2);
+                    directoryStructure[key].AddRange(directoryStructure[key2]);
+                    toRemove.Add(key2);
+                }
+                else if (!(key2 + '\\').StartsWith(key))
+                {
+                    break;
                 }
             }
+        }
+
+        foreach (var key in toRemove)
+        {
+            directoryStructure.Remove(key);
         }
 
         int min, max;
