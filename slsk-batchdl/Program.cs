@@ -1372,6 +1372,7 @@ static partial class Program
             .Replace("{uri}", track.URI)
             .Replace("{length}", track.Length.ToString())
             .Replace("{row}", (track.CsvOrListRow == -1 ? -1 : track.CsvOrListRow + 1).ToString())
+            .Replace("{line}", (track.CsvOrListRow == -1 ? -1 : track.CsvOrListRow + 1).ToString())
             .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
             .Replace("{type}", track.Type.ToString())
             .Replace("{is-not-audio}", track.IsNotAudio.ToString())

@@ -131,11 +131,17 @@ namespace Extractors
                 setProperty(currentKey, currentVal.Trim());
 
             other = other.Trim();
-            if (other.Length > 0)
+            if (other.Length > 0 && (isAlbum && track.Album.Length > 0 || !isAlbum && track.Title.Length > 0))
+            {
+                Printing.WriteLine($"Warning: Input part '{other}' provided without a property name " +
+                    $"and album or title is already set. Ignoring.", ConsoleColor.DarkYellow);
+            }
+            else if (other.Length > 0)
             {
                 string artist = "", album = "", title = "";
-                parts = other.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 1 || parts.Length > 3)
+                parts = other.Split(" - ", 2, StringSplitOptions.TrimEntries);
+
+                if (parts.Length == 1 || track.Artist.Length > 0)
                 {
                     if (isAlbum)
                         album = other.Trim();
@@ -150,12 +156,6 @@ namespace Extractors
                         album = parts[1];
                     else
                         title = parts[1];
-                }
-                else if (parts.Length == 3)
-                {
-                    artist = parts[0];
-                    album = parts[1];
-                    title = parts[2];
                 }
 
                 if (track.Artist.Length == 0)

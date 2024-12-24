@@ -94,6 +94,8 @@ public static class Printing
                         Console.WriteLine($"  Title:              {tracks[i].Title}");
                     if (!string.IsNullOrEmpty(tracks[i].Album) || tracks[i].Type == TrackType.Album)
                         Console.WriteLine($"  Album:              {tracks[i].Album}");
+                    if (tracks[i].MinAlbumTrackCount != -1 || tracks[i].MaxAlbumTrackCount != -1)
+                        Console.WriteLine($"  Min,Max tracks:     {tracks[i].MinAlbumTrackCount},{tracks[i].MaxAlbumTrackCount}");
                     if (tracks[i].Length > -1 || tracks[i].Type == TrackType.Normal)
                         Console.WriteLine($"  Length:             {tracks[i].Length}s");
                     if (!string.IsNullOrEmpty(tracks[i].DownloadPath))
@@ -132,7 +134,9 @@ public static class Printing
                     }
                     Console.WriteLine();
                 }
-                Console.WriteLine();
+
+                if (i < number - 1) 
+                    Console.WriteLine();
             }
         }
 

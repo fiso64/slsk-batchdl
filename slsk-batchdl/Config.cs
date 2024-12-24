@@ -1088,7 +1088,7 @@ public class Config
                     case "--pref-strict-title":
                         setNullableFlag(ref preferredCond.StrictTitle, ref i);
                         break;
-                    case "--psa":
+                    case "--psar":
                     case "--pref-strict-artist":
                         setNullableFlag(ref preferredCond.StrictArtist, ref i);
                         break;
@@ -1142,7 +1142,7 @@ public class Config
                     case "--strict-title":
                         setNullableFlag(ref necessaryCond.StrictTitle, ref i);
                         break;
-                    case "--sa":
+                    case "--sar":
                     case "--strict-artist":
                         setNullableFlag(ref necessaryCond.StrictArtist, ref i);
                         break;
