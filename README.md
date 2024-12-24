@@ -295,7 +295,7 @@ file containing lines of the following form:
 # input                         conditions                    pref. conditions
 artist=Artist,album=Album       format=mp3;br>128             "br >= 320"
 ```
-The inputs can be any of the above input types. The conditions are added on top of the
+The input can be any of the above input types. The conditions are added on top of the
 configured conditions and can be omitted.   
 For album downloads, the above example can be written briefly as `a:"Artist - Album"` (note
 that `a:` must appear outside the quotes).
@@ -321,8 +321,8 @@ all songs by an artist.
 Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
 download one of each distinct album, starting with the one shared by the most users. Note
 that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
-will be ignored. Album-aggregate mode can be used to (for example) download all albums by an
-artist. It is recommended to pair it with `--interactive`.
+will be ignored. Album-aggregate mode can be used to (for example) download the most popular
+albums by an artist. It is recommended to pair it with `--interactive`.
 
 ## Searching
 
@@ -354,8 +354,8 @@ instability:
 ## File conditions
 
 Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
-will be preferred: With `--pref-format flac,wav` sldl will try to download lossless files if
-available, but still accept lossy files.
+will be preferred: With `--pref-format flac,wav`, sldl will try to download lossless files if
+available while still accepting lossy files.
 
 There are no default required conditions. The default preferred conditions are:
 ```

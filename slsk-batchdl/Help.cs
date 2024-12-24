@@ -266,7 +266,7 @@ public static class Help
           # input                         conditions                    pref. conditions
           artist=Artist,album=Album       format=mp3;br>128             ""br >= 320""
         
-        The inputs can be any of the above input types. The conditions are added on top of the
+        The input can be any of the above input types. The conditions are added on top of the
         configured conditions and can be omitted.   
         For album downloads, the above example can be written briefly as `a:""Artist - Album""` (note
         that `a:` must appear outside the quotes).
@@ -294,8 +294,8 @@ public static class Help
         Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
         download one of each distinct album, starting with the one shared by the most users. Note
         that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
-        will be ignored. Album-aggregate mode can be used to (for example) download all albums by an
-        artist. It is recommended to pair it with `--interactive`.
+        will be ignored. Album-aggregate mode can be used to (for example) download the most popular
+        albums by an artist. It is recommended to pair it with `--interactive`.
     ";
 
     const string searchHelp = @"
@@ -331,8 +331,8 @@ public static class Help
     File conditions
 
       Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
-      will be preferred: With `--pref-format flac,wav` sldl will try to download lossless files if
-      available, but still accept lossy files.
+      will be preferred: With `--pref-format flac,wav`, sldl will try to download lossless files if
+      available while still accepting lossy files.
 
       There are no default required conditions. The default preferred conditions are:
 
@@ -438,8 +438,8 @@ public static class Help
           [lossless]
           pref-format = flac,wav
 
-        To activate the above profile, run --profile ""lossless"". To list all available profiles,
-        run --profile ""help"".
+        To activate the above profile, run `--profile lossless`. To list all available profiles,
+        run `--profile help`.
         Profiles can be activated automatically based on a few simple conditions:
         
           [no-stale]
@@ -501,10 +501,14 @@ public static class Help
             text = dict[option];
         else if (option == "all")
             text = $"{helpText}\n{string.Join('\n', dict.Values)}";
+        else if (option == "help")
+            text = $"Choose from:\n\n  {string.Join("\n  ", dict.Keys)}";
         else if (option != null)
-            Console.WriteLine($"Unrecognized help option '{option}'");
+            text = $"Unrecognized help option '{option}'. Choose from:\n\n  {string.Join("\n  ", dict.Keys)}";
 
-        var lines = text.Split('\n').Skip(1);
+        var lines = text.Split('\n').AsEnumerable();
+        if (lines.Any() && lines.First().Trim() == "")
+            lines = lines.Skip(1);
         int minIndent = lines.Where(line => line.Trim().Length > 0).Min(line => line.TakeWhile(char.IsWhiteSpace).Count());
         text = string.Join("\n", lines.Select(line => line.Length > minIndent ? line[minIndent..] : line));
         Console.WriteLine(text);
