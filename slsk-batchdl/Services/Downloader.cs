@@ -9,9 +9,16 @@ using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 
 
-static class Downloader
+public class Downloader
 {
-    public static async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, TrackListEntry tle, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
+    private ISoulseekClient client;
+
+    public Downloader(ISoulseekClient client)
+    {
+        this.client = client;
+    }
+
+    public async Task DownloadFile(SearchResponse response, Soulseek.File file, string filePath, Track track, ProgressBar progress, TrackListEntry tle, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
         await Program.WaitForLogin(config);
         Directory.CreateDirectory(Path.GetDirectoryName(filePath));

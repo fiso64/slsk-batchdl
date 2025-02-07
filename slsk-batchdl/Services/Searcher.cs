@@ -65,7 +65,7 @@ public class Searcher
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = Downloader.DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
+                    downloadTask = new Downloader(client).DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
                 }
             }
         }
@@ -162,7 +162,7 @@ public class Searcher
                 try
                 {
                     downloading = 1;
-                    await Downloader.DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
+                    await new Downloader(client).DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
                     userSuccessCounts.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }

@@ -10,24 +10,24 @@ using Konsole;
 using Models;
 using Enums;
 using Extractors;
+using Services;
 using static Printing;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
-using Services;
 
-static partial class Program
+public static partial class Program
 {
     const int updateInterval = 100;
-    private static bool initialized = false;
+    public static bool initialized = false;
     public static bool skipUpdate = false;
     public static bool interceptKeys = false;
     public static event EventHandler<ConsoleKey>? keyPressed;
 
+    public static ISoulseekClient client = null!;
     public static IExtractor extractor = null!;
     public static TrackLists trackLists = null!;
-    public static SoulseekClient client = null!;
 
     public static readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public static readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
@@ -35,7 +35,7 @@ static partial class Program
 
     private static Searcher searchService = null!;
 
-    static async Task Main(string[] args)
+    public static async Task Main(string[] args)
     {
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -75,21 +75,25 @@ static partial class Program
         bool needLogin = !config.PrintTracks;
         if (needLogin)
         {
-            var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+            // If client is not null, assume it's injected for testing
+            if (client == null)
             {
-                socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
-                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
-                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
-            });
+                var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+                {
+                    socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
+                });
 
-            var clientOptions = new SoulseekClientOptions(
-                transferConnectionOptions: connectionOptions,
-                serverConnectionOptions: connectionOptions,
-                listenPort: config.listenPort
-            );
+                var clientOptions = new SoulseekClientOptions(
+                    transferConnectionOptions: connectionOptions,
+                    serverConnectionOptions: connectionOptions,
+                    listenPort: config.listenPort
+                );
 
-            client = new SoulseekClient(clientOptions);
+                client = new SoulseekClient(clientOptions);
+            }
 
             if (!config.useRandomLogin && (string.IsNullOrEmpty(config.username) || string.IsNullOrEmpty(config.password)))
                 Config.InputError("No soulseek username or password");
