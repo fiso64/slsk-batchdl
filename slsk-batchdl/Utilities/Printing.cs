@@ -145,13 +145,13 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound, Config config)
+    public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound, Config config, Searcher searchService)
     {
         await Program.InitClientAndUpdateIfNeeded(config);
 
         if (tle.source.Type == TrackType.Normal)
         {
-            await Search.SearchAndPrintResults(tle.list[0], config);
+            await searchService.SearchAndPrintResults(tle.list[0], config);
         }
         else if (tle.source.Type == TrackType.Aggregate)
         {

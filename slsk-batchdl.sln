@@ -5,6 +5,8 @@ VisualStudioVersion = 17.4.33110.190
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "slsk-batchdl", "slsk-batchdl\slsk-batchdl.csproj", "{5AC3AC78-7D2D-413D-B075-9F6EED0D5B51}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "slsk-batchdl.Tests", "slsk-batchdl.Tests\slsk-batchdl.Tests.csproj", "{7E61E35A-1422-4C5B-91FD-F32CD3CC9631}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{5AC3AC78-7D2D-413D-B075-9F6EED0D5B51}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5AC3AC78-7D2D-413D-B075-9F6EED0D5B51}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5AC3AC78-7D2D-413D-B075-9F6EED0D5B51}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7E61E35A-1422-4C5B-91FD-F32CD3CC9631}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E61E35A-1422-4C5B-91FD-F32CD3CC9631}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E61E35A-1422-4C5B-91FD-F32CD3CC9631}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E61E35A-1422-4C5B-91FD-F32CD3CC9631}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

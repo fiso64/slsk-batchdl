@@ -1,4 +1,4 @@
-﻿class RateLimitedSemaphore
+﻿public class RateLimitedSemaphore
 {
     private readonly int maxCount;
     private readonly TimeSpan resetTimeSpan;

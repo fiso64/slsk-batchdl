@@ -362,3 +362,6 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /slsk-batchdl/Properties/launchSettings.json
+
+.aider*
+TODO.txt

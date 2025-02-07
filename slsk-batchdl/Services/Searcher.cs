@@ -11,12 +11,19 @@ using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 
 
-static class Search
+public class Searcher
 {
-    public static RateLimitedSemaphore? searchSemaphore;
+    private readonly ISoulseekClient client;
+    private RateLimitedSemaphore searchSemaphore;
+
+    public Searcher(ISoulseekClient client, RateLimitedSemaphore searchSemaphore)
+    {
+        this.client = client;
+        this.searchSemaphore = searchSemaphore;
+    }
 
     // very messy function that does everything
-    public static async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, TrackListEntry tle, Config config, CancellationTokenSource? cts = null)
+    public async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, TrackListEntry tle, Config config, CancellationTokenSource? cts = null)
     {
         if (config.DoNotDownload)
             throw new Exception();
@@ -58,7 +65,7 @@ static class Search
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = Download.DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
+                    downloadTask = Downloader.DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
                 }
             }
         }
@@ -155,7 +162,7 @@ static class Search
                 try
                 {
                     downloading = 1;
-                    await Download.DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
+                    await Downloader.DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
                     userSuccessCounts.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
@@ -263,7 +270,7 @@ static class Search
     }
 
 
-    public static async Task<List<List<Track>>> GetAlbumDownloads(Track track, ResponseData responseData, Config config)
+    public async Task<List<List<Track>>> GetAlbumDownloads(Track track, ResponseData responseData, Config config)
     {
         var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         SearchOptions getSearchOptions(int timeout, FileConditions nec, FileConditions prf) =>
@@ -423,7 +430,7 @@ static class Search
     }
 
 
-    public static async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData, Config config)
+    public async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData, Config config)
     {
         var results = new SlDictionary();
         SearchOptions getSearchOptions(int timeout, FileConditions nec, FileConditions prf) =>
@@ -483,7 +490,7 @@ static class Search
     }
 
 
-    public static async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData, Config config)
+    public async Task<List<List<List<Track>>>> GetAggregateAlbums(Track track, ResponseData responseData, Config config)
     {
         int maxDiff = config.aggregateLengthTol;
 
@@ -576,7 +583,7 @@ static class Search
     }
 
 
-    public static async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? cancellationToken = null)
+    public async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? cancellationToken = null)
     {
         var browseOptions = new BrowseOptions();
         var res = new List<(string dir, SlFile file)>();
@@ -596,7 +603,7 @@ static class Search
     }
 
 
-    public static async Task<int> CompleteFolder(List<Track> tracks, SearchResponse response, string folder, CancellationToken? cancellationToken = null)
+    public async Task<int> CompleteFolder(List<Track> tracks, SearchResponse response, string folder, CancellationToken? cancellationToken = null)
     {
         int newFiles = 0;
         try
@@ -644,7 +651,7 @@ static class Search
     }
 
 
-    public static IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(
+    public IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(
         Track track,
         IEnumerable<(SlResponse, SlFile)> fileResponses,
         Config config,
@@ -677,7 +684,7 @@ static class Search
     }
 
 
-    public static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
+    public IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
         IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
         Track track,
         Config config,
@@ -689,7 +696,7 @@ static class Search
     }
 
 
-    public static IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
+    public IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
         IEnumerable<(SlResponse, SlFile)> results,
         Track track,
         Config config,
@@ -763,7 +770,7 @@ static class Search
     }
 
 
-    public static async Task RunSearches(Track track, SlDictionary results, Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
+    public async Task RunSearches(Track track, SlDictionary results, Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
         Action<SearchResponse> responseHandler, Config config, CancellationToken? ct = null, Action? onSearch = null)
     {
         bool artist = track.Artist.Length > 0;
@@ -869,7 +876,7 @@ static class Search
     }
 
 
-    static async Task DoSearch(string search, SearchOptions opts, Action<SearchResponse> rHandler, Config config, CancellationToken? ct = null, Action? onSearch = null)
+    async Task DoSearch(string search, SearchOptions opts, Action<SearchResponse> rHandler, Config config, CancellationToken? ct = null, Action? onSearch = null)
     {
         await searchSemaphore.WaitAsync();
         try
@@ -883,7 +890,7 @@ static class Search
     }
 
 
-    public static async Task SearchAndPrintResults(List<Track> tracks, Config config)
+    public async Task SearchAndPrintResults(List<Track> tracks, Config config)
     {
         foreach (var track in tracks)
         {
@@ -987,7 +994,7 @@ static class Search
     }
 
 
-    public static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
+    public Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
         var t = new Track(defaultTrack);
         t.Type = type;
@@ -1154,7 +1161,7 @@ static class Search
     }
 
 
-    public static bool AlbumsAreSimilar(List<Track> album1, List<Track> album2, int[]? album1SortedLengths = null, int tolerance = 3)
+    public bool AlbumsAreSimilar(List<Track> album1, List<Track> album2, int[]? album1SortedLengths = null, int tolerance = 3)
     {
         if (album1SortedLengths != null && album1SortedLengths.Length != album2.Count(t => !t.IsNotAudio))
             return false;

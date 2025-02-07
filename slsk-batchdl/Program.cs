@@ -9,13 +9,13 @@ using Konsole;
 
 using Models;
 using Enums;
-using FileSkippers;
 using Extractors;
 using static Printing;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
+using Services;
 
 static partial class Program
 {
@@ -32,6 +32,8 @@ static partial class Program
     public static readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public static readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public static readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
+
+    private static Searcher searchService = null!;
 
     static async Task Main(string[] args)
     {
@@ -94,7 +96,8 @@ static partial class Program
 
             await Login(config, config.useRandomLogin);
 
-            Search.searchSemaphore = new RateLimitedSemaphore(config.searchesPerTime, TimeSpan.FromSeconds(config.searchRenewTime));
+            var searchSemaphore = new RateLimitedSemaphore(config.searchesPerTime, TimeSpan.FromSeconds(config.searchRenewTime));
+            searchService = new Searcher(client, searchSemaphore);
         }
 
         bool needUpdate = needLogin;
@@ -342,17 +345,17 @@ static partial class Program
 
                     if (tle.source.Type == TrackType.Album)
                     {
-                        tle.list = await Search.GetAlbumDownloads(tle.source, responseData, config);
+                        tle.list = await searchService.GetAlbumDownloads(tle.source, responseData, config);
                         foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
                     }
                     else if (tle.source.Type == TrackType.Aggregate)
                     {
-                        tle.list.Insert(0, await Search.GetAggregateTracks(tle.source, responseData, config));
+                        tle.list.Insert(0, await searchService.GetAggregateTracks(tle.source, responseData, config));
                         foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
                     }
                     else if (tle.source.Type == TrackType.AlbumAggregate)
                     {
-                        var res = await Search.GetAggregateAlbums(tle.source, responseData, config);
+                        var res = await searchService.GetAggregateAlbums(tle.source, responseData, config);
 
                         foreach (var item in res)
                         {
@@ -419,7 +422,7 @@ static partial class Program
 
             if (config.PrintResults)
             {
-                await PrintResults(tle, existing, notFound, config);
+                await PrintResults(tle, existing, notFound, config, searchService);
                 continue;
             }
 
@@ -675,7 +678,7 @@ static partial class Program
                 {
                     Console.WriteLine("Getting all files in folder...");
 
-                    int newFilesFound = await Search.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
+                    int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
                     retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
 
                     if (newFilesFound > 0)
@@ -818,7 +821,7 @@ static partial class Program
             sortedLengths = chosenAlbum.Where(t => !t.IsNotAudio).Select(t => t.Length).OrderBy(x => x).ToArray();
 
         var albumArts = downloads
-            .Where(ls => chosenAlbum == null || Search.AlbumsAreSimilar(chosenAlbum, ls, sortedLengths))
+            .Where(ls => chosenAlbum == null || searchService.AlbumsAreSimilar(chosenAlbum, ls, sortedLengths))
             .Select(ls => ls.Where(t => Utils.IsImageFile(t.FirstDownload.Filename)))
             .Where(ls => ls.Any());
 
@@ -986,7 +989,7 @@ static partial class Program
 
             try
             {
-                (savedFilePath, chosenFile) = await Search.SearchAndDownload(track, organizer, tle, config, cts);
+                (savedFilePath, chosenFile) = await searchService.SearchAndDownload(track, organizer, tle, config, cts);
             }
             catch (Exception ex)
             {
@@ -1152,7 +1155,7 @@ static partial class Program
                     if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
                     {
                         Console.WriteLine("Getting all files in folder...");
-                        int newFiles = await Search.CompleteFolder(tracks, response, folder);
+                        int newFiles = await searchService.CompleteFolder(tracks, response, folder);
                         retrievedFolders.Add(username + '\\' + folder);
                         if (newFiles == 0)
                         {

@@ -2,7 +2,7 @@
 using Models;
 using Enums;
 
-namespace FileSkippers
+namespace Services
 {
     public static class FileSkipperRegistry
     {
@@ -248,7 +248,7 @@ namespace FileSkippers
 
             foreach ((var path, var partist, var ptitle) in index)
             {
-                if (title==ptitle && partist.Contains(artist))
+                if (title == ptitle && partist.Contains(artist))
                 {
                     foundPath = path;
                     return true;
@@ -326,7 +326,7 @@ namespace FileSkippers
 
     public class IndexSkipper : FileSkipper
     {
-        public IndexSkipper() 
+        public IndexSkipper()
         {
             IndexIsBuilt = true;
         }
@@ -382,8 +382,8 @@ namespace FileSkippers
                     return false;
 
                 TagLib.File musicFile;
-                try 
-                { 
+                try
+                {
                     musicFile = TagLib.File.Create(t.DownloadPath);
                     if (context.conditions.FileSatisfies(musicFile, track, false))
                     {
@@ -395,8 +395,8 @@ namespace FileSkippers
                         return false;
                     }
                 }
-                catch 
-                { 
+                catch
+                {
                     return false;
                 }
             }
@@ -409,7 +409,7 @@ namespace FileSkippers
 
                 if (t.MaxAlbumTrackCount > -1 || t.MinAlbumTrackCount > -1)
                 {
-                    int count = files.Count(x=> Utils.IsMusicFile(x));
+                    int count = files.Count(x => Utils.IsMusicFile(x));
 
                     if (t.MaxAlbumTrackCount > -1 && count > t.MaxAlbumTrackCount)
                         return false;
