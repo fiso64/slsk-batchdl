@@ -6,7 +6,7 @@ using Tests.ClientTests;
 using Directory = Soulseek.Directory;
 using File = Soulseek.File;
 
-namespace Tests.SearchTests
+namespace Tests.SearchDownloadTests
 {
     [TestClass]
     public class MockSoulseekClientTests
@@ -53,7 +53,7 @@ namespace Tests.SearchTests
             );
 
             var user3SearchResponse = new SearchResponse(
-                username: "user3",
+                username: "testuser",
                 token: 3,
                 hasFreeUploadSlot: true,
                 uploadSpeed: 75,
@@ -87,9 +87,8 @@ namespace Tests.SearchTests
             var results = await searcher.GetAlbumDownloads(album, new ResponseData(), new Config(Array.Empty<string>()));
 
             // Assert
-            //Assert.AreEqual(1, results.Responses.Count);
-            //Assert.AreEqual(4, results.Responses.First().FileCount);
-            //Assert.AreEqual("Music\\music\\testartist\\(2011) testalbum [MP3]\\cover.jpg", results.Responses.First().Files.Last().Filename);
+            Assert.AreEqual(4, results[0].Count);
+            CollectionAssert.AreEqual(index.First(x => x.Username == "testuser").Files.Select(x => x.Filename).ToList(), results[0].Select(x => x.FirstDownload.Filename).ToList());
         }
     }
 }

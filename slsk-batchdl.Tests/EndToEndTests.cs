@@ -67,13 +67,18 @@ namespace Tests.EndToEnd
 
             var results = await testClient.SearchAsync(new SearchQuery("testartist - testalbum"));
 
+            var outputDir = Path.Combine(Path.GetTempPath(), "sldl_temp");
+
+            Console.WriteLine($"Downloading to: {outputDir}");
+
             var testArgs = new string[]
             {
                 "--input", "testartist testalbum",
                 "--album",
+                "--path", outputDir,
+                "--name-format", "{foldername}/{filename}",
                 "--user", "test_user",
                 "--pass", "test_pass",
-                "--print-results",
             };
 
             var originalConsoleOut = Console.Out;

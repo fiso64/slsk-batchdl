@@ -53,6 +53,16 @@ namespace Tests.ClientTests
 
         public Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsync(SearchQuery query, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
         {
+            return SearchAsyncInternal(query, null, scope, token, options, cancellationToken);
+        }
+
+        public Task<Search> SearchAsync(SearchQuery query, Action<SearchResponse> responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
+        {
+            return SearchAsyncInternal(query, responseHandler, scope, token, options, cancellationToken).ContinueWith(t => t.Result.Search);
+        }
+
+        private Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsyncInternal(SearchQuery query, Action<SearchResponse>? responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
+        {
             options ??= new SearchOptions();
             var searchToken = token ?? Random.Shared.Next();
             var responses = new List<SearchResponse>();
@@ -95,6 +105,7 @@ namespace Tests.ClientTests
                         totalFileCount += response.FileCount;
                         totalLockedFileCount += response.LockedFileCount;
                         options.ResponseReceived?.Invoke((null, response));
+                        responseHandler?.Invoke(response);
                     }
 
                     if (responses.Count >= options.ResponseLimit)
@@ -112,12 +123,6 @@ namespace Tests.ClientTests
             );
 
             return Task.FromResult((search, (IReadOnlyCollection<SearchResponse>)responses));
-        }
-
-        public Task<Search> SearchAsync(SearchQuery query, Action<SearchResponse> responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
-        {
-            var searchOptions = options ?? new SearchOptions(responseReceived: (tuple) => responseHandler?.Invoke(tuple.Response));
-            return SearchAsync(query, scope, token, searchOptions, cancellationToken).ContinueWith(t => t.Result.Search);
         }
 
         public Task<Transfer> DownloadAsync(string username, string remoteFilename, string localFilename, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)

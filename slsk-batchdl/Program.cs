@@ -102,11 +102,7 @@ public static partial class Program
 
             var searchSemaphore = new RateLimitedSemaphore(config.searchesPerTime, TimeSpan.FromSeconds(config.searchRenewTime));
             searchService = new Searcher(client, searchSemaphore);
-        }
 
-        bool needUpdate = needLogin;
-        if (needUpdate)
-        {
             var UpdateTask = Task.Run(() => Update(config));
             WriteLineIf("Update started", config.debugInfo);
         }
