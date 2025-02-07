@@ -48,7 +48,7 @@ public static partial class Program
 
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
-        WriteLineIf($"Using extractor: {config.inputType}", config.debugInfo);
+        Console.WriteLine($"Item: {config.input} [{config.inputType}]");
         
         trackLists = await extractor.GetTracks(config.input, config.maxTracks, config.offset, config.reverse, config);
 
@@ -359,7 +359,7 @@ public static partial class Program
 
                         foreach (var item in res)
                         {
-                            var newSource = new Track(tle.source) { Type = TrackType.Album };
+                            var newSource = new Track(tle.source) { Type = TrackType.Album, PlaylistNumber = -1 };
                             var albumTle = new TrackListEntry(item, newSource, config, needSourceSearch: false, sourceCanBeSkipped: true, preprocessTracks: false);
                             albumTle.defaultFolderName = tle.defaultFolderName;
                             trackLists.AddEntry(albumTle);
@@ -373,8 +373,7 @@ public static partial class Program
                     if (!foundSomething)
                     {
                         var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
-                        var str = progress != null ? $": {tle.source}" : "";
-                        Printing.RefreshOrPrint(progress, 0, $"No results{str}{lockedFiles}", true);
+                        Printing.RefreshOrPrint(progress, 0, $"No results: {tle.source}{lockedFiles}", true);
                     }
                     else if (progress != null)
                     {
@@ -422,6 +421,7 @@ public static partial class Program
 
             if (config.PrintResults)
             {
+                await InitClientAndUpdateIfNeeded(config);
                 await PrintResults(tle, existing, notFound, config, searchService);
                 continue;
             }
@@ -702,7 +702,8 @@ public static partial class Program
                     Console.Write("\nDownload cancelled.");
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
-                        Console.WriteLine("Delete files? [Y/n] (default: album fail action): ");
+                        var defaultAction = config.DeleteAlbumOnFail ? "Yes" : config.IgnoreAlbumFail ? "No" : $"Move to {config.failedAlbumPath}";
+                        Console.WriteLine($"Delete files? [Y/n] (default: {defaultAction}): ");
                         var res = Console.ReadLine().Trim().ToLower();
                         if (res == "y") 
                             OnAlbumFail(tracks, true, config);
@@ -718,10 +719,14 @@ public static partial class Program
             }
             finally
             {
-                organizer.SetRemoteCommonDir(null);
-                tle.list.RemoveAt(index);
                 interceptKeys = false;
                 keyPressed -= onKeyPressed;
+            }
+
+            if (!succeeded)
+            {
+                organizer.SetRemoteCommonDir(null);
+                tle.list.RemoveAt(index);
             }
         }
 
@@ -1374,8 +1379,8 @@ public static partial class Program
             .Replace("{album}", track.Album)
             .Replace("{uri}", track.URI)
             .Replace("{length}", track.Length.ToString())
-            .Replace("{row}", (track.CsvOrListRow == -1 ? -1 : track.CsvOrListRow + 1).ToString())
-            .Replace("{line}", (track.CsvOrListRow == -1 ? -1 : track.CsvOrListRow + 1).ToString())
+            .Replace("{row}", (track.PlaylistNumber == -1 ? -1 : track.PlaylistNumber + 1).ToString())
+            .Replace("{line}", (track.PlaylistNumber == -1 ? -1 : track.PlaylistNumber + 1).ToString())
             .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
             .Replace("{type}", track.Type.ToString())
             .Replace("{is-not-audio}", track.IsNotAudio.ToString())

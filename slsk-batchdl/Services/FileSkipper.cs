@@ -61,10 +61,10 @@ namespace Services
             this.dir = dir;
         }
 
-        private string Preprocess(string s, bool removeSlash)
+        private string Preprocess(string s, bool removeSlash, bool isQuery)
         {
             s = s.ToLower();
-            s = s.RemoveFt();
+            if (isQuery) s = s.RemoveFt();
             s = s.Replace(ignore, " ");
             s = s.ReplaceInvalidChars(' ', false, removeSlash);
             s = s.RemoveConsecutiveWs().Trim();
@@ -81,13 +81,13 @@ namespace Services
 
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
-            int removeLen = Preprocess(dir, false).Length + 1;
+            int removeLen = Preprocess(dir, false, false).Length + 1;
 
             foreach (var path in files)
             {
                 if (Utils.IsMusicFile(path))
                 {
-                    string ppath = Preprocess(path[removeLen..path.LastIndexOf('.')], false);
+                    string ppath = Preprocess(path[removeLen..path.LastIndexOf('.')], false, false);
                     string pname = Path.GetFileName(ppath);
                     index.Add((path, ppath, pname));
                 }
@@ -103,8 +103,8 @@ namespace Services
             if (track.OutputsDirectory)
                 return false;
 
-            string title = Preprocess(track.Title, true);
-            string artist = Preprocess(track.Artist, true);
+            string title = Preprocess(track.Title, true, true);
+            string artist = Preprocess(track.Artist, true, true);
 
             foreach ((var path, var ppath, var pname) in index)
             {
@@ -131,10 +131,10 @@ namespace Services
             this.dir = dir;
         }
 
-        private string Preprocess(string s, bool removeSlash)
+        private string Preprocess(string s, bool removeSlash, bool isQuery)
         {
             s = s.ToLower();
-            s = s.RemoveFt();
+            if (isQuery) s = s.RemoveFt();
             s = s.Replace(ignore, " ");
             s = s.ReplaceInvalidChars(' ', false, removeSlash);
             s = s.RemoveConsecutiveWs().Trim();
@@ -151,7 +151,7 @@ namespace Services
 
             var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
 
-            int removeLen = Preprocess(dir, false).Length + 1;
+            int removeLen = Preprocess(dir, false, false).Length + 1;
 
             foreach (var path in files)
             {
@@ -161,7 +161,7 @@ namespace Services
                     try { musicFile = TagLib.File.Create(path); }
                     catch { continue; }
 
-                    string ppath = Preprocess(path[..path.LastIndexOf('.')], false)[removeLen..];
+                    string ppath = Preprocess(path[..path.LastIndexOf('.')], false, false)[removeLen..];
                     string pname = Path.GetFileName(ppath);
                     index.Add((ppath, pname, new SimpleFile(musicFile)));
                 }
@@ -177,8 +177,8 @@ namespace Services
             if (track.OutputsDirectory)
                 return false;
 
-            string title = Preprocess(track.Title, true);
-            string artist = Preprocess(track.Artist, true);
+            string title = Preprocess(track.Title, true, true);
+            string artist = Preprocess(track.Artist, true, true);
 
             foreach ((var ppath, var pname, var musicFile) in index)
             {
@@ -204,9 +204,10 @@ namespace Services
             this.dir = dir;
         }
 
-        private string Preprocess(string s)
+        private string Preprocess(string s, bool isQuery)
         {
-            return s.RemoveFt().Replace(" ", "").ToLower();
+            if (isQuery) s = s.RemoveFt();
+            return s.Replace(" ", "").ToLower();
         }
 
         public override void BuildIndex()
@@ -227,8 +228,8 @@ namespace Services
                     try { musicFile = TagLib.File.Create(path); }
                     catch { continue; }
 
-                    string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "");
-                    string ptitle = Preprocess(musicFile.Tag.Title ?? "");
+                    string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "", false);
+                    string ptitle = Preprocess(musicFile.Tag.Title ?? "", false);
                     index.Add((path, partist, ptitle));
                 }
             }
@@ -243,8 +244,8 @@ namespace Services
             if (track.OutputsDirectory)
                 return false;
 
-            string title = Preprocess(track.Title);
-            string artist = Preprocess(track.Artist);
+            string title = Preprocess(track.Title, true);
+            string artist = Preprocess(track.Artist, true);
 
             foreach ((var path, var partist, var ptitle) in index)
             {
@@ -269,9 +270,10 @@ namespace Services
             this.dir = dir;
         }
 
-        private string Preprocess(string s)
+        private string Preprocess(string s, bool isQuery)
         {
-            return s.RemoveFt().Replace(" ", "").ToLower();
+            if (isQuery) s = s.RemoveFt();
+            return s.Replace(" ", "").ToLower();
         }
 
         public override void BuildIndex()
@@ -292,8 +294,8 @@ namespace Services
                     try { musicFile = TagLib.File.Create(path); }
                     catch { continue; }
 
-                    string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "");
-                    string ptitle = Preprocess(musicFile.Tag.Title ?? "");
+                    string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "", false);
+                    string ptitle = Preprocess(musicFile.Tag.Title ?? "", false);
                     index.Add((partist, ptitle, new SimpleFile(musicFile)));
                 }
             }
@@ -308,8 +310,8 @@ namespace Services
             if (track.OutputsDirectory)
                 return false;
 
-            string title = Preprocess(track.Title);
-            string artist = Preprocess(track.Artist);
+            string title = Preprocess(track.Title, true);
+            string artist = Preprocess(track.Artist, true);
 
             foreach ((var partist, var ptitle, var musicFile) in index)
             {

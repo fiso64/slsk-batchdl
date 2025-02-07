@@ -390,12 +390,20 @@ public static class Utils
 
                     if (!any)
                     {
-                        str = str[..ftIndex];
+                        var separatorIdx = str.IndexOf(" - ", ftIndex);
+                        if (separatorIdx != -1)
+                            str = str.Remove(ftIndex, separatorIdx - ftIndex + 1);
+                        else
+                            str = str[..ftIndex];
                     }
                 }
                 else
                 {
-                    str = str[..ftIndex];
+                    var separatorIdx = str.IndexOf(" - ", ftIndex);
+                    if (separatorIdx != -1)
+                        str = str.Remove(ftIndex, separatorIdx - ftIndex + 1);
+                    else
+                        str = str[..ftIndex];
                 }
                 break;
             }

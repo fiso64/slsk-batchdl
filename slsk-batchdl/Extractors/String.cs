@@ -104,7 +104,7 @@ namespace Extractors
                 {
                     var lr = x.Split('=', 2);
                     lr[0] = lr[0].Trim();
-                    if (lr.Length == 2 && lr[1].Length > 0 && keys.Contains(lr[0]))
+                    if (lr.Length == 2 && keys.Contains(lr[0]))
                     {
                         if (currentKey != null && currentVal != null)
                             setProperty(currentKey, currentVal.Trim());

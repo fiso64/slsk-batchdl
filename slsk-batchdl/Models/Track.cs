@@ -16,7 +16,7 @@ namespace Models
         public bool IsNotAudio = false;
         public string DownloadPath = "";
         public string Other = "";
-        public int CsvOrListRow = -1;
+        public int PlaylistNumber = -1;
         public TrackType Type = TrackType.Normal;
         public FailureReason FailureReason = FailureReason.None;
         public TrackState State = TrackState.Initial;
@@ -46,7 +46,7 @@ namespace Models
             Other = other.Other;
             MinAlbumTrackCount = other.MinAlbumTrackCount;
             MaxAlbumTrackCount = other.MaxAlbumTrackCount;
-            //CsvRow = other.CsvRow;
+            PlaylistNumber = other.PlaylistNumber;
         }
 
         public string ToKey()

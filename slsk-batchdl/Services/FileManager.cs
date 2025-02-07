@@ -96,7 +96,7 @@ public class FileManager
             return;
         }
 
-        string pathPart = SubstituteValues(config.nameFormat, track, file);
+        string pathPart = ApplyNameFormat(config.nameFormat, track, file);
         string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
 
         try
@@ -143,7 +143,7 @@ public class FileManager
         organized.Add(track);
     }
          
-    string SubstituteValues(string format, Track track, Soulseek.File? slfile)
+    string ApplyNameFormat(string format, Track track, Soulseek.File? slfile)
     {
         string newName = format;
         TagLib.File? file = null;
@@ -248,7 +248,7 @@ public class FileManager
                     if (!string.IsNullOrEmpty(remoteCommonDir))
                         res = Path.GetFileName(Utils.NormalizedPath(remoteCommonDir));
                     else
-                        res = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
+                        res = Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)));
                 }
                 else
                 {
@@ -261,6 +261,8 @@ public class FileManager
                 res = config.inputType.ToString(); break;
             case "default-folder":
                 res = tle.defaultFolderName ?? tle.source.ToString(false); break;
+            case "snumber":
+                res = track.PlaylistNumber.ToString(); break;
             default:
                 res = x; return false;
         }

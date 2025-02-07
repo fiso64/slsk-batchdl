@@ -218,12 +218,18 @@ public class Config
 
         if (!confPathChanged)
         {
-            var configPaths = new string[]
+            var configPaths = new List<string>
             {
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "sldl", "sldl.conf"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "sldl", "sldl.conf"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sldl.conf"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sldl.conf")
             };
+
+            string? xdgConfigHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+            if (!string.IsNullOrEmpty(xdgConfigHome))
+            {
+                configPaths.Add(Path.Combine(xdgConfigHome, "sldl", "sldl.conf"));
+            }
 
             foreach (var path in configPaths)
             {
@@ -263,10 +269,11 @@ public class Config
         m3uFilePath     = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
         indexFilePath   = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
         skipMusicDir    = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
-        failedAlbumPath = Utils.GetFullPath(Utils.ExpandVariables(failedAlbumPath));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");
+        else if (failedAlbumPath != "disable" && failedAlbumPath != "delete")
+            failedAlbumPath = Utils.GetFullPath(Utils.ExpandVariables(failedAlbumPath));
     }
 
 
@@ -385,7 +392,6 @@ public class Config
             return;
 
         ApplyDefaultConfig();
-        ApplyProfiles(profile);
 
         foreach (var (name, args) in toApply)
         {
@@ -394,7 +400,10 @@ public class Config
             appliedProfiles.Add(name);
         }
 
+        ApplyProfiles(profile);
+
         ProcessArgs(arguments);
+        
         PostProcessArgs();
     }
 
@@ -603,7 +612,7 @@ public class Config
                 case "f":
                 case "format":
                 case "formats":
-                    cond.Formats = value.Split(',', tr);
+                    cond.Formats = value.Split(',', tr).Select(x => x.TrimStart('.')).ToArray();
                     break;
                 case "banned":
                 case "bannedusers":
@@ -1061,7 +1070,8 @@ public class Config
                     case "--pf":
                     case "--paf":
                     case "--pref-format":
-                        preferredCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                        preferredCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--plt":
                     case "--pref-tolerance":
@@ -1116,7 +1126,8 @@ public class Config
                         break;
                     case "--af":
                     case "--format":
-                        necessaryCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                        necessaryCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--lt":
                     case "--tolerance":

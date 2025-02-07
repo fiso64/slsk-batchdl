@@ -15,6 +15,8 @@ namespace Tests.StringUtils
             Assert.AreEqual("blah blah", "blah blah feat. blah blah".RemoveFt());
             Assert.AreEqual("blah blah", "blah (feat. blah blah) blah".RemoveFt());
             Assert.AreEqual("blah blah", "blah (ft. blah blah) blah".RemoveFt());
+            Assert.AreEqual("foo - blah", "foo feat. bar - blah".RemoveFt());
+            Assert.AreEqual("foo - blah", "foo ft. bar - blah".RemoveFt());
         }
 
         [TestMethod]

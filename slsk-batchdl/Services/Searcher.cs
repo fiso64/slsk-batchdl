@@ -304,12 +304,16 @@ public class Searcher
 
         string fullPath((SearchResponse r, Soulseek.File f) x) { return x.r.Username + '\\' + x.f.Filename; }
 
+        // order results first
+        // the following loops should preserve the order
         var orderedResults = OrderedResults(results, track, config, false, false, albumMode: true);
 
         var discPattern = new Regex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$");
         bool canMatchDiscPattern = !discPattern.IsMatch(track.Album) && !discPattern.IsMatch(track.Artist);
-        var directoryStructure = new Dictionary<string, List<(SlResponse response, SlFile file)>>();
+        var directoryStructure = new Dictionary<string, (List<(SlResponse response, SlFile file)> list, int index)>();
 
+        // construct directory structure and save indices of the files as they appear in orderedResults
+        int idx = 0;
         foreach (var x in orderedResults)
         {
             var path = fullPath(x);
@@ -317,14 +321,18 @@ public class Searcher
 
             if (!directoryStructure.ContainsKey(dirpath))
             {
-                directoryStructure[dirpath] = new() { x };
+                directoryStructure[dirpath] = (new() { x }, idx);
             }
             else
             {
-                directoryStructure[dirpath].Add(x);
+                directoryStructure[dirpath].list.Add(x);
             }
+
+            idx++;
         }
 
+        // if a folder name matches the disc pattern, move one level up. This will merge separate
+        // disc directories of the same album into one
         if (canMatchDiscPattern)
         {
             foreach (var key in directoryStructure.Keys.ToArray())
@@ -338,7 +346,7 @@ public class Searcher
 
                     if (directoryStructure.ContainsKey(newKey))
                     {
-                        directoryStructure[newKey].AddRange(val);
+                        directoryStructure[newKey].list.AddRange(val.list);
                     }
                     else
                     {
@@ -351,6 +359,8 @@ public class Searcher
         var sortedKeys = directoryStructure.Keys.OrderBy(key => key).ToList();
         var toRemove = new HashSet<string>();
 
+        // Merge child directories (like Artist/Album/Pictures) into parent directories
+        // (like Artist/Album) in case they exist
         for (int i = 0; i < sortedKeys.Count; i++)
         {
             var key = sortedKeys[i];
@@ -365,8 +375,18 @@ public class Searcher
 
                 if ((key2 + '\\').StartsWith(key + '\\'))
                 {
-                    directoryStructure[key].AddRange(directoryStructure[key2]);
-                    toRemove.Add(key2);
+                    // merge list with larger index into the list with the smaller index
+                    if (directoryStructure[key].index <= directoryStructure[key2].index)
+                    {
+                        directoryStructure[key].list.AddRange(directoryStructure[key2].list);
+                        toRemove.Add(key2);
+                    }
+                    else
+                    {
+                        directoryStructure[key2].list.AddRange(directoryStructure[key].list);
+                        toRemove.Add(key);
+                        key = key2;
+                    }
                 }
                 else if (!(key2 + '\\').StartsWith(key))
                 {
@@ -381,6 +401,7 @@ public class Searcher
         }
 
         int min, max;
+        
         if (config.minAlbumTrackCount > -1 || config.maxAlbumTrackCount > -1)
         {
             min = config.minAlbumTrackCount;
@@ -398,14 +419,14 @@ public class Searcher
 
         foreach ((var key, var val) in directoryStructure)
         {
-            int musicFileCount = val.Count(x => Utils.IsMusicFile(x.file.Filename));
+            int musicFileCount = val.list.Count(x => Utils.IsMusicFile(x.file.Filename));
 
             if (musicFileCount == 0 || !countIsGood(musicFileCount))
                 continue;
 
             var ls = new List<Track>();
 
-            foreach (var x in val)
+            foreach (var x in val.list)
             {
                 var t = new Track
                 {
@@ -955,7 +976,7 @@ public class Searcher
         if (track.Type == TrackType.Album)
         {
             if (track.Album.Length > 0)
-                return (track.Artist + " " + track.Album).Trim();
+                return (track.Artist + " " + track.Album + " " + track.Title).Trim();
             if (track.Title.Length > 0)
                 return (track.Artist + " " + track.Title).Trim();
             return track.Artist.Trim();
@@ -996,7 +1017,7 @@ public class Searcher
 
     public Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
-        var t = new Track(defaultTrack);
+        var t = new Track(defaultTrack) { PlaylistNumber = -1 };
         t.Type = type;
 
         filename = Utils.GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();

@@ -147,8 +147,6 @@ public static class Printing
 
     public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound, Config config, Searcher searchService)
     {
-        await Program.InitClientAndUpdateIfNeeded(config);
-
         if (tle.source.Type == TrackType.Normal)
         {
             await searchService.SearchAndPrintResults(tle.list[0], config);
@@ -354,7 +352,14 @@ public static class Printing
         {
             if (!config.noProgress)
             {
-                return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
+                try
+                {
+                    return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
+                }
+                catch 
+                {
+                    return null;
+                }
             }
             else
             {

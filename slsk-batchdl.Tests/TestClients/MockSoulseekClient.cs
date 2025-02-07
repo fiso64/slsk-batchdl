@@ -125,22 +125,45 @@ namespace Tests.ClientTests
             return Task.FromResult((search, (IReadOnlyCollection<SearchResponse>)responses));
         }
 
-        public Task<Transfer> DownloadAsync(string username, string remoteFilename, string localFilename, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
-        {
-            async Task<Stream> StreamFactory()
-            {
-                var directory = Path.GetDirectoryName(localFilename);
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    System.IO.Directory.CreateDirectory(directory);
-                }
-                return System.IO.File.Create(localFilename);
-            }
+        private static readonly SemaphoreSlim _downloadSemaphore = new SemaphoreSlim(1, 1);
 
-            return DownloadAsync(username, remoteFilename, StreamFactory, size, startOffset, token, options, cancellationToken);
+        public async Task<Transfer> DownloadAsync(string username, string remoteFilename, string localFilename, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
+        {
+            await _downloadSemaphore.WaitAsync(cancellationToken.GetValueOrDefault(CancellationToken.None));
+            try
+            {
+                async Task<Stream> StreamFactory()
+                {
+                    var directory = Path.GetDirectoryName(localFilename);
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        System.IO.Directory.CreateDirectory(directory);
+                    }
+                    return System.IO.File.Create(localFilename);
+                }
+
+                return await DownloadAsyncInternal(username, remoteFilename, StreamFactory, size, startOffset, token, options, cancellationToken);
+            }
+            finally
+            {
+                _downloadSemaphore.Release();
+            }
         }
 
         public async Task<Transfer> DownloadAsync(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
+        {
+            await _downloadSemaphore.WaitAsync(cancellationToken.GetValueOrDefault(CancellationToken.None));
+            try
+            {
+                return await DownloadAsyncInternal(username, remoteFilename, outputStreamFactory, size, startOffset, token, options, cancellationToken);
+            }
+            finally
+            {
+                _downloadSemaphore.Release();
+            }
+        }
+
+        private async Task<Transfer> DownloadAsyncInternal(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
         {
             var user = index.FirstOrDefault(x => x.Username == username);
             if (user == null)

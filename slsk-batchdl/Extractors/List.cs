@@ -79,7 +79,7 @@ namespace Extractors
                 }
 
                 if (tl.lists.Count == 1)
-                    tl[0].source.CsvOrListRow = i;
+                    tl[0].source.PlaylistNumber = i;
 
                 trackLists.lists.AddRange(tl.lists);
 
@@ -142,9 +142,9 @@ namespace Extractors
                     {
                         string[] lines = File.ReadAllLines(listFilePath, Encoding.UTF8);
 
-                        if (track.CsvOrListRow > -1 && track.CsvOrListRow < lines.Length)
+                        if (track.PlaylistNumber > -1 && track.PlaylistNumber < lines.Length)
                         {
-                            lines[track.CsvOrListRow] = "";
+                            lines[track.PlaylistNumber] = "";
                             Utils.WriteAllLines(listFilePath, lines, '\n');
                         }
                     }

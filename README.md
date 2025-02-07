@@ -196,10 +196,10 @@ Usage: sldl <input> [OPTIONS]
     --album-art-only               Only download album art for the provided album
     --no-browse-folder             Do not automatically browse user shares to get all files in
                                    in the folder
-    --failed-album-path            Path to move all album files to when one of the items from
-                                   the directory fails to download. Set to 'delete' to delete
-                                   the files instead. Set to 'disable' keep it where it is.
-                                   Default: {configured output dir}/failed
+	--failed-album-path            Path to move all album files to when one of the items from
+								   the directory fails to download. Set to 'delete' to delete
+								   the files instead. Set to 'disable' keep them where they 
+								   are. Default: {configured output dir}/failed
     --album-parallel-search        Run album searches in parallel, then download sequentially.
 ```
 #### Aggregate Download Options
@@ -329,8 +329,7 @@ albums by an artist. It is recommended to pair it with `--interactive`.
 ### Search Query
 The search query is determined as follows:
 
-- For album downloads: If the album field is non-empty, search for 'Artist Album'.
-  Otherwise, search for 'Artist Title'
+- For album downloads: Search for 'Artist Album Title'.
 - For all other download types: If the title field is non-empty, search for 'Artist Title'.
   Otherwise, search for 'Artist Album'
 
