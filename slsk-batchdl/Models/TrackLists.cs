@@ -142,7 +142,7 @@ namespace Models
             foreach (var tle in lists)
             {
                 if (tle.source.Type == TrackType.Aggregate || tle.source.Type == TrackType.AlbumAggregate)
-                    tle.subItemName = tle.source.ToString(true);
+                    tle.itemName = tle.source.ToString(true);
             }
         }
 

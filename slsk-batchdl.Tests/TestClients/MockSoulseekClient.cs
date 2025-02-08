@@ -20,6 +20,72 @@ namespace Tests.ClientTests
             this.index = index;
         }
 
+        public static MockSoulseekClient FromLocalPaths(bool useTags, params string[] localPaths)
+        {
+            var files = localPaths.SelectMany(path =>
+                System.IO.Directory.Exists(path)
+                    ? System.IO.Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
+                    : new[] { path });
+
+            var fileList = files
+                .Select((path, i) => {
+
+                    var attributes = new List<Soulseek.FileAttribute>();
+
+                    if (Utils.IsMusicFile(path))
+                    {
+                        if (useTags)
+                        {
+                            using (var file = TagLib.File.Create(path))
+                            {
+                                if (file.Properties != null)
+                                {
+                                    attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitRate, file.Properties.AudioBitrate));
+                                    attributes.Add(new Soulseek.FileAttribute(FileAttributeType.Length, (int)file.Properties.Duration.TotalSeconds));
+                                    attributes.Add(new Soulseek.FileAttribute(FileAttributeType.VariableBitRate, file.Properties.BitsPerSample > 0 ? 1 : 0));
+
+                                    if (file.Properties.AudioSampleRate > 0)
+                                        attributes.Add(new Soulseek.FileAttribute(FileAttributeType.SampleRate, file.Properties.AudioSampleRate));
+
+                                    if (file.Properties.BitsPerSample > 0)
+                                        attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitDepth, file.Properties.BitsPerSample));
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Generate deterministic length from filename
+                            var filename = Path.GetFileName(path);
+                            var length = Math.Abs(filename.GetHashCode() % 1000) + 1; // 1-1000 seconds
+                            attributes.Add(new Soulseek.FileAttribute(FileAttributeType.Length, length));
+                        }
+                    }
+
+                    return new Soulseek.File(
+                        i + 1,
+                        path.Replace('/', '\\'),
+                        new FileInfo(path).Length,
+                        Path.GetExtension(path),
+                        attributeList: attributes
+                    );
+                })
+                .ToList();
+
+            var index = new List<SearchResponse>() {
+                new SearchResponse(
+                    username: "local",
+                    token: 1,
+                    hasFreeUploadSlot: true,
+                    uploadSpeed: 100,
+                    queueLength: 0,
+                    fileList: fileList
+                )
+            };
+
+            return new MockSoulseekClient(index);
+        }
+
+
         public Task ConnectAsync(string username, string password, CancellationToken? cancellationToken = null)
         {
             return ConnectAsync("", 0, username, password, cancellationToken);
@@ -46,7 +112,16 @@ namespace Tests.ClientTests
 
             var directories = user.Files
                 .GroupBy(x => Utils.GetDirectoryNameSlsk(x.Filename))
-                .Select(x => new Soulseek.Directory(x.Key, x));
+                .Select(g => new Soulseek.Directory(
+                    g.Key,
+                    g.Select(f => new Soulseek.File(
+                        f.Code,
+                        Utils.GetFileNameSlsk(f.Filename),
+                        f.Size,
+                        f.Extension,
+                        f.Attributes
+                    )).ToList()
+                ));
 
             return Task.FromResult(new BrowseResponse(directories));
         }
@@ -165,21 +240,36 @@ namespace Tests.ClientTests
 
         private async Task<Transfer> DownloadAsyncInternal(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
         {
-            var user = index.FirstOrDefault(x => x.Username == username);
-            if (user == null)
-            {
-                throw new UserNotFoundException($"User {username} not found");
-            }
-
-            // Find the file in the directories
-            Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
-            if (foundFile == null)
-            {
-                throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");
-            }
-
             var transferToken = token ?? Random.Shared.Next();
-            var fileSize = size ?? foundFile.Size;
+            long fileSize;
+            string sourceFilePath = null;
+
+            if (username == "local")
+            {
+                // For local user, try to find the actual file in the filesystem
+                sourceFilePath = Path.GetFullPath(remoteFilename);
+                if (!System.IO.File.Exists(sourceFilePath))
+                {
+                    throw new FileNotFoundException($"Local file {sourceFilePath} not found");
+                }
+                fileSize = (long)(size == null || size == -1 ? new FileInfo(sourceFilePath).Length : size);
+            }
+            else
+            {
+                var user = index.FirstOrDefault(x => x.Username == username);
+                if (user == null)
+                {
+                    throw new UserNotFoundException($"User {username} not found");
+                }
+
+                // Find the file in the directories
+                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
+                if (foundFile == null)
+                {
+                    throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");
+                }
+                fileSize = size ?? foundFile.Size;
+            }
 
             var transfer = new Transfer(
                 direction: TransferDirection.Download,
@@ -196,55 +286,78 @@ namespace Tests.ClientTests
             {
                 try
                 {
-                    options?.StateChanged?.Invoke((TransferStates.Queued, transfer));
+                    options?.StateChanged?.Invoke((TransferStates.Initializing, transfer));
                     //await Task.Delay(100); // Simulate queue wait
 
-                    using var stream = await outputStreamFactory();
+                    using var outputStream = await outputStreamFactory();
                     var startTime = DateTime.UtcNow;
                     var bytesTransferred = startOffset;
                     var chunkSize = 16384; // 16KB chunks
-                    var buffer = new byte[chunkSize];
 
-                    // Fill buffer with repeating pattern
-                    for (int i = 0; i < buffer.Length; i++)
+                    if (sourceFilePath != null)
                     {
-                        buffer[i] = (byte)(i % 256);
+                        // Copy from local file
+                        using var sourceStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read);
+                        if (startOffset > 0)
+                        {
+                            sourceStream.Seek(startOffset, SeekOrigin.Begin);
+                        }
+                        var buffer = new byte[chunkSize];
+                        int bytesRead;
+
+                        options?.StateChanged?.Invoke((TransferStates.InProgress, transfer));
+
+                        while ((bytesRead = await sourceStream.ReadAsync(buffer, 0, chunkSize)) > 0)
+                        {
+                            await outputStream.WriteAsync(buffer, 0, bytesRead);
+                            await outputStream.FlushAsync();
+                            bytesTransferred += bytesRead;
+
+                            var elapsed = DateTime.UtcNow - startTime;
+                            var speed = bytesTransferred / elapsed.TotalSeconds;
+
+                            transfer = new Transfer(
+                                direction: TransferDirection.Download,
+                                username: username,
+                                filename: remoteFilename,
+                                token: transferToken,
+                                state: TransferStates.InProgress,
+                                size: fileSize,
+                                startOffset: startOffset,
+                                bytesTransferred: bytesTransferred,
+                                averageSpeed: speed,
+                                startTime: startTime
+                            );
+
+                            options?.ProgressUpdated?.Invoke((bytesTransferred - bytesRead, transfer));
+
+                            if (cancellationToken?.IsCancellationRequested == true)
+                            {
+                                transfer = new Transfer(
+                                    direction: TransferDirection.Download,
+                                    username: username,
+                                    filename: remoteFilename,
+                                    token: transferToken,
+                                    state: TransferStates.Cancelled,
+                                    size: fileSize,
+                                    startOffset: startOffset,
+                                    bytesTransferred: bytesTransferred,
+                                    averageSpeed: speed,
+                                    startTime: startTime
+                                );
+                                options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
+                                return;
+                            }
+                        }
                     }
-
-                    transfer = new Transfer(
-                        direction: TransferDirection.Download,
-                        username: username,
-                        filename: remoteFilename,
-                        token: transferToken,
-                        state: TransferStates.InProgress,
-                        size: fileSize,
-                        startOffset: startOffset,
-                        bytesTransferred: bytesTransferred,
-                        startTime: startTime
-                    );
-
-                    options?.StateChanged?.Invoke((TransferStates.InProgress, transfer));
-
-                    // Skip to start offset if needed
-                    if (startOffset > 0)
+                    else
                     {
-                        stream.Seek(startOffset, SeekOrigin.Begin);
-                    }
-
-                    while (bytesTransferred < fileSize)
-                    {
-                        await Task.Delay(50); // Simulate network delay
-                        var remainingBytes = fileSize - bytesTransferred;
-                        var currentChunk = (int)Math.Min(chunkSize, remainingBytes);
-
-                        // Write the actual data
-                        await stream.WriteAsync(buffer, 0, currentChunk, cancellationToken.GetValueOrDefault());
-                        await stream.FlushAsync(cancellationToken.GetValueOrDefault());
-
-                        bytesTransferred += currentChunk;
-
-                        var elapsed = DateTime.UtcNow - startTime;
-                        var speed = bytesTransferred / elapsed.TotalSeconds;
+                        // Generate fake data as before
+                        var buffer = new byte[chunkSize];
+                        for (int i = 0; i < buffer.Length; i++)
+                        {
+                            buffer[i] = (byte)(i % 256);
+                        }
 
                         transfer = new Transfer(
                             direction: TransferDirection.Download,
@@ -255,29 +368,64 @@ namespace Tests.ClientTests
                             size: fileSize,
                             startOffset: startOffset,
                             bytesTransferred: bytesTransferred,
-                            averageSpeed: speed,
                             startTime: startTime
                         );
 
-                        options?.ProgressUpdated?.Invoke((bytesTransferred - currentChunk, transfer));
+                        options?.StateChanged?.Invoke((TransferStates.InProgress, transfer));
 
-                        if (cancellationToken?.IsCancellationRequested == true)
+                        // Skip to start offset if needed
+                        if (startOffset > 0)
                         {
+                            outputStream.Seek(startOffset, SeekOrigin.Begin);
+                        }
+
+                        while (bytesTransferred < fileSize)
+                        {
+                            await Task.Delay(50); // Simulate network delay
+                            var remainingBytes = fileSize - bytesTransferred;
+                            var currentChunk = (int)Math.Min(chunkSize, remainingBytes);
+
+                            // Write the actual data
+                            await outputStream.WriteAsync(buffer, 0, currentChunk, cancellationToken.GetValueOrDefault());
+                            await outputStream.FlushAsync(cancellationToken.GetValueOrDefault());
+
+                            bytesTransferred += currentChunk;
+
+                            var elapsed = DateTime.UtcNow - startTime;
+                            var speed = bytesTransferred / elapsed.TotalSeconds;
+
                             transfer = new Transfer(
                                 direction: TransferDirection.Download,
                                 username: username,
                                 filename: remoteFilename,
                                 token: transferToken,
-                                state: TransferStates.Cancelled,
+                                state: TransferStates.InProgress,
                                 size: fileSize,
                                 startOffset: startOffset,
                                 bytesTransferred: bytesTransferred,
                                 averageSpeed: speed,
                                 startTime: startTime
                             );
-                            options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
-                            return;
 
+                            options?.ProgressUpdated?.Invoke((bytesTransferred - currentChunk, transfer));
+
+                            if (cancellationToken?.IsCancellationRequested == true)
+                            {
+                                transfer = new Transfer(
+                                    direction: TransferDirection.Download,
+                                    username: username,
+                                    filename: remoteFilename,
+                                    token: transferToken,
+                                    state: TransferStates.Cancelled,
+                                    size: fileSize,
+                                    startOffset: startOffset,
+                                    bytesTransferred: bytesTransferred,
+                                    averageSpeed: speed,
+                                    startTime: startTime
+                                );
+                                options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
+                                return;
+                            }
                         }
                     }
 
@@ -317,5 +465,6 @@ namespace Tests.ClientTests
 
             return transfer;
         }
+
     }
 }

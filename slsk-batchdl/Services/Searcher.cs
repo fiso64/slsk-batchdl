@@ -23,14 +23,13 @@ public class Searcher
     }
 
     // very messy function that does everything
-    public async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, TrackListEntry tle, Config config, CancellationTokenSource? cts = null)
+    public async Task<(string, SlFile?)> SearchAndDownload(Track track, FileManager organizer, TrackListEntry tle, Config config, Konsole.ProgressBar? progress, CancellationTokenSource? cts = null)
     {
         if (config.DoNotDownload)
             throw new Exception();
 
         IEnumerable<(SlResponse response, SlFile file)>? orderedResults = null;
         var responseData = new ResponseData();
-        var progress = Printing.GetProgressBar(config);
         var results = new SlDictionary();
         var fsResults = new SlDictionary();
         using var searchCts = new CancellationTokenSource();

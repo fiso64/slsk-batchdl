@@ -47,7 +47,6 @@ public class Config
     public string nameFormat = "";
     public string invalidReplaceStr = " ";
     public string ytdlpArgument = "";
-    public string onComplete = "";
     public string confPath = "";
     public string profile = "";
     public string failedAlbumPath = "";
@@ -102,6 +101,7 @@ public class Config
     public int aggregateLengthTol = 3;
     public int parallelAlbumSearchProcesses = 5;
     public double fastSearchMinUpSpeed = 1.0;
+    public List<string> onComplete = null;
     public Track regexToReplace = new();
     public Track regexReplaceBy = new();
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
@@ -118,6 +118,7 @@ public class Config
     public bool PrintResultsFull => (printOption & PrintOption.Results) != 0 && (printOption & PrintOption.Full) != 0;
     public bool DeleteAlbumOnFail => failedAlbumPath == "delete";
     public bool IgnoreAlbumFail => failedAlbumPath == "disable";
+    public bool HasOnComplete => onComplete != null && onComplete.Any(x => !string.IsNullOrWhiteSpace(x));
 
     private Dictionary<string, (List<string> args, string? cond)> configProfiles;
     private HashSet<string> appliedProfiles;
@@ -430,7 +431,7 @@ public class Config
                     appliedProfiles.Add(name);
                 }
                 else
-                    Console.WriteLine($"Warning: No profile '{name}' found in config");
+                    InputWarning($"Warning: No profile '{name}' found in config");
             }
         }
     }
@@ -953,6 +954,10 @@ public class Config
                     case "--write-playlist":
                         setFlag(ref writePlaylist, ref i);
                         break;
+                    case "--nwp":
+                    case "--no-write-playlist":
+                        setFlag(ref writePlaylist, ref i, false);
+                        break;
                     case "--pp":
                     case "--playlist-path":
                         m3uFilePath = getParameter(ref i);
@@ -961,6 +966,11 @@ public class Config
                     case "--no-write-index":
                         hasConfiguredIndex = true;
                         setFlag(ref writeIndex, ref i, false);
+                        break;
+                    case "--wi":
+                    case "--write-index":
+                        hasConfiguredIndex = true;
+                        setFlag(ref writeIndex, ref i);
                         break;
                     case "--ip":
                     case "--index-path":
@@ -1258,7 +1268,17 @@ public class Config
                         break;
                     case "--oc":
                     case "--on-complete":
-                        onComplete = getParameter(ref i);
+                        var onCompleteStr = getParameter(ref i);
+                        onComplete = onComplete ?? new List<string>();
+                        if (onCompleteStr.TrimStart().StartsWith("+ "))
+                        {
+                            onComplete.Add(onCompleteStr.TrimStart().Substring(2));
+                        }
+                        else
+                        {
+                            onComplete.Clear();
+                            onComplete.Add(onCompleteStr);
+                        }
                         break;
                     case "--ftd":
                     case "--fails-to-downrank":
@@ -1352,6 +1372,13 @@ public class Config
         }
 
         return args.ToArray();
+    }
+
+
+    public static void InputWarning(string message)
+    {
+        Printing.WriteLine($"Warning: {message}", ConsoleColor.DarkYellow);
+        Environment.Exit(1);
     }
 
 

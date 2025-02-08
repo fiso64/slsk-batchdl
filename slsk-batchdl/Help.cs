@@ -43,15 +43,8 @@ public static class Help
                                        during the last run.
           
         --listen-port <port>           Port for incoming connections (default: 49998)
-        --on-complete <command>        Run a command whenever a file is downloaded.
-                                       Available placeholders: {path} (local path),{title},{row}
-                                       {artist},{album},{uri},{length},{failure-reason},{state}.
-                                       Prepend a state number to only run in specific cases:
-                                       1:, 2: for the Downloaded and Failed states respectively.
-                                       E.g: '1:<cmd>' will only run the command if the file is
-                                       downloaded successfully. Prepend 's:' to use the system
-                                       shell to execute the command. Prepend 'a:' to run it only
-                                       on album downloads.
+        --on-complete <command>        Run a command when a download completes. See `--help
+                                       on-complete`
 
         --print <option>               Print tracks or search results instead of downloading:
                                        'tracks': Print all tracks to be downloaded
@@ -259,7 +252,7 @@ public static class Help
         file containing lines of the following form:
         
           # input                         conditions                    pref. conditions
-          artist=Artist,album=Album       format=mp3;br>128             ""br >= 320""
+          artist=Artist,album=Album       ""format=mp3; br>128""        ""br >= 320""
         
         The input can be any of the above input types. The conditions are added on top of the
         configured conditions and can be omitted.   
@@ -376,35 +369,53 @@ public static class Help
       tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check. 
         
       Examples:
-        ""{artist} - {title}""
-            Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the 
+        ""{artist} - {title}""  
+            Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
             following is generally preferred:
-        ""{artist( - )title|filename}""
-            If artist and title are not null, name it 'Artist - Title', otherwise use the original 
+        ""{artist( - )title|filename}""  
+            If artist and title are not null, name it 'Artist - Title', otherwise use the original
             filename.
-        ""{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}""  
+        ""{albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}""  
             Sort files into artist/album folders if all tags are present, otherwise put them in
-            the 'missing-tags' folder. 
-        
+            the 'missing-tags' folder.   
+
       Available variables:
-        artist                          First artist (from the file tags)
-        sartist                         Source artist (as on CSV/Spotify/YouTube/etc)
-        item-name                       Name of the playlist of CSV file
-        artists                         Artists, joined with '&'
-        albumartist                     First album artist
-        albumartists                    Album artists, joined with '&'
-        title                           Track title
-        stitle                          Source track title
-        album                           Album name
-        salbum                          Source album name
-        year                            Track year or date
-        track                           Track number
-        disc                            Disc number
-        snumber                         Source playlist item number
-        filename                        Soulseek filename without extension
-        foldername                      Soulseek folder name
-        extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
-        default-folder                  Default sldl folder name (usually the playlist name)
+
+        The following values are read from the downloaded file's tags:
+          artist                         First artist
+          artists                        Artists, joined with '&'
+          albumartist                    First album artist
+          albumartists                   Album artists, joined with '&'
+          title                          Track title
+          album                          Album name
+          year                           Track year
+          track                          Track number
+          disc                           Disc number
+          length                         Track length (in seconds)
+
+        The following values are taken from the input source (CSV file data, Spotify, etc):
+          sartist                        Source artist
+          stitle                         Source track title
+          salbum                         Source album name
+          slength                        Source track length
+          uri                            Track URI
+          row/line/snum                  Item number (all three are the same)
+
+        Other variables:
+          type                           Track type
+          state                          Track state
+          failure-reason                 Reason for failure if any
+          is-audio                       If track is audio (true/false)
+          artist-maybe-wrong             If artist might be incorrect (true/false)
+          slsk-filename                  Soulseek filename without extension
+          slsk-foldername                Soulseek folder name
+          extractor                      Name of the extractor used
+          item-name                      Name of the playlist/source
+          default-folder                 Default sldl folder name
+          bindir                         Base application directory
+          path                           Download file path
+          path-noext                     Download file path without extension
+          ext                            File extension
     ";
 
     const string configHelp = @"
@@ -456,6 +467,50 @@ public static class Help
           interactive       (bool)
     ";
 
+    const string onCompleteHelp = @"
+    On-Complete Actions
+
+      The `--on-complete` parameter allows executing commands after a track or album is downloaded. 
+      Multiple actions can be chained using the `+ ` prefix (note the space after +).
+
+      Syntax: `--on-complete [prefixes:]command`
+
+      Prefixes:
+        1: - Execute only if track downloaded successfully
+        2: - Execute only if track failed to download
+        a: - Execute only after album download
+        s: - Use shell execute
+        h: - Hide window
+        r: - Read command output
+        u: - Use output to update index (implies `r:`)
+
+      When using u: prefix, the command output should be new_state;new_path to update the track 
+      state and path in the index and playlist.
+
+      Variables:
+        The available variables are the same as in name-format, with the following additions:
+        {stdout} - Previous command's stdout
+        {stderr} - Previous command's stderr
+        {exitcode} - Previous command's exit code
+        {first-stdout} - First command's stdout
+        {first-stderr} - First command's stderr
+        {first-exitcode} - First command's exit code
+
+      Examples:
+        Queue downloaded audio files in foobar2000 (Windows):
+          1:h: cmd /c if {is-audio}==true start "" ""C:\Program Files\foobar2000\foobar2000.exe"" /immediate /add ""{path}""
+
+        Convert downloaded audio files to MP3 (Windows):
+          # Check if file is audio and not already MP3
+          1:h:r: cmd /c if {is-audio}==true if /i not {ext}==.mp3 if not exist ""{path-noext}.mp3"" echo true
+
+          # Convert to MP3 if check passed
+          + 1:h:r: cmd /c if {stdout}==true (ffmpeg -i ""{path}"" -q:a 0 ""{path-noext}.mp3"" && echo success)
+
+          # Delete original and update index if conversion succeeded
+          + 1:h:u: cmd /c if {stdout}==success (del ""{path}"" & echo ""1;{path-noext}.mp3"")
+    ";
+
     const string shortcutsHelp = @"
     Shortcuts & interactive mode
       Shortcuts
@@ -470,9 +525,10 @@ public static class Help
           Up/p            previous folder
           Down/n          next folder
           Enter/d         download selected folder
-          q               download folder and disable interactive mode
+          y               download folder and disable interactive mode
           r               retrieve all files in the folder
-          Esc/s           skip current album
+          s               skip current item
+          Esc/q           quit program
 
           d:1,2,3         download specific files
           d:start:end     download a range of files
@@ -490,6 +546,7 @@ public static class Help
             { "search", searchHelp },
             { "file-conditions", fileConditionsHelp },
             { "name-format", nameFormatHelp },
+            { "on-complete", onCompleteHelp },
             { "config", configHelp },
             { "shortcuts", shortcutsHelp },
         };

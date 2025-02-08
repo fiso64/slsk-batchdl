@@ -1,0 +1,11 @@
+# Template manifest file for winget-releaser
+PackageIdentifier: fiso64.slsk-batchdl
+PackageName: slsk-batchdl
+Publisher: fiso64
+License: GPL-3.0
+ShortDescription: Batch downloader for Soulseek
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: sldl.exe
+    PortableCommandAlias: sldl

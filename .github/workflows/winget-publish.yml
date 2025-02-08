@@ -1,0 +1,17 @@
+name: Publish to Windows Package Manager Community Repository
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: fiso64.slsk-batchdl
+          version: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.WINGET_TOKEN }}
+          release-tag: v${{ github.event.release.tag_name }}
+          installers-regex: 'sldl_win-x86_self-contained\.zip$'

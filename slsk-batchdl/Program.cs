@@ -182,9 +182,9 @@ public static partial class Program
             {
                 string indexPath;
                 if (tle.config.indexFilePath.Length > 0)
-                    indexPath = tle.config.indexFilePath.Replace("{playlist-name}", tle.itemName.ReplaceInvalidChars(" ").Trim());
+                    indexPath = tle.config.indexFilePath.Replace("{playlist-name}", tle.ItemNameOrSource().ReplaceInvalidChars(" ").Trim());
                 else
-                    indexPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName, "_index.sldl");
+                    indexPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName(), "_index.sldl");
 
                 if (editors.TryGetValue((indexPath, indexOption), out var indexEditor))
                 {
@@ -202,9 +202,9 @@ public static partial class Program
             {
                 string m3uPath;
                 if (tle.config.m3uFilePath.Length > 0)
-                    m3uPath = tle.config.m3uFilePath.Replace("{playlist-name}", tle.itemName.ReplaceInvalidChars(" ").Trim());
+                    m3uPath = tle.config.m3uFilePath.Replace("{playlist-name}", tle.ItemNameOrSource().ReplaceInvalidChars(" ").Trim());
                 else
-                    m3uPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName, $"_{tle.itemName.ReplaceInvalidChars(" ").Trim()}.m3u8");
+                    m3uPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName(), tle.DefaultPlaylistName());
 
                 if (editors.TryGetValue((m3uPath, playlistOption), out var playlistEditor))
                 {
@@ -360,7 +360,17 @@ public static partial class Program
                         foreach (var item in res)
                         {
                             var newSource = new Track(tle.source) { Type = TrackType.Album, ItemNumber = -1 };
-                            var albumTle = new TrackListEntry(item, newSource, config, needSourceSearch: false, sourceCanBeSkipped: true, preprocessTracks: false);
+                            var albumTle = new TrackListEntry() 
+                            {
+                                source = newSource,
+                                list = item,
+                                config = config,
+                                needSourceSearch = false,
+                                sourceCanBeSkipped = true,
+                                preprocessTracks = false,
+                                indexEditor = tle.indexEditor,
+                                playlistEditor = tle.playlistEditor,
+                            };
                             albumTle.itemName = tle.itemName;
                             trackLists.AddEntry(albumTle);
                         }
@@ -639,6 +649,7 @@ public static partial class Program
             {
                 (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(config, tle.list, !config.noBrowseFolder, retrievedFolders);
                 if (index == -1) break;
+                if (index == -2) Environment.Exit(0);
             }
             else
             {
@@ -700,6 +711,7 @@ public static partial class Program
                 if (userCancelled)
                 {
                     Console.Write("\nDownload cancelled.");
+
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
                         var defaultAction = config.DeleteAlbumOnFail ? "Yes" : config.IgnoreAlbumFail ? "No" : $"Move to {config.failedAlbumPath}";
@@ -709,6 +721,12 @@ public static partial class Program
                             OnAlbumFail(tracks, true, config);
                         else if (res == "" && !config.IgnoreAlbumFail) 
                             OnAlbumFail(tracks, config.DeleteAlbumOnFail, config);
+                    }
+
+                    if (!config.interactiveMode)
+                    {
+                        Console.WriteLine("Entering interactive mode");
+                        config.interactiveMode = true;
                     }
                 }
                 else
@@ -755,7 +773,7 @@ public static partial class Program
         if (config.albumArtOnly || succeeded && config.albumArtOption != AlbumArtOption.Default)
         {
             Console.WriteLine($"\nDownloading additional images:");
-            additionalImages = await DownloadImages(config, tle, tle.list, config.albumArtOption, tle.list[index]);
+            additionalImages = await DownloadImages(config, tle, tle.list, config.albumArtOption, tle.list[index], organizer);
             tracks?.AddRange(additionalImages);
         }
 
@@ -767,7 +785,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        OnComplete(config, tle.source, true, tle.indexEditor, tle.playlistEditor);
+        OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
     }
 
 
@@ -803,13 +821,11 @@ public static partial class Program
     }
 
 
-    static async Task<List<Track>> DownloadImages(Config config, TrackListEntry tle, List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum)
+    static async Task<List<Track>> DownloadImages(Config config, TrackListEntry tle, List<List<Track>> downloads, AlbumArtOption option, List<Track>? chosenAlbum, FileManager fileManager)
     {
         var downloadedImages = new List<Track>();
         long mSize = 0;
         int mCount = 0;
-
-        var fileManager = new FileManager(tle, config);
 
         if (chosenAlbum != null)
         {
@@ -894,6 +910,7 @@ public static partial class Program
             {
                 (index, tracks, _) = await InteractiveModeAlbum(config, albumArtLists, false, null);
                 if (index == -1) break;
+                if (index == -2) Environment.Exit(0);
             }
             else
             {
@@ -914,7 +931,8 @@ public static partial class Program
                 PrintAlbum(tracks);
             }
 
-            fileManager.SetRemoteCommonDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
+            fileManager.downloadingAdditinalImages = true;
+            fileManager.SetRemoteCommonImagesDir(Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename)));
 
             bool allSucceeded = true;
             using var semaphore = new SemaphoreSlim(1);
@@ -986,6 +1004,8 @@ public static partial class Program
         string savedFilePath = "";
         SlFile? chosenFile = null;
 
+        ProgressBar? progress = null;
+
         while (tries > 0)
         {
             await WaitForLogin(config);
@@ -994,7 +1014,8 @@ public static partial class Program
 
             try
             {
-                (savedFilePath, chosenFile) = await searchService.SearchAndDownload(track, organizer, tle, config, cts);
+                progress = Printing.GetProgressBar(config);
+                (savedFilePath, chosenFile) = await searchService.SearchAndDownload(track, organizer, tle, config, progress, cts);
             }
             catch (Exception ex)
             {
@@ -1077,7 +1098,14 @@ public static partial class Program
             }
         }
 
-        OnComplete(config, track, false, tle.indexEditor, tle.playlistEditor);
+        if (tle.config.HasOnComplete)
+        {
+            var savedText = progress.Line1;
+            var savedPos = progress.Current;
+            RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
+            OnComplete(tle, track, false, tle.indexEditor, tle.playlistEditor);
+            RefreshOrPrint(progress, savedPos, savedText);
+        }
 
         semaphore.Release();
     }
@@ -1093,13 +1121,15 @@ public static partial class Program
             if (!Console.KeyAvailable)
             {
                 var key = Console.ReadKey(true);
-                if (key.Key == ConsoleKey.DownArrow)
+                if (key.Key == ConsoleKey.Enter)
+                    return "";
+                else if (key.Key == ConsoleKey.DownArrow)
                     return "n";
                 else if (key.Key == ConsoleKey.UpArrow)
                     return "p";
                 else if (key.Key == ConsoleKey.Escape)
-                    return "s";
-                else if ("pnqrs".Contains(key.KeyChar))
+                    return "q";
+                else if ("pnyqrs".Contains(key.KeyChar))
                     return key.KeyChar.ToString();
                 else if (!char.IsControl(key.KeyChar))
                 {
@@ -1112,6 +1142,7 @@ public static partial class Program
 
         void printUndo(ref int lines)
         {
+            if (Console.IsOutputRedirected) return;
             for (int i = 0; i < lines; i++)
             {
                 Console.Write("\x1b[1A"); // Move up one line
@@ -1123,8 +1154,8 @@ public static partial class Program
         string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
         string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
         Console.WriteLine();
-        WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
-        WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
+        WriteLine($" [Up/p] | [Down/n] | [Enter] | [y]              {retrieveAll1}| [s]  | [Esc/q]", ConsoleColor.Green);
+        WriteLine($" Prev   | Next     | Accept  | Stop Interactive {retrieveAll2}| Skip | Quit", ConsoleColor.Green);
         Console.WriteLine();
 
         while (true)
@@ -1166,6 +1197,8 @@ public static partial class Program
                 case "s":
                     return (-1, new List<Track>(), false);
                 case "q":
+                    return (-2, new List<Track>(), false);
+                case "y":
                     config.interactiveMode = false;
                     return (aidx, tracks, true);
                 case "r":
@@ -1362,151 +1395,192 @@ public static partial class Program
     }
 
 
-    static void OnComplete(Config config, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
+    static void OnComplete(TrackListEntry tle, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
     {
-        var onComplete = config.onComplete;
-
-        if (onComplete.Length == 0)
+        if (!tle.config.HasOnComplete)
             return;
 
-        bool useShellExecute = false;
-        bool createNoWindow = false;
-        bool hasAlbumOnComplete = false;
+        bool needUpdateIndex = false;
+        int firstCommandStatus = -1;
+        int prevCommandStatus = -1;
+        string? prevStdout = null;
+        string? prevStderr = null;
+        string? firstStdout = null;
+        string? firstStderr = null;
 
-        var startInfo = new ProcessStartInfo();
-
-        while (onComplete.Length > 2)
+        for (int i = 0; i < tle.config.onComplete.Count; i++)
         {
-            if (onComplete[1] == ':')
+            var onComplete = tle.config.onComplete[i];
+
+            if (string.IsNullOrWhiteSpace(onComplete))
+                continue;
+
+            bool useShellExecute = false;
+            bool createNoWindow = false;
+            bool hasAlbumOnComplete = false;
+            bool readOutput = false;
+            bool useOutputToUpdateIndex = false;
+            var startInfo = new ProcessStartInfo();
+
+            while (onComplete.Length > 2)
             {
-                if (onComplete[0] == 's')
+                if (onComplete[1] == ':')
                 {
-                    useShellExecute = true;
-                    onComplete = onComplete[2..];
-                }
-                else if (onComplete[0] == 'a')
-                {
-                    hasAlbumOnComplete = true;
-                    onComplete = onComplete[2..];
-                }
-                else if (onComplete[0] == 'w')
-                {
-                    createNoWindow = true;
-                    onComplete = onComplete[2..];
-                }
-                else if (onComplete[0] == 'o')
-                {
-                    startInfo.RedirectStandardOutput = true;
-                    onComplete = onComplete[2..];
-                }
-                else if (onComplete[0].IsDigit())
-                {
-                    if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
-                    onComplete = onComplete[2..];
+                    if (onComplete[0] == 's')
+                    {
+                        useShellExecute = true;
+                        onComplete = onComplete[2..];
+                    }
+                    else if (onComplete[0] == 'a')
+                    {
+                        hasAlbumOnComplete = true;
+                        onComplete = onComplete[2..];
+                    }
+                    else if (onComplete[0] == 'h')
+                    {
+                        createNoWindow = true;
+                        onComplete = onComplete[2..];
+                    }
+                    else if (onComplete[0] == 'u')
+                    {
+                        useOutputToUpdateIndex = true;
+                        onComplete = onComplete[2..];
+                    }
+                    else if (onComplete[0] == 'r')
+                    {
+                        readOutput = true;
+                        onComplete = onComplete[2..];
+                    }
+                    else if (onComplete[0].IsDigit())
+                    {
+                        if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
+                        onComplete = onComplete[2..];
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
                 else
                 {
                     break;
                 }
             }
-            else
+
+            if (hasAlbumOnComplete ^ isAlbumOnComplete)
             {
-                break;
+                continue;
             }
-        }
 
-        if (hasAlbumOnComplete ^ isAlbumOnComplete)
-        {
-            return;
-        }
+            var process = new Process();
 
-        var process = new Process();
+            TagLib.File? audio = null;
 
-        var path = track.DownloadPath.TrimEnd('/').TrimEnd('\\');
-
-        onComplete = onComplete
-            .Replace("{title}", track.Title)
-            .Replace("{artist}", track.Artist)
-            .Replace("{album}", track.Album)
-            .Replace("{uri}", track.URI)
-            .Replace("{length}", track.Length.ToString())
-            .Replace("{row}", (track.ItemNumber == -1 ? -1 : track.ItemNumber + 1).ToString())
-            .Replace("{line}", (track.ItemNumber == -1 ? -1 : track.ItemNumber + 1).ToString())
-            .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
-            .Replace("{type}", track.Type.ToString())
-            .Replace("{is-audio}", Convert.ToInt32(!track.IsNotAudio).ToString())
-            .Replace("{is-not-audio}", Convert.ToInt32(track.IsNotAudio).ToString())
-            .Replace("{failure-reason}", track.FailureReason.ToString())
-            .Replace("{path}", path)
-            .Replace("{path-noext}", Path.Combine(Path.GetDirectoryName(path), Path.GetFileNameWithoutExtension(path)))
-            .Replace("{ext}", Path.GetExtension(path))
-            .Replace("{state}", track.State.ToString())
-            .Replace("{extractor}", config.inputType.ToString())
-            .Replace("{bindir}", AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\'))
-            .Trim();
-
-        if (onComplete[0] == '"')
-        {
-            int e = onComplete.IndexOf('"', 1);
-            if (e > 1)
+            if (FileManager.HasTagVariables(onComplete))
             {
-                startInfo.FileName = onComplete[1..e];
-                startInfo.Arguments = onComplete.Substring(e + 1, onComplete.Length - e - 1);
+                try { audio = TagLib.File.Create(track.DownloadPath); }
+                catch { }
             }
-            else
+
+            onComplete = FileManager.ReplaceVariables(onComplete, tle, audio, track.FirstDownload, track, null)
+                .Replace("{exitcode}", prevCommandStatus.ToString())
+                .Replace("{first-exitcode}", firstCommandStatus.ToString())
+                .Replace("{stdout}", string.IsNullOrWhiteSpace(prevStdout) ? "null" : prevStdout)
+                .Replace("{stderr}", string.IsNullOrWhiteSpace(prevStderr) ? "null" : prevStderr)
+                .Replace("{first-stdout}", string.IsNullOrWhiteSpace(firstStdout) ? "null" : firstStdout)
+                .Replace("{first-stderr}", string.IsNullOrWhiteSpace(firstStderr) ? "null" : firstStderr)
+                .Trim();
+
+            if (onComplete[0] == '"')
             {
-                startInfo.FileName = onComplete.Trim('"');
-            }
-        }
-        else
-        {
-            string[] parts = onComplete.Split(' ', 2);
-            startInfo.FileName = parts[0];
-            startInfo.Arguments = parts.Length > 1 ? parts[1] : "";
-        }
-
-        if (!useShellExecute)
-        {
-            startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError = true;
-            if (!createNoWindow)
-                startInfo.CreateNoWindow = false;
-        }
-
-        startInfo.UseShellExecute = useShellExecute;
-        process.StartInfo = startInfo;
-
-        WriteLineIf($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}", config.debugInfo);
-
-        process.Start();
-
-        try
-        {
-            process.WaitForExit();
-        }
-        catch (Exception ex)
-        {
-            WriteLine($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}", ConsoleColor.DarkYellow);
-            return;
-        }
-
-        if (startInfo.RedirectStandardOutput)
-        {
-            string output = process.StandardOutput.ReadToEnd().Trim(); // Error: Cannot mix synchronous and asynchronous operation on process stream
-            if (output.Contains(';'))
-            {
-                string[] parts = output.Split(';', 2);
-                if (int.TryParse(parts[0], out int newState))
+                int e = onComplete.IndexOf('"', 1);
+                if (e > 1)
                 {
-                    track.State = (TrackState)newState;
-                    if (parts.Length > 1)
-                        track.DownloadPath = parts[1];
-                    indexEditor?.Update();
-                    playlistEditor?.Update();
+                    startInfo.FileName = onComplete[1..e];
+                    startInfo.Arguments = onComplete.Substring(e + 1, onComplete.Length - e - 1);
+                }
+                else
+                {
+                    startInfo.FileName = onComplete.Trim('"');
                 }
             }
+            else
+            {
+                string[] parts = onComplete.Split(' ', 2);
+                startInfo.FileName = parts[0];
+                startInfo.Arguments = parts.Length > 1 ? parts[1] : "";
+            }
+
+            startInfo.UseShellExecute = useShellExecute;
+            startInfo.CreateNoWindow = createNoWindow;
+
+            if (useOutputToUpdateIndex || readOutput)
+            {
+                startInfo.UseShellExecute = false;
+                startInfo.RedirectStandardOutput = true;
+                startInfo.RedirectStandardError = true;
+            }
+
+            process.StartInfo = startInfo;
+
+            WriteLineIf($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}", tle.config.debugInfo);
+            Debug.WriteLine($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}");
+
+            try
+            {
+                process.Start();
+
+                if (startInfo.RedirectStandardOutput)
+                {
+                    var readStdout = process.StandardOutput.ReadToEndAsync();
+                    var readStderr = process.StandardError.ReadToEndAsync();
+                    Task.WaitAll(readStdout, readStderr);
+
+                    prevStdout = readStdout.Result.Trim().Trim('"');
+                    prevStderr = readStderr.Result.Trim().Trim('"');
+
+                    if (i == 0)
+                    {
+                        firstStdout = prevStdout;
+                        firstStderr = prevStderr;
+                    }
+                }
+
+                process.WaitForExit();
+
+                if (useOutputToUpdateIndex && !string.IsNullOrWhiteSpace(prevStdout))
+                {
+                    string[] parts = prevStdout.Split(';', 2);
+                    if (int.TryParse(parts[0], out int newState))
+                    {
+                        track.State = (TrackState)newState;
+                        if (parts.Length > 1)
+                            track.DownloadPath = parts[1];
+                        needUpdateIndex = true;
+                    }
+                }
+
+                prevCommandStatus = process.ExitCode;
+                if (i == 0) firstCommandStatus = process.ExitCode;
+            }
+            catch (Exception ex)
+            {
+                WriteLine($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}", ConsoleColor.DarkYellow);
+                return;
+            }
+            finally
+            {
+                process.Close();
+            }
+        }
+
+        if (needUpdateIndex)
+        {
+            indexEditor?.Update();
+            playlistEditor?.Update();
         }
     }
+
 
 
 

@@ -22,6 +22,7 @@ See the [usage examples](#examples-1).
  - [Searching](#searching)
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
+ - [On-Complete Actions](#on-complete-actions)
  - [Configuration](#configuration)
  - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
  - [Examples](#examples-1)
@@ -46,7 +47,7 @@ Usage: sldl <input> [OPTIONS]
 ```
     -p, --path <path>              Download directory
     --input-type <type>            [csv|youtube|spotify|bandcamp|string|list]
-    --name-format <format>         Name format for downloaded tracks. See --help name-format
+    --name-format <format>         Name format for downloaded tracks. See `--help name-format`
         
     -n, --number <maxtracks>       Download the first n tracks of a playlist
     -o, --offset <offset>          Skip a specified number of tracks
@@ -68,15 +69,8 @@ Usage: sldl <input> [OPTIONS]
                                    during the last run.
         
     --listen-port <port>           Port for incoming connections (default: 49998)
-    --on-complete <command>        Run a command whenever a file is downloaded.
-                                   Available placeholders: {path} (local path),{title},{row}
-                                   {artist},{album},{uri},{length},{failure-reason},{state}.
-                                   Prepend a state number to only run in specific cases:
-                                   1:, 2: for the Downloaded and Failed states respectively. 
-                                   E.g: '1:<cmd>' will only run the command if the file is
-                                   downloaded successfully. Prepend 's:' to use the system
-                                   shell to execute the command. Prepend 'a:' to run it only
-                                   on album downloads.
+    --on-complete <command>        Run a command when a download completes. See `--help
+                                   on-complete`
 
     --print <option>               Print tracks or search results instead of downloading:
                                    'tracks': Print all tracks to be downloaded
@@ -195,10 +189,10 @@ Usage: sldl <input> [OPTIONS]
     --album-art-only               Only download album art for the provided album
     --no-browse-folder             Do not automatically browse user shares to get all files in
                                    in the folder
-	--failed-album-path            Path to move all album files to when one of the items from
-								   the directory fails to download. Set to 'delete' to delete
-								   the files instead. Set to 'disable' keep them where they 
-								   are. Default: {configured output dir}/failed
+    --failed-album-path            Path to move all album files to when one of the items from
+                                   the directory fails to download. Set to 'delete' to delete
+                                   the files instead. Set to 'disable' keep them where they 
+                                   are. Default: {configured output dir}/failed
     --album-parallel-search        Run album searches in parallel, then download sequentially.
 ```
 #### Aggregate Download Options
@@ -285,9 +279,9 @@ dealing with names which contain hyphens surrounded by spaces.
 ### List file
 List input must be manually activated with `--input-type=list`. The input is a path to a text
 file containing lines of the following form:
-```bash
+```ini
 # input                         conditions                    pref. conditions
-artist=Artist,album=Album       format=mp3;br>128             "br >= 320"
+artist=Artist,album=Album       "format=mp3; br>128"          "br >= 320"
 ```
 The input can be any of the above input types. The conditions are added on top of the
 configured conditions and can be omitted.   
@@ -351,7 +345,7 @@ will be preferred: With `--pref-format flac,wav`, sldl will try to download loss
 available while still accepting lossy files.
 
 There are no default required conditions. The default preferred conditions are:
-```
+```ini
 pref-format = mp3
 pref-length-tol = 3
 pref-min-bitrate = 200
@@ -402,30 +396,98 @@ tag1 is null, use tag2. String literals enclosed in parentheses are ignored in t
   - `{artist( - )title|filename}`  
       If artist and title are not null, name it 'Artist - Title', otherwise use the original
       filename.
-  - `{albumartist(/)album(/)track(. )title|(missing-tags/)foldername(/)filename}`  
+  - `{albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}`  
       Sort files into artist/album folders if all tags are present, otherwise put them in
       the 'missing-tags' folder.   
 
 ### Available variables
+
+The following values are read from the downloaded file's tags:
 ```
-artist                          First artist (from the file tags)
-sartist                         Source artist (as on CSV/Spotify/YouTube/etc)
-item-name                       Name of the playlist of CSV file
-artists                         Artists, joined with '&'
-albumartist                     First album artist
-albumartists                    Album artists, joined with '&'
-title                           Track title
-stitle                          Source track title
-album                           Album name
-salbum                          Source album name
-year                            Track year or date
-track                           Track number
-disc                            Disc number
-snumber                         Source playlist item number
-filename                        Soulseek filename without extension
-foldername                      Soulseek folder name
-extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
-default-folder                  Default sldl folder name (usually the playlist name)
+artist                         First artist
+artists                        Artists, joined with '&'
+albumartist                    First album artist
+albumartists                   Album artists, joined with '&'
+title                          Track title
+album                          Album name
+year                           Track year
+track                          Track number
+disc                           Disc number
+length                         Track length (in seconds)
+```
+
+The following values are taken from the input source (CSV file data, Spotify, etc):
+```
+sartist                        Source artist
+stitle                         Source track title
+salbum                         Source album name
+slength                        Source track length
+uri                            Track URI
+row/line/snum                  Item number (all three are the same)
+```
+
+Other variables:
+```
+type                           Track type
+state                          Track state
+failure-reason                 Reason for failure if any
+is-audio                       If track is audio (true/false)
+artist-maybe-wrong             If artist might be incorrect (true/false)
+slsk-filename                  Soulseek filename without extension
+slsk-foldername                Soulseek folder name
+extractor                      Name of the extractor used
+item-name                      Name of the playlist/source
+default-folder                 Default sldl folder name
+bindir                         Base application directory
+path                           Download file path
+path-noext                     Download file path without extension
+ext                            File extension
+```
+
+## On-Complete Actions
+
+The `--on-complete` parameter allows executing commands after a track or album is downloaded. Multiple actions can be chained using the `+ ` prefix (note the space after +).
+
+**Syntax:** `--on-complete [prefixes:]command`
+
+### Prefixes
+- `1:` - Execute only if track downloaded successfully
+- `2:` - Execute only if track failed to download
+- `a:` - Execute only after album download
+- `s:` - Use shell execute
+- `h:` - Hide window
+- `r:` - Read command output
+- `u:` - Use output to update index (implies `r:`)
+
+When using u: prefix, the command output should be new_state;new_path to update the track state and path in the index and playlist.
+
+### Variables
+
+The available variables are the same as in name-format, with the following additions:
+- `{stdout}` - Previous command's stdout
+- `{stderr}` - Previous command's stderr
+- `{exitcode}` - Previous command's exit code
+- `{first-stdout}` - First command's stdout
+- `{first-stderr}` - First command's stderr
+- `{first-exitcode}` - First command's exit code
+
+### Examples
+
+Queue downloaded audio files in foobar2000 (Windows):
+```ini
+on-complete = 1:h: cmd /c if {is-audio}==true start "" "C:\Program Files\foobar2000\foobar2000.exe" /immediate /add "{path}"
+```
+
+Convert downloaded audio files to MP3 (Windows):
+```ini
+# Check if file is audio and not already MP3
+on-complete =   1:h:r: cmd /c if {is-audio}==true if /i not {ext}==.mp3 if not exist "{path-noext}.mp3" echo true
+
+# Convert to MP3 if check passed
+on-complete = + 1:h:r: cmd /c if {stdout}==true (ffmpeg -i "{path}" -q:a 0 "{path-noext}.mp3" && echo success)
+
+# Delete original and update index if conversion succeeded
+on-complete = + 1:h:u: cmd /c if {stdout}==success (del "{path}" & echo "1;{path-noext}.mp3")
 ```
 
 ## Configuration
@@ -434,12 +496,13 @@ sldl will look for a file named sldl.conf in the following locations:
 ```
 ~/AppData/Roaming/sldl/sldl.conf
 ~/.config/sldl/sldl.conf
+$XDG_CONFIG_HOME/sldl/sldl.conf
 ```
 as well as in the directory of the executable.
 
 ### Syntax
 Example config file:
-```
+```ini
 username = your-username
 password = your-password
 pref-format = flac
@@ -450,14 +513,14 @@ directory. The path variable `{bindir}` stores the directory of the sldl binary.
 
 ### Configuration profiles
 Profiles are supported:
-```
+```ini
 [lossless]
 pref-format = flac,wav
 ```
 To activate the above profile, run `--profile lossless`. To list all available profiles,
 run `--profile help`.  
 Profiles can be activated automatically based on a few simple conditions:
-```
+```ini
 [no-stale]
 profile-cond = interactive && download-mode == "album"
 max-stale-time = 9999999
@@ -474,7 +537,7 @@ The following variables are available:
 input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
 download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
 interactive       (bool)
-  ```
+```
 
 ## Shortcuts & interactive mode
 
@@ -489,9 +552,10 @@ Key bindings:
 Up/p            previous folder
 Down/n          next folder
 Enter/d         download selected folder
-q               download folder and disable interactive mode
+y               download folder and disable interactive mode
 r               retrieve all files in the folder
-Esc/s           skip current album
+s               skip current item
+Esc/q           quit program
 
 d:1,2,3         download specific files
 d:start:end     download a range of files
@@ -501,61 +565,61 @@ cd ..           load parent folder
 ## Examples
 
 Download tracks from a csv file:
-```
-sldl test.csv
+```bash
+sldl "tracks.csv"
 ```
 <br>
 
-Download spotify likes:
+Download a Spotify playlist, or your liked songs:
+```bash
+sldl "https://open.spotify.com/playlist/id"
+sldl "spotify-likes"
 ```
-sldl spotify-likes
+
+<br>
+
+Download a youtube playlist, additionally retrieving deleted video names and with yt-dlp fallback:
+```bash
+sldl "https://www.youtube.com/playlist/id" --get-deleted --yt-dlp
 ```
+
 <br>
 
 Interactive album download:
+```bash
+sldl "Artist - Some Album" -a -t
 ```
-sldl "Some Album" -a -t
-```
+
 <br>
 
 Download a specific song by name and length, preferring lossless:
-```
+```bash
 sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
-```  
-<br>
-
-Download the album of every song in a spotify playlist:
-```
-sldl https://spotify/playlist/id -a
-```
+``` 
 
 <br>
 
-Retrieve deleted video names, then download from a youtube playlist with fallback to yt-dlp:
+Download all albums by an artist interactively:
+```bash
+sldl "artist=MC MENTAL" -a -g -t
 ```
-sldl https://www.youtube.com/playlist/id --get-deleted --yt-dlp
-```
+
 <br>
 
 Print all songs by an artist which are not in your library:
-```
+```bash
 sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results-full
 ```
 <br>
 
-Download all albums by an artist interactively:
-```
-sldl "artist=MC MENTAL" -a -g -t
-```
-
 #### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```
-"Artist - My Favorite Song"    		format=flac
-a:"Artist - Some Album"				strict-album=true;album-track-count=5
+"Artist - My Favorite Song"            format=flac
+a:"Artist - Some Album"                strict-album=true;album-track-count=5
 ```
 Add a profile to your `sldl.conf`:
-```bash
+```ini
 [wishlist]
 input = ~/sldl/wishlist.txt 
 input-type = list
@@ -563,8 +627,9 @@ index-path = ~/sldl/wishlist-index.sldl
 album-parallel-search = true
 ```
 This will create a global index file `wishlist-index.sldl` which will be scanned every time sldl is run to skip wishlist items that have already been downloaded. If you want to continue searching until a version satisfying the preferred conditions is found, also add `skip-check-pref-cond = true` (note that this requires the files to remain in the same spot after being downloaded).  
-Finally, set up a cron job (or a scheduled task on windows) to periodically run sldl with the following option:
-```
+
+Now you can manually run, or set up a cron job / scheduled task to periodically run sldl with the following option:
+```bash
 sldl --profile wishlist
 ```
 

@@ -13,8 +13,8 @@ namespace Models
         public bool gotoNextAfterSearch = false;
         public bool enablesIndexByDefault = false;
         public bool preprocessTracks = true;
-        public string? itemName = null;
         public string? subItemName = null;
+        public string? itemName = null;
 
         public Config config = null!;
         public FileConditions? extractorCond = null;
@@ -25,9 +25,26 @@ namespace Models
         public FileSkipper? musicDirSkipper = null;
 
         public bool CanParallelSearch => source.Type == TrackType.Album || source.Type == TrackType.Aggregate;
-        public string DefaultFolderName => Path.Join((itemName ?? "").ReplaceInvalidChars(" ").Trim(), (subItemName ?? "").ReplaceInvalidChars(" ").Trim());
+
+        public string DefaultFolderName()
+        {
+            return Path.Join((itemName ?? "").ReplaceInvalidChars(" ").Trim(), (subItemName ?? "").ReplaceInvalidChars(" ").Trim());
+        }
+
+        public string DefaultPlaylistName()
+        {
+            var name = itemName != null ? itemName : source.Type != TrackType.Normal ? source.ToString(true) : "playlist";
+            return $"_{name.ReplaceInvalidChars(" ").Trim()}.m3u8";
+        }
+
+        public string ItemNameOrSource()
+        {
+            return itemName != null ? itemName : source.Type != TrackType.Normal ? source.ToString(true) : "";
+        }
 
         private List<string>? printLines = null;
+
+        public TrackListEntry() { }
 
         public TrackListEntry(TrackType trackType)
         {
@@ -48,20 +65,6 @@ namespace Models
             this.list = list;
             this.source = source;
             SetDefaults();
-        }
-
-        public TrackListEntry(List<List<Track>> list, Track source, Config config, bool needSourceSearch = false, bool sourceCanBeSkipped = false,
-            bool needSkipExistingAfterSearch = false, bool gotoNextAfterSearch = false, string? itemName = null, bool preprocessTracks = true)
-        {
-            this.list = list;
-            this.source = source;
-            this.needSourceSearch = needSourceSearch;
-            this.sourceCanBeSkipped = sourceCanBeSkipped;
-            this.needSkipExistingAfterSearch = needSkipExistingAfterSearch;
-            this.gotoNextAfterSearch = gotoNextAfterSearch;
-            this.itemName = itemName;
-            this.config = config;
-            this.preprocessTracks = preprocessTracks;
         }
 
         public void SetDefaults()
