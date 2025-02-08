@@ -72,8 +72,7 @@ Usage: sldl <input> [OPTIONS]
                                    Available placeholders: {path} (local path),{title},{row}
                                    {artist},{album},{uri},{length},{failure-reason},{state}.
                                    Prepend a state number to only run in specific cases:
-                                   1:, 2:, 3:, 4: for the Downloaded, Failed, Exists, and
-                                   NotFoundLastTime states respectively. 
+                                   1:, 2: for the Downloaded and Failed states respectively. 
                                    E.g: '1:<cmd>' will only run the command if the file is
                                    downloaded successfully. Prepend 's:' to use the system
                                    shell to execute the command. Prepend 'a:' to run it only

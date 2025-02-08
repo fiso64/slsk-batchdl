@@ -767,7 +767,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        OnComplete(config, tle.source, true);
+        OnComplete(config, tle.source, true, tle.indexEditor, tle.playlistEditor);
     }
 
 
@@ -1077,7 +1077,7 @@ public static partial class Program
             }
         }
 
-        OnComplete(config, track, false);
+        OnComplete(config, track, false, tle.indexEditor, tle.playlistEditor);
 
         semaphore.Release();
     }
@@ -1362,7 +1362,7 @@ public static partial class Program
     }
 
 
-    static void OnComplete(Config config, Track track, bool isAlbumOnComplete)
+    static void OnComplete(Config config, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
     {
         var onComplete = config.onComplete;
 
@@ -1372,6 +1372,8 @@ public static partial class Program
         bool useShellExecute = false;
         bool createNoWindow = false;
         bool hasAlbumOnComplete = false;
+
+        var startInfo = new ProcessStartInfo();
 
         while (onComplete.Length > 2)
         {
@@ -1390,6 +1392,11 @@ public static partial class Program
                 else if (onComplete[0] == 'w')
                 {
                     createNoWindow = true;
+                    onComplete = onComplete[2..];
+                }
+                else if (onComplete[0] == 'o')
+                {
+                    startInfo.RedirectStandardOutput = true;
                     onComplete = onComplete[2..];
                 }
                 else if (onComplete[0].IsDigit())
@@ -1414,7 +1421,8 @@ public static partial class Program
         }
 
         var process = new Process();
-        var startInfo = new ProcessStartInfo();
+
+        var path = track.DownloadPath.TrimEnd('/').TrimEnd('\\');
 
         onComplete = onComplete
             .Replace("{title}", track.Title)
@@ -1426,10 +1434,12 @@ public static partial class Program
             .Replace("{line}", (track.ItemNumber == -1 ? -1 : track.ItemNumber + 1).ToString())
             .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
             .Replace("{type}", track.Type.ToString())
-            .Replace("{is-not-audio}", track.IsNotAudio.ToString())
+            .Replace("{is-audio}", Convert.ToInt32(!track.IsNotAudio).ToString())
+            .Replace("{is-not-audio}", Convert.ToInt32(track.IsNotAudio).ToString())
             .Replace("{failure-reason}", track.FailureReason.ToString())
-            .Replace("{path}", track.DownloadPath.TrimEnd('/').TrimEnd('\\'))
-            .Replace("{path-noext}", Path.GetFileNameWithoutExtension(track.DownloadPath.TrimEnd('/').TrimEnd('\\')))
+            .Replace("{path}", path)
+            .Replace("{path-noext}", Path.Combine(Path.GetDirectoryName(path), Path.GetFileNameWithoutExtension(path)))
+            .Replace("{ext}", Path.GetExtension(path))
             .Replace("{state}", track.State.ToString())
             .Replace("{extractor}", config.inputType.ToString())
             .Replace("{bindir}", AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\'))
@@ -1470,14 +1480,34 @@ public static partial class Program
 
         process.Start();
 
-        if (!useShellExecute)
+        try
         {
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            process.WaitForExit();
+        }
+        catch (Exception ex)
+        {
+            WriteLine($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}", ConsoleColor.DarkYellow);
+            return;
         }
 
-        process.WaitForExit();
+        if (startInfo.RedirectStandardOutput)
+        {
+            string output = process.StandardOutput.ReadToEnd().Trim(); // Error: Cannot mix synchronous and asynchronous operation on process stream
+            if (output.Contains(';'))
+            {
+                string[] parts = output.Split(';', 2);
+                if (int.TryParse(parts[0], out int newState))
+                {
+                    track.State = (TrackState)newState;
+                    if (parts.Length > 1)
+                        track.DownloadPath = parts[1];
+                    indexEditor?.Update();
+                    playlistEditor?.Update();
+                }
+            }
+        }
     }
+
 
 
     public static async Task WaitForLogin(Config config)
