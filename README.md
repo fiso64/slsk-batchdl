@@ -552,7 +552,7 @@ sldl "artist=MC MENTAL" -a -g -t
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
 ```
 "Artist - My Favorite Song"    		format=flac
-a:"Artist - Some Album"				strict-album=true;album-track-count=5
+a:"Artist - Some Album"			strict-album=true;album-track-count=5
 ```
 Add a profile to your `sldl.conf`:
 ```bash
