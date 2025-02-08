@@ -47,6 +47,7 @@ namespace Extractors
 
                 var tralbums = new List<Track>();
 
+                int num = 1;
                 foreach (var item in root.GetProperty("discography").EnumerateArray())
                 {
                     //ItemType = item.GetProperty("item_type").GetString(),
@@ -55,9 +56,10 @@ namespace Extractors
                         Album = item.GetProperty("title").GetString(),
                         Artist = item.GetProperty("artist_name").GetString() ?? item.GetProperty("band_name").GetString(),
                         Type = TrackType.Album,
+                        ItemNumber = num++,
                     };
                     var tle = new TrackListEntry(track);
-                    tle.defaultFolderName = track.Artist;
+                    tle.itemName = track.Artist;
                     tle.enablesIndexByDefault = true;
                     trackLists.AddEntry(tle);
                 }

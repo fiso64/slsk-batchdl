@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 
 using Models;
 using Enums;
+using Swan;
 
 namespace Extractors
 {
@@ -65,7 +66,7 @@ namespace Extractors
             var tle = new TrackListEntry(TrackType.Normal);
 
             tle.enablesIndexByDefault = true;
-            tle.defaultFolderName = name;
+            tle.itemName = name;
             tle.list.Add(tracks);
 
             trackLists.AddEntry(tle);
@@ -135,6 +136,7 @@ namespace Extractors
                             desc = videoResponse.Items[0].Snippet.Description;
 
                             Track track = await ParseTrackInfo(title, uploader, playlistItem.Snippet.ResourceId.VideoId, length, desc);
+                            track.ItemNumber = count + 1;
                             tracks.Add(track);
                         }
                     }
@@ -317,6 +319,7 @@ namespace Extractors
                     var length = (int)video.Duration.Value.TotalSeconds;
 
                     var track = await ParseTrackInfo(title, uploader, ytId, length);
+                    track.ItemNumber = count + 1;
 
                     tracks[ytId] = track;
                 }
@@ -354,7 +357,7 @@ namespace Extractors
                     var length = (int)video.Duration.Value.TotalSeconds;
 
                     var track = await ParseTrackInfo(title, uploader, ytId, length);
-
+                    track.ItemNumber = count + 1;
                     tracks.Add(track);
                 }
 

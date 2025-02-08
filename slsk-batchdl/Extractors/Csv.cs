@@ -33,7 +33,7 @@ namespace Extractors
             
             foreach (var tle in trackLists.lists)
             {
-                tle.defaultFolderName = csvName;
+                tle.itemName = csvName;
                 tle.enablesIndexByDefault = true;
             }
 
@@ -50,9 +50,9 @@ namespace Extractors
                     {
                         string[] lines = File.ReadAllLines(csvFilePath, System.Text.Encoding.UTF8);
 
-                        if (track.PlaylistNumber > -1 && track.PlaylistNumber < lines.Length)
+                        if (track.ItemNumber > -1 && track.ItemNumber < lines.Length)
                         {
-                            lines[track.PlaylistNumber] = new string(',', Math.Max(0, csvColumnCount - 1));
+                            lines[track.ItemNumber] = new string(',', Math.Max(0, csvColumnCount - 1));
                             Utils.WriteAllLines(csvFilePath, lines, '\n');
                         }
                     }
@@ -135,7 +135,7 @@ namespace Extractors
                     csvColumnCount = values.Count;
 
                 var desc = "";
-                var track = new Track() { PlaylistNumber = index };
+                var track = new Track() { ItemNumber = index };
 
                 if (artistIndex >= 0) track.Artist = values[artistIndex];
                 if (trackIndex >= 0) track.Title = values[trackIndex];

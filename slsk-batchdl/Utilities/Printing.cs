@@ -243,64 +243,82 @@ public static class Printing
     }
 
 
-    public static void PrintAlbum(List<Track> albumTracks, bool indices = false)
+    public static int PrintAlbum(List<Track> albumTracks, bool indices = false)
     {
         if (albumTracks.Count == 0 && albumTracks[0].Downloads.Count == 0)
-            return;
+            return 0;
 
         var response = albumTracks[0].FirstResponse;
         string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s)";
-        var (parents, props) = FolderInfo(albumTracks.Select(x => x.FirstDownload));
+        var (parents, propsList) = FolderInfo(albumTracks.Select(x => x.FirstDownload));
 
-        WriteLine($"User  : {userInfo}\nFolder: {parents}\nProps : {props}", ConsoleColor.White);
+        string format = propsList.FirstOrDefault() ?? "";
+        string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
+
+        Console.ForegroundColor = ConsoleColor.White;
+        Console.Write($"User  : {userInfo}\nFolder: {parents}\nProps : [");
+        Console.ForegroundColor = GetFormatColor(format);
+        Console.Write(format);
+        Console.ForegroundColor = ConsoleColor.White;
+        Console.WriteLine(otherProps + "]");
+        Console.ResetColor();
         PrintTracks(albumTracks.ToList(), pathsOnly: true, showAncestors: false, showUser: false, indices: true);
+
+        return 3 + albumTracks.Count;
     }
 
-
-    static (string parents, string props) FolderInfo(IEnumerable<SlFile> files)
+    static (string parents, List<string> props) FolderInfo(IEnumerable<SlFile> files)
     {
-        string res = "";
         int totalLengthInSeconds = files.Sum(f => f.Length ?? 0);
         var sampleRates = files.Where(f => f.SampleRate.HasValue).Select(f => f.SampleRate.Value).OrderBy(r => r).ToList();
-
         int? modeSampleRate = sampleRates.GroupBy(rate => rate).OrderByDescending(g => g.Count()).Select(g => (int?)g.Key).FirstOrDefault();
 
         var bitRates = files.Where(f => f.BitRate.HasValue).Select(f => f.BitRate.Value).ToList();
         double? meanBitrate = bitRates.Count > 0 ? (double?)bitRates.Average() : null;
-
         double totalFileSizeInMB = files.Sum(f => f.Size) / (1024.0 * 1024.0);
 
         TimeSpan totalTimeSpan = TimeSpan.FromSeconds(totalLengthInSeconds);
-        string totalLengthFormatted;
-        if (totalTimeSpan.TotalHours >= 1)
-            totalLengthFormatted = string.Format("{0}:{1:D2}:{2:D2}", (int)totalTimeSpan.TotalHours, totalTimeSpan.Minutes, totalTimeSpan.Seconds);
-        else
-            totalLengthFormatted = string.Format("{0:D2}:{1:D2}", totalTimeSpan.Minutes, totalTimeSpan.Seconds);
+        string totalLengthFormatted = totalTimeSpan.TotalHours >= 1
+            ? string.Format("{0}:{1:D2}:{2:D2}", (int)totalTimeSpan.TotalHours, totalTimeSpan.Minutes, totalTimeSpan.Seconds)
+            : string.Format("{0:D2}:{1:D2}", totalTimeSpan.Minutes, totalTimeSpan.Seconds);
 
         var mostCommonExtension = files.GroupBy(f => Utils.GetExtensionSlsk(f.Filename))
             .OrderByDescending(g => Utils.IsMusicExtension(g.Key)).ThenByDescending(g => g.Count()).First().Key.TrimStart('.');
 
-        res = $"[{mostCommonExtension.ToUpper()} / {totalLengthFormatted}";
-
+        List<string> propsList = new() { mostCommonExtension.ToUpper().Trim(), totalLengthFormatted };
         if (modeSampleRate.HasValue)
-            res += $" / {(modeSampleRate.Value / 1000.0).Normalize()} kHz";
-
+            propsList.Add($"{(modeSampleRate.Value / 1000.0).Normalize()} kHz");
         if (meanBitrate.HasValue)
-            res += $" / {(int)meanBitrate.Value} kbps";
-
-        res += $" / {totalFileSizeInMB:F2} MB]";
+            propsList.Add($"{(int)meanBitrate.Value} kbps");
+        propsList.Add($"{totalFileSizeInMB:F2} MB");
 
         string gcp = Utils.GreatestCommonDirectorySlsk(files.Select(x => x.Filename)).TrimEnd('\\');
+    
         int lastIndex = gcp.LastIndexOf('\\');
         if (lastIndex != -1)
         {
             int secondLastIndex = gcp.LastIndexOf('\\', lastIndex - 1);
+    
             gcp = secondLastIndex == -1 ? gcp : gcp[(secondLastIndex + 1)..];
         }
 
-        return (gcp, res);
+        return (gcp, propsList);
     }
 
+
+    static ConsoleColor GetFormatColor(string format)
+    {
+        return format.ToLower() switch
+        {
+            "flac" => ConsoleColor.DarkYellow,
+            "mp3" => ConsoleColor.DarkRed,
+            "ogg" => ConsoleColor.DarkGreen,
+            "wav" => ConsoleColor.White,
+            "opus" => ConsoleColor.DarkBlue,
+            "m4a" => ConsoleColor.Cyan,
+            _ => ConsoleColor.Gray,
+        };
+    }
 
     public static void RefreshOrPrint(ProgressBar? progress, int current, string item, bool print = false, bool refreshIfOffscreen = false)
     {

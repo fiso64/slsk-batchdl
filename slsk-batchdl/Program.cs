@@ -182,9 +182,9 @@ public static partial class Program
             {
                 string indexPath;
                 if (tle.config.indexFilePath.Length > 0)
-                    indexPath = tle.config.indexFilePath;
+                    indexPath = tle.config.indexFilePath.Replace("{playlist-name}", tle.itemName.ReplaceInvalidChars(" ").Trim());
                 else
-                    indexPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_index.sldl");
+                    indexPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName, "_index.sldl");
 
                 if (editors.TryGetValue((indexPath, indexOption), out var indexEditor))
                 {
@@ -202,9 +202,9 @@ public static partial class Program
             {
                 string m3uPath;
                 if (tle.config.m3uFilePath.Length > 0)
-                    m3uPath = tle.config.m3uFilePath;
+                    m3uPath = tle.config.m3uFilePath.Replace("{playlist-name}", tle.itemName.ReplaceInvalidChars(" ").Trim());
                 else
-                    m3uPath = Path.Join(tle.config.parentDir, tle.defaultFolderName, "_playlist.m3u8");
+                    m3uPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName, $"_{tle.itemName.ReplaceInvalidChars(" ").Trim()}.m3u8");
 
                 if (editors.TryGetValue((m3uPath, playlistOption), out var playlistEditor))
                 {
@@ -359,9 +359,9 @@ public static partial class Program
 
                         foreach (var item in res)
                         {
-                            var newSource = new Track(tle.source) { Type = TrackType.Album, PlaylistNumber = -1 };
+                            var newSource = new Track(tle.source) { Type = TrackType.Album, ItemNumber = -1 };
                             var albumTle = new TrackListEntry(item, newSource, config, needSourceSearch: false, sourceCanBeSkipped: true, preprocessTracks: false);
-                            albumTle.defaultFolderName = tle.defaultFolderName;
+                            albumTle.itemName = tle.itemName;
                             trackLists.AddEntry(albumTle);
                         }
 
@@ -767,7 +767,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        OnComplete(config, config.onComplete, tle.source, true);
+        OnComplete(config, tle.source, true);
     }
 
 
@@ -1077,7 +1077,7 @@ public static partial class Program
             }
         }
 
-        OnComplete(config, config.onComplete, track, false);
+        OnComplete(config, track, false);
 
         semaphore.Release();
     }
@@ -1086,38 +1086,46 @@ public static partial class Program
     static async Task<(int index, List<Track> tracks, bool retrieveFolder)> InteractiveModeAlbum(Config config, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
     {
         int aidx = 0;
-        static string interactiveModeLoop() // bug: characters don't disappear when backspacing
+
+        static string interactiveModeInput() // problem: first typed character can not be deleted
         {
-            string userInput = "";
-            while (true)
+            string first = "";
+            if (!Console.KeyAvailable)
             {
-                var key = Console.ReadKey(false);
+                var key = Console.ReadKey(true);
                 if (key.Key == ConsoleKey.DownArrow)
                     return "n";
                 else if (key.Key == ConsoleKey.UpArrow)
                     return "p";
                 else if (key.Key == ConsoleKey.Escape)
                     return "s";
-                else if (key.Key == ConsoleKey.Enter)
-                    return userInput;
-                else if (char.IsControl(key.KeyChar))
-                    continue;
-                else
-                    userInput += key.KeyChar;
+                else if ("pnqrs".Contains(key.KeyChar))
+                    return key.KeyChar.ToString();
+                else if (!char.IsControl(key.KeyChar))
+                {
+                    Console.Write(key.KeyChar);
+                    first += key.KeyChar;
+                }
             }
-        }
-        
-        void writeHelp()
-        {
-            string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
-            string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
-            Console.WriteLine();
-            WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
-            WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
-            Console.WriteLine();
+            return first + Console.ReadLine() ?? "";
         }
 
-        writeHelp();
+        void printUndo(ref int lines)
+        {
+            for (int i = 0; i < lines; i++)
+            {
+                Console.Write("\x1b[1A"); // Move up one line
+                Console.Write("\x1b[2K"); // Clear entire line
+            }
+            lines = 0;
+        }
+
+        string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
+        string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
+        Console.WriteLine();
+        WriteLine($" [Up/p] | [Down/n] | [Enter] | [q]                       {retrieveAll1}| [Esc/s]", ConsoleColor.Green);
+        WriteLine($" Prev   | Next     | Accept  | Accept & Quit Interactive {retrieveAll2}| Skip", ConsoleColor.Green);
+        Console.WriteLine();
 
         while (true)
         {
@@ -1127,12 +1135,15 @@ public static partial class Program
 
             WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
 
-            PrintAlbum(tracks, indices: true);
+            int undoLines = 2;
+            undoLines += PrintAlbum(tracks, indices: true);
             Console.WriteLine();
 
         Loop:
-            string userInput = interactiveModeLoop().Trim().ToLower();
+            string userInput = interactiveModeInput().Trim().ToLower();
+            Debug.WriteLine(userInput);
             string options = "";
+            string folder = "";
 
             if (userInput.StartsWith("d:"))
             {
@@ -1143,9 +1154,13 @@ public static partial class Program
             switch (userInput)
             {
                 case "p":
+                    var prevTracks = list[aidx];
+                    printUndo(ref undoLines);
                     aidx = (aidx + list.Count - 1) % list.Count;
                     break;
                 case "n":
+                    var currTracks = list[aidx];
+                    printUndo(ref undoLines);
                     aidx = (aidx + 1) % list.Count;
                     break;
                 case "s":
@@ -1155,8 +1170,19 @@ public static partial class Program
                     return (aidx, tracks, true);
                 case "r":
                     if (!retrieveFolder)
-                        break;
-                    var folder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+                        goto Loop;
+                    folder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+                    goto case "complete_folder";
+                case "cd ..":
+                    if (!retrieveFolder)
+                        goto Loop;
+                    var currentFolder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+                    var parentFolder = Utils.GetDirectoryNameSlsk(currentFolder);
+                    if (string.IsNullOrEmpty(parentFolder))
+                        goto Loop;
+                    folder = parentFolder;
+                    goto case "complete_folder";
+                case "complete_folder":
                     if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
                     {
                         Console.WriteLine("Getting all files in folder...");
@@ -1165,18 +1191,22 @@ public static partial class Program
                         if (newFiles == 0)
                         {
                             Console.WriteLine("No more files found.");
+                            undoLines += 2;
                             goto Loop;
                         }
                         else
                         {
                             Console.WriteLine($"Found {newFiles} more files in the folder:");
+                            undoLines += 2;
+                            printUndo(ref undoLines);
+                            break;
                         }
                     }
-                    break;
+                    goto Loop;
                 case "d":
                     if (options.Length == 0)
                         return (aidx, tracks, true);
-                    try 
+                    try
                     {
                         var indices = options.Split(',')
                             .SelectMany(option =>
@@ -1194,19 +1224,19 @@ public static partial class Program
                             .ToArray();
                         return (aidx, indices.Select(i => tracks[i - 1]).ToList(), false);
                     }
-                    catch 
-                    { 
-                        writeHelp(); 
-                        goto Loop; 
+                    catch
+                    {
+                        goto Loop;
                     }
                 case "":
                     return (aidx, tracks, true);
                 default:
-                    writeHelp();
                     goto Loop;
             }
         }
     }
+
+
 
 
     static async Task Update(Config startConfig)
@@ -1332,42 +1362,55 @@ public static partial class Program
     }
 
 
-    static void OnComplete(Config config, string onComplete, Track track, bool isAlbumOnComplete)
+    static void OnComplete(Config config, Track track, bool isAlbumOnComplete)
     {
+        var onComplete = config.onComplete;
+
         if (onComplete.Length == 0)
             return;
 
         bool useShellExecute = false;
         bool createNoWindow = false;
-        int count = 0;
+        bool hasAlbumOnComplete = false;
 
-        while (onComplete.Length > 2 && count++ < 4)
+        while (onComplete.Length > 2)
         {
             if (onComplete[1] == ':')
             {
                 if (onComplete[0] == 's')
                 {
                     useShellExecute = true;
+                    onComplete = onComplete[2..];
                 }
                 else if (onComplete[0] == 'a')
                 {
-                    if (!isAlbumOnComplete) return;
+                    hasAlbumOnComplete = true;
+                    onComplete = onComplete[2..];
                 }
                 else if (onComplete[0] == 'w')
                 {
                     createNoWindow = true;
+                    onComplete = onComplete[2..];
                 }
                 else if (onComplete[0].IsDigit())
                 {
                     if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
+                    onComplete = onComplete[2..];
                 }
-
-                onComplete = onComplete[2..];
+                else
+                {
+                    break;
+                }
             }
             else
             {
                 break;
             }
+        }
+
+        if (hasAlbumOnComplete ^ isAlbumOnComplete)
+        {
+            return;
         }
 
         var process = new Process();
@@ -1379,13 +1422,14 @@ public static partial class Program
             .Replace("{album}", track.Album)
             .Replace("{uri}", track.URI)
             .Replace("{length}", track.Length.ToString())
-            .Replace("{row}", (track.PlaylistNumber == -1 ? -1 : track.PlaylistNumber + 1).ToString())
-            .Replace("{line}", (track.PlaylistNumber == -1 ? -1 : track.PlaylistNumber + 1).ToString())
+            .Replace("{row}", (track.ItemNumber == -1 ? -1 : track.ItemNumber + 1).ToString())
+            .Replace("{line}", (track.ItemNumber == -1 ? -1 : track.ItemNumber + 1).ToString())
             .Replace("{artist-maybe-wrong}", track.ArtistMaybeWrong.ToString())
             .Replace("{type}", track.Type.ToString())
             .Replace("{is-not-audio}", track.IsNotAudio.ToString())
             .Replace("{failure-reason}", track.FailureReason.ToString())
             .Replace("{path}", track.DownloadPath.TrimEnd('/').TrimEnd('\\'))
+            .Replace("{path-noext}", Path.GetFileNameWithoutExtension(track.DownloadPath.TrimEnd('/').TrimEnd('\\')))
             .Replace("{state}", track.State.ToString())
             .Replace("{extractor}", config.inputType.ToString())
             .Replace("{bindir}", AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\'))

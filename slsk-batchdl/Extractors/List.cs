@@ -74,12 +74,12 @@ namespace Extractors
                         tle.extractorPrefCond = Config.ParseConditions(fields[2]);
                     }
 
-                    tle.defaultFolderName = foldername;
+                    tle.itemName = foldername;
                     tle.enablesIndexByDefault = true;
                 }
 
                 if (tl.lists.Count == 1)
-                    tl[0].source.PlaylistNumber = i;
+                    tl[0].source.ItemNumber = i;
 
                 trackLists.lists.AddRange(tl.lists);
 
@@ -142,9 +142,9 @@ namespace Extractors
                     {
                         string[] lines = File.ReadAllLines(listFilePath, Encoding.UTF8);
 
-                        if (track.PlaylistNumber > -1 && track.PlaylistNumber < lines.Length)
+                        if (track.ItemNumber > -1 && track.ItemNumber < lines.Length)
                         {
-                            lines[track.PlaylistNumber] = "";
+                            lines[track.ItemNumber] = "";
                             Utils.WriteAllLines(listFilePath, lines, '\n');
                         }
                     }

@@ -13,7 +13,7 @@ public static class Help
 
       Required Arguments 
         <input>                        A url, search string, or path to a local CSV file.
-                                       Run --help ""input"" to view the accepted inputs. 
+                                       Run `--help input` to view the accepted inputs. 
                                        Can also be passed with -i, --input <input>            
         --user <username>              Soulseek username
         --pass <password>              Soulseek password
@@ -27,10 +27,10 @@ public static class Help
         -o, --offset <offset>          Skip a specified number of tracks
         -r, --reverse                  Download tracks in reverse order
         -c, --config <path>            Set config file location. Set to 'none' to ignore config
-        --profile <names>              Configuration profile(s) to use. See --help ""config"".
+        --profile <names>              Configuration profile(s) to use. See `--help config`.
         --concurrent-downloads <num>   Max concurrent downloads (default: 2)
         --write-playlist               Create an m3u playlist file in the output directory
-        --playlist-path <path>         Override default path for m3u playlist file
+        --playlist-path <path>         Override default path for m3u playlist file.
 
         --no-skip-existing             Do not skip downloaded tracks
         --no-write-index               Do not create a file indexing all downloaded tracks
@@ -93,9 +93,9 @@ public static class Help
         --search-timeout <ms>          Max search time in ms (default: 6000)
         --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
         --searches-per-time <num>      Max searches per time interval. Higher values may cause
-                                       30-minute bans, see --help ""search"". (default: 34)
+                                       30-minute bans, see `--help search`. (default: 34)
         --searches-renew-time <sec>    Controls how often available searches are replenished.
-                                       See --help ""search"". (default: 220)
+                                       See `--help search. (default: 220)
           
       Spotify
         --spotify-id <id>              Spotify client ID
@@ -249,15 +249,11 @@ public static class Help
 
         The following properties are accepted: title, artist, album, length (in seconds), 
         artist-maybe-wrong, album-track-count.
-
-        Example inputs:
-          | Input String                            | Artist   | Title    | Album    | Length |
-          |-----------------------------------------|----------|----------|----------|--------|
-          | Foo Bar (without hyphens)               |          | Foo Bar  |          |        |
-          | Foo - Bar                               | Foo      | Bar      |          |        |
-          | Foo - Bar (with --album)                | Foo      |          | Bar      |        |
-          | Artist - Title, length=42               | Artist   | Title    |          | 42     |
-          | artist=AR, title=T, album=AL            | AR       | T        | AL       |        |
+        
+        String input accepts a shorthand for track and album downloads: The input `ARTIST - TITLE`
+        will be parsed as `artist=ARTIST, title=TITLE` when downloading songs, and
+        `artist=ARTIST, album=ALBUM` when run with `--album`. Explicit properties are required when
+        dealing with names which contain hyphens surrounded by spaces.
         
       List
         List input must be manually activated with `--input-type=list`. The input is a path to a text
@@ -394,6 +390,7 @@ public static class Help
       Available variables:
         artist                          First artist (from the file tags)
         sartist                         Source artist (as on CSV/Spotify/YouTube/etc)
+        item-name                       Name of the playlist of CSV file
         artists                         Artists, joined with '&'
         albumartist                     First album artist
         albumartists                    Album artists, joined with '&'
@@ -404,6 +401,7 @@ public static class Help
         year                            Track year or date
         track                           Track number
         disc                            Disc number
+        snumber                         Source playlist item number
         filename                        Soulseek filename without extension
         foldername                      Soulseek folder name
         extractor                       Name of the extractor used (CSV/Spotify/YouTube/etc)
@@ -443,7 +441,7 @@ public static class Help
         
           [no-stale]
           profile-cond = interactive && download-mode == ""album""
-          max-stale-time = 999999
+          max-stale-time = 9999999
           # album downloads will never be automatically cancelled in interactive mode
             
           [youtube]
@@ -479,6 +477,7 @@ public static class Help
 
           d:1,2,3         download specific files
           d:start:end     download a range of files
+          cd ..           load parent folder
     ";
 
     public static void PrintHelp(string? option = null)

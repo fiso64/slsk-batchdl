@@ -256,7 +256,7 @@ public static class Utils
 
     public static string ReplaceInvalidChars(this string str, string replaceStr, bool windows = false, bool removeSlash = true)
     {
-        if (str.Length == 0)
+        if (string.IsNullOrEmpty(str))
             return str;
 
         char[] invalidChars;
@@ -334,7 +334,10 @@ public static class Utils
             }
         }
 
-        return string.Join('/', pathParts);
+        if (pathParts.Length > 0)
+            pathParts[pathParts.Length - 1] = pathParts[pathParts.Length - 1].TrimEnd('.');
+
+        return string.Join('/', pathParts.Select(a => a.Trim()));
     }
 
 

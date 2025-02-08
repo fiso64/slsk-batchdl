@@ -42,7 +42,7 @@ namespace Extractors
                 Console.WriteLine("Loading Spotify likes..");
                 var tracks = await spotifyClient.GetLikes(max, off);
                 tle = new TrackListEntry(TrackType.Normal);
-                tle.defaultFolderName = "Spotify Likes";
+                tle.itemName = "Spotify Likes";
                 tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
             }
@@ -61,7 +61,6 @@ namespace Extractors
             }
             else if (input.Contains("/artist/"))
             {
-                Console.WriteLine("Loading spotify artist..");
                 Console.WriteLine("Error: Spotify artist download currently not supported.");
                 Environment.Exit(1);
             }
@@ -92,7 +91,7 @@ namespace Extractors
                     else throw;
                 }
 
-                tle.defaultFolderName = playlistName.ReplaceInvalidChars(' ').Trim();
+                tle.itemName = playlistName;
                 tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
             }
@@ -300,6 +299,7 @@ namespace Extractors
             List<Track> res = new List<Track>();
             int limit = Math.Min(max, 50);
 
+            int num = offset + 1;
             while (true)
             {
                 var tracks = await _client.Library.GetTracks(new LibraryTracksRequest { Limit = limit, Offset = offset });
@@ -311,7 +311,7 @@ namespace Extractors
                     string name = (string)track.Track.ReadProperty("name");
                     string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
                     int duration = (int)track.Track.ReadProperty("durationMs");
-                    res.Add(new Track { Album = album, Artist = artist, Title = name, Length = duration / 1000 });
+                    res.Add(new Track { Album = album, Artist = artist, Title = name, Length = duration / 1000, ItemNumber = num++ });
                 }
 
                 if (tracks.Items.Count < limit || res.Count >= max)
@@ -341,6 +341,7 @@ namespace Extractors
             List<Track> res = new List<Track>();
             int limit = Math.Min(max, 100);
 
+            int num = offset + 1;
             while (true)
             {
                 var tracks = await _client.Playlists.GetItems(playlistId, new PlaylistGetItemsRequest { Limit = limit, Offset = offset });
@@ -357,6 +358,7 @@ namespace Extractors
                             Title = (string)track.Track.ReadProperty("name"),
                             Length = (int)track.Track.ReadProperty("durationMs") / 1000,
                             URI = (string)track.Track.ReadProperty("uri"),
+                            ItemNumber = num++,
                         };
                         res.Add(t);
                     }

@@ -28,9 +28,9 @@ public class FileManager
         string parent = config.parentDir;
         string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
-        if (tle.defaultFolderName != null)
+        if (!string.IsNullOrEmpty(tle.DefaultFolderName))
         {
-            parent = Path.Join(parent, tle.defaultFolderName);
+            parent = Path.Join(parent, tle.DefaultFolderName);
         } 
 
         if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(remoteCommonDir))
@@ -259,10 +259,12 @@ public class FileManager
                 return true;
             case "extractor":
                 res = config.inputType.ToString(); break;
+            case "item-name":
+                res = tle.itemName ?? tle.source.ToString(false); break;
             case "default-folder":
-                res = tle.defaultFolderName ?? tle.source.ToString(false); break;
+                res = tle.DefaultFolderName ?? tle.source.ToString(false); break;
             case "snumber":
-                res = track.PlaylistNumber.ToString(); break;
+                res = track.ItemNumber.ToString(); break;
             default:
                 res = x; return false;
         }

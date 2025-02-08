@@ -123,7 +123,8 @@ namespace Models
                             track.Type = TrackType.Aggregate;
 
                         var newTle = new TrackListEntry(track);
-                        newTle.defaultFolderName = tle.defaultFolderName;
+                        newTle.itemName = tle.itemName;
+                        newTle.subItemName = tle.subItemName;
                         newLists.Add(newTle);
                     }
                 }
@@ -138,11 +139,10 @@ namespace Models
 
         public void SetListEntryOptions()
         {
-            // aggregate downloads will be placed in subfolders by default
             foreach (var tle in lists)
             {
                 if (tle.source.Type == TrackType.Aggregate || tle.source.Type == TrackType.AlbumAggregate)
-                    tle.defaultFolderName = Path.Join(tle.defaultFolderName, tle.source.ToString(true));
+                    tle.subItemName = tle.source.ToString(true);
             }
         }
 

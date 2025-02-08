@@ -1017,7 +1017,7 @@ public class Searcher
 
     public Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
-        var t = new Track(defaultTrack) { PlaylistNumber = -1 };
+        var t = new Track(defaultTrack) { ItemNumber = -1 };
         t.Type = type;
 
         filename = Utils.GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
