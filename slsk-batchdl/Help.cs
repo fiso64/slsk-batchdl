@@ -489,12 +489,12 @@ public static class Help
 
       Variables:
         The available variables are the same as in name-format, with the following additions:
-        {stdout} - Previous command's stdout
-        {stderr} - Previous command's stderr
         {exitcode} - Previous command's exit code
-        {first-stdout} - First command's stdout
-        {first-stderr} - First command's stderr
-        {first-exitcode} - First command's exit code
+        {stdout} - Previous command's stdout (requires r:)
+        {stderr} - Previous command's stderr (requires r:)
+        {first-exitcode} - First command's exit code 
+        {first-stdout} - First command's stdout (requires r:)
+        {first-stderr} - First command's stderr (requires r:)
 
       Examples:
         Queue downloaded audio files in foobar2000 (Windows):
