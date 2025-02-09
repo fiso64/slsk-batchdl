@@ -246,7 +246,7 @@ public class Config
 
     public void PostProcessArgs() // must be run after extracting tracklist
     {
-        if (DoNotDownload || debugInfo)
+        if (DoNotDownload)
             concurrentProcesses = 1;
 
         ignoreOn = Math.Min(ignoreOn, downrankOn);
