@@ -608,7 +608,7 @@ sldl "artist=MC MENTAL" -a -g -t
 
 Print all songs by an artist which are not in your library:
 ```bash
-sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results-full
+sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results
 ```
 <br>
 
