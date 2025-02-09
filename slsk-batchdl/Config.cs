@@ -90,7 +90,7 @@ public class Config
     public int minSharesAggregate = 2;
     public int maxTracks = int.MaxValue;
     public int offset = 0;
-    public int maxStaleTime = 50000;
+    public int maxStaleTime = 30000;
     public int searchTimeout = 6000;
     public int concurrentProcesses = 2;
     public int unknownErrorRetries = 2;

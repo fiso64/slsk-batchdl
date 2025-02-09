@@ -190,30 +190,12 @@ public class Searcher
                 }
             }
 
-            // the first result is usually fine, no need to sort the entire sequence
-            var fr = orderedResults.First();
-            bool success = await process(fr.response, fr.file);
-
-            if (!success)
+            foreach (var (response, file) in orderedResults)
             {
-                fr = orderedResults.Skip(1).FirstOrDefault();
-                if (fr != default)
-                {
-                    if (userSuccessCounts.GetValueOrDefault(fr.response.Username, 0) > config.ignoreOn)
-                    {
-                        success = await process(fr.response, fr.file);
-                    }
-                    if (!success)
-                    {
-                        foreach (var (response, file) in orderedResults.Skip(2))
-                        {
-                            if (userSuccessCounts.GetValueOrDefault(response.Username, 0) <= config.ignoreOn)
-                                continue;
-                            success = await process(response, file);
-                            if (success) break;
-                        }
-                    }
-                }
+                if (userSuccessCounts.GetValueOrDefault(response.Username, 0) <= config.ignoreOn)
+                    continue;
+                bool success = await process(response, file);
+                if (success) break;
             }
         }
 
@@ -704,7 +686,7 @@ public class Searcher
     }
 
 
-    public IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
+    public IEnumerable<(SlResponse response, SlFile file)> OrderedResults(
         IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
         Track track,
         Config config,
@@ -716,7 +698,7 @@ public class Searcher
     }
 
 
-    public IOrderedEnumerable<(SlResponse response, SlFile file)> OrderedResults(
+    public IEnumerable<(SlResponse response, SlFile file)> OrderedResults(
         IEnumerable<(SlResponse, SlFile)> results,
         Track track,
         Config config,
@@ -778,6 +760,7 @@ public class Searcher
                 .ThenByDescending(x => config.preferredCond.BitDepthSatisfies(x.file))
                 .ThenByDescending(x => config.preferredCond.FileSatisfies(x.file, track, x.response))
                 .ThenByDescending(x => x.response.HasFreeUploadSlot)
+                .ThenByDescending(x => x.response.QueueLength == 0)
                 .ThenByDescending(x => x.response.UploadSpeed / 1024 / 650)
                 .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.Title))
                 .ThenByDescending(x => !albumMode || FileConditions.StrictString(Utils.GetDirectoryNameSlsk(x.file.Filename), track.Album))

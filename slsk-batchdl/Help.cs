@@ -83,7 +83,7 @@ public static class Help
                                        is unavailable.
           
         --search-timeout <ms>          Max search time in ms (default: 6000)
-        --max-stale-time <ms>          Max download time without progress in ms (default: 50000)
+        --max-stale-time <ms>          Max download time without progress in ms (default: 30000)
         --searches-per-time <num>      Max searches per time interval. Higher values may cause
                                        30-minute bans, see `--help search`. (default: 34)
         --searches-renew-time <sec>    Controls how often available searches are replenished.
@@ -309,7 +309,7 @@ public static class Help
           - `--fast-search` skips waiting until the search completes and downloads as soon as a file
             matching the preferred conditions is found
           - `--concurrent-downloads` - set it to 4 or more
-          - `--max-stale-time` is set to 50 seconds by default, sldl will wait a long time before giving
+          - `--max-stale-time` is set to 30 seconds by default, sldl will wait a long time before giving
             up on a file
           - `--album-parallel-search` - enables parallel searching for album entries
     ";
@@ -449,15 +449,15 @@ public static class Help
         run `--profile help`.
         Profiles can be activated automatically based on a few simple conditions:
         
+          # never automatically cancel album downloads in interactive mode
           [no-stale]
           profile-cond = interactive && download-mode == ""album""
           max-stale-time = 9999999
-          # album downloads will never be automatically cancelled in interactive mode
             
+          # download to another location for youtube
           [youtube]
           profile-cond = input-type == ""youtube""
           path = ~/downloads/sldl-youtube
-          # download to another location for youtube
 
         The following operators are supported for use in profile-cond: &&, ||, ==, !=, !{bool}.
         The following variables are available for use in profile-cond:
