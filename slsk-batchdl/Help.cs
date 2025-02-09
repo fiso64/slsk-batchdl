@@ -500,7 +500,7 @@ public static class Help
         Queue downloaded audio files in foobar2000 (Windows):
           1:h: cmd /c if {is-audio}==true start "" ""C:\Program Files\foobar2000\foobar2000.exe"" /immediate /add ""{path}""
 
-        Convert downloaded audio files to MP3 (Windows):
+        Convert downloaded audio files to MP3 (Windows, requires ffmpeg):
           # Check if file is audio and not already MP3
           1:h:r: cmd /c if {is-audio}==true if /i not {ext}==.mp3 if not exist ""{path-noext}.mp3"" echo true
 

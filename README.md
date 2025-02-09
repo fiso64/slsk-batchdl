@@ -3,7 +3,7 @@
 An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls.  
 Supports playlist and album downloads; selects the best files according to user-configured file conditions and heuristics.
 
-See the [usage examples](#examples-1).
+See the [usage examples](#examples-2).
 
 ## Index
  - [Options](#options)
@@ -25,7 +25,7 @@ See the [usage examples](#examples-1).
  - [On-Complete Actions](#on-complete-actions)
  - [Configuration](#configuration)
  - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
- - [Examples](#examples-1)
+ - [Examples](#examples-2)
  - [Notes](#notes)
  - [Docker](#docker)
 
@@ -459,7 +459,7 @@ The `--on-complete` parameter allows executing commands after a track or album i
 - `r:` - Read command output
 - `u:` - Use output to update index (implies `r:`)
 
-When using u: prefix, the command output should be new_state;new_path to update the track state and path in the index and playlist.
+When using u: prefix, the command output should be `new_state;new_path` to update the track state and path in the index and playlist.
 
 ### Variables
 
@@ -478,7 +478,7 @@ Queue downloaded audio files in foobar2000 (Windows):
 on-complete = 1:h: cmd /c if {is-audio}==true start "" "C:\Program Files\foobar2000\foobar2000.exe" /immediate /add "{path}"
 ```
 
-Convert downloaded audio files to MP3 (Windows):
+Convert downloaded audio files to MP3 (Windows, requires ffmpeg):
 ```ini
 # Check if file is audio and not already MP3
 on-complete =   1:h:r: cmd /c if {is-audio}==true if /i not {ext}==.mp3 if not exist "{path-noext}.mp3" echo true
