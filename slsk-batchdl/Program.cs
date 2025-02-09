@@ -16,6 +16,7 @@ using static Printing;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
+using System.Text;
 
 public static partial class Program
 {
@@ -37,6 +38,8 @@ public static partial class Program
 
     public static async Task Main(string[] args)
     {
+        client = Tests.ClientTests.MockSoulseekClient.FromLocalPaths(false, @"C:\Users\fiso\Music\Main");
+
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Help.PrintAndExitIfNeeded(args);
@@ -647,7 +650,7 @@ public static partial class Program
 
             if (config.interactiveMode)
             {
-                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(config, tle.list, !config.noBrowseFolder, retrievedFolders);
+                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(config, tle.list, true, retrievedFolders);
                 if (index == -1) break;
                 if (index == -2) Environment.Exit(0);
             }
@@ -1115,40 +1118,110 @@ public static partial class Program
     {
         int aidx = 0;
 
-        static string interactiveModeInput() // problem: first typed character can not be deleted
+        static string interactiveModeInput()
         {
-            string first = "";
-            if (!Console.KeyAvailable)
+            var buffer = new StringBuilder();
+            var firstKey = true;
+            var cursorPos = 0;
+
+            while (true)
             {
                 var key = Console.ReadKey(true);
-                if (key.Key == ConsoleKey.Enter)
-                    return "";
-                else if (key.Key == ConsoleKey.DownArrow)
-                    return "n";
-                else if (key.Key == ConsoleKey.UpArrow)
-                    return "p";
-                else if (key.Key == ConsoleKey.Escape)
-                    return "q";
-                else if ("pnyqrs".Contains(key.KeyChar))
+
+                // Handle special keys that should work at any time
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.Escape)
+                {
+                    // Clear the current line if there's any content
+                    if (buffer.Length > 0)
+                    {
+                        Console.SetCursorPosition(0, Console.CursorTop);
+                        Console.Write(new string(' ', buffer.Length + 1));
+                        Console.SetCursorPosition(0, Console.CursorTop);
+                    }
+
+                    if (key.Key == ConsoleKey.DownArrow)
+                        return "n";
+                    else if (key.Key == ConsoleKey.UpArrow)
+                        return "p";
+                    else
+                        return "q";
+                }
+
+                // On first keypress, check for action keys
+                if (firstKey && "pnyqrs".Contains(key.KeyChar))
                     return key.KeyChar.ToString();
+
+                // Handle editing keys
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    Console.WriteLine();
+                    return buffer.ToString();
+                }
+                else if (key.Key == ConsoleKey.LeftArrow && cursorPos > 0)
+                {
+                    cursorPos--;
+                    Console.SetCursorPosition(Console.CursorLeft - 1, Console.CursorTop);
+                }
+                else if (key.Key == ConsoleKey.RightArrow && cursorPos < buffer.Length)
+                {
+                    cursorPos++;
+                    Console.SetCursorPosition(Console.CursorLeft + 1, Console.CursorTop);
+                }
+                else if (key.Key == ConsoleKey.Backspace && cursorPos > 0)
+                {
+                    buffer.Remove(cursorPos - 1, 1);
+                    cursorPos--;
+
+                    var restOfLine = buffer.ToString(cursorPos, buffer.Length - cursorPos);
+                    Console.Write("\b" + restOfLine + " ");
+                    Console.SetCursorPosition(Console.CursorLeft - (restOfLine.Length + 1), Console.CursorTop);
+                }
+                else if (key.Key == ConsoleKey.Delete && cursorPos < buffer.Length)
+                {
+                    buffer.Remove(cursorPos, 1);
+
+                    var restOfLine = buffer.ToString(cursorPos, buffer.Length - cursorPos);
+                    Console.Write(restOfLine + " ");
+                    Console.SetCursorPosition(Console.CursorLeft - (restOfLine.Length + 1), Console.CursorTop);
+                }
                 else if (!char.IsControl(key.KeyChar))
                 {
-                    Console.Write(key.KeyChar);
-                    first += key.KeyChar;
+                    buffer.Insert(cursorPos, key.KeyChar);
+                    cursorPos++;
+
+                    var restOfLine = buffer.ToString(cursorPos - 1, buffer.Length - (cursorPos - 1));
+                    Console.Write(restOfLine);
+                    Console.SetCursorPosition(Console.CursorLeft - (restOfLine.Length - 1), Console.CursorTop);
                 }
+
+                firstKey = false;
             }
-            return first + Console.ReadLine() ?? "";
         }
 
-        void printUndo(ref int lines)
+        static void clearCurrentLine()
+        {
+            int currentLineCursor = Console.CursorTop;
+            Console.SetCursorPosition(0, Console.CursorTop);
+            Console.Write(new string(' ', Console.BufferWidth));
+            Console.SetCursorPosition(0, currentLineCursor);
+        }
+
+        static void clearOutput(int toPos)
         {
             if (Console.IsOutputRedirected) return;
-            for (int i = 0; i < lines; i++)
+
+            int pos = Console.CursorTop;
+
+            while (pos > toPos && pos > 0)
             {
-                Console.Write("\x1b[1A"); // Move up one line
-                Console.Write("\x1b[2K"); // Clear entire line
+                //Console.Write("\x1b[1A"); // Move up one line
+                //Console.Write("\x1b[2K"); // Clear entire line
+                Console.SetCursorPosition(0, pos - 1);
+                clearCurrentLine();
+                pos--;
             }
-            lines = 0;
+
+            Console.SetCursorPosition(0, toPos);
         }
 
         string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
@@ -1156,7 +1229,9 @@ public static partial class Program
         Console.WriteLine();
         WriteLine($" [Up/p] | [Down/n] | [Enter] | [y]              {retrieveAll1}| [s]  | [Esc/q]", ConsoleColor.Green);
         WriteLine($" Prev   | Next     | Accept  | Stop Interactive {retrieveAll2}| Skip | Quit", ConsoleColor.Green);
+
         Console.WriteLine();
+        int savedPos = Console.CursorTop;
 
         while (true)
         {
@@ -1164,34 +1239,36 @@ public static partial class Program
             var response = tracks[0].FirstResponse;
             var username = tracks[0].FirstUsername;
 
+
             WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
 
-            int undoLines = 2;
-            undoLines += PrintAlbum(tracks, indices: true);
+            PrintAlbum(tracks, indices: true);
             Console.WriteLine();
 
         Loop:
-            string userInput = interactiveModeInput().Trim().ToLower();
-            Debug.WriteLine(userInput);
+            string userInputStr = interactiveModeInput().Trim().ToLower();
+            Debug.WriteLine(userInputStr);
+
+            string command = userInputStr;
             string options = "";
             string folder = "";
 
-            if (userInput.StartsWith("d:"))
+            if (command.StartsWith("d:"))
             {
-                options = userInput.Substring(2).Trim();
-                userInput = "d";
+                options = command.Substring(2).Trim();
+                command = "d";
             }
 
-            switch (userInput)
+            switch (command)
             {
                 case "p":
                     var prevTracks = list[aidx];
-                    printUndo(ref undoLines);
+                    clearOutput(savedPos);
                     aidx = (aidx + list.Count - 1) % list.Count;
                     break;
                 case "n":
                     var currTracks = list[aidx];
-                    printUndo(ref undoLines);
+                    clearOutput(savedPos);
                     aidx = (aidx + 1) % list.Count;
                     break;
                 case "s":
@@ -1212,7 +1289,10 @@ public static partial class Program
                     var currentFolder = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
                     var parentFolder = Utils.GetDirectoryNameSlsk(currentFolder);
                     if (string.IsNullOrEmpty(parentFolder))
+                    {
+                        Console.WriteLine("This is the top directory");
                         goto Loop;
+                    }
                     folder = parentFolder;
                     goto case "complete_folder";
                 case "complete_folder":
@@ -1224,14 +1304,12 @@ public static partial class Program
                         if (newFiles == 0)
                         {
                             Console.WriteLine("No more files found.");
-                            undoLines += 2;
                             goto Loop;
                         }
                         else
                         {
                             Console.WriteLine($"Found {newFiles} more files in the folder:");
-                            undoLines += 2;
-                            printUndo(ref undoLines);
+                            clearOutput(savedPos);
                             break;
                         }
                     }
@@ -1244,9 +1322,9 @@ public static partial class Program
                         var indices = options.Split(',')
                             .SelectMany(option =>
                             {
-                                if (option.Contains(':'))
+                                if (option.Contains('-'))
                                 {
-                                    var parts = option.Split(':');
+                                    var parts = option.Split(new char[] { '-' });
                                     int start = string.IsNullOrEmpty(parts[0]) ? 1 : int.Parse(parts[0]);
                                     int end = string.IsNullOrEmpty(parts[1]) ? tracks.Count : int.Parse(parts[1]);
                                     return Enumerable.Range(start, end - start + 1);
@@ -1259,11 +1337,13 @@ public static partial class Program
                     }
                     catch
                     {
+                        Console.WriteLine("Error: Invalid range");
                         goto Loop;
                     }
                 case "":
                     return (aidx, tracks, true);
                 default:
+                    Console.WriteLine($"Error: Invalid input {userInputStr}");
                     goto Loop;
             }
         }

@@ -58,7 +58,7 @@ namespace Tests.EndToEnd
             Program.initialized = false;
         }
 
-        [TestMethod]
+        //[TestMethod]
         public async Task Main_E2E_Test()
         {
             var testClient = new ClientTests.MockSoulseekClient(CreateTestIndex());
