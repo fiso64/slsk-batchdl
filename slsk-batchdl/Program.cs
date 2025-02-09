@@ -711,12 +711,12 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Console.Write("\nDownload cancelled.");
+                    Console.WriteLine("\nDownload cancelled. ");
 
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
                         var defaultAction = config.DeleteAlbumOnFail ? "Yes" : config.IgnoreAlbumFail ? "No" : $"Move to {config.failedAlbumPath}";
-                        Console.WriteLine($"Delete files? [Y/n] (default: {defaultAction}): ");
+                        Console.Write($"Delete files? [Y/n] (default: {defaultAction}): ");
                         var res = Console.ReadLine().Trim().ToLower();
                         if (res == "y") 
                             OnAlbumFail(tracks, true, config);
@@ -967,13 +967,22 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Console.Write("\nDownload cancelled.");
+                    Console.WriteLine("\nDownload cancelled. ");
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
-                        Console.WriteLine("Delete files? [Y/n]: ");
-                        if (Console.ReadLine().Trim().ToLower() == "y")
+                        Console.Write("Delete files? [Y/n] (default: Yes): ");
+                        var res = Console.ReadLine().Trim().ToLower();
+                        if (res == "y" || res == "")
                             OnAlbumFail(tracks, true, config);
                     }
+
+                    if (!config.interactiveMode)
+                    {
+                        Console.WriteLine("Entering interactive mode");
+                        config.interactiveMode = true;
+                    }
+
+                    continue;
                 }
                 else
                 {
