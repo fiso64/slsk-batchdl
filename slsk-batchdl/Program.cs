@@ -38,8 +38,6 @@ public static partial class Program
 
     public static async Task Main(string[] args)
     {
-        client = Tests.ClientTests.MockSoulseekClient.FromLocalPaths(false, @"C:\Users\fiso\Music\Main");
-
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Help.PrintAndExitIfNeeded(args);

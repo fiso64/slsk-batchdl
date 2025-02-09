@@ -558,7 +558,7 @@ s               skip current item
 Esc/q           quit program
 
 d:1,2,3         download specific files
-d:start:end     download a range of files
+d:start-end     download a range of files
 cd ..           load parent folder
 ```
 
