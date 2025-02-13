@@ -84,7 +84,10 @@ public class FileManager
             tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0).Select(t => t.DownloadPath));
 
         foreach (var track in nonAudioToOrganize)
-        {
+        {   
+            if (track == null || additionalImages == null)
+                continue;
+
             if (remainingOnly && organized.Contains(track))
                 continue;
 
