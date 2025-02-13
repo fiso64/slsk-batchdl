@@ -1,5 +1,7 @@
 ﻿using Konsole;
 
+using System;
+using System.Text;
 using Models;
 using Enums;
 using ProgressBar = Konsole.ProgressBar;
@@ -9,6 +11,7 @@ using SlFile = Soulseek.File;
 public static class Printing
 {
     static readonly object consoleLock = new();
+    static Encoding ascii = Encoding.ASCII;
 
     public static string DisplayString(Track t, Soulseek.File? file = null, SearchResponse? response = null, FileConditions? nec = null,
         FileConditions? pref = null, bool fullpath = false, string customPath = "", bool infoFirst = false, bool showUser = true, bool showSpeed = false)
@@ -22,6 +25,10 @@ public static class Printing
         string user = showUser && response?.Username != null ? response.Username + "\\" : "";
         string speed = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
         string fname = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath);
+        if (!Utils.ContainsOnlyAscii(fname)) {
+            Byte[] asciiEncoding = ascii.GetBytes(fname);
+            fname = ascii.GetString(asciiEncoding);
+        }
         string length = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
         string displayText;
         if (!infoFirst)
