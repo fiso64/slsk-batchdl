@@ -41,6 +41,14 @@ public static class Printing
         if (nec != null || pref != null)
             cond = $" ({(necStr + prefStr).TrimEnd(' ', ',')})";
 
+        if (!Utils.ContainsOnlyAscii(displayText)) {
+            displayText = Utils.RemoveNonAscii(displayText);
+        }
+
+        if (!Utils.ContainsOnlyAscii(cond)) {
+            cond = Utils.RemoveNonAscii(cond);
+        }
+
         return displayText + cond;
     }
 

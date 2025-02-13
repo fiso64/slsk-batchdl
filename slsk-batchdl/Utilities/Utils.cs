@@ -724,6 +724,38 @@ public static class Utils
         return textBuilder.ToString();
     }
 
+    public static bool ContainsOnlyAscii(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return false;
+
+        foreach (char c in input)
+        {
+            if (!char.IsAscii(c))
+                return false;
+        }
+        return true;
+    }
+    
+    public static string RemoveNonAscii(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        StringBuilder cleanString = new StringBuilder();
+
+        foreach (char c in input)
+        {
+            if (c >= 32 && c <= 126)
+            {
+                cleanString.Append(c);
+            } else {
+                cleanString.Append('?');cleanString.Append(c);
+            }
+        }
+
+        return cleanString.ToString();
+    }
     static readonly Dictionary<char, char> diacriticChars = new()
     {
         { 'ä', 'a' }, { 'æ', 'a' }, { 'ǽ', 'a' }, { 'œ', 'o' }, { 'ö', 'o' }, { 'ü', 'u' },
