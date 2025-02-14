@@ -175,7 +175,7 @@ public static class Help
 
       Other
         -h, --help [option]            [all|input|download-modes|search|name-format|
-                                       file-conditions|config|shortcuts]
+                                       file-conditions|on-complete|config|shortcuts]
         --version                      Print program version and exit
           
       Notes 
