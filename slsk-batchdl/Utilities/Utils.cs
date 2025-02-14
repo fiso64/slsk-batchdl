@@ -456,7 +456,7 @@ public static class Utils
         return s.Contains(other, StringComparison.OrdinalIgnoreCase);
     }
 
-    static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@#:*=+{}|'\"$^&`~%<>".ToCharArray());
+    static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@#:*=+{}|'\"$^&`~%<>—–-".ToCharArray());
 
     public static bool ContainsWithBoundary(this string str, string value, bool ignoreCase = false)
     {

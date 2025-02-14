@@ -151,7 +151,7 @@ public class Searcher
         if (downloading == 0 && (!results.IsEmpty || orderedResults != null))
         {
             if (orderedResults == null)
-                orderedResults = OrderedResults(results, track, config, useInfer: true);
+                orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
 
             int trackTries = config.maxRetriesPerTrack;
             async Task<bool> process(SlResponse response, SlFile file)
@@ -287,7 +287,7 @@ public class Searcher
 
         // order results first
         // the following loops should preserve the order
-        var orderedResults = OrderedResults(results, track, config, false, false, albumMode: true);
+        var orderedResults = ResultSorter.OrderedResults(results, track, config, false, false, albumMode: true);
 
         var discPattern = new Regex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$");
         bool canMatchDiscPattern = !discPattern.IsMatch(track.Album) && !discPattern.IsMatch(track.Artist);
@@ -299,6 +299,12 @@ public class Searcher
         {
             var path = fullPath(x);
             var dirpath = path[..path.LastIndexOf('\\')];
+            var dirname = dirpath[(dirpath.LastIndexOf('\\') + 1)..];
+
+            if (canMatchDiscPattern && discPattern.IsMatch(dirname))
+            {
+                dirpath = dirpath[..dirpath.LastIndexOf('\\')];
+            }
 
             if (!directoryStructure.ContainsKey(dirpath))
             {
@@ -310,31 +316,6 @@ public class Searcher
             }
 
             idx++;
-        }
-
-        // if a folder name matches the disc pattern, move one level up. This will merge separate
-        // disc directories of the same album into one
-        if (canMatchDiscPattern)
-        {
-            foreach (var key in directoryStructure.Keys.ToArray())
-            {
-                var dirname = key[(key.LastIndexOf('\\') + 1)..];
-
-                if (discPattern.IsMatch(dirname))
-                {
-                    directoryStructure.Remove(key, out var val);
-                    var newKey = key[..key.LastIndexOf('\\')];
-
-                    if (directoryStructure.ContainsKey(newKey))
-                    {
-                        directoryStructure[newKey].list.AddRange(val.list);
-                    }
-                    else
-                    {
-                        directoryStructure[newKey] = val;
-                    }
-                }
-            }
         }
 
         var sortedKeys = directoryStructure.Keys.OrderBy(key => key).ToList();
@@ -469,7 +450,7 @@ public class Searcher
         string albumName = track.Album.Trim();
 
         var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value), config)
-            .Select(x => (x.Item1, OrderedResults(x.Item2, track, config, false, false, false))).ToList();
+            .Select(x => (x.Item1, ResultSorter.OrderedResults(x.Item2, track, config, false, false, false))).ToList();
 
         if (!config.relax)
         {
@@ -653,7 +634,7 @@ public class Searcher
     }
 
 
-    public IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(
+    public static IEnumerable<(Track, IEnumerable<(SlResponse response, SlFile file)>)> EquivalentFiles(
         Track track,
         IEnumerable<(SlResponse, SlFile)> fileResponses,
         Config config,
@@ -684,94 +665,6 @@ public class Searcher
 
         return groups;
     }
-
-
-    public IEnumerable<(SlResponse response, SlFile file)> OrderedResults(
-        IEnumerable<KeyValuePair<string, (SlResponse, SlFile)>> results,
-        Track track,
-        Config config,
-        bool useInfer = false,
-        bool useLevenshtein = true,
-        bool albumMode = false)
-    {
-        return OrderedResults(results.Select(x => x.Value), track, config, useInfer, useLevenshtein, albumMode);
-    }
-
-
-    public IEnumerable<(SlResponse response, SlFile file)> OrderedResults(
-        IEnumerable<(SlResponse, SlFile)> results,
-        Track track,
-        Config config,
-        bool useInfer = false,
-        bool useLevenshtein = true,
-        bool albumMode = false)
-    {
-        bool useBracketCheck = true;
-
-        if (albumMode)
-        {
-            useBracketCheck = false;
-            useLevenshtein = false;
-            useInfer = false;
-        }
-
-        Dictionary<string, (Track, int)>? infTracksAndCounts = null;
-
-        if (useInfer) // this is very slow
-        {
-            var equivalentFiles = EquivalentFiles(track, results, config, 1);
-            infTracksAndCounts = equivalentFiles
-                .SelectMany(t => t.Item2, (t, f) => new { t.Item1, f.response.Username, f.file.Filename, Count = t.Item2.Count() })
-                .ToSafeDictionary(x => $"{x.Username}\\{x.Filename}", y => (y.Item1, y.Count));
-        }
-
-        (Track, int) inferredTrack((SearchResponse response, Soulseek.File file) x)
-        {
-            string key = $"{x.response.Username}\\{x.file.Filename}";
-            if (infTracksAndCounts != null && infTracksAndCounts.ContainsKey(key))
-                return infTracksAndCounts[key];
-            return (new Track(), 0);
-        }
-
-        int levenshtein((SearchResponse response, Soulseek.File file) x)
-        {
-            Track t = inferredTrack(x).Item1;
-            string t1 = track.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
-            string t2 = t.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
-            return Utils.Levenshtein(t1, t2);
-        }
-
-        var random = new Random();
-        return results.Select(x => (response: x.Item1, file: x.Item2))
-                .Where(x => userSuccessCounts.GetValueOrDefault(x.response.Username, 0) > config.ignoreOn)
-                .OrderByDescending(x => userSuccessCounts.GetValueOrDefault(x.response.Username, 0) > config.downrankOn)
-                .ThenByDescending(x => config.necessaryCond.FileSatisfies(x.file, track, x.response))
-                .ThenByDescending(x => config.preferredCond.BannedUsersSatisfies(x.response))
-                .ThenByDescending(x => (x.file.Length != null && x.file.Length > 0) || config.preferredCond.AcceptNoLength == null || config.preferredCond.AcceptNoLength.Value)
-                .ThenByDescending(x => !useBracketCheck || FileConditions.BracketCheck(track, inferredTrack(x).Item1)) // downrank result if it contains '(' or '[' and the title does not (avoid remixes)
-                .ThenByDescending(x => config.preferredCond.StrictTitleSatisfies(x.file.Filename, track.Title))
-                .ThenByDescending(x => !albumMode || config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
-                .ThenByDescending(x => config.preferredCond.StrictArtistSatisfies(x.file.Filename, track.Title))
-                .ThenByDescending(x => config.preferredCond.LengthToleranceSatisfies(x.file, track.Length))
-                .ThenByDescending(x => config.preferredCond.FormatSatisfies(x.file.Filename))
-                .ThenByDescending(x => albumMode || config.preferredCond.StrictAlbumSatisfies(x.file.Filename, track.Album))
-                .ThenByDescending(x => config.preferredCond.BitrateSatisfies(x.file))
-                .ThenByDescending(x => config.preferredCond.SampleRateSatisfies(x.file))
-                .ThenByDescending(x => config.preferredCond.BitDepthSatisfies(x.file))
-                .ThenByDescending(x => config.preferredCond.FileSatisfies(x.file, track, x.response))
-                .ThenByDescending(x => x.response.HasFreeUploadSlot)
-                .ThenByDescending(x => x.response.QueueLength == 0)
-                .ThenByDescending(x => x.response.UploadSpeed / 1024 / 650)
-                .ThenByDescending(x => albumMode || FileConditions.StrictString(x.file.Filename, track.Title))
-                .ThenByDescending(x => !albumMode || FileConditions.StrictString(Utils.GetDirectoryNameSlsk(x.file.Filename), track.Album))
-                .ThenByDescending(x => FileConditions.StrictString(x.file.Filename, track.Artist, boundarySkipWs: false))
-                .ThenByDescending(x => useInfer ? inferredTrack(x).Item2 : 0) // sorts by the number of occurences of this track
-                .ThenByDescending(x => x.response.UploadSpeed / 1024 / 350)
-                .ThenByDescending(x => (x.file.BitRate ?? 0) / 80)
-                .ThenByDescending(x => useLevenshtein ? levenshtein(x) / 5 : 0) // sorts by the distance between the track title and the inferred title of the search result
-                .ThenByDescending(x => random.Next());
-    }
-
 
     public async Task RunSearches(Track track, SlDictionary results, Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
         Action<SearchResponse> responseHandler, Config config, CancellationToken? ct = null, Action? onSearch = null)
@@ -935,7 +828,7 @@ public class Searcher
             }
             else
             {
-                var orderedResults = OrderedResults(results, track, config, useInfer: true);
+                var orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
                 int count = 0;
                 Console.WriteLine();
                 foreach (var (response, file) in orderedResults)
@@ -997,7 +890,7 @@ public class Searcher
     }
 
 
-    public Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
+    public static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
         var t = new Track(defaultTrack) { ItemNumber = -1 };
         t.Type = type;
