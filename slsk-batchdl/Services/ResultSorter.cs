@@ -196,8 +196,8 @@ public class SortingCriteria : IComparable<SortingCriteria>
         comparison = HasFreeUploadSlot.CompareTo(other.HasFreeUploadSlot);
         if (comparison != 0) return comparison;
 
-        comparison = NoQueue.CompareTo(other.NoQueue);
-        if (comparison != 0) return comparison;
+        //comparison = NoQueue.CompareTo(other.NoQueue);
+        //if (comparison != 0) return comparison;
 
         comparison = UploadSpeedFast.CompareTo(other.UploadSpeedFast);
         if (comparison != 0) return comparison;

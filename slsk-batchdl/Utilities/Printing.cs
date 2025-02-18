@@ -249,7 +249,8 @@ public static class Printing
             return 0;
 
         var response = albumTracks[0].FirstResponse;
-        string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s)";
+        string noSlot = !response.HasFreeUploadSlot ? ", no upload slots" : "";
+        string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
         var (parents, propsList) = FolderInfo(albumTracks.Select(x => x.FirstDownload));
 
         string format = propsList.FirstOrDefault() ?? "";
