@@ -648,7 +648,7 @@ public static partial class Program
 
             if (config.interactiveMode)
             {
-                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(config, tle.list, true, retrievedFolders);
+                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(tle, tle.list, true, retrievedFolders);
                 if (index == -1) break;
                 if (index == -2) Environment.Exit(0);
             }
@@ -728,6 +728,8 @@ public static partial class Program
                     {
                         Console.WriteLine("Entering interactive mode");
                         config.interactiveMode = true;
+                        tle.config.UpdateProfiles(tle);
+                        tle.PrintLines();
                     }
                 }
                 else
@@ -909,7 +911,7 @@ public static partial class Program
 
             if (config.interactiveMode)
             {
-                (index, tracks, _) = await InteractiveModeAlbum(config, albumArtLists, false, null);
+                (index, tracks, _) = await InteractiveModeAlbum(tle, albumArtLists, false, null);
                 if (index == -1) break;
                 if (index == -2) Environment.Exit(0);
             }
@@ -1121,7 +1123,7 @@ public static partial class Program
     }
 
 
-    static async Task<(int index, List<Track> tracks, bool retrieveFolder)> InteractiveModeAlbum(Config config, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
+    static async Task<(int index, List<Track> tracks, bool retrieveFolder)> InteractiveModeAlbum(TrackListEntry tle, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
     {
         int aidx = 0;
 
@@ -1283,7 +1285,10 @@ public static partial class Program
                 case "q":
                     return (-2, new List<Track>(), false);
                 case "y":
-                    config.interactiveMode = false;
+                    Console.WriteLine("Exiting interactive mode");
+                    tle.config.interactiveMode = false;
+                    tle.config.UpdateProfiles(tle);
+                    tle.PrintLines();
                     return (aidx, tracks, true);
                 case "r":
                     if (!retrieveFolder)
