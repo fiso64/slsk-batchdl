@@ -79,7 +79,7 @@ public class Downloader
         catch
         {
             if (File.Exists(filePath))
-                try { File.Delete(filePath); } catch { }
+                try { Utils.DeleteFileAndParentsIfEmpty(filePath, config.parentDir); } catch { }
             downloads.TryRemove(file.Filename, out var d);
             if (d != null)
                 lock (d) { d.UpdateText(); }

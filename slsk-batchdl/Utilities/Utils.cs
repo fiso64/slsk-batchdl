@@ -222,6 +222,12 @@ public static class Utils
         }
     }
 
+    public static void DeleteFileAndParentsIfEmpty(string filepath, string recurseUntil)
+    {
+        File.Delete(filepath);
+        DeleteAncestorsIfEmpty(Path.GetDirectoryName(filepath), recurseUntil);
+    }
+
     public static bool EqualsAny(this string input, string[] values, StringComparison comparison = StringComparison.Ordinal)
     {
         foreach (var value in values)
