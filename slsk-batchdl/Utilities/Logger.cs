@@ -41,7 +41,7 @@ public static class Logger
         AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
         {
             var exception = (Exception)args.ExceptionObject;
-            LogNonConsole(LogLevel.Fatal, $"Unhandled exception: {exception.Message}\n{exception.StackTrace}");
+            LogNonConsole(LogLevel.Fatal, $"Unhandled exception. {args.ExceptionObject}: {exception.Message}\n{exception.StackTrace}");
         };
     }
 
