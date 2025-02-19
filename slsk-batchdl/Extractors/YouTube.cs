@@ -35,7 +35,7 @@ namespace Extractors
 
             if (config.getDeleted)
             {
-                Console.WriteLine("Getting deleted videos..");
+                Logger.Info("Getting deleted videos..");
                 var archive = new YouTube.YouTubeArchiveRetriever();
                 deleted = await archive.RetrieveDeleted(input, printFailed: config.deletedOnly);
             }
@@ -43,12 +43,12 @@ namespace Extractors
             {
                 if (YouTube.apiKey.Length > 0)
                 {
-                    Console.WriteLine("Loading YouTube playlist (API)");
+                    Logger.Info("Loading YouTube playlist (API)");
                     (name, tracks) = await YouTube.GetTracksApi(input, max, off);
                 }
                 else
                 {
-                    Console.WriteLine("Loading YouTube playlist");
+                    Logger.Info("Loading YouTube playlist");
                     (name, tracks) = await YouTube.GetTracksYtExplode(input, max, off);
                 }
             }
@@ -490,17 +490,17 @@ namespace Extractors
                 {
                     if (archivedCount < totalCount)
                     {
-                        Console.WriteLine("No archived version found for the following:");
+                        Logger.Info("No archived version found for the following:");
                         foreach (var x in noArchive)
-                            Console.WriteLine($"  {x}");
+                            Logger.Info($"  {x}");
                         Console.WriteLine();
 
                     }
                     if (tracks.Count < archivedCount)
                     {
-                        Console.WriteLine("Failed to parse archived version for the following:");
+                        Logger.Info("Failed to parse archived version for the following:");
                         foreach (var x in failRetrieve)
-                            Console.WriteLine($"  {x}");
+                            Logger.Info($"  {x}");
                         Console.WriteLine();
                     }
                 }
@@ -610,7 +610,7 @@ namespace Extractors
             }
         }
 
-        public static async Task<List<(int length, string id, string title)>> YtdlpSearch(Track track, bool printCommand = false)
+        public static async Task<List<(int length, string id, string title)>> YtdlpSearch(Track track)
         {
             Process process = new Process();
             ProcessStartInfo startInfo = new ProcessStartInfo();
@@ -623,10 +623,10 @@ namespace Extractors
             startInfo.RedirectStandardError = true;
             startInfo.UseShellExecute = false;
             process.StartInfo = startInfo;
-            process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
-            process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
+            process.OutputDataReceived += (sender, e) => { Logger.Info(e.Data ?? ""); };
+            process.ErrorDataReceived += (sender, e) => { Logger.Info(e.Data ?? ""); };
 
-            Printing.WriteLineIf($"{startInfo.FileName} {startInfo.Arguments}", printCommand);
+            Logger.Debug($"{startInfo.FileName} {startInfo.Arguments}");
 
             process.Start();
 
@@ -649,7 +649,7 @@ namespace Extractors
             return results;
         }
 
-        public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "", bool printCommand = false)
+        public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "")
         {
             var process = new Process();
             var startInfo = new ProcessStartInfo();
@@ -671,7 +671,7 @@ namespace Extractors
             //process.OutputDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
             //process.ErrorDataReceived += (sender, e) => { Console.WriteLine(e.Data); };
 
-            Printing.WriteLineIf($"{startInfo.FileName} {startInfo.Arguments}", printCommand);
+            Logger.Debug($"{startInfo.FileName} {startInfo.Arguments}");
 
             process.Start();
             process.WaitForExit();

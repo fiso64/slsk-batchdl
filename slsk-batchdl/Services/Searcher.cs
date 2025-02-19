@@ -170,7 +170,7 @@ public class Searcher
                     if (e is OperationCanceledException && cts != null && cts.IsCancellationRequested)
                         throw;
 
-                    Printing.WriteLineIf($"Error: Download Error: {e}", config.debugInfo, ConsoleColor.DarkYellow);
+                    Logger.DebugError($"Download Error: {e}");
 
                     chosenFile = null;
                     saveFilePath = "";
@@ -205,7 +205,7 @@ public class Searcher
             try
             {
                 Printing.RefreshOrPrint(progress, 0, $"yt-dlp search: {track}", true);
-                var ytResults = await Extractors.YouTube.YtdlpSearch(track, printCommand: config.debugInfo);
+                var ytResults = await Extractors.YouTube.YtdlpSearch(track);
 
                 if (ytResults.Count > 0)
                 {
@@ -216,7 +216,7 @@ public class Searcher
                             string saveFilePathNoExt = organizer.GetSavePathNoExt(title);
                             downloading = 1;
                             Printing.RefreshOrPrint(progress, 0, $"yt-dlp download: {track}", true);
-                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, config.ytdlpArgument, printCommand: config.debugInfo);
+                            saveFilePath = await Extractors.YouTube.YtdlpDownload(id, saveFilePathNoExt, config.ytdlpArgument);
                             Printing.RefreshOrPrint(progress, 100, $"Succeded: yt-dlp completed download for {track}", true);
                             break;
                         }
@@ -598,7 +598,7 @@ public class Searcher
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Error: Error getting all files in directory '{folder}: {e}'");
+                Logger.Error($"Error getting all files in directory '{folder}: {e}'");
                 return 0;
             }
 
@@ -628,7 +628,7 @@ public class Searcher
         }
         catch (Exception ex)
         {
-            Printing.WriteLine($"Error getting complete list of files: {ex}", ConsoleColor.DarkYellow);
+            Logger.Error($"Error getting complete list of files: {ex}");
         }
         return newFiles;
     }

@@ -98,7 +98,7 @@ namespace Models
         {
             if (printLines == null) return;
             foreach (var line in printLines)
-                Console.WriteLine(line);
+                Logger.Info(line);
             printLines = null;
         }
     }

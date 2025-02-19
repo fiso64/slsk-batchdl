@@ -50,6 +50,7 @@ public class Config
     public string confPath = "";
     public string profile = "";
     public string failedAlbumPath = "";
+    public string logFilePath = "";
     public bool aggregate = false;
     public bool album = false;
     public bool albumArtOnly = false;
@@ -71,7 +72,6 @@ public class Config
     public bool deletedOnly = false;
     public bool removeSingleCharacterSearchTerms = false;
     public bool relax = false;
-    public bool debugInfo = false;
     public bool noModifyShareCount = false;
     public bool useRandomLogin = false;
     public bool noBrowseFolder = false;
@@ -101,9 +101,10 @@ public class Config
     public int aggregateLengthTol = 3;
     public int parallelAlbumSearchProcesses = 5;
     public double fastSearchMinUpSpeed = 1.0;
-    public List<string> onComplete = null;
+    public List<string>? onComplete = null;
     public Track regexToReplace = new();
     public Track regexReplaceBy = new();
+    public Logger.LogLevel logLevel = Logger.LogLevel.Info;
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
     public InputType inputType = InputType.None;
     public SkipMode skipMode = SkipMode.Index;
@@ -172,6 +173,9 @@ public class Config
         ApplyProfiles(profile);
 
         ProcessArgs(arguments);
+
+        if (input.Length == 0)
+            InputError($"No input provided");
     }
 
     public Config Copy() // deep copies all fields except configProfiles and arguments
@@ -270,6 +274,7 @@ public class Config
         m3uFilePath     = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
         indexFilePath   = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
         skipMusicDir    = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
+        logFilePath     = Utils.GetFullPath(Utils.ExpandVariables(logFilePath));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");
@@ -654,48 +659,36 @@ public class Config
 
     void ProcessArgs(IReadOnlyList<string> args)
     {
-        void setFlag(ref bool flag, ref int i, bool trueVal = true)
+        bool getFlag(ref int i, bool trueVal = true)
         {
             if (i >= args.Count - 1 || args[i + 1].StartsWith('-'))
             {
-                flag = trueVal;
+                return trueVal;
             }
             else if (args[i + 1] == "false")
             {
-                flag = !trueVal;
                 i++;
+                return !trueVal;
             }
             else if (args[i + 1] == "true")
             {
-                flag = trueVal;
                 i++;
+                return trueVal;
             }
             else
             {
-                flag = trueVal;
+                return trueVal;
             }
+        }
+
+        void setFlag(ref bool flag, ref int i, bool trueVal = true)
+        {
+            flag = getFlag(ref i, trueVal);
         }
 
         void setNullableFlag(ref bool? flag, ref int i, bool trueVal = true)
         {
-            if (i >= args.Count - 1 || args[i + 1].StartsWith('-'))
-            {
-                flag = trueVal;
-            }
-            else if (args[i + 1] == "false")
-            {
-                flag = !trueVal;
-                i++;
-            }
-            else if (args[i + 1] == "true")
-            {
-                flag = trueVal;
-                i++;
-            }
-            else
-            {
-                flag = trueVal;
-            }
+            flag = getFlag(ref i, trueVal);
         }
 
         string getParameter(ref int i)
@@ -1269,8 +1262,11 @@ public class Config
                     case "--fast-search-min-up-speed":
                         fastSearchMinUpSpeed = getDoubleParameter(ref i);
                         break;
+                    case "-v":
+                    case "--verbose":
                     case "--debug":
-                        setFlag(ref debugInfo, ref i);
+                        var yes = getFlag(ref i);
+                        if (yes) logLevel = Logger.LogLevel.Debug;
                         break;
                     case "--sc":
                     case "--strict":
@@ -1397,13 +1393,13 @@ public class Config
 
     public static void InputWarning(string message)
     {
-        Printing.WriteLine($"Warning: {message}", ConsoleColor.DarkYellow);
+        Logger.Warn($"Warning: {message}");
     }
 
 
     public static void InputError(string message)
     {
-        Printing.WriteLine($"Input error: {message}", ConsoleColor.Red);
+        Logger.Fatal($"Input error: {message}");
         Environment.Exit(1);
     }
 

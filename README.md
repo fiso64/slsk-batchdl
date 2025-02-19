@@ -78,7 +78,7 @@ Usage: sldl <input> [OPTIONS]
                                    'results': Print search results satisfying file conditions
                                    'results-full': Print search results including full paths.
     --no-progress                  Disable progress bars/percentages, only simple printing
-    --debug                        Print extra debug info
+    -v, --verbose                  Print extra debug info
 ```
 #### Search Options
 ```

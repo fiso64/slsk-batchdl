@@ -52,7 +52,7 @@ public static class Help
                                        'results': Print search results satisfying file conditions
                                        'results-full': Print search results including full paths.
         --no-progress                  Disable progress bars/percentages, only simple printing
-        --debug                        Print extra debug info
+        -v, --verbose                  Print extra debug info
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred

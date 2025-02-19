@@ -28,7 +28,7 @@ namespace Extractors
 
             if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
             {
-                Console.WriteLine("Error: Credentials are required when downloading liked music or removing from source playlists.");
+                Logger.Fatal("Error: Credentials are required when downloading liked music or removing from source playlists.");
                 Environment.Exit(1);
             }
 
@@ -39,7 +39,7 @@ namespace Extractors
 
             if (input == "spotify-likes")
             {
-                Console.WriteLine("Loading Spotify likes..");
+                Logger.Info("Loading Spotify likes..");
                 var tracks = await spotifyClient.GetLikes(max, off);
                 tle = new TrackListEntry(TrackType.Normal);
                 tle.itemName = "Spotify Likes";
@@ -48,7 +48,7 @@ namespace Extractors
             }
             else if (input.Contains("/album/"))
             {
-                Console.WriteLine("Loading Spotify album..");
+                Logger.Info("Loading Spotify album..");
                 (var source, var tracks) = await spotifyClient.GetAlbum(input);
                 tle = new TrackListEntry(TrackType.Album);
                 tle.source = source;
@@ -61,7 +61,7 @@ namespace Extractors
             }
             else if (input.Contains("/artist/"))
             {
-                Console.WriteLine("Error: Spotify artist download currently not supported.");
+                Logger.Fatal("Error: Spotify artist download currently not supported.");
                 Environment.Exit(1);
             }
             else
@@ -73,7 +73,7 @@ namespace Extractors
 
                 try
                 {
-                    Console.WriteLine("Loading Spotify playlist");
+                    Logger.Info("Loading Spotify playlist");
                     (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
                 }
                 catch (SpotifyAPI.Web.APIException)
@@ -85,7 +85,7 @@ namespace Extractors
                     }
                     else if (!needLogin)
                     {
-                        Console.WriteLine("Error: Spotify playlist not found (it may be set to private, but no credentials have been provided).");
+                        Logger.Fatal("Error: Spotify playlist not found (it may be set to private, but no credentials have been provided).");
                         Environment.Exit(1);
                     }
                     else throw;
@@ -116,7 +116,7 @@ namespace Extractors
             }
             catch (Exception e) 
             {
-                Printing.WriteLine($"Error removing from source: {e}");
+                Logger.Error($"Error removing from source: {e}");
             }
         }
     }
@@ -201,7 +201,7 @@ namespace Extractors
                     }
                     catch (Exception)
                     {
-                        Console.WriteLine("Unable to open URL, manually open: {0}", request.ToUri());
+                        Logger.Info($"Unable to open URL, manually open: {request.ToUri()}");
                     }
                 }
 
@@ -213,23 +213,23 @@ namespace Extractors
         {
             if (_clientToken.Length != 0)
             {
-                //Console.WriteLine("Testing Spotify access with existing token...");
+                Logger.Debug("Testing Spotify access with existing token...");
                 var client = new SpotifyClient(_clientToken);
                 try
                 {
                     var me = await client.UserProfile.Current();
-                    //Console.WriteLine("Spotify access is good!");
+                    Logger.Debug("Spotify access is good!");
                     _client = client;
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Could not make an API call with existing token: {ex.Message}");
+                    Logger.Info($"Could not make an API call with existing token: {ex.Message}");
                 }
             }
             if (_clientRefreshToken.Length != 0)
             {
-                Console.WriteLine("Trying to renew access with refresh token...");
+                Logger.Info("Trying to renew access with refresh token...");
                 //     var refreshRequest = new TokenSwapRefreshRequest(
                 //     new Uri("http://localhost:48721/refresh"),
                 //     _clientRefreshToken
@@ -239,20 +239,20 @@ namespace Extractors
                 {
                     var oauthClient = new OAuthClient();
                     var refreshResponse = await oauthClient.RequestToken(refreshRequest);
-                    //Console.WriteLine($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
+                    Logger.Debug($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
                     _clientToken = refreshResponse.AccessToken;
                     _client = new SpotifyClient(_clientToken);
                     return true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Could not refresh access token with refresh token: {ex}");
+                    Logger.Info($"Could not refresh access token with refresh token: {ex}");
                 }
             } else {
-                Console.WriteLine("No refresh token present, cannot refresh existing access");
+                Logger.Info("No refresh token present, cannot refresh existing access");
             }
 
-            Console.WriteLine("Not possible to access Spotify API without login! Falling back to login flow...");
+            Logger.Info("Not possible to access Spotify API without login! Falling back to login flow...");
             return false;
         }
 

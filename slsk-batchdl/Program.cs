@@ -5,18 +5,16 @@ using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Net.Sockets;
-using Konsole;
-
 using Models;
 using Enums;
 using Extractors;
 using Services;
-using static Printing;
+using System.Text;
+using Konsole;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
 using SlFile = Soulseek.File;
-using System.Text;
 
 public static partial class Program
 {
@@ -42,18 +40,19 @@ public static partial class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Help.PrintAndExitIfNeeded(args);
 
+        Logger.AddConsole();
+
         var config = new Config(args);
 
-        if (config.input.Length == 0)
-            Config.InputError($"No input provided");
+        Logger.SetConsoleLogLevel(config.logLevel);
 
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
-        Console.WriteLine($"Item: {config.input} [{config.inputType}]");
+        Logger.Info($"Input ({config.inputType}): {config.input}");
         
         trackLists = await extractor.GetTracks(config.input, config.maxTracks, config.offset, config.reverse, config);
 
-        WriteLineIf("Got tracks", config.debugInfo);
+        Logger.Debug("Got tracks");
 
         config.PostProcessArgs();
 
@@ -64,7 +63,7 @@ public static partial class Program
 
         await MainLoop();
 
-        WriteLineIf("Mainloop done", config.debugInfo);
+        Logger.Debug("Exiting");
     }
 
 
@@ -105,7 +104,7 @@ public static partial class Program
             searchService = new Searcher(client, searchSemaphore);
 
             var UpdateTask = Task.Run(() => Update(config));
-            WriteLineIf("Update started", config.debugInfo);
+            Logger.Debug("Update started");
         }
 
         initialized = true;
@@ -267,6 +266,8 @@ public static partial class Program
             var tle = trackLists[i];
             var config = tle.config;
 
+            Logger.SetConsoleLogLevel(config.logLevel);
+
             if (tle.preprocessTracks) PreprocessTracks(tle);
             if (!enableParallelSearch) tle.PrintLines();
 
@@ -301,13 +302,13 @@ public static partial class Program
             {
                 if (tle.source.Type == TrackType.Normal)
                 {
-                    PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
+                    Printing.PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
                 }
                 else
                 {
                     var tl = new List<Track>();
                     if (tle.source.State == TrackState.Initial) tl.Add(tle.source);
-                    PrintTracksTbd(tl, existing, notFound, tle.source.Type, config, summary: false);
+                    Printing.PrintTracksTbd(tl, existing, notFound, tle.source.Type, config, summary: false);
                 }
                 continue;
             }
@@ -316,13 +317,13 @@ public static partial class Program
             {
                 if (tle.source.State == TrackState.AlreadyExists)
                 {
-                    Console.WriteLine($"{tle.source.Type} download '{tle.source.ToString(true)}' already exists at {tle.source.DownloadPath}, skipping");
+                    Logger.Info($"{tle.source.Type} download '{tle.source.ToString(true)}' already exists at {tle.source.DownloadPath}, skipping");
                     continue;
                 }
             
                 if (tle.source.State == TrackState.NotFoundLastTime)
                 {
-                    Console.WriteLine($"{tle.source.Type} download '{tle.source.ToString(true)}' was not found during a prior run, skipping");
+                    Logger.Info($"{tle.source.Type} download '{tle.source.ToString(true)}' was not found during a prior run, skipping");
                     continue;
                 }
             }
@@ -433,7 +434,7 @@ public static partial class Program
             if (config.PrintResults)
             {
                 await InitClientAndUpdateIfNeeded(config);
-                await PrintResults(tle, existing, notFound, config, searchService);
+                await Printing.PrintResults(tle, existing, notFound, config, searchService);
                 continue;
             }
 
@@ -455,7 +456,7 @@ public static partial class Program
 
         if (!trackLists[^1].config.DoNotDownload && (trackLists.lists.Count > 0 || trackLists.Flattened(false, false).Skip(1).Any()))
         {
-            PrintComplete(trackLists);
+            Printing.PrintComplete(trackLists);
         }
 
         async Task download(TrackListEntry tle, Config config, List<Track>? notFound, List<Track>? existing)
@@ -465,7 +466,7 @@ public static partial class Program
 
             if (tle.source.Type != TrackType.Album)
             {
-                PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
+                Printing.PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
             }
 
             if (notFound != null && existing != null && notFound.Count + existing.Count >= tle.list.Sum(x => x.Count))
@@ -499,7 +500,7 @@ public static partial class Program
 
                 if (foundSomething)
                 {
-                    Console.WriteLine($"Downloading: {tle.source}");
+                    Logger.Info($"Downloading: {tle.source}");
                     await download(tle, tle.config, null, null);
                 }
                 else
@@ -554,7 +555,7 @@ public static partial class Program
         {
             if (!tle.musicDirSkipper.IndexIsBuilt)
             {
-                Console.WriteLine($"Building music directory index..");
+                Logger.Info($"Building music directory index..");
                 tle.musicDirSkipper.BuildIndex();
             }
 
@@ -664,7 +665,7 @@ public static partial class Program
             if (!config.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
-                PrintAlbum(tracks);
+                Printing.PrintAlbum(tracks);
             }
 
             using var semaphore = new SemaphoreSlim(999); // Needs to be uncapped due to a bug that causes album downloads to fail after some time
@@ -688,19 +689,19 @@ public static partial class Program
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
-                    Console.WriteLine("Getting all files in folder...");
+                    Logger.Info("Getting all files in folder...");
 
                     int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
                     retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
 
                     if (newFilesFound > 0)
                     {
-                        Console.WriteLine($"Found {newFilesFound} more files, downloading:");
+                        Logger.Info($"Found {newFilesFound} more files, downloading:");
                         await runAlbumDownloads(tracks, semaphore, cts);
                     }
                     else
                     {
-                        Console.WriteLine("No more files found.");
+                        Logger.Info("No more files found.");
                     }
                 }
 
@@ -711,7 +712,7 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Console.WriteLine("\nDownload cancelled. ");
+                    Logger.Info("\nDownload cancelled. ");
 
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
@@ -726,7 +727,7 @@ public static partial class Program
 
                     if (!config.interactiveMode)
                     {
-                        Console.WriteLine("Entering interactive mode");
+                        Logger.Info("Entering interactive mode");
                         config.interactiveMode = true;
                         tle.config.UpdateProfiles(tle);
                         tle.PrintLines();
@@ -775,7 +776,7 @@ public static partial class Program
         
         if (config.albumArtOnly || succeeded && config.albumArtOption != AlbumArtOption.Default)
         {
-            Console.WriteLine($"\nDownloading additional images:");
+            Logger.Info($"\nDownloading additional images:");
             additionalImages = await DownloadImages(config, tle, tle.list, config.albumArtOption, tle.list[index], organizer);
             tracks?.AddRange(additionalImages);
         }
@@ -817,7 +818,7 @@ public static partial class Program
                 }
                 catch (Exception e) 
                 {
-                    Printing.WriteLine($"Error: Unable to move or delete file '{track.DownloadPath}' after album fail: {e}");
+                    Logger.Error($"Error: Unable to move or delete file '{track.DownloadPath}' after album fail: {e}");
                 }
             }
         }
@@ -851,12 +852,12 @@ public static partial class Program
 
         if (!albumArts.Any())
         {
-            Console.WriteLine("No images found");
+            Logger.Info("No images found");
             return downloadedImages;
         }
         else if (!albumArts.Skip(1).Any() && albumArts.First().All(y => y.State != TrackState.Initial))
         {
-            Console.WriteLine("No additional images found");
+            Logger.Info("No additional images found");
             return downloadedImages;
         }
 
@@ -924,14 +925,14 @@ public static partial class Program
 
             if (!needImageDownload(tracks))
             {
-                Console.WriteLine("Image requirements already satisfied.");
+                Logger.Info("Image requirements already satisfied.");
                 return downloadedImages;
             }
 
             if (!config.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
-                PrintAlbum(tracks);
+                Printing.PrintAlbum(tracks);
             }
 
             fileManager.downloadingAdditinalImages = true;
@@ -969,7 +970,7 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Console.WriteLine("\nDownload cancelled. ");
+                    Logger.Info("\nDownload cancelled. ");
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
                         Console.Write("Delete files? [Y/n] (default: Yes): ");
@@ -980,7 +981,7 @@ public static partial class Program
 
                     if (!config.interactiveMode)
                     {
-                        Console.WriteLine("Entering interactive mode");
+                        Logger.Info("Entering interactive mode");
                         config.interactiveMode = true;
                     }
 
@@ -1031,7 +1032,7 @@ public static partial class Program
             }
             catch (Exception ex)
             {
-                WriteLineIf($"Error: {ex}", config.debugInfo);
+                Logger.DebugError($"{ex}");
                 if (!IsConnectedAndLoggedIn())
                 {
                     continue;
@@ -1097,7 +1098,7 @@ public static partial class Program
                 }
                 catch (Exception ex)
                 {
-                    WriteLine($"\n{ex.Message}\n{ex.StackTrace}\n", ConsoleColor.DarkYellow, true);
+                    Logger.Error($"Error while removing track from source: {ex.Message}\n{ex.StackTrace}\n");
                 }
             }
         }
@@ -1114,9 +1115,9 @@ public static partial class Program
         {
             var savedText = progress.Line1;
             var savedPos = progress.Current;
-            RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
+            Printing.RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
             OnComplete(tle, track, false, tle.indexEditor, tle.playlistEditor);
-            RefreshOrPrint(progress, savedPos, savedText);
+            Printing.RefreshOrPrint(progress, savedPos, savedText);
         }
 
         semaphore.Release();
@@ -1236,8 +1237,8 @@ public static partial class Program
         string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
         string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
         Console.WriteLine();
-        WriteLine($" [Up/p] | [Down/n] | [Enter] | [y]              {retrieveAll1}| [s]  | [Esc/q]", ConsoleColor.Green);
-        WriteLine($" Prev   | Next     | Accept  | Stop Interactive {retrieveAll2}| Skip | Quit", ConsoleColor.Green);
+        Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | [y]              {retrieveAll1}| [s]  | [Esc/q]", ConsoleColor.Green);
+        Printing.WriteLine($" Prev   | Next     | Accept  | Stop Interactive {retrieveAll2}| Skip | Quit", ConsoleColor.Green);
 
         Console.WriteLine();
         int savedPos = Console.CursorTop;
@@ -1249,9 +1250,9 @@ public static partial class Program
             var username = tracks[0].FirstUsername;
 
 
-            WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
+            Printing.WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
 
-            PrintAlbum(tracks, indices: true);
+            Printing.PrintAlbum(tracks, indices: true);
             Console.WriteLine();
 
         Loop:
@@ -1412,12 +1413,12 @@ public static partial class Program
                             && !client.State.HasFlag(SoulseekClientStates.LoggingIn) 
                             && !client.State.HasFlag(SoulseekClientStates.Connecting))
                         {
-                            WriteLine($"\nDisconnected, logging in\n", ConsoleColor.DarkYellow, true);
+                            Logger.Warn($"Disconnected, logging in");
                             try { await Login(startConfig, startConfig.useRandomLogin); }
                             catch (Exception ex)
                             {
                                 string banMsg = startConfig.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
-                                WriteLine($"{ex.Message}{banMsg}", ConsoleColor.DarkYellow, true);
+                                Logger.Warn($"{ex.Message}{banMsg}");
                             }
                         }
 
@@ -1432,7 +1433,7 @@ public static partial class Program
                 }
                 catch (Exception ex)
                 {
-                    WriteLine($"\n{ex.Message}\n", ConsoleColor.DarkYellow, true);
+                    Logger.Error($"{ex.Message}");
                 }
 
                 if (interceptKeys && Console.KeyAvailable)
@@ -1458,32 +1459,32 @@ public static partial class Program
             pass = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
         }
 
-        WriteLine($"Login {user}");
+        Logger.Info($"Login {user}");
 
         while (true)
         {
             try
             {
-                WriteLineIf($"Connecting {user}", config.debugInfo);
+                Logger.Debug($"Connecting {user}");
                 await client.ConnectAsync(user, pass);
                 if (!config.noModifyShareCount)
                 {
-                    WriteLineIf($"Setting share count", config.debugInfo);
+                    Logger.Debug($"Setting share count");
                     await client.SetSharedCountsAsync(20, 100);
                 }
                 break;
             }
             catch (Exception e)
             {
-                WriteLineIf($"Exception while logging in: {e}", config.debugInfo);
+                Logger.DebugError($"Exception while logging in: {e}");
                 if (!(e is Soulseek.AddressException || e is System.TimeoutException) && --tries == 0)
                     throw;
             }
             await Task.Delay(500);
-            WriteLineIf($"Retry login {user}", config.debugInfo);
+            Logger.Debug($"Retry login {user}");
         }
 
-        WriteLineIf($"Logged in {user}", config.debugInfo);
+        Logger.Debug($"Logged in {user}");
     }
 
 
@@ -1615,8 +1616,7 @@ public static partial class Program
 
             process.StartInfo = startInfo;
 
-            WriteLineIf($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}", tle.config.debugInfo);
-            Debug.WriteLine($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}");
+            Logger.Debug($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}");
 
             try
             {
@@ -1657,7 +1657,7 @@ public static partial class Program
             }
             catch (Exception ex)
             {
-                WriteLine($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}", ConsoleColor.DarkYellow);
+                Logger.Error($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}");
                 return;
             }
             finally
@@ -1680,7 +1680,7 @@ public static partial class Program
     {
         while (true)
         {
-            WriteLineIf($"Wait for login, state: {client.State}", config.debugInfo);
+            Logger.Debug($"Wait for login, state: {client.State}");
             if (IsConnectedAndLoggedIn())
                 break;
             await Task.Delay(1000);

@@ -1,7 +1,6 @@
-﻿using Konsole;
-
-using Models;
+﻿using Models;
 using Enums;
+using Konsole;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
@@ -330,40 +329,16 @@ public static class Printing
         }
         else if ((progress == null || Console.IsOutputRedirected) && print)
         {
-            Console.WriteLine(item);
+            Logger.Info(item);
         }
     }
 
-
-    public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray, bool safe = false)
+    public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray)
     {
-        if (!safe)
-        {
-            Console.ForegroundColor = color;
-            Console.WriteLine(value);
-            Console.ResetColor();
-        }
-        else
-        {
-            Program.skipUpdate = true;
-            lock (consoleLock)
-            {
-                Console.ForegroundColor = color;
-                Console.WriteLine(value);
-                Console.ResetColor();
-            }
-
-            Program.skipUpdate = false;
-        }
+        Console.ForegroundColor = color;
+        Console.WriteLine(value);
+        Console.ResetColor();
     }
-
-
-    public static void WriteLineIf(string value, bool condition, ConsoleColor color = ConsoleColor.Gray)
-    {
-        if (condition)
-            Printing.WriteLine(value, color); 
-    }
-
 
     public static ProgressBar? GetProgressBar(Config config)
     {

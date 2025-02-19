@@ -133,8 +133,8 @@ namespace Extractors
             other = other.Trim();
             if (other.Length > 0 && (isAlbum && track.Album.Length > 0 || !isAlbum && track.Title.Length > 0))
             {
-                Printing.WriteLine($"Warning: Input part '{other}' provided without a property name " +
-                    $"and album or title is already set. Ignoring.", ConsoleColor.DarkYellow);
+                Logger.Warn($"Warning: Input part '{other}' provided without a property name " +
+                    $"and album or title is already set. Ignoring.");
             }
             else if (other.Length > 0)
             {

@@ -58,7 +58,7 @@ namespace Extractors
                     }
                     catch (Exception e)
                     {
-                        Printing.WriteLine($"Error removing from source: {e}");
+                        Logger.Error($"Error removing from source: {e}");
                     }
                 }
             }
@@ -112,7 +112,7 @@ namespace Extractors
 
             int foundCount = cols.Count(col => col.Length > 0);
             if (!string.IsNullOrEmpty(usingColumns))
-                Console.WriteLine($"Using columns: {usingColumns.TrimEnd(' ', ',')}.");
+                Logger.Info($"Using columns: {usingColumns.TrimEnd(' ', ',')}.");
             else if (foundCount == 0)
                 throw new Exception("No columns specified and couldn't determine automatically");
 
@@ -172,7 +172,7 @@ namespace Extractors
                     }
                     catch
                     {
-                        Printing.WriteLine($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\" for \"{track}\"", ConsoleColor.DarkYellow);
+                        Logger.Warn($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\" for \"{track}\"");
                     }
                 }
 

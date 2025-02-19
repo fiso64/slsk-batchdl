@@ -150,7 +150,7 @@ namespace Extractors
                     }
                     catch (Exception e)
                     {
-                        Printing.WriteLine($"Error removing from source: {e}");
+                        Logger.Error($"Error removing from source: {e}");
                     }
                 }
             }

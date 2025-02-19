@@ -25,7 +25,7 @@ public class Downloader
         string origPath = filePath;
         filePath += ".incomplete";
 
-        Printing.WriteLineIf($"Downloading: {track} to '{filePath}'", config.debugInfo);
+        Logger.Debug($"Downloading: {track} to '{filePath}'");
 
         var transferOptions = new TransferOptions(
             stateChanged: (state) =>
@@ -67,7 +67,7 @@ public class Downloader
                 {
                     retryCount++;
 
-                    Printing.WriteLineIf($"Error while downloading: {e}", config.debugInfo, ConsoleColor.DarkYellow);
+                    Logger.DebugError($"Error while downloading: {e}");
 
                     if (retryCount >= maxRetries || IsConnectedAndLoggedIn())
                         throw;
@@ -89,7 +89,7 @@ public class Downloader
         try { searchCts?.Cancel(); } catch { }
 
         try { Utils.Move(filePath, origPath); }
-        catch (IOException) { Printing.WriteLine($"Failed to rename .incomplete file", ConsoleColor.DarkYellow, true); }
+        catch (IOException) { Logger.Error($"Failed to rename .incomplete file"); }
 
         downloads.TryRemove(file.Filename, out var x);
 

@@ -24,7 +24,7 @@ namespace Extractors
 
             if (isArtist)
             {
-                Console.WriteLine("Retrieving bandcamp artist discography..");
+                Logger.Info("Retrieving bandcamp artist discography..");
                 string artistUrl = input.TrimEnd('/');
 
                 if (!artistUrl.EndsWith("/music"))
@@ -66,7 +66,7 @@ namespace Extractors
             }
             else
             {
-                Console.WriteLine("Retrieving bandcamp item..");
+                Logger.Info("Retrieving bandcamp item..");
                 var web = new HtmlWeb();
                 var doc = await web.LoadFromWebAsync(input);
 

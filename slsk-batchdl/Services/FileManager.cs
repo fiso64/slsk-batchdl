@@ -112,7 +112,7 @@ public class FileManager
         }
         catch (Exception ex)
         {
-            Printing.WriteLine($"\nFailed to move: {ex.Message}\n", ConsoleColor.DarkYellow, true);
+            Logger.Error($"Failed to move: {ex.Message}");
             return;
         }
 
@@ -143,7 +143,7 @@ public class FileManager
         }
         catch (Exception ex)
         {
-            Printing.WriteLine($"\nFailed to move: {ex.Message}\n", ConsoleColor.DarkYellow, true);
+            Logger.Error($"Failed to move: {ex.Message}");
             return;
         }
 
