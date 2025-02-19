@@ -106,8 +106,9 @@ namespace Models
                 bar = "  ";
             }
 
-            string txt = $"{bar}{state}:".PadRight(14) + $" {displayText}";
             bool needSimplePrintUpdate = (downloading && !updatedTextDownload) || (success && !updatedTextSuccess);
+            bar = needSimplePrintUpdate ? "" : bar;
+            string txt = $"{bar}{state}:".PadRight(14) + $" {displayText}";
             updatedTextDownload |= downloading;
             updatedTextSuccess |= success;
 

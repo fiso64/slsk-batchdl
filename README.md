@@ -72,13 +72,14 @@ Usage: sldl <input> [OPTIONS]
     --on-complete <command>        Run a command when a download completes. See `--help
                                    on-complete`
 
-    --print <option>               Print tracks or search results instead of downloading:
-                                   'tracks': Print all tracks to be downloaded
-                                   'tracks-full': Print extended information about all tracks
-                                   'results': Print search results satisfying file conditions
-                                   'results-full': Print search results including full paths.
-    --no-progress                  Disable progress bars/percentages, only simple printing
     -v, --verbose                  Print extra debug info
+    --log-file <path>              Write debug info to a specified file
+    --no-progress                  Disable progress bars/percentages, only simple printing
+    --print <option>               Print tracks or search results instead of downloading:
+                                    'tracks': Print all tracks to be downloaded
+                                    'tracks-full': Print extended information about all tracks
+                                    'results': Print search results satisfying file conditions
+                                    'results-full': Print search results including full paths.
 ```
 #### Search Options
 ```
@@ -580,7 +581,7 @@ sldl "spotify-likes"
 
 Download a youtube playlist, additionally retrieving deleted video names and with yt-dlp fallback:
 ```bash
-sldl "https://www.youtube.com/playlist/id" --get-deleted --yt-dlp
+sldl "https://youtube.com/playlist/id" --get-deleted --yt-dlp
 ```
 
 <br>

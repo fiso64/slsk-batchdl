@@ -46,13 +46,14 @@ public static class Help
         --on-complete <command>        Run a command when a download completes. See `--help
                                        on-complete`
 
+        -v, --verbose                  Print extra debug info
+        --log-file <path>              Write debug info to a specified file
+        --no-progress                  Disable progress bars/percentages, only simple printing
         --print <option>               Print tracks or search results instead of downloading:
                                        'tracks': Print all tracks to be downloaded
                                        'tracks-full': Print extended information about all tracks
                                        'results': Print search results satisfying file conditions
                                        'results-full': Print search results including full paths.
-        --no-progress                  Disable progress bars/percentages, only simple printing
-        -v, --verbose                  Print extra debug info
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred

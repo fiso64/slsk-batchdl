@@ -21,12 +21,14 @@ public static class Logger
         Fatal
     }
 
-    private class OutputConfig
+    public class OutputConfig
     {
         public Action<string> Output;
         public LogLevel MinimumLevel;
         public bool PrependDate;
         public bool PrependLogLevel;
+        public bool IsFileOutput;
+        public bool IsConsoleOutput;
         public bool UseConsoleColors; // Only applicable for console output
     }
 
@@ -34,7 +36,17 @@ public static class Logger
 
     private static readonly object LockObject = new ();
 
-    public static void AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true, bool prependLogLevel = true)
+    public static void SetupExceptionHandling()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
+        {
+            var exception = (Exception)args.ExceptionObject;
+            LogNonConsole(LogLevel.Fatal, $"Unhandled exception: {exception.Message}\n{exception.StackTrace}");
+        };
+    }
+
+    private static void AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true, 
+        bool prependLogLevel = true, bool isFileOutput = false)
     {
         lock (LockObject)
         {
@@ -44,7 +56,8 @@ public static class Logger
                 PrependDate = prependDate,
                 PrependLogLevel = prependLogLevel,
                 UseConsoleColors = false,
-                MinimumLevel = minimumLevel
+                MinimumLevel = minimumLevel,
+                IsFileOutput = isFileOutput
             });
         }
     }
@@ -52,8 +65,9 @@ public static class Logger
     public static void AddConsole(LogLevel minimumLevel = LogLevel.Info, bool useColors = true, bool prependDate = false, bool prependLogLevel = false)
     {
         AddOutput(Console.WriteLine, minimumLevel, prependDate, prependLogLevel);
-        var consoleConfig = OutputConfigs[OutputConfigs.Count - 1];
+        var consoleConfig = OutputConfigs[^1];
         consoleConfig.UseConsoleColors = useColors;
+        consoleConfig.IsConsoleOutput = true;
     }
 
     public static void SetConsoleLogLevel(LogLevel logLevel)
@@ -63,21 +77,31 @@ public static class Logger
 
     public static void AddFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
     {
-        AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel);
+        AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel, isFileOutput: true);
     }
 
-    public static void Log(LogLevel level, string message)
+    public static void AddOrReplaceFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
     {
+        OutputConfigs.RemoveAll(config => config.IsFileOutput);
+        AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel, isFileOutput: true);
+    }
+
+    public static void Log(LogLevel level, string message, IEnumerable<OutputConfig>? outputs = null)
+    {
+        if (outputs == null)
+            outputs = OutputConfigs;
+
         lock (LockObject)
         {
-            foreach (var config in OutputConfigs)
+            foreach (var config in outputs)
             {
                 if (level < config.MinimumLevel)
                     continue;
 
+                if (!config.IsConsoleOutput) message = message.TrimStart();
                 string logEntry = BuildLogEntry(level, message, config.PrependDate, config.PrependLogLevel);
 
-                if (config.Output == Console.WriteLine && config.UseConsoleColors)
+                if (config.IsConsoleOutput && config.UseConsoleColors)
                 {
                     SetConsoleColor(level);
                     config.Output(logEntry);
@@ -89,6 +113,11 @@ public static class Logger
                 }
             }
         }
+    }
+
+    public static void LogNonConsole(LogLevel level, string message)
+    {
+        Log(level, message, OutputConfigs.Where(x => x.Output != Console.WriteLine));
     }
 
     private static string BuildLogEntry(LogLevel level, string message, bool prependDate, bool prependLogLevel)

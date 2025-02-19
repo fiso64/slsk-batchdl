@@ -198,7 +198,10 @@ public static class Printing
                 fails++;
         }
         if (successes + fails > 1)
-            Console.WriteLine($"\nCompleted: {successes} succeeded, {fails} failed.");
+        {
+            Console.WriteLine();
+            Logger.Info($"Completed: {successes} succeeded, {fails} failed.");
+        }
     }
 
 
@@ -215,7 +218,7 @@ public static class Printing
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
         if (summary && (type == TrackType.Normal || skippedTracks.Length > 0))
-            Console.WriteLine($"Downloading {toBeDownloaded.Count(x => !x.IsNotAudio)} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+            Logger.Info($"Downloading {toBeDownloaded.Count(x => !x.IsNotAudio)} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
 
         if (toBeDownloaded.Count > 0)
         {
@@ -326,6 +329,11 @@ public static class Printing
         {
             try { progress.Refresh(current, item); }
             catch { }
+
+            if (print)
+            {
+                Logger.LogNonConsole(Logger.LogLevel.Info, item);
+            }
         }
         else if ((progress == null || Console.IsOutputRedirected) && print)
         {

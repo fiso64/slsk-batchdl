@@ -26,13 +26,12 @@ public static partial class Program
 
     public static ISoulseekClient client = null!;
     public static IExtractor extractor = null!;
+    public static Searcher searchService = null!;
     public static TrackLists trackLists = null!;
 
     public static readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public static readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public static readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
-
-    private static Searcher searchService = null!;
 
     public static async Task Main(string[] args)
     {
@@ -40,11 +39,10 @@ public static partial class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Help.PrintAndExitIfNeeded(args);
 
+        Logger.SetupExceptionHandling();
         Logger.AddConsole();
 
         var config = new Config(args);
-
-        Logger.SetConsoleLogLevel(config.logLevel);
 
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
@@ -689,6 +687,7 @@ public static partial class Program
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
+                    Console.WriteLine();
                     Logger.Info("Getting all files in folder...");
 
                     int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
@@ -712,7 +711,8 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Logger.Info("\nDownload cancelled. ");
+                    Console.WriteLine();
+                    Logger.Info("Download cancelled. ");
 
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
@@ -776,7 +776,7 @@ public static partial class Program
         
         if (config.albumArtOnly || succeeded && config.albumArtOption != AlbumArtOption.Default)
         {
-            Logger.Info($"\nDownloading additional images:");
+            Logger.Info($"Downloading additional images:");
             additionalImages = await DownloadImages(config, tle, tle.list, config.albumArtOption, tle.list[index], organizer);
             tracks?.AddRange(additionalImages);
         }
@@ -796,6 +796,11 @@ public static partial class Program
     static void OnAlbumFail(List<Track>? tracks, bool deleteDownloaded, Config config)
     {
         if (tracks == null) return;
+
+        if (deleteDownloaded)
+            Logger.Info($"Deleting album files");
+        else if (config.failedAlbumPath.Length > 0)
+            Logger.Info($"Moving album files to {config.failedAlbumPath}");
 
         foreach (var track in tracks)
         {
@@ -970,7 +975,8 @@ public static partial class Program
             {
                 if (userCancelled)
                 {
-                    Logger.Info("\nDownload cancelled. ");
+                    Console.WriteLine();
+                    Logger.Info("Download cancelled. ");
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
                         Console.Write("Delete files? [Y/n] (default: Yes): ");
@@ -1032,7 +1038,15 @@ public static partial class Program
             }
             catch (Exception ex)
             {
-                Logger.DebugError($"{ex}");
+                if (ex is not OperationCanceledException)
+                {
+                    Logger.DebugError($"{ex}");
+                }
+                else
+                {
+                    Logger.Debug($"Cancelled: {track}");
+                }
+
                 if (!IsConnectedAndLoggedIn())
                 {
                     continue;
@@ -1389,6 +1403,7 @@ public static partial class Program
                                 {
                                     if ((DateTime.Now - val.UpdateLastChangeTime()).TotalMilliseconds > val.tle.config.maxStaleTime)
                                     {
+                                        Logger.Debug($"Cancelling stale download: {val.displayText}");
                                         val.stalled = true;
                                         val.UpdateText();
 
@@ -1673,14 +1688,11 @@ public static partial class Program
         }
     }
 
-
-
-
     public static async Task WaitForLogin(Config config)
     {
         while (true)
         {
-            Logger.Debug($"Wait for login, state: {client.State}");
+            Logger.Trace($"Wait for login, state: {client.State}");
             if (IsConnectedAndLoggedIn())
                 break;
             await Task.Delay(1000);

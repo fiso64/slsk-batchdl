@@ -1265,8 +1265,17 @@ public class Config
                     case "-v":
                     case "--verbose":
                     case "--debug":
-                        var yes = getFlag(ref i);
-                        if (yes) logLevel = Logger.LogLevel.Debug;
+                        if (getFlag(ref i))
+                        {
+                            logLevel = Logger.LogLevel.Debug;
+                            Logger.SetConsoleLogLevel(logLevel);
+                        }
+                        break;
+                    case "--lf":
+                    case "--log-file":
+                        logFilePath = getParameter(ref i);
+                        if (logFilePath.Length > 0)
+                            Logger.AddOrReplaceFile(Utils.GetFullPath(Utils.ExpandVariables(logFilePath)));
                         break;
                     case "--sc":
                     case "--strict":
