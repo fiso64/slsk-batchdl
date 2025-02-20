@@ -621,7 +621,7 @@ sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results
 <br>
 
 #### Advanced example: Automatic wishlist downloader
-Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list):
+Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list-file):
 ```
 "Artist - My Favorite Song"            format=flac
 a:"Artist - Some Album"                strict-album=true;album-track-count=5
