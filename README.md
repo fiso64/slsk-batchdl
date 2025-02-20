@@ -37,182 +37,182 @@ Usage: sldl <input> [OPTIONS]
 ```
 #### Required Arguments
 ```
-    <input>                        A url, search string, or path to a local CSV file.
-                                   Run `--help input` to view the accepted inputs.
-                                   Can also be passed with -i, --input <input>
-    --user <username>              Soulseek username
-    --pass <password>              Soulseek password
+<input>                         A url, search string, or path to a local CSV file.
+                                Run `--help input` to view the accepted inputs.
+                                Can also be passed with -i, --input <input>
+--user <username>               Soulseek username
+--pass <password>               Soulseek password
 ```
 #### General Options
 ```
-    -p, --path <path>              Download directory
-    --input-type <type>            [csv|youtube|spotify|bandcamp|string|list]
-    --name-format <format>         Name format for downloaded tracks. See `--help name-format`
-        
-    -n, --number <maxtracks>       Download the first n tracks of a playlist
-    -o, --offset <offset>          Skip a specified number of tracks
-    -r, --reverse                  Download tracks in reverse order
-    -c, --config <path>            Set config file location. Set to 'none' to ignore config
-    --profile <names>              Configuration profile(s) to use. See `--help config`.
-    --concurrent-downloads <num>   Max concurrent downloads (default: 2)
-    --write-playlist               Create an m3u playlist file in the output directory
-    --playlist-path <path>         Override default path for m3u playlist file
+-p, --path <path>               Download directory
+--input-type <type>             [csv|youtube|spotify|bandcamp|string|list]
+--name-format <format>          Name format for downloaded tracks. See `--help name-format`
+    
+-n, --number <maxtracks>        Download the first n tracks of a playlist
+-o, --offset <offset>           Skip a specified number of tracks
+-r, --reverse                   Download tracks in reverse order
+-c, --config <path>             Set config file location. Set to 'none' to ignore config
+--profile <names>               Configuration profile(s) to use. See `--help config`.
+--concurrent-downloads <num>    Max concurrent downloads (default: 2)
+--write-playlist                Create an m3u playlist file in the output directory
+--playlist-path <path>          Override default path for m3u playlist file
 
-    --no-skip-existing             Do not skip downloaded tracks
-    --no-write-index               Do not create a file indexing all downloaded tracks
-    --index-path <path>            Override default path for sldl index
-    --skip-check-cond              Check file conditions when skipping existing files
-    --skip-check-pref-cond         Check preferred conditions when skipping existing files  
-    --skip-music-dir <path>        Also skip downloading tracks found in a music library by
-                                   comparing filenames. Not 100% reliable.
-    --skip-not-found               Skip searching for tracks that weren't found on Soulseek
-                                   during the last run.
-        
-    --listen-port <port>           Port for incoming connections (default: 49998)
-    --on-complete <command>        Run a command when a download completes. See `--help
-                                   on-complete`
+--no-skip-existing              Do not skip downloaded tracks
+--no-write-index                Do not create a file indexing all downloaded tracks
+--index-path <path>             Override default path for sldl index
+--skip-check-cond               Check file conditions when skipping existing files
+--skip-check-pref-cond          Check preferred conditions when skipping existing files  
+--skip-music-dir <path>         Also skip downloading tracks found in a music library by
+                                comparing filenames. Not 100% reliable.
+--skip-not-found                Skip searching for tracks that weren't found on Soulseek
+                                during the last run.
+    
+--listen-port <port>            Port for incoming connections (default: 49998)
+--on-complete <command>         Run a command when a download completes. See `--help
+                                on-complete`
 
-    -v, --verbose                  Print extra debug info
-    --log-file <path>              Write debug info to a specified file
-    --no-progress                  Disable progress bars/percentages, only simple printing
-    --print <option>               Print tracks or search results instead of downloading:
-                                    'tracks': Print all tracks to be downloaded
-                                    'tracks-full': Print extended information about all tracks
-                                    'results': Print search results satisfying file conditions
-                                    'results-full': Print search results including full paths.
+-v, --verbose                   Print extra debug info
+--log-file <path>               Write debug info to a specified file
+--no-progress                   Disable progress bars/percentages, only simple printing
+--print <option>                Print tracks or search results instead of downloading:
+                                'tracks': Print all tracks to be downloaded
+                                'tracks-full': Print extended information about all tracks
+                                'results': Print search results satisfying file conditions
+                                'results-full': Print search results including full paths.
 ```
 #### Search Options
 ```
-    --fast-search                  Begin downloading as soon as a file satisfying the preferred
-                                   conditions is found. Only for normal download mode.
-    --remove-ft                    Remove 'feat.' and everything after before searching
-    --no-remove-special-chars      Do not remove special characters before searching
-    --remove-brackets              Remove square brackets and their contents before searching
-    --regex <regex>                Remove a regexp from all track titles and artist names.
-                                   Optionally specify a replacement regex after a semicolon.
-                                   Add 'T:', 'A:' or 'L:' at the start to only apply this to
-                                   the track title, artist, or album respectively.
-    --artist-maybe-wrong           Performs an additional search without the artist name.
-                                   Useful for sources like SoundCloud where the "artist"
-                                   could just be an uploader. Note that when downloading a
-                                   YouTube playlist via url, this option is set automatically
-                                   on a per-track basis, so it is best kept off in that case.
-    -d, --desperate                Tries harder to find the desired track by searching for the
-                                   artist/album/title only, then filtering. (slower search)
-    --fails-to-downrank <num>      Number of fails to downrank a user's shares (default: 1)
-    --fails-to-ignore <num>        Number of fails to ban/ignore a user's shares (default: 2)
+--fast-search                   Begin downloading as soon as a file satisfying the preferred
+                                conditions is found. Only for normal download mode.
+--remove-ft                     Remove 'feat.' and everything after before searching
+--no-remove-special-chars       Do not remove special characters before searching
+--remove-brackets               Remove square brackets and their contents before searching
+--regex <regex>                 Remove a regexp from all track titles and artist names.
+                                Optionally specify a replacement regex after a semicolon.
+                                Add 'T:', 'A:' or 'L:' at the start to only apply this to
+                                the track title, artist, or album respectively.
+--artist-maybe-wrong            Performs an additional search without the artist name.
+                                Useful for sources like SoundCloud where the "artist"
+                                could just be an uploader. Note that when downloading a
+                                YouTube playlist via url, this option is set automatically
+                                on a per-track basis, so it is best kept off in that case.
+-d, --desperate                 Tries harder to find the desired track by searching for the
+                                artist/album/title only, then filtering. (slower search)
+--fails-to-downrank <num>       Number of fails to downrank a user's shares (default: 1)
+--fails-to-ignore <num>         Number of fails to ban/ignore a user's shares (default: 2)
 
-    --yt-dlp                       Use yt-dlp to download tracks that weren't found on
-                                   Soulseek. yt-dlp must be available from the command line.
-    --yt-dlp-argument <str>        The command line arguments when running yt-dlp. Default:
-                                   "{id}" -f bestaudio/best -cix -o "{savepath}.%(ext)s"
-                                   Available vars are: {id}, {savedir}, {savepath} (w/o ext).
-                                   Note that -x causes yt-dlp to download webms in case ffmpeg
-                                   is unavailable.
+--yt-dlp                        Use yt-dlp to download tracks that weren't found on
+                                Soulseek. yt-dlp must be available from the command line.
+--yt-dlp-argument <str>         The command line arguments when running yt-dlp. Default:
+                                "{id}" -f bestaudio/best -cix -o "{savepath}.%(ext)s"
+                                Available vars are: {id}, {savedir}, {savepath} (w/o ext).
+                                Note that -x causes yt-dlp to download webms in case ffmpeg
+                                is unavailable.
 
-    --search-timeout <ms>          Max search time in ms (default: 6000)
-    --max-stale-time <ms>          Max download time without progress in ms (default: 30000)
-    --searches-per-time <num>      Max searches per time interval. Higher values may cause
-                                   30-minute bans, see `--help search`. (default: 34)
-    --searches-renew-time <sec>    Controls how often available searches are replenished.
-                                   See `--help search`. (default: 220)
+--search-timeout <ms>           Max search time in ms (default: 6000)
+--max-stale-time <ms>           Max download time without progress in ms (default: 30000)
+--searches-per-time <num>       Max searches per time interval. Higher values may cause
+                                30-minute bans, see `--help search`. (default: 34)
+--searches-renew-time <sec>     Controls how often available searches are replenished.
+                                See `--help search`. (default: 220)
 ```
 #### Spotify Options
 ```
-    --spotify-id <id>              Spotify client ID
-    --spotify-secret <secret>      Spotify client secret
-    --spotify-token <token>        Spotify access token
-    --spotify-refresh <token>      Spotify refresh token
-    --remove-from-source           Remove downloaded tracks from source playlist
+--spotify-id <id>               Spotify client ID
+--spotify-secret <secret>       Spotify client secret
+--spotify-token <token>         Spotify access token
+--spotify-refresh <token>       Spotify refresh token
+--remove-from-source            Remove downloaded tracks from source playlist
 ```
 #### YouTube Options 
 ```
-    --youtube-key <key>            Youtube data API key
-    --get-deleted                  Attempt to retrieve titles of deleted videos from wayback
-                                   machine. Requires yt-dlp.
-    --deleted-only                 Only retrieve & download deleted music.
+--youtube-key <key>             Youtube data API key
+--get-deleted                   Attempt to retrieve titles of deleted videos from wayback
+                                machine. Requires yt-dlp.
+--deleted-only                  Only retrieve & download deleted music.
 ```
 #### CSV File Options
 ```
-    --artist-col                   Artist column name
-    --title-col                    Track title column name
-    --album-col                    Album column name
-    --length-col                   Track length column name
-    --album-track-count-col        Album track count column name (sets --album-track-count)
-    --yt-desc-col                  Youtube description column (improves --yt-parse)
-    --yt-id-col                    Youtube video id column (improves --yt-parse)
+--artist-col                    Artist column name
+--title-col                     Track title column name
+--album-col                     Album column name
+--length-col                    Track length column name
+--album-track-count-col         Album track count column name (sets --album-track-count)
+--yt-desc-col                   Youtube description column (improves --yt-parse)
+--yt-id-col                     Youtube video id column (improves --yt-parse)
 
-    --time-format <format>         Time format in Length column of the csv file (e.g h:m:s.ms
-                                   for durations like 1:04:35.123). Default: s
-    --yt-parse                     Enable if the CSV contains YouTube video titles and channel
-                                   names; attempt to parse them into title and artist names.
-    --remove-from-source           Remove downloaded tracks from source CSV file
+--time-format <format>          Time format in Length column of the csv file (e.g h:m:s.ms
+                                for durations like 1:04:35.123). Default: s
+--yt-parse                      Enable if the CSV contains YouTube video titles and channel
+                                names; attempt to parse them into title and artist names.
+--remove-from-source            Remove downloaded tracks from source CSV file
 ```
 #### File Condition Options
 ```
-    --format <formats>             Accepted file format(s), comma-separated, without periods
-    --length-tol <sec>             Length tolerance in seconds
-    --min-bitrate <rate>           Minimum file bitrate
-    --max-bitrate <rate>           Maximum file bitrate
-    --min-samplerate <rate>        Minimum file sample rate
-    --max-samplerate <rate>        Maximum file sample rate
-    --min-bitdepth <depth>         Minimum bit depth
-    --max-bitdepth <depth>         Maximum bit depth
-    --strict-title                 File name must contain title
-    --strict-artist                File path must contain artist name
-    --strict-album                 File path must contain album name
-    --banned-users <list>          Comma-separated list of users to ignore
+--format <formats>              Accepted file format(s), comma-separated, without periods
+--length-tol <sec>              Length tolerance in seconds
+--min-bitrate <rate>            Minimum file bitrate
+--max-bitrate <rate>            Maximum file bitrate
+--min-samplerate <rate>         Minimum file sample rate
+--max-samplerate <rate>         Maximum file sample rate
+--min-bitdepth <depth>          Minimum bit depth
+--max-bitdepth <depth>          Maximum bit depth
+--strict-title                  File name must contain title
+--strict-artist                 File path must contain artist name
+--strict-album                  File path must contain album name
+--banned-users <list>           Comma-separated list of users to ignore
 
-    --pref-format <formats>        Preferred file format(s), comma-separated (default: mp3)
-    --pref-length-tol <sec>        Preferred length tolerance in seconds (default: 3)
-    --pref-min-bitrate <rate>      Preferred minimum bitrate (default: 200)
-    --pref-max-bitrate <rate>      Preferred maximum bitrate (default: 2500)
-    --pref-min-samplerate <rate>   Preferred minimum sample rate
-    --pref-max-samplerate <rate>   Preferred maximum sample rate (default: 48000)
-    --pref-min-bitdepth <depth>    Preferred minimum bit depth
-    --pref-max-bitdepth <depth>    Preferred maximum bit depth
-    --pref-banned-users <list>     Comma-separated list of users to downrank
+--pref-format <formats>         Preferred file format(s), comma-separated (default: mp3)
+--pref-length-tol <sec>         Preferred length tolerance in seconds (default: 3)
+--pref-min-bitrate <rate>       Preferred minimum bitrate (default: 200)
+--pref-max-bitrate <rate>       Preferred maximum bitrate (default: 2500)
+--pref-min-samplerate <rate>    Preferred minimum sample rate
+--pref-max-samplerate <rate>    Preferred maximum sample rate (default: 48000)
+--pref-min-bitdepth <depth>     Preferred minimum bit depth
+--pref-max-bitdepth <depth>     Preferred maximum bit depth
+--pref-banned-users <list>      Comma-separated list of users to downrank
 
-    --strict-conditions            Skip files with missing properties instead of accepting by
-                                   default; if --min-bitrate is set, ignores any files with
-                                   unknown bitrate.
+--strict-conditions             Skip files with missing properties instead of accepting by
+                                default; if --min-bitrate is set, ignores any files with
+                                unknown bitrate.
 ```
 #### Album Download Options
 ```
-    -a, --album                    Album download mode: Download a folder
-    -t, --interactive              Interactively select folders. See --help shortcuts.
-    --album-track-count <num>      Specify the exact number of tracks in the album. Add a + or
-                                   - for inequalities, e.g '5+' for five or more tracks.
-    --album-art <option>           Retrieve additional images after downloading the album:
-                                   'default': No additional images
-                                   'largest': Download from the folder with the largest image
-                                   'most': Download from the folder containing the most images
-    --album-art-only               Only download album art for the provided album
-    --no-browse-folder             Do not automatically browse user shares to get all files in
-                                   in the folder
-    --failed-album-path            Path to move all album files to when one of the items from
-                                   the directory fails to download. Set to 'delete' to delete
-                                   the files instead. Set to 'disable' keep them where they 
-                                   are. Default: {configured output dir}/failed
-    --album-parallel-search        Run album searches in parallel, then download sequentially.
+-a, --album                     Album download mode: Download a folder
+-t, --interactive               Interactively select folders. See --help shortcuts.
+--album-track-count <num>       Specify the exact number of tracks in the album. Add a + or
+                                - for inequalities, e.g '5+' for five or more tracks.
+--album-art <option>            Retrieve additional images after downloading the album:
+                                'default': No additional images
+                                'largest': Download from the folder with the largest image
+                                'most': Download from the folder containing the most images
+--album-art-only                Only download album art for the provided album
+--no-browse-folder              Do not automatically browse user shares to get all files in
+                                in the folder
+--failed-album-path             Path to move all album files to when one of the items from
+                                the directory fails to download. Set to 'delete' to delete
+                                the files instead. Set to 'disable' keep them where they 
+                                are. Default: {configured output dir}/failed
+--album-parallel-search         Run album searches in parallel, then download sequentially.
 ```
 #### Aggregate Download Options
 ```
-    -g, --aggregate                Aggregate download mode: Find and download all distinct
-                                   songs associated with the provided artist, album, or title.
-    --aggregate-length-tol <tol>   Max length tolerance in seconds to consider two tracks or
-                                   albums equal. (Default: 3)
-    --min-shares-aggregate <num>   Minimum number of shares of a track or album for it to be
-                                   downloaded in aggregate mode. (Default: 2)
-    --relax-filtering              Slightly relax file filtering in aggregate mode to include
-                                   more results
+-g, --aggregate                 Aggregate download mode: Find and download all distinct
+                                songs associated with the provided artist, album, or title.
+--aggregate-length-tol <tol>    Max length tolerance in seconds to consider two tracks or
+                                albums equal. (Default: 3)
+--min-shares-aggregate <num>    Minimum number of shares of a track or album for it to be
+                                downloaded in aggregate mode. (Default: 2)
+--relax-filtering               Slightly relax file filtering in aggregate mode to include
+                                more results
 ```
 ### Notes
-Acronyms of two- and --three-word-flags are also accepted, e.g. --twf. If the option
+Acronyms of two- and `--three-word-flags` are also accepted, e.g. `--twf`. If the option
 contains the word 'max' then the m should be uppercase. 'bitrate', 'sameplerate' and
-'bitdepth' should be all treated as two separate words, e.g --Mbr for --max-bitrate.
+'bitdepth' should be all treated as two separate words, e.g `--Mbr` for `--max-bitrate`.
 
-Flags can be explicitly disabled by setting them to false, e.g '--interactive false'
+Flags can be explicitly disabled by setting them to false, e.g `--interactive false`.
 
 ## Input types
 
@@ -579,7 +579,14 @@ sldl "spotify-likes"
 
 <br>
 
-Download a youtube playlist, additionally retrieving deleted video names and with yt-dlp fallback:
+Download the album of every song in a spotify playlist:
+```bash
+sldl "https://open.spotify.com/playlist/id" -a
+```
+
+<br>
+
+Download a youtube playlist, retrieving deleted video names and with yt-dlp fallback:
 ```bash
 sldl "https://youtube.com/playlist/id" --get-deleted --yt-dlp
 ```
