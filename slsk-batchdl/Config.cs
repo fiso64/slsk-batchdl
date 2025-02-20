@@ -21,7 +21,6 @@ public class Config
         MaxSampleRate = 48000,
         StrictTitle = true,
         StrictAlbum = true,
-        AcceptNoLength = false,
     };
 
     public string parentDir = Directory.GetCurrentDirectory();

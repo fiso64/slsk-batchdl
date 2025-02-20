@@ -289,6 +289,8 @@ public class Searcher
         // the following loops should preserve the order
         var orderedResults = ResultSorter.OrderedResults(results, track, config, false, false, albumMode: true);
 
+        //Printing.PrintTrackResults(orderedResults, track, true, config.necessaryCond, config.preferredCond);
+
         var discPattern = new Regex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$");
         bool canMatchDiscPattern = !discPattern.IsMatch(track.Album) && !discPattern.IsMatch(track.Artist);
         var directoryStructure = new Dictionary<string, (List<(SlResponse response, SlFile file)> list, int index)>();
@@ -829,16 +831,8 @@ public class Searcher
             else
             {
                 var orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
-                int count = 0;
                 Console.WriteLine();
-                foreach (var (response, file) in orderedResults)
-                {
-                    Console.WriteLine(Printing.DisplayString(track, file, response,
-                        config.PrintResultsFull ? config.necessaryCond : null, config.PrintResultsFull ? config.preferredCond : null,
-                        fullpath: config.PrintResultsFull, infoFirst: true, showSpeed: config.PrintResultsFull));
-                    count += 1;
-                }
-                Printing.WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+                Printing.PrintTrackResults(orderedResults, track, config.PrintResultsFull, config.necessaryCond, config.preferredCond);
             }
 
             Console.WriteLine();

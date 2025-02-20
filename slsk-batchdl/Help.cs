@@ -331,12 +331,11 @@ public static class Help
         pref-max-samplerate = 48000
         pref-strict-title = true
         pref-strict-album = true
-        pref-accept-no-length = false
 
       sldl will therefore prefer mp3 files with bitrate between 200 and 2500 kbps, and whose length
-      differs from the supplied length by no more than 3 seconds. Additionally, it will prefer files
-      whose paths contain the supplied title and album and which have non-null length. Changing the
-      last three preferred conditions is not recommended.  
+      differs from the supplied length by no more than 3 seconds. Moreover, it will prefer files
+      whose paths contain the supplied title and album. Changing the last two preferred conditions is
+      not recommended.  
 
       Note that files satisfying only a subset of the conditions will be preferred over files that don't
       satisfy any condition. Run a search with `--print results-full` to reveal the sorting logic.

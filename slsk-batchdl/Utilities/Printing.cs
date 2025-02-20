@@ -245,6 +245,20 @@ public static class Printing
     }
 
 
+    public static void PrintTrackResults(IEnumerable<(SearchResponse, Soulseek.File)> orderedResults, Track track, bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
+    {
+        int count = 0;
+        foreach (var (response, file) in orderedResults)
+        {
+            Console.WriteLine(Printing.DisplayString(track, file, response,
+                full ? necCond : null, full ? prefCond : null,
+                fullpath: full, infoFirst: true, showSpeed: full));
+            count += 1;
+        }
+        WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+    }
+
+
     public static int PrintAlbum(List<Track> albumTracks, bool indices = false)
     {
         if (albumTracks.Count == 0 && albumTracks[0].Downloads.Count == 0)
