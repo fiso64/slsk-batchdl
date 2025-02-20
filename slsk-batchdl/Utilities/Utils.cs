@@ -588,6 +588,21 @@ public static class Utils
         return d;
     }
 
+    public static int IndexOf<TSource>(this IEnumerable<TSource> source, Func<TSource, bool> predicate)
+    {
+        var index = 0;
+        foreach (var item in source)
+        {
+            if (predicate.Invoke(item))
+            {
+                return index;
+            }
+            index++;
+        }
+
+        return -1;
+    }
+
     public static int Levenshtein(string source, string target)
     {
         if (source.Length == 0)

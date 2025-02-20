@@ -628,6 +628,7 @@ public static partial class Program
         var retrievedFolders = new HashSet<string>();
         bool succeeded = false;
         string? soulseekDir = null;
+        string? filterStr = null;
         int index = 0;
 
         async Task runAlbumDownloads(List<Track> tracks, SemaphoreSlim semaphore, CancellationTokenSource cts)
@@ -647,12 +648,18 @@ public static partial class Program
 
             if (config.interactiveMode)
             {
-                (index, tracks, retrieveCurrent) = await InteractiveModeAlbum(tle, tle.list, true, retrievedFolders);
+                (index, tracks, retrieveCurrent, filterStr) = await InteractiveModeAlbum(tle, tle.list, true, retrievedFolders, filterStr);
                 if (index == -1) break;
                 if (index == -2) Environment.Exit(0);
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(filterStr))
+                {
+                    index = tle.list.IndexOf(ls => ls.Any(x => x.FirstDownload.Filename.ContainsIgnoreCase(filterStr)));
+                    if (index == -1) break;
+                }
+
                 tracks = tle.list[index];
             }
 
@@ -909,6 +916,8 @@ public static partial class Program
             return true;
         }
 
+        string? filterStr = null;
+
         while (albumArtLists.Count > 0)
         {
             int index = 0;
@@ -917,12 +926,18 @@ public static partial class Program
 
             if (config.interactiveMode)
             {
-                (index, tracks, _) = await InteractiveModeAlbum(tle, albumArtLists, false, null);
+                (index, tracks, _, filterStr) = await InteractiveModeAlbum(tle, albumArtLists, false, null, filterStr);
                 if (index == -1) break;
                 if (index == -2) Environment.Exit(0);
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(filterStr))
+                {
+                    index = albumArtLists.IndexOf(ls => ls.Any(x => x.FirstDownload.Filename.ContainsIgnoreCase(filterStr)));
+                    if (index == -1) break;
+                }
+
                 tracks = albumArtLists[index];
             }
 
@@ -1138,7 +1153,7 @@ public static partial class Program
     }
 
 
-    static async Task<(int index, List<Track> tracks, bool retrieveFolder)> InteractiveModeAlbum(TrackListEntry tle, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders)
+    static async Task<(int index, List<Track> tracks, bool retrieveFolder, string? filterStr)> InteractiveModeAlbum(TrackListEntry tle, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders, string? filterStr = null)
     {
         int aidx = 0;
 
@@ -1256,15 +1271,34 @@ public static partial class Program
 
         Console.WriteLine();
         int savedPos = Console.CursorTop;
+        var original = list.Select((x, i) => new { List = x, Index = i }).ToList();
+        var filterList = original;
+
+        if (filterStr != null)
+        {
+            filterList = original.Where(ls => ls.List.Any(track => track.FirstDownload.Filename.ContainsIgnoreCase(filterStr))).ToList();
+            if (filterList.Count == 0)
+            {
+                Console.WriteLine($"No matches for query: {filterStr}");
+                filterStr = null;
+                filterList = original;
+            }
+        }
 
         while (true)
         {
-            var tracks = list[aidx];
+            var index = filterList[aidx].Index;
+            var tracks = filterList[aidx].List;
             var response = tracks[0].FirstResponse;
             var username = tracks[0].FirstUsername;
 
+            if (filterStr != null)
+            {
+                Console.WriteLine($"Filter: '{filterStr}'");
+                Console.WriteLine();
+            }
 
-            Printing.WriteLine($"[{aidx + 1} / {list.Count}]", ConsoleColor.DarkGray);
+            Printing.WriteLine($"[{aidx + 1} / {filterList.Count}]", ConsoleColor.DarkGray);
 
             Printing.PrintAlbum(tracks, indices: true);
             Console.WriteLine();
@@ -1277,34 +1311,32 @@ public static partial class Program
             string options = "";
             string folder = "";
 
-            if (command.StartsWith("d:"))
+            if (command.StartsWith("d:") || command.StartsWith("f:"))
             {
                 options = command.Substring(2).Trim();
-                command = "d";
+                command = command[0].ToString();
             }
 
             switch (command)
             {
                 case "p":
-                    var prevTracks = list[aidx];
                     clearOutput(savedPos);
-                    aidx = (aidx + list.Count - 1) % list.Count;
+                    aidx = (aidx + filterList.Count - 1) % filterList.Count;
                     break;
                 case "n":
-                    var currTracks = list[aidx];
                     clearOutput(savedPos);
-                    aidx = (aidx + 1) % list.Count;
+                    aidx = (aidx + 1) % filterList.Count;
                     break;
                 case "s":
-                    return (-1, new List<Track>(), false);
+                    return (-1, new List<Track>(), false, null);
                 case "q":
-                    return (-2, new List<Track>(), false);
+                    return (-2, new List<Track>(), false, null);
                 case "y":
                     Console.WriteLine("Exiting interactive mode");
                     tle.config.interactiveMode = false;
                     tle.config.UpdateProfiles(tle);
                     tle.PrintLines();
-                    return (aidx, tracks, true);
+                    return (index, tracks, true, filterStr);
                 case "r":
                     if (!retrieveFolder)
                         goto Loop;
@@ -1343,7 +1375,7 @@ public static partial class Program
                     goto Loop;
                 case "d":
                     if (options.Length == 0)
-                        return (aidx, tracks, true);
+                        return (index, tracks, true, filterStr);
                     try
                     {
                         var indices = options.Split(',')
@@ -1360,15 +1392,40 @@ public static partial class Program
                             })
                             .Distinct()
                             .ToArray();
-                        return (aidx, indices.Select(i => tracks[i - 1]).ToList(), false);
+                        return (index, indices.Select(i => tracks[i - 1]).ToList(), false, filterStr);
                     }
                     catch
                     {
                         Console.WriteLine("Error: Invalid range");
                         goto Loop;
                     }
+                case "f":
+                    aidx = 0;
+                    if (string.IsNullOrWhiteSpace(options))
+                    {
+                        filterList = original;
+                        filterStr = null;
+                        clearOutput(savedPos);
+                    }
+                    else
+                    {
+                        filterList = original.Where(ls => ls.List.Any(track => track.FirstDownload.Filename.ContainsIgnoreCase(options))).ToList();
+                        if (filterList.Count == 0)
+                        {
+                            Console.WriteLine($"No matches for query: {options}");
+                            filterStr = null;
+                            filterList = original;
+                            goto Loop;
+                        }
+                        else
+                        {
+                            filterStr = options;
+                            clearOutput(savedPos);
+                        }
+                    }
+                    break;
                 case "":
-                    return (aidx, tracks, true);
+                    return (index, tracks, true, filterStr);
                 default:
                     Console.WriteLine($"Error: Invalid input {userInputStr}");
                     goto Loop;
