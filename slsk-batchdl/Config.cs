@@ -162,8 +162,11 @@ public class Config
 
         if (profileIndex != -1)
         {
+            if (profileIndex + 1 >= arguments.Length)
+                InputError("Option requires parameter");
+
             profile = arguments[profileIndex + 1];
-            if (profile == "help")
+            if (profile == "help" || profile == "list")
             {
                 ListProfiles();
                 Environment.Exit(0);
@@ -691,7 +694,7 @@ public class Config
             flag = getFlag(ref i, trueVal);
         }
 
-        string getParameter(ref int i)
+        string GetParameter(ref int i)
         {
             i++;
             if (i < 0 || i >= args.Count) 
@@ -701,14 +704,14 @@ public class Config
 
         int getIntParameter(ref int i)
         {
-            if (!int.TryParse(getParameter(ref i), out var res))
+            if (!int.TryParse(GetParameter(ref i), out var res))
                 InputError("Option requires integer parameter");
             return res;
         }
 
         double getDoubleParameter(ref int i)
         {
-            if (!double.TryParse(getParameter(ref i), out var res))
+            if (!double.TryParse(GetParameter(ref i), out var res))
                 InputError("Option requires double parameter");
             return res;
         }
@@ -723,11 +726,11 @@ public class Config
                 {
                     case "-i":
                     case "--input":
-                        input = getParameter(ref i);
+                        input = GetParameter(ref i);
                         break;
                     case "--it":
                     case "--input-type":
-                        inputType = getParameter(ref i).ToLower().Trim() switch
+                        inputType = GetParameter(ref i).ToLower().Trim() switch
                         {
                             "none" => InputType.None,
                             "csv" => InputType.CSV,
@@ -742,11 +745,11 @@ public class Config
                     case "-p":
                     case "--path":
                     case "--parent":
-                        parentDir = getParameter(ref i);
+                        parentDir = GetParameter(ref i);
                         break;
                     case "-c":
                     case "--config":
-                        confPath = getParameter(ref i);
+                        confPath = GetParameter(ref i);
                         break;
                     case "--nc":
                     case "--no-config":
@@ -754,7 +757,7 @@ public class Config
                         break;
                     case "--smd":
                     case "--skip-music-dir":
-                        skipMusicDir = getParameter(ref i);
+                        skipMusicDir = GetParameter(ref i);
                         break;
                     case "-g":
                     case "--aggregate":
@@ -771,37 +774,37 @@ public class Config
                         break;
                     case "--si":
                     case "--spotify-id":
-                        spotifyId = getParameter(ref i);
+                        spotifyId = GetParameter(ref i);
                         break;
                     case "--ss":
                     case "--spotify-secret":
-                        spotifySecret = getParameter(ref i);
+                        spotifySecret = GetParameter(ref i);
                         break;
                     case "--stk":
                     case "--spotify-token":
-                        spotifyToken = getParameter(ref i);
+                        spotifyToken = GetParameter(ref i);
                         break;
                     case "--str":
                     case "--spotify-refresh":
-                        spotifyRefresh = getParameter(ref i);
+                        spotifyRefresh = GetParameter(ref i);
                         break;
                     case "--yk":
                     case "--youtube-key":
-                        ytKey = getParameter(ref i);
+                        ytKey = GetParameter(ref i);
                         break;
                     case "-l":
                     case "--login":
-                        var login = getParameter(ref i).Split(';', 2);
+                        var login = GetParameter(ref i).Split(';', 2);
                         username = login[0];
                         password = login[1];
                         break;
                     case "--user":
                     case "--username":
-                        username = getParameter(ref i);
+                        username = GetParameter(ref i);
                         break;
                     case "--pass":
                     case "--password":
-                        password = getParameter(ref i);
+                        password = GetParameter(ref i);
                         break;
                     case "--rl":
                     case "--random-login":
@@ -809,36 +812,36 @@ public class Config
                         break;
                     case "--ac":
                     case "--artist-col":
-                        artistCol = getParameter(ref i);
+                        artistCol = GetParameter(ref i);
                         break;
                     case "--tc":
                     case "--track-col":
                     case "--title-col":
-                        titleCol = getParameter(ref i);
+                        titleCol = GetParameter(ref i);
                         break;
                     case "--alc":
                     case "--album-col":
-                        albumCol = getParameter(ref i);
+                        albumCol = GetParameter(ref i);
                         break;
                     case "--ydc":
                     case "--yt-desc-col":
-                        descCol = getParameter(ref i);
+                        descCol = GetParameter(ref i);
                         break;
                     case "--atcc":
                     case "--album-track-count-col":
-                        trackCountCol = getParameter(ref i);
+                        trackCountCol = GetParameter(ref i);
                         break;
                     case "--yic":
                     case "--yt-id-col":
-                        ytIdCol = getParameter(ref i);
+                        ytIdCol = GetParameter(ref i);
                         break;
                     case "--lc":
                     case "--length-col":
-                        lengthCol = getParameter(ref i);
+                        lengthCol = GetParameter(ref i);
                         break;
                     case "--tf":
                     case "--time-format":
-                        timeUnit = getParameter(ref i);
+                        timeUnit = GetParameter(ref i);
                         break;
                     case "-n":
                     case "--number":
@@ -850,14 +853,14 @@ public class Config
                         break;
                     case "--nf":
                     case "--name-format":
-                        nameFormat = getParameter(ref i);
+                        nameFormat = GetParameter(ref i);
                         break;
                     case "--irs":
                     case "--invalid-replace-str":
-                        invalidReplaceStr = getParameter(ref i);
+                        invalidReplaceStr = GetParameter(ref i);
                         break;
                     case "--print":
-                        printOption = getParameter(ref i).ToLower().Trim() switch
+                        printOption = GetParameter(ref i).ToLower().Trim() switch
                         {
                             "none" => PrintOption.None,
                             "tracks" => PrintOption.Tracks,
@@ -924,7 +927,7 @@ public class Config
                         break;
                     case "--re":
                     case "--regex":
-                        string s = getParameter(ref i).Replace("\\;", "<<semicol>>");
+                        string s = GetParameter(ref i).Replace("\\;", "<<semicol>>");
                         string applyTo = "TAL";
 
                         if (s.Length > 2 && s[1] == ':' && (s[0] == 'T' || s[0] == 'A' || s[0] == 'L'))
@@ -967,7 +970,7 @@ public class Config
                         break;
                     case "--pp":
                     case "--playlist-path":
-                        m3uFilePath = getParameter(ref i);
+                        m3uFilePath = GetParameter(ref i);
                         break;
                     case "--nwi":
                     case "--no-write-index":
@@ -982,7 +985,7 @@ public class Config
                     case "--ip":
                     case "--index-path":
                         hasConfiguredIndex = true;
-                        indexFilePath = getParameter(ref i);
+                        indexFilePath = GetParameter(ref i);
                         break;
                     case "--lp":
                     case "--port":
@@ -1021,7 +1024,7 @@ public class Config
                         break;
                     case "--atc":
                     case "--album-track-count":
-                        string a = getParameter(ref i);
+                        string a = GetParameter(ref i);
                         if (a == "-1")
                         {
                             minAlbumTrackCount = -1;
@@ -1065,7 +1068,7 @@ public class Config
                         break;
                     case "--aa":
                     case "--album-art":
-                        albumArtOption = getParameter(ref i).ToLower().Trim() switch
+                        albumArtOption = GetParameter(ref i).ToLower().Trim() switch
                         {
                             "default" => AlbumArtOption.Default,
                             "largest" => AlbumArtOption.Largest,
@@ -1084,7 +1087,7 @@ public class Config
                         break;
                     case "--fap":
                     case "--failed-album-path":
-                        failedAlbumPath = getParameter(ref i);
+                        failedAlbumPath = GetParameter(ref i);
                         break;
                     case "-t":
                     case "--interactive":
@@ -1093,7 +1096,7 @@ public class Config
                     case "--pf":
                     case "--paf":
                     case "--pref-format":
-                        preferredCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        preferredCond.Formats = GetParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--plt":
@@ -1145,11 +1148,11 @@ public class Config
                         break;
                     case "--pbu":
                     case "--pref-banned-users":
-                        preferredCond.BannedUsers = getParameter(ref i).Split(',');
+                        preferredCond.BannedUsers = GetParameter(ref i).Split(',');
                         break;
                     case "--af":
                     case "--format":
-                        necessaryCond.Formats = getParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        necessaryCond.Formats = GetParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--lt":
@@ -1196,7 +1199,7 @@ public class Config
                         break;
                     case "--bu":
                     case "--banned-users":
-                        necessaryCond.BannedUsers = getParameter(ref i).Split(',');
+                        necessaryCond.BannedUsers = GetParameter(ref i).Split(',');
                         break;
                     case "--anl":
                     case "--accept-no-length":
@@ -1204,12 +1207,12 @@ public class Config
                         break;
                     case "--cond":
                     case "--conditions":
-                        necessaryCond.AddConditions(ParseConditions(getParameter(ref i)));
+                        necessaryCond.AddConditions(ParseConditions(GetParameter(ref i)));
                         break;
                     case "--pc":
                     case "--pref":
                     case "--preferred-conditions":
-                        preferredCond.AddConditions(ParseConditions(getParameter(ref i)));
+                        preferredCond.AddConditions(ParseConditions(GetParameter(ref i)));
                         break;
                     case "--nmsc":
                     case "--no-modify-share-count":
@@ -1225,7 +1228,7 @@ public class Config
                         break;
                     case "--smod":
                     case "--skip-mode-output-dir":
-                        skipMode = getParameter(ref i).ToLower().Trim() switch
+                        skipMode = GetParameter(ref i).ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
@@ -1235,7 +1238,7 @@ public class Config
                         break;
                     case "--smmd":
                     case "--skip-mode-music-dir":
-                        skipModeMusicDir = getParameter(ref i).ToLower().Trim() switch
+                        skipModeMusicDir = GetParameter(ref i).ToLower().Trim() switch
                         {
                             "name" => SkipMode.Name,
                             "tag" => SkipMode.Tag,
@@ -1273,7 +1276,7 @@ public class Config
                         break;
                     case "--lf":
                     case "--log-file":
-                        logFilePath = getParameter(ref i);
+                        logFilePath = GetParameter(ref i);
                         if (logFilePath.Length > 0)
                             Logger.AddOrReplaceFile(Utils.GetFullPath(Utils.ExpandVariables(logFilePath)));
                         break;
@@ -1285,7 +1288,7 @@ public class Config
                         break;
                     case "--yda":
                     case "--yt-dlp-argument":
-                        ytdlpArgument = getParameter(ref i);
+                        ytdlpArgument = GetParameter(ref i);
                         break;
                     case "-a":
                     case "--album":
@@ -1293,7 +1296,7 @@ public class Config
                         break;
                     case "--oc":
                     case "--on-complete":
-                        var onCompleteStr = getParameter(ref i);
+                        var onCompleteStr = GetParameter(ref i);
                         onComplete = onComplete ?? new List<string>();
                         if (onCompleteStr.TrimStart().StartsWith("+ "))
                         {
@@ -1318,7 +1321,7 @@ public class Config
                         unknownErrorRetries = getIntParameter(ref i);
                         break;
                     case "--profile":
-                        profile = getParameter(ref i);
+                        profile = GetParameter(ref i);
                         break;
                     case "--nbf":
                     case "--no-browse-folder":
