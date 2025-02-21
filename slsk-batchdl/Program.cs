@@ -1187,7 +1187,7 @@ public static partial class Program
                 }
 
                 // On first keypress, check for action keys
-                if (firstKey && "pnyqrs".Contains(key.KeyChar))
+                if (firstKey && "pnyqrsh".Contains(key.KeyChar))
                     return key.KeyChar.ToString();
 
                 // Handle editing keys
@@ -1266,8 +1266,8 @@ public static partial class Program
         string retrieveAll1 = retrieveFolder ? "| [r]            " : "";
         string retrieveAll2 = retrieveFolder ? "| Load All Files " : "";
         Console.WriteLine();
-        Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | [y]              {retrieveAll1}| [s]  | [Esc/q]", ConsoleColor.Green);
-        Printing.WriteLine($" Prev   | Next     | Accept  | Stop Interactive {retrieveAll2}| Skip | Quit", ConsoleColor.Green);
+        Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | {retrieveAll1}| [s]  | [Esc/q] | [h]", ConsoleColor.Green);
+        Printing.WriteLine($" Prev   | Next     | Accept  | {retrieveAll2}| Skip | Quit    | Help", ConsoleColor.Green);
 
         Console.WriteLine();
         int savedPos = Console.CursorTop;
@@ -1294,7 +1294,8 @@ public static partial class Program
 
             if (filterStr != null)
             {
-                Console.WriteLine($"Filter: '{filterStr}'");
+                Printing.Write($"Filter: ", ConsoleColor.White);
+                Printing.Write($"{filterStr}\n", ConsoleColor.Cyan);
                 Console.WriteLine();
             }
 
@@ -1424,6 +1425,11 @@ public static partial class Program
                         }
                     }
                     break;
+                case "h":
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Help.PrintHelp("shortcuts");
+                    Console.ResetColor();
+                    goto Loop;
                 case "":
                     return (index, tracks, true, filterStr);
                 default:

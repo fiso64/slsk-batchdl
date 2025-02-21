@@ -362,6 +362,13 @@ public static class Printing
         Console.ResetColor();
     }
 
+    public static void Write(string value, ConsoleColor color = ConsoleColor.Gray)
+    {
+        Console.ForegroundColor = color;
+        Console.Write(value);
+        Console.ResetColor();
+    }
+
     public static ProgressBar? GetProgressBar(Config config)
     {
         lock (consoleLock)
