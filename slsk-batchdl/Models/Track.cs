@@ -92,10 +92,10 @@ namespace Models
                 }
                 if (!noInfo)
                 {
-                    if (Length > 0)
-                        str += $" ({Length}s)";
                     if (Type == TrackType.Album)
                         str += " (album)";
+                    else if (Length > 0)
+                        str += $" ({Length}s)";
                 }
             }
             else if (!noInfo)

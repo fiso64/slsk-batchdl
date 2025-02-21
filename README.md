@@ -580,7 +580,7 @@ sldl "spotify-likes"
 
 <br>
 
-Download the album of every song in a spotify playlist:
+Download the albums of a spotify playlist:
 ```bash
 sldl "https://open.spotify.com/playlist/id" -a
 ```

@@ -897,6 +897,10 @@ public class Config
                     case "--no-skip-existing":
                         setFlag(ref skipExisting, ref i, false);
                         break;
+                    case "--se":
+                    case "--skip-existing":
+                        setFlag(ref skipExisting, ref i);
+                        break;
                     case "--snf":
                     case "--skip-not-found":
                         setFlag(ref skipNotFound, ref i);
@@ -1225,6 +1229,9 @@ public class Config
                     case "--no-progress":
                         setFlag(ref noProgress, ref i);
                         break;
+                    case "--progress":
+                        setFlag(ref noProgress, ref i, false);
+                        break;
                     case "--smod":
                     case "--skip-mode-output-dir":
                         skipMode = GetParameter(ref i).ToLower().Trim() switch
@@ -1247,6 +1254,10 @@ public class Config
                     case "--nrsc":
                     case "--no-remove-special-chars":
                         setFlag(ref noRemoveSpecialChars, ref i);
+                        break;
+                    case "--rsc":
+                    case "--remove-special-chars":
+                        setFlag(ref noRemoveSpecialChars, ref i, false);
                         break;
                     case "--amw":
                     case "--artist-maybe-wrong":
@@ -1325,6 +1336,10 @@ public class Config
                     case "--nbf":
                     case "--no-browse-folder":
                         setFlag(ref noBrowseFolder, ref i);
+                        break;
+                    case "--bf":
+                    case "--browse-folder":
+                        setFlag(ref noBrowseFolder, ref i, false);
                         break;
                     case "--scc":
                     case "--skip-check-cond":
