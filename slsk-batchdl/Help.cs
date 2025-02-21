@@ -8,8 +8,10 @@
 
 public static class Help
 {
-    const string helpText = @"
-    Usage: sldl <input> [OPTIONS]
+    const string usageText = @"
+      Usage: sldl <input> [OPTIONS]";
+
+    const string helpText = usageText + @"
 
       Required Arguments 
         <input>                        A url, search string, or path to a local CSV file.
@@ -577,8 +579,16 @@ public static class Help
 
     public static void PrintAndExitIfNeeded(string[] args)
     {
+        if (args.Length == 0)
+        {
+            Console.WriteLine(usageText.Trim());
+            Console.WriteLine();
+            Console.WriteLine("Type sldl --help to see a list of all options.");
+            return;
+        }
+
         int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
-        if (args.Length == 0 || helpIdx >= 0)
+        if (helpIdx >= 0)
         {
             PrintHelp(helpIdx + 1 < args.Length ? args[helpIdx + 1] : null);
             Environment.Exit(0);
