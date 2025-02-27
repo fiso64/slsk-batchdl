@@ -562,6 +562,7 @@ d:1,2,3         download specific files
 d:start-end     download a range of files
 f:query         filter folders containing files matching query
 cd ..           load parent folder
+cd subdir       go to subfolder
 ```
 
 ## Examples
@@ -619,9 +620,8 @@ Print all songs by an artist which are not in your library:
 ```bash
 sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results
 ```
-<br>
 
-#### Advanced example: Automatic wishlist downloader
+### Advanced example: Automatic wishlist downloader
 Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list-file):
 ```
 "Artist - My Favorite Song"            format=flac

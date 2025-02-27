@@ -537,6 +537,7 @@ public static class Help
           d:start-end     download a range of files
           f:query         filter folders containing files matching query
           cd ..           load parent folder
+          cd subdir       go to subfolder
     ";
 
     public static void PrintHelp(string? option = null)
