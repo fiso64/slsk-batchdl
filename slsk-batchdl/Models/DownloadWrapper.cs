@@ -47,7 +47,7 @@ namespace Models
 
         public void UpdateText()
         {
-            float? percentage = bytesTransferred / (float)file.Size;
+            float percentage = file.Size > 0 ? bytesTransferred / (float)file.Size : 0;
             queued = (transfer?.State & TransferStates.Queued) != 0;
             string bar;
             string state;
@@ -81,7 +81,10 @@ namespace Models
                     state = flag.ToString();
 
                     if (flag == TransferStates.Succeeded)
+                    {
                         success = true;
+                        if (file.Size < 0) percentage = 1;
+                    }
 
                     bar = "";
                 }
@@ -108,12 +111,14 @@ namespace Models
 
             bool needSimplePrintUpdate = (downloading && !updatedTextDownload) || (success && !updatedTextSuccess);
             bar = needSimplePrintUpdate ? "" : bar;
-            string txt = $"{bar}{state}:".PadRight(14) + $" {displayText}";
+
+            string mbStr = file.Size <= 0 && bytesTransferred > 0 ? $" ({bytesTransferred / (float)(1024 * 1024):F2}MB)" : "";
+            string txt = $"{bar}{state}{mbStr}:".PadRight(14) + $" {displayText}";
             updatedTextDownload |= downloading;
             updatedTextSuccess |= success;
 
             Console.ResetColor();
-            Printing.RefreshOrPrint(progress, (int)((percentage ?? 0) * 100), txt, needSimplePrintUpdate, needSimplePrintUpdate);
+            Printing.RefreshOrPrint(progress, (int)(percentage * 100), txt, needSimplePrintUpdate, needSimplePrintUpdate);
 
         }
 

@@ -14,6 +14,7 @@ namespace Models
         public int MinAlbumTrackCount = -1;
         public int MaxAlbumTrackCount = -1;
         public bool IsNotAudio = false;
+        public bool IsDirectLink = false;
         public string DownloadPath = "";
         public string Other = "";
         public int ItemNumber = -1;
@@ -53,8 +54,10 @@ namespace Models
         {
             if (Type == TrackType.Album)
                 return $"{Artist};{Album};{(int)Type}";
-            else
+            else if (!IsDirectLink)
                 return $"{Artist};{Album};{Title};{Length};{(int)Type}";
+            else
+                return URI;
         }
 
         public override string ToString()
@@ -66,6 +69,9 @@ namespace Models
         {
             if (IsNotAudio && Downloads != null && Downloads.Count > 0)
                 return $"{Utils.GetFileNameSlsk(Downloads[0].Item2.Filename)}";
+
+            if (IsDirectLink)
+                return URI;
 
             string str = Artist;
             if (Type == TrackType.Normal && Title.Length == 0 && Downloads != null && Downloads.Count > 0)

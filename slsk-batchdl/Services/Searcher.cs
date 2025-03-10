@@ -415,6 +415,34 @@ public class Searcher
     }
 
 
+    public async Task<List<List<Track>>> GetDirectLinkAlbumFiles(Track track)
+    {
+        var parts = track.URI["slsk://".Length..].Split('/', 2);
+        var username = parts[0];
+        var directory = parts[1].TrimEnd('/').Replace('/', '\\');
+        
+        var files = await GetAllFilesInFolder(username, directory);
+
+        var res = new List<List<Track>> { new List<Track>() };
+        var response = new SearchResponse(username, -1, false, -1, -1, null);
+
+        foreach (var x in files)
+        {
+            var path = x.dir.TrimEnd('\\') + '\\' + x.file.Filename;
+            var file = new Soulseek.File(x.file.Code, path, x.file.Size, x.file.Extension);
+
+            res[0].Add(new Track()
+            {
+                Length = x.file.Length ?? -1,
+                IsNotAudio = !Utils.IsMusicFile(x.file.Filename),
+                Downloads = new() { (response, file) },
+            });
+        }
+
+        return res;
+    }
+
+
     public async Task<List<Track>> GetAggregateTracks(Track track, ResponseData responseData, Config config)
     {
         var results = new SlDictionary();

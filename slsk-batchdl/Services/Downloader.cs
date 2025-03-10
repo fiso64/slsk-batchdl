@@ -7,6 +7,7 @@ using File = System.IO.File;
 using Directory = System.IO.Directory;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
+using System.Diagnostics;
 
 
 public class Downloader
@@ -58,7 +59,7 @@ public class Downloader
                 {
                     await client.DownloadAsync(response.Username, file.Filename,
                         () => Task.FromResult((Stream)outputStream),
-                        file.Size, startOffset: outputStream.Position,
+                        file.Size == -1 ? null : file.Size, startOffset: outputStream.Position,
                         options: transferOptions, cancellationToken: downloadCts.Token);
 
                     break;

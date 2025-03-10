@@ -113,6 +113,10 @@ public static partial class Program
     {
         static void preprocessTrack(Config config, Track track)
         {
+            if (track.IsDirectLink)
+            {
+                return;
+            }
             if (config.removeFt)
             {
                 track.Title = track.Title.RemoveFt();
@@ -345,7 +349,22 @@ public static partial class Program
 
                     if (tle.source.Type == TrackType.Album)
                     {
-                        tle.list = await searchService.GetAlbumDownloads(tle.source, responseData, config);
+                        if (!tle.source.IsDirectLink)
+                        {
+                            tle.list = await searchService.GetAlbumDownloads(tle.source, responseData, config);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                Printing.RefreshOrPrint(progress, 0, "Getting files in folder..", true);
+                                tle.list = await searchService.GetDirectLinkAlbumFiles(tle.source);
+                            }
+                            catch (UserOfflineException e)
+                            {
+                                Logger.Error("Error: " + e.Message);
+                            }
+                        }
                         foundSomething = tle.list.Count > 0 && tle.list[0].Count > 0;
                     }
                     else if (tle.source.Type == TrackType.Aggregate)
@@ -665,6 +684,9 @@ public static partial class Program
             }
 
             soulseekDir = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+
+            if (tle.source.IsDirectLink)
+                retrievedFolders.Add(soulseekDir);
 
             organizer.SetRemoteCommonDir(soulseekDir);
 

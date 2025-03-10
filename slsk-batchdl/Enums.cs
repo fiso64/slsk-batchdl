@@ -36,7 +36,8 @@ namespace Enums
         Bandcamp,
         String,
         List,
-        None,
+        Soulseek,
+        None = -1,
     }
 
     public enum TrackType
