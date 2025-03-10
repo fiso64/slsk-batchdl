@@ -12,7 +12,7 @@ See the [usage examples](#examples-2).
    - [YouTube](#youtube)
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
-   - [Slsk Link](#soulseek-link)
+   - [Soulseek Link](#soulseek-link)
    - [Search string](#search-string)
    - [List file](#list-file)
  - [Download modes](#download-modes)
@@ -83,7 +83,7 @@ Usage: sldl <input> [OPTIONS]
                                 'results-full': Print search results including full paths.
                                 'json': Print first result in json format
                                 'json-all': Print json of all results in sorted order
-                                'link': Print first result slsk:// link                                
+                                'link': Print first result slsk:// link
 ```
 #### Search Options
 ```
