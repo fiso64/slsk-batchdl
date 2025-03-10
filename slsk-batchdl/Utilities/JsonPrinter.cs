@@ -79,7 +79,7 @@ public static class JsonPrinter
 {
     private static readonly JsonSerializerOptions _options = new()
     {
-        WriteIndented = true
+        //WriteIndented = true
     };
 
     public static void PrintTrackResultJson(Track track, IEnumerable<(SearchResponse, Soulseek.File)> results, bool printAll = false)
