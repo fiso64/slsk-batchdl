@@ -152,36 +152,61 @@ public static class Printing
         }
         else if (tle.source.Type == TrackType.Aggregate)
         {
-            Console.WriteLine(new string('-', 60));
-            Console.WriteLine($"Results for aggregate {tle.source.ToString(true)}:");
-            PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
+            if (config.printOption.HasFlag(PrintOption.Json))
+            {
+                var tracks = tle.list[0].Where(t => t.State == TrackState.Initial).ToList();
+                JsonPrinter.PrintAggregateJson(tracks);
+            }
+            else if (config.printOption.HasFlag(PrintOption.Link))
+            {
+                var first = tle.list[0].First();
+                PrintLink(first.FirstResponse.Username, first.FirstDownload.Filename);
+            }
+            else
+            {
+                Console.WriteLine($"Results for aggregate {tle.source.ToString(true)}:");
+                PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
+            }
         }
         else if (tle.source.Type == TrackType.Album)
         {
-            Console.WriteLine(new string('-', 60));
-
-            if (!config.printOption.HasFlag(PrintOption.Full))
-                Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
-            else
-                Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
-
-            if (tle.list.Count > 0 && tle.list[0].Count > 0)
+            if (config.printOption.HasFlag(PrintOption.Json))
             {
-                if (!config.noBrowseFolder)
-                    Console.WriteLine("[Skipping full folder retrieval]");
+                var albumsToPrint = config.printOption.HasFlag(PrintOption.Full)
+                    ? tle.list
+                    : tle.list.Take(1).ToList();
 
-                foreach (var ls in tle.list)
+                JsonPrinter.PrintAlbumJson(albumsToPrint, tle.source);
+            }
+            else if (config.printOption.HasFlag(PrintOption.Link))
+            {
+                PrintAlbumLink(tle.list[0]);
+            }
+            else
+            {
+                if (!config.printOption.HasFlag(PrintOption.Full))
+                    Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
+                else
+                    Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
+
+                if (tle.list.Count > 0 && tle.list[0].Count > 0)
                 {
-                    PrintAlbum(ls);
+                    if (!config.noBrowseFolder)
+                        Console.WriteLine("[Skipping full folder retrieval]");
 
-                    if (!config.printOption.HasFlag(PrintOption.Full))
-                        break;
+                    foreach (var ls in tle.list)
+                    {
+                        PrintAlbum(ls);
+
+                        if (!config.printOption.HasFlag(PrintOption.Full))
+                            break;
+                    }
                 }
             }
-            else
-            {
-                Console.WriteLine("No results.");
-            }
+        }
+        else
+        {
+            Console.WriteLine("No results.");
         }
     }
 
@@ -256,6 +281,23 @@ public static class Printing
             count += 1;
         }
         WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+    }
+
+
+    public static void PrintLink(string username, string filename)
+    {
+        var link = $"slsk://{username}/{filename.Replace('\\', '/')}";
+        Console.WriteLine(link);
+    }
+
+
+    public static void PrintAlbumLink(List<Track> albumTracks)
+    {
+        if (albumTracks.Count == 0) return;
+        var username = albumTracks[0].FirstResponse.Username;
+        var directory = Utils.GreatestCommonDirectorySlsk(albumTracks.Select(t => t.FirstDownload.Filename));
+        var link = $"slsk://{username}/{directory.Replace('\\', '/').TrimEnd('/')}/";
+        Console.WriteLine(link);
     }
 
 

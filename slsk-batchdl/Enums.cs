@@ -62,6 +62,8 @@ namespace Enums
         Tracks = 1,
         Results = 2,
         Full = 4,
+        Link = 8,
+        Json = 16,
     }
 
     public enum AlbumArtOption

@@ -820,7 +820,8 @@ public class Searcher
     {
         foreach (var track in tracks)
         {
-            Console.WriteLine($"Results for {track}:");
+            if (!config.NonVerbosePrint) 
+                Console.WriteLine($"Results for {track}:");
 
             SearchOptions getSearchOptions(int timeout, FileConditions necCond, FileConditions prfCond)
             {
@@ -835,7 +836,7 @@ public class Searcher
                     },
                     fileFilter: (file) =>
                     {
-                        return (necCond.FileSatisfies(file, track, null) || config.PrintResultsFull);
+                        return (necCond.FileSatisfies(file, track, null) || config.PrintFull);
                     });
             }
 
@@ -854,16 +855,38 @@ public class Searcher
 
             if (config.DoNotDownload && results.IsEmpty)
             {
-                Printing.WriteLine($"No results", ConsoleColor.Yellow);
+                if (config.printOption.HasFlag(PrintOption.Json))
+                {
+                    JsonPrinter.PrintTrackResultJson(track, Enumerable.Empty<(SearchResponse, Soulseek.File)>());
+                }
+             
+                if (!config.NonVerbosePrint)
+                    Printing.WriteLine($"No results", ConsoleColor.Yellow);
             }
             else
             {
                 var orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
-                Console.WriteLine();
-                Printing.PrintTrackResults(orderedResults, track, config.PrintResultsFull, config.necessaryCond, config.preferredCond);
+
+                if (!config.NonVerbosePrint)
+                    Console.WriteLine();
+
+                if (config.printOption.HasFlag(PrintOption.Json))
+                {
+                    JsonPrinter.PrintTrackResultJson(track, orderedResults, config.printOption.HasFlag(PrintOption.Full));
+                }
+                else if (config.printOption.HasFlag(PrintOption.Link))
+                {
+                    var first = orderedResults.First();
+                    Printing.PrintLink(first.response.Username, first.file.Filename);
+                }
+                else
+                {
+                    Printing.PrintTrackResults(orderedResults, track, config.PrintFull, config.necessaryCond, config.preferredCond);
+                }
             }
 
-            Console.WriteLine();
+            if (!config.NonVerbosePrint)
+                Console.WriteLine();
         }
     }
 

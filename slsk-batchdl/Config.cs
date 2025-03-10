@@ -111,11 +111,11 @@ public class Config
     public PrintOption printOption = PrintOption.None;
 
     public bool HasAutoProfiles { get; private set; } = false;
-    public bool DoNotDownload => (printOption & (PrintOption.Results | PrintOption.Tracks)) != 0;
+    public bool DoNotDownload => printOption != PrintOption.None;
     public bool PrintTracks => (printOption & PrintOption.Tracks) != 0;
-    public bool PrintResults => (printOption & PrintOption.Results) != 0;
-    public bool PrintTracksFull => (printOption & PrintOption.Tracks) != 0 && (printOption & PrintOption.Full) != 0;
-    public bool PrintResultsFull => (printOption & PrintOption.Results) != 0 && (printOption & PrintOption.Full) != 0;
+    public bool PrintResults => (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
+    public bool PrintFull => (printOption & PrintOption.Full) != 0;
+    public bool NonVerbosePrint => (printOption & (PrintOption.Json | PrintOption.Link)) != 0;
     public bool DeleteAlbumOnFail => failedAlbumPath == "delete";
     public bool IgnoreAlbumFail => failedAlbumPath == "disable";
     public bool HasOnComplete => onComplete != null && onComplete.Any(x => !string.IsNullOrWhiteSpace(x));
@@ -866,6 +866,9 @@ public class Config
                             "results" => PrintOption.Results,
                             "tracks-full" => PrintOption.Tracks | PrintOption.Full,
                             "results-full" => PrintOption.Results | PrintOption.Full,
+                            "link" => PrintOption.Link,
+                            "json" => PrintOption.Json,
+                            "json-all" => PrintOption.Json | PrintOption.Full,
                             _ => InputError<PrintOption>($"Invalid print option '{args[i]}'"),
                         };
                         break;
@@ -884,6 +887,18 @@ public class Config
                     case "--prf":
                     case "--print-results-full":
                         printOption = PrintOption.Results | PrintOption.Full;
+                        break;
+                    case "--pl":
+                    case "--print-link":
+                        printOption = PrintOption.Link;
+                        break;
+                    case "--pj":
+                    case "--print-json":
+                        printOption = PrintOption.Json;
+                        break;
+                    case "--pjf":
+                    case "--print-json-full":
+                        printOption = PrintOption.Json | PrintOption.Full;
                         break;
                     case "--yp":
                     case "--yt-parse":
@@ -1434,5 +1449,12 @@ public class Config
     {
         InputError(message);
         return default;
+    }
+
+    public Logger.LogLevel GetConsoleLogLevel()
+    {
+        if (NonVerbosePrint)
+            return Logger.LogLevel.Error;
+        return logLevel;
     }
 }

@@ -12,6 +12,7 @@ See the [usage examples](#examples-2).
    - [YouTube](#youtube)
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
+   - [Slsk Link](#soulseek-link)
    - [Search string](#search-string)
    - [List file](#list-file)
  - [Download modes](#download-modes)
@@ -80,6 +81,9 @@ Usage: sldl <input> [OPTIONS]
                                 'tracks-full': Print extended information about all tracks
                                 'results': Print search results satisfying file conditions
                                 'results-full': Print search results including full paths.
+                                'json': Print first result in json format
+                                'json-all': Print json of all results in sorted order
+                                'link': Print first result slsk:// link                                
 ```
 #### Search Options
 ```
@@ -263,6 +267,9 @@ spotify-token access is only valid for 1 hour. spotify-refresh will enable sldl 
 ### Bandcamp
 A bandcamp track, album, or artist url. Download a single track, an album, or an artist's
 entire discography.
+
+### Soulseek Link
+A direct path starting with `slsk://`. Paths ending in `/` will be treated as album downloads.
 
 ### Search string
 Name of the track, album, or artist to search for. The input can either be an arbitrary

@@ -44,6 +44,8 @@ public static partial class Program
 
         var config = new Config(args);
 
+        Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
+
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
         Logger.Info($"Input ({config.inputType}): {config.input}");
@@ -268,7 +270,7 @@ public static partial class Program
             var tle = trackLists[i];
             var config = tle.config;
 
-            Logger.SetConsoleLogLevel(config.logLevel);
+            Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
 
             if (tle.preprocessTracks) PreprocessTracks(tle);
             if (!enableParallelSearch) tle.PrintLines();

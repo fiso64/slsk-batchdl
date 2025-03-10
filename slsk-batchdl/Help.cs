@@ -55,7 +55,10 @@ public static class Help
                                        'tracks': Print all tracks to be downloaded
                                        'tracks-full': Print extended information about all tracks
                                        'results': Print search results satisfying file conditions
-                                       'results-full': Print search results including full paths.
+                                       'results-full': Print search results including full paths
+                                       'json': Print first result in json format
+                                       'json-all': Print json of all results in sorted order
+                                       'link': Print first result slsk:// link
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred
@@ -236,6 +239,9 @@ public static class Help
       Bandcamp 
         A bandcamp track, album, or artist url. Download a single track, an album, or an artist's
         entire discography.
+
+      Soulseek Link
+        A direct path starting with `slsk://`. Paths ending in `/` will be treated as album downloads.
 
       Search string
         Name of the track, album, or artist to search for. The input can either be an arbitrary
