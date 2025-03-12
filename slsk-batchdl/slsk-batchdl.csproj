@@ -14,7 +14,8 @@
     <DebugType>portable</DebugType>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+  <!-- <ItemGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'"> -->
+  <ItemGroup>
     <Compile Include="..\slsk-batchdl.Tests\TestClients\MockSoulseekClient.cs" Link="TestClients\MockSoulseekClient.cs" />
     <Compile Include="..\slsk-batchdl.Tests\TestClients\MockSoulseekClientNotImpl.cs" Link="TestClients\MockSoulseekClientNotImpl.cs" />
   </ItemGroup>

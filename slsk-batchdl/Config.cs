@@ -50,6 +50,7 @@ public class Config
     public string profile = "";
     public string failedAlbumPath = "";
     public string logFilePath = "";
+    public string mockFilesDir = "";
     public bool aggregate = false;
     public bool album = false;
     public bool albumArtOnly = false;
@@ -81,6 +82,7 @@ public class Config
     public bool skipExisting = true;
     public bool writeIndex = true;
     public bool parallelAlbumSearch = false;
+    public bool mockFilesReadTags = true;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -277,6 +279,7 @@ public class Config
         indexFilePath   = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
         skipMusicDir    = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
         logFilePath     = Utils.GetFullPath(Utils.ExpandVariables(logFilePath));
+        mockFilesDir    = Utils.GetFullPath(Utils.ExpandVariables(mockFilesDir));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");
@@ -1375,6 +1378,12 @@ public class Config
                     case "--apsc":
                     case "--album-parallel-search-count":
                         parallelAlbumSearchProcesses = getIntParameter(ref i);
+                        break;
+                    case "--mock-files-dir":
+                        mockFilesDir = GetParameter(ref i);
+                        break;
+                    case "--mock-files-no-read-tags":
+                        setFlag(ref mockFilesReadTags, ref i, false);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

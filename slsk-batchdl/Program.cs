@@ -78,24 +78,31 @@ public static partial class Program
             // If client is not null, assume it's injected for testing
             if (client == null)
             {
-                var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+                if (!string.IsNullOrEmpty(config.mockFilesDir))
                 {
-                    socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
-                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
-                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
-                });
+                    client = Tests.ClientTests.MockSoulseekClient.FromLocalPaths(config.mockFilesReadTags, config.mockFilesDir);
+                }
+                else
+                {
+                    var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+                    {
+                        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
+                    });
 
-                var clientOptions = new SoulseekClientOptions(
-                    transferConnectionOptions: connectionOptions,
-                    serverConnectionOptions: connectionOptions,
-                    listenPort: config.listenPort
-                );
+                    var clientOptions = new SoulseekClientOptions(
+                        transferConnectionOptions: connectionOptions,
+                        serverConnectionOptions: connectionOptions,
+                        listenPort: config.listenPort
+                    );
 
-                client = new SoulseekClient(clientOptions);
+                    client = new SoulseekClient(clientOptions);
+                }
             }
 
-            if (!config.useRandomLogin && (string.IsNullOrEmpty(config.username) || string.IsNullOrEmpty(config.password)))
+            if (!IsConnectedAndLoggedIn() && !config.useRandomLogin && (string.IsNullOrEmpty(config.username) || string.IsNullOrEmpty(config.password)))
                 Config.InputError("No soulseek username or password");
 
             await Login(config, config.useRandomLogin);

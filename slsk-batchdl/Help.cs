@@ -5,6 +5,8 @@
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count
+// For debugging:
+// --mock-files-dir <directory>, --mock-files-no-read-tags
 
 public static class Help
 {
