@@ -443,6 +443,7 @@ artist-maybe-wrong             If artist might be incorrect (true/false)
 slsk-filename                  Soulseek filename without extension
 slsk-foldername                Soulseek folder name
 extractor                      Name of the extractor used
+input                          Input string
 item-name                      Name of the playlist/source
 default-folder                 Default sldl folder name
 bindir                         Base application directory

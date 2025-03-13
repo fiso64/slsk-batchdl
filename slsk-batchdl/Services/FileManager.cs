@@ -256,6 +256,7 @@ public class FileManager
         { "slsk-foldername", (_, _, s, _, r) => GetFolderName(s, r) },
         { "foldername", (_, _, s, _, r) => GetFolderName(s, r) },
         { "extractor", (t, _, _, _, _) => t.config.inputType.ToString() },
+        { "input", (t, _, _, _, _) => t.config.input },
         { "item-name", (t, _, _, _, _) => t.ItemNameOrSource() },
         { "default-folder", (t, _, _, _, _) => t.DefaultFolderName() },
         { "path", (_, _, _, t, _) => t.DownloadPath.TrimEnd('/').TrimEnd('\\') },
