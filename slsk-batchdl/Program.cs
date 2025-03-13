@@ -828,7 +828,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
+        await OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
     }
 
 
@@ -1178,7 +1178,7 @@ public static partial class Program
             var savedText = progress.Line1;
             var savedPos = progress.Current;
             Printing.RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
-            OnComplete(tle, track, false, tle.indexEditor, tle.playlistEditor);
+            await OnComplete(tle, track, false, tle.indexEditor, tle.playlistEditor);
             Printing.RefreshOrPrint(progress, savedPos, savedText);
         }
 
@@ -1310,7 +1310,7 @@ public static partial class Program
     }
 
 
-    static void OnComplete(TrackListEntry tle, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
+    static async Task OnComplete(TrackListEntry tle, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
     {
         if (!tle.config.HasOnComplete)
             return;
@@ -1448,7 +1448,7 @@ public static partial class Program
                 {
                     var readStdout = process.StandardOutput.ReadToEndAsync();
                     var readStderr = process.StandardError.ReadToEndAsync();
-                    Task.WaitAll(readStdout, readStderr);
+                    await Task.WhenAll(readStdout, readStderr);
 
                     prevStdout = readStdout.Result.Trim().Trim('"');
                     prevStderr = readStderr.Result.Trim().Trim('"');
@@ -1460,7 +1460,7 @@ public static partial class Program
                     }
                 }
 
-                process.WaitForExit();
+                await process.WaitForExitAsync();
 
                 if (useOutputToUpdateIndex && !string.IsNullOrWhiteSpace(prevStdout))
                 {
