@@ -409,7 +409,8 @@ public static class Help
           salbum                         Source album name
           slength                        Source track length
           uri                            Track URI
-          row/line/snum                  Item number (all three are the same)
+          snum                           Source item number (1-indexed, including offset)
+          row/line                       Line number (1-indexed, only for CSV or list input)
 
         Other variables:
           type                           Track type

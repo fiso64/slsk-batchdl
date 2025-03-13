@@ -1,6 +1,7 @@
 ﻿using System.Text;
 
 using Models;
+using Enums;
 
 namespace Extractors
 {
@@ -59,7 +60,7 @@ namespace Extractors
                     fields[0] = "album://" + fields[0];
                 }
 
-                var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
+                var (type, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
 
                 var tl = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
 
@@ -76,10 +77,19 @@ namespace Extractors
 
                     tle.itemName = foldername;
                     tle.enablesIndexByDefault = true;
+
+                    tle.source.LineNumber = i + 1;
+                    tle.source.ItemNumber = offset + added + 1;
                 }
 
-                if (tl.lists.Count == 1)
-                    tl[0].source.ItemNumber = i;
+                if (tl.Count == 1 && tl[0].source.Type == TrackType.Normal && (type == InputType.String || type == InputType.Soulseek))
+                {
+                    if (tl[0].list != null && tl[0].list.SelectMany(x => x).Count() == 1)
+                    {
+                        tl[0].list[0][0].LineNumber = i + 1;
+                        tl[0].list[0][0].ItemNumber = offset + added + 1;
+                    }
+                }
 
                 trackLists.lists.AddRange(tl.lists);
 
@@ -141,10 +151,11 @@ namespace Extractors
                     try
                     {
                         string[] lines = File.ReadAllLines(listFilePath, Encoding.UTF8);
+                        int idx = track.LineNumber - 1;
 
-                        if (track.ItemNumber > -1 && track.ItemNumber < lines.Length)
+                        if (idx > -1 && idx < lines.Length)
                         {
-                            lines[track.ItemNumber] = "";
+                            lines[idx] = "";
                             Utils.WriteAllLines(listFilePath, lines, '\n');
                         }
                     }

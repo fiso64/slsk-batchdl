@@ -247,8 +247,8 @@ public class FileManager
         { "is-audio", (_, _, _, t, _) => (!t.IsNotAudio).ToString().ToLower() },
         { "failure-reason", (_, _, _, t, _) => t.FailureReason.ToString() },
         { "artist-maybe-wrong", (_, _, _, t, _) => t.ArtistMaybeWrong.ToString().ToLower() },
-        { "row", (_, _, _, t, _) => t.ItemNumber.ToString() },
-        { "line", (_, _, _, t, _) => t.ItemNumber.ToString() },
+        { "row", (_, _, _, t, _) => t.LineNumber.ToString() },
+        { "line", (_, _, _, t, _) => t.LineNumber.ToString() },
         { "snum", (_, _, _, t, _) => t.ItemNumber.ToString() },
 
         { "slsk-filename", (_, _, s, _, _) => Utils.GetFileNameWithoutExtSlsk(s?.Filename ?? "") },

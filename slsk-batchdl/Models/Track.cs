@@ -17,7 +17,8 @@ namespace Models
         public bool IsDirectLink = false;
         public string DownloadPath = "";
         public string Other = "";
-        public int ItemNumber = -1;
+        public int ItemNumber = 1; // source item number (1-indexed, including offset)
+        public int LineNumber = 1; // line number (1-indexed, for csv or list input only)
         public TrackType Type = TrackType.Normal;
         public FailureReason FailureReason = FailureReason.None;
         public TrackState State = TrackState.Initial;
@@ -48,6 +49,7 @@ namespace Models
             MinAlbumTrackCount = other.MinAlbumTrackCount;
             MaxAlbumTrackCount = other.MaxAlbumTrackCount;
             ItemNumber = other.ItemNumber;
+            LineNumber = other.LineNumber;
         }
 
         public string ToKey()
