@@ -295,7 +295,9 @@ public class FileManager
         {
             if (!string.IsNullOrEmpty(remoteCommonDir))
                 return Path.GetFileName(Utils.NormalizedPath(remoteCommonDir));
-            return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)));
+            if (slfile != null)
+                return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)));
+            return "";
         }
 
         string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
@@ -330,7 +332,12 @@ public class FileManager
     {
         foreach (var (key, extractor) in VarExtractors)
         {
-            x = x.Replace('{' + key + '}', extractor(tle, file, slfile, track, remoteCommonDir));
+            var k = '{' + key + '}';
+            if (x.Contains(k))
+            {
+                var val = extractor(tle, file, slfile, track, remoteCommonDir);
+                x = x.Replace(k, val);
+            }
         }
 
         return x;
