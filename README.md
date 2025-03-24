@@ -28,6 +28,7 @@ See the [usage examples](#examples-2).
  - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
  - [Examples](#examples-2)
  - [Notes](#notes)
+ - [Tips](#notes)
  - [Docker](#docker)
 
 
@@ -55,7 +56,7 @@ Usage: sldl <input> [OPTIONS]
 -r, --reverse                   Download tracks in reverse order
 -c, --config <path>             Set config file location. Set to 'none' to ignore config
 --profile <names>               Configuration profile(s) to use. See `--help config`.
---concurrent-downloads <num>    Max concurrent downloads (default: 2)
+--concurrent-downloads <num>    Max concurrent downloads for normal mode (default: 2)
 --write-playlist                Create an m3u playlist file in the output directory
 --playlist-path <path>          Override default path for m3u playlist file
 
@@ -212,11 +213,9 @@ Usage: sldl <input> [OPTIONS]
                                 more results
 ```
 ### Notes
-Acronyms of two- and `--three-word-flags` are also accepted, e.g. `--twf`. If the option
-contains the word 'max' then the m should be uppercase. 'bitrate', 'sameplerate' and
-'bitdepth' should be all treated as two separate words, e.g `--Mbr` for `--max-bitrate`.
-
-Flags can be explicitly disabled by setting them to false, e.g `--interactive false`.
+- Flags can be explicitly disabled by setting them to false, e.g `--interactive false`.
+- Single-character flags can be combined, e.g. `-at` for `-a -t`.
+- Acronyms of two- and `--three-word-flags` like `--twf` are also accepted. E.g. `--Mbr` for `--max-bitrate`.
 
 ## Input types
 
@@ -281,15 +280,14 @@ artist-maybe-wrong, album-track-count.
 
 String input accepts a shorthand for track and album downloads: The input `ARTIST - TITLE`
 will be parsed as `artist=ARTIST, title=TITLE` when downloading songs, and
-`artist=ARTIST, album=ALBUM` when run with `--album`. Explicit properties are required when
-dealing with names which contain hyphens surrounded by spaces.
+`artist=ARTIST, album=TITLE` when run with `--album`.
 
 ### List file
 List input must be manually activated with `--input-type=list`. The input is a path to a text
 file containing lines of the following form:
 ```ini
 # input                         conditions                    pref. conditions
-artist=Artist,album=Album       "format=mp3; br>128"          "br >= 320"
+"artist=Artist,album=Album"     "format=mp3; br>128"          "br >= 320"
 ```
 The input can be any of the above input types. The conditions are added on top of the
 configured conditions and can be omitted.   
@@ -310,15 +308,15 @@ string or csv row has no track title, or when `-a/--album` is enabled.
 With `-g/--aggregate`, sldl performs an ordinary search for the input, then attempts to
 group the results into distinct songs and download one of each, starting with the one shared
 by the most users. Note that `--min-shares-aggregate` is 2 by default, meaning that songs
-shared by only one user will be ignored. Aggregate mode can be used to (for example) download
-all songs by an artist.  
+shared by only one user will be ignored. Aggregate mode can be used to download all songs by 
+an artist.  
 
 ### Album Aggregate
 Activated when both `--album` and `--aggregate` are enabled. sldl will group shares and
 download one of each distinct album, starting with the one shared by the most users. Note
 that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
-will be ignored. Album-aggregate mode can be used to (for example) download the most popular
-albums by an artist. It is recommended to pair it with `--interactive`.
+will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
+by an artist. It is recommended to pair it with `--interactive`.
 
 ## Searching
 
@@ -335,16 +333,6 @@ timespan. sldl has a search limiter which can be adjusted with `--searches-per-t
 and `--searches-renew-time` (when the limit is reached, the status of the downloads will be
 'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
 The default values were determined through experimentation, so they may be incorrect.
-
-### Speeding things up
-The following options will make it go faster, but may decrease search result quality or cause
-instability:
-- `--fast-search` skips waiting until the search completes and downloads as soon as a file
-  matching the preferred conditions is found
-- `--concurrent-downloads` - set it to 4 or more
-- `--max-stale-time` is set to 30 seconds by default, sldl will wait a long time before giving
-  up on a file
-- `--album-parallel-search` - enables parallel searching for album entries
 
 ## File conditions
 
@@ -373,15 +361,7 @@ satisfy any condition. Run a search with `--print results-full` to reveal the so
 Conditions can also be supplied as a semicolon-delimited string with `--cond` and `--pref`, e.g
 `--cond "br>=320; format=mp3,ogg; sr<96000"`.
 
-### Filtering irrelevant results
-The options `--strict-title`, `--strict-artist` and `--strict-album` will filter any file that
-does not contain the title/artist/album in the path (ignoring case, bounded by boundary chars).  
-Another way to prevent false downloads is to set `--length-tol` to 3 or less to make it ignore
-any songs that differ from the input by more than 3 seconds. However, all 4 options are already
-enabled as 'preferred' conditions by default. Hence it is only recommended to enable them for
-special cases, like albums whose name is just one or two characters.
-
-### Important note
+### Note on availability of metadata
 Some info may be unavailable depending on the client used by the peer. If (e.g) `--min-bitrate`
 is set, then sldl will still accept any file with unknown bitrate. To reject all files where one
 or more of the checked properties is null (unknown), enable `--strict-conditions`.  
@@ -397,15 +377,15 @@ Name format supports subdirectories as well as conditional expressions like {tag
 tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check.
 
 ### Examples
-  - `{artist} - {title}`  
-      Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
-      following is generally preferred:
-  - `{artist( - )title|filename}`  
-      If artist and title are not null, name it 'Artist - Title', otherwise use the original
-      filename.
-  - `{albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}`  
-      Sort files into artist/album folders if all tags are present, otherwise put them in
-      the 'missing-tags' folder.   
+- `{artist} - {title}`  
+    Always name it 'Artist - Title'. Because some files on Soulseek are untagged, the
+    following is generally preferred:
+- `{artist( - )title|filename}`  
+    If artist and title are not null, name it 'Artist - Title', otherwise use the original
+    filename.
+- `{albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}`  
+    Sort files into artist/album folders if all tags are present, otherwise put them in
+    the 'missing-tags' folder.   
 
 ### Available variables
 
@@ -651,10 +631,35 @@ Now you can manually run, or set up a cron job / scheduled task to periodically 
 sldl --profile wishlist
 ```
 
-
 ## Notes
 - For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
 - The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
+
+## Tips
+
+### Filtering Irrelevant Results
+
+sldl typically selects the correct files as long as they appear in the search results. By default, it always downloads the best result without additional filtering. However, you can use the following options to filter your downloads:
+
+- `--strict-title`, `--strict-artist`, `--strict-album`  
+  Filters out files whose paths do not include the specified title, artist, or album name (ignoring case and using boundary characters). Note that the preferred versions of these options are enabled by default and hence these are generally only needed in special cases, such as when song or album names are very short (one or two characters).
+
+- `--length-tol`  
+  For standard downloads, this option sets a tolerance level by which the file’s length can differ from the input length. The default preference (--pref-length-tol) is set to 3 seconds.
+
+- `--album-track-count`  
+  When downloading an album, you can specify this option to ensure the album contains a certain number of tracks. For instance, if the input is a Spotify or Bandcamp album, this field is automatically set to `n+` (where n is the number of tracks on the album). This ensures that only albums with at least n tracks are accepted (useful when there are more complete versions of the album on soulseek).  
+  Note: The initial search returns only files whose paths match the query, not the full album contents. For example, if you search by a single song name, the search may only show 1 track even if the album contains more. With a lower bound, this folder might be incorrectly excluded; with an upper bound, it might be wrongly accepted. These issues rarely occur when searching with the album name.
+
+
+### Speeding things up
+The following options will make it go faster, but may decrease search result quality or cause
+instability:
+
+- `--fast-search` skips waiting until the search completes and downloads as soon as a file matching the preferred conditions is found
+- `--concurrent-downloads` can be set it to 4 or more. This only affects normal downloads (not album).
+- `--max-stale-time` is set to 30 seconds by default, sldl will wait a long time before giving up on a file.
+- `--album-parallel-search` enables parallel searching for album entries
 
 ## Docker
 
