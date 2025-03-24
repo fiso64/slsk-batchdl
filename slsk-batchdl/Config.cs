@@ -1117,7 +1117,7 @@ public class Config
                     case "--pf":
                     case "--paf":
                     case "--pref-format":
-                        preferredCond.Formats = GetParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        preferredCond.Formats = GetParameter(ref i).ToLower().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--plt":
@@ -1169,11 +1169,11 @@ public class Config
                         break;
                     case "--pbu":
                     case "--pref-banned-users":
-                        preferredCond.BannedUsers = GetParameter(ref i).Split(',');
+                        preferredCond.BannedUsers = GetParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--af":
                     case "--format":
-                        necessaryCond.Formats = GetParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        necessaryCond.Formats = GetParameter(ref i).ToLower().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                             .Select(x => x.Trim().TrimStart('.')).ToArray();
                         break;
                     case "--lt":
@@ -1220,7 +1220,7 @@ public class Config
                         break;
                     case "--bu":
                     case "--banned-users":
-                        necessaryCond.BannedUsers = GetParameter(ref i).Split(',');
+                        necessaryCond.BannedUsers = GetParameter(ref i).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                         break;
                     case "--anl":
                     case "--accept-no-length":
