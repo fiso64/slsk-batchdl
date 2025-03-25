@@ -156,6 +156,8 @@ namespace Extractors
         {
             _client = null;
 
+            Logger.Debug($"Spotify: Authorizing (login={login}, modify={needModify})");
+
             if (!login)
             {
                 var config = SpotifyClientConfig.CreateDefault();
@@ -171,6 +173,8 @@ namespace Extractors
                 _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
                 await _server.Start();
 
+                Logger.Debug($"Spotify: AuthServer started");
+
                 var existingOk = false;
                 if (_clientToken.Length != 0 || _clientRefreshToken.Length != 0)
                 {
@@ -178,14 +182,15 @@ namespace Extractors
                     loggedIn = true;
                     //new OAuthClient(config).RequestToken()
                 }
+
                 if (!existingOk)
                 {
                     _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
                     _server.ErrorReceived += OnErrorReceived;
 
                     var scope = new List<string> {
-                    Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate, Scopes.PlaylistReadCollaborative
-                };
+                        Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate, Scopes.PlaylistReadCollaborative
+                    };
 
                     if (needModify)
                     {
@@ -258,14 +263,19 @@ namespace Extractors
 
         private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
         {
+            Logger.Debug($"Spotify: Authorization code received");
             await _server.Stop();
 
             var config = SpotifyClientConfig.CreateDefault();
+
+            Logger.Debug($"Spotify: Getting token response..");
             var tokenResponse = await new OAuthClient(config).RequestToken(
                 new AuthorizationCodeTokenRequest(
                     _clientId, _clientSecret, response.Code, new Uri("http://localhost:48721/callback")
                 )
             );
+
+            Logger.Debug($"Spotify: Got token");
 
             Console.WriteLine("spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
@@ -280,6 +290,7 @@ namespace Extractors
 
         private async Task OnErrorReceived(object sender, string error, string state)
         {
+            Logger.DebugError($"Spotify: Auth error: {error}");
             await _server.Stop();
             throw new Exception($"Aborting authorization, error received: {error}");
         }
