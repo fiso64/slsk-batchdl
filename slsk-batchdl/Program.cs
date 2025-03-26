@@ -95,7 +95,8 @@ public static partial class Program
                     var clientOptions = new SoulseekClientOptions(
                         transferConnectionOptions: connectionOptions,
                         serverConnectionOptions: connectionOptions,
-                        listenPort: config.listenPort
+                        listenPort: config.listenPort,
+                        maximumConcurrentSearches: int.MaxValue
                     );
 
                     client = new SoulseekClient(clientOptions);
