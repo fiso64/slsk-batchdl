@@ -64,6 +64,8 @@ namespace Enums
         Full = 4,
         Link = 8,
         Json = 16,
+        Index = 32,
+        IndexFailed = 64,
     }
 
     public enum AlbumArtOption

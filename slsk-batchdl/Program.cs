@@ -46,6 +46,12 @@ public static partial class Program
 
         Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
 
+        if (!config.RequiresInput)
+        {
+            PerformNoInputActions(config);
+            Environment.Exit(0);
+        }
+
         (config.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(config.input, config.inputType);
 
         Logger.Info($"Input ({config.inputType}): {config.input}");
@@ -72,8 +78,7 @@ public static partial class Program
         if (initialized)
             return;
 
-        bool needLogin = !config.PrintTracks;
-        if (needLogin)
+        if (config.NeedLogin)
         {
             // If client is not null, assume it's injected for testing
             if (client == null)
@@ -1493,6 +1498,37 @@ public static partial class Program
         {
             indexEditor?.Update();
             playlistEditor?.Update();
+        }
+    }
+
+
+    static void PerformNoInputActions(Config config)
+    {
+        if (config.printOption.HasFlag(PrintOption.Index))
+        {
+            if (string.IsNullOrEmpty(config.indexFilePath))
+            {
+                Logger.Error("Error: No index file path provided");
+                Environment.Exit(1);
+            }
+
+            var indexFilePath = Utils.GetFullPath(Utils.ExpandVariables(config.indexFilePath));
+            
+            if (!File.Exists(indexFilePath))
+            {
+                Logger.Error($"Error: Index file {indexFilePath} does not exist");
+                Environment.Exit(1);
+            }
+
+            var index = new M3uEditor(indexFilePath, new TrackLists(), M3uOption.Index, true);
+            var data = index.GetPreviousRunData().AsEnumerable();
+
+            if (config.printOption.HasFlag(PrintOption.IndexFailed))
+            {
+                data = data.Where(t => t.State == TrackState.Failed);
+            }
+
+            JsonPrinter.PrintIndexJson(data);
         }
     }
 

@@ -1,4 +1,5 @@
-﻿using Models;
+﻿using Enums;
+using Models;
 using Soulseek;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -58,6 +59,48 @@ public class TrackResultJson
     public FileInfoJson File { get; set; }
 }
 
+public class TrackJson
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Artist { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Album { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Length { get; set; }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public TrackType Type { get; set; } = TrackType.Normal;
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public FailureReason? FailureReason { get; set; } 
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public TrackState State { get; set; } = TrackState.Initial;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Path { get; set; }
+
+    public TrackJson() { }
+
+    public TrackJson(Track track)
+    {
+        Title = string.IsNullOrEmpty(track.Title) ? null : track.Title;
+        Artist = string.IsNullOrEmpty(track.Artist) ? null : track.Artist;
+        Album = string.IsNullOrEmpty(track.Album) ? null : track.Album;
+        Path = string.IsNullOrEmpty(track.DownloadPath) ? null : track.DownloadPath.Replace('\\', '/');
+        Length = track.Length == -1 ? null : (int?)track.Length;
+        Type = track.Type;
+        FailureReason = track.FailureReason == Enums.FailureReason.None ? null : track.FailureReason;
+        State = track.State;
+    }
+}
+
 public class AggregateTrackJson
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -79,7 +122,8 @@ public static class JsonPrinter
 {
     private static readonly JsonSerializerOptions _options = new()
     {
-        //WriteIndented = true
+        //WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static void PrintTrackResultJson(Track track, IEnumerable<(SearchResponse, Soulseek.File)> results, bool printAll = false)
@@ -149,6 +193,17 @@ public static class JsonPrinter
             });
 
         var json = JsonSerializer.Serialize(albumResults, _options);
+        Console.WriteLine(json);
+    }
+
+    public static void PrintIndexJson(IEnumerable<Track> tracks)
+    {
+        var trackJsons = tracks.Select(t => new TrackJson(t));
+        var options = new JsonSerializerOptions(_options)
+        {
+            WriteIndented = true
+        };
+        var json = JsonSerializer.Serialize(trackJsons, options);
         Console.WriteLine(json);
     }
 }

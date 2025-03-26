@@ -388,4 +388,9 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     {
         return ReadAllText().TrimEnd().Split('\n');
     }
+
+    public IReadOnlyCollection<Track> GetPreviousRunData()
+    {
+        return previousRunData.Values;
+    }
 }

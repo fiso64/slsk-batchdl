@@ -61,6 +61,8 @@ public static class Help
                                        'json': Print first result in json format
                                        'json-all': Print json of all results in sorted order
                                        'link': Print first result slsk:// link
+                                       'index': Print sldl index as formatted json
+                                       'index-failed': Print failed downloads from sldl index
           
       Searching
         --fast-search                  Begin downloading as soon as a file satisfying the preferred

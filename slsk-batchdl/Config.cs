@@ -113,11 +113,13 @@ public class Config
     public PrintOption printOption = PrintOption.None;
 
     public bool HasAutoProfiles { get; private set; } = false;
+    public bool NeedLogin => !PrintTracks && (printOption & PrintOption.Index) == 0;
+    public bool RequiresInput => (printOption & PrintOption.Index) == 0;
     public bool DoNotDownload => printOption != PrintOption.None;
     public bool PrintTracks => (printOption & PrintOption.Tracks) != 0;
     public bool PrintResults => (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
     public bool PrintFull => (printOption & PrintOption.Full) != 0;
-    public bool NonVerbosePrint => (printOption & (PrintOption.Json | PrintOption.Link)) != 0;
+    public bool NonVerbosePrint => (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
     public bool DeleteAlbumOnFail => failedAlbumPath == "delete";
     public bool IgnoreAlbumFail => failedAlbumPath == "disable";
     public bool HasOnComplete => onComplete != null && onComplete.Any(x => !string.IsNullOrWhiteSpace(x));
@@ -178,7 +180,7 @@ public class Config
 
         ProcessArgs(arguments);
 
-        if (input.Length == 0)
+        if (input.Length == 0 && RequiresInput)
             InputError($"No input provided");
     }
 
@@ -872,6 +874,8 @@ public class Config
                             "link" => PrintOption.Link,
                             "json" => PrintOption.Json,
                             "json-all" => PrintOption.Json | PrintOption.Full,
+                            "index" => PrintOption.Index,
+                            "index-failed" => PrintOption.Index | PrintOption.IndexFailed,
                             _ => InputError<PrintOption>($"Invalid print option '{args[i]}'"),
                         };
                         break;
