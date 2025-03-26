@@ -142,7 +142,7 @@ namespace Tests.ClientTests
             throw new NotImplementedException();
         }
 
-        public Task<Soulseek.Directory> GetDirectoryContentsAsync(string username, string directoryName, int? token = null, CancellationToken? cancellationToken = null)
+        public Task<IReadOnlyCollection<Soulseek.Directory>> GetDirectoryContentsAsync(string username, string directoryName, int? token = null, CancellationToken? cancellationToken = null)
         {
             throw new NotImplementedException();
         }

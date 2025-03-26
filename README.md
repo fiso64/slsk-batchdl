@@ -623,7 +623,7 @@ sldl --profile wishlist
 
 ### Searching
 
-- Just like in other soulseek clients, when searching it's best to provide the least input necessary to uniquely identify an album or song.
+- Just like in other soulseek clients, it's always best to provide the least input necessary in the search string to uniquely identify an album or song.
   - When downloading a spotify or bandcamp album, you can remove the artist name with `--regex A:.*`.
 - You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
 - When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
