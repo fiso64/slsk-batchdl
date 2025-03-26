@@ -20,7 +20,6 @@ See the [usage examples](#examples-2).
    - [Album](#album)
    - [Aggregate](#aggregate)
    - [Album Aggregate](#album-aggregate)
- - [Searching](#searching)
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
  - [On-Complete Actions](#on-complete-actions)
@@ -318,22 +317,6 @@ that `--min-shares-aggregate` is 2 by default, meaning that albums shared by onl
 will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
 by an artist. It is recommended to pair it with `--interactive`.
 
-## Searching
-
-### Search Query
-The search query is determined as follows:
-
-- For album downloads: Search for 'Artist Album Title'.
-- For all other download types: If the title field is non-empty, search for 'Artist Title'.
-  Otherwise, search for 'Artist Album'
-
-### Soulseek's rate limits
-The server may ban users for 30 minutes if too many searches are performed within a short
-timespan. sldl has a search limiter which can be adjusted with `--searches-per-time`
-and `--searches-renew-time` (when the limit is reached, the status of the downloads will be
-'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
-The default values were determined through experimentation, so they may be incorrect.
-
 ## File conditions
 
 Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
@@ -482,11 +465,11 @@ on-complete = + 1:h:u: cmd /c if {stdout}==success (del "{path}" & echo "1;{path
 ## Configuration
 ### Config Location
 sldl will look for a file named sldl.conf in the following locations:
-```
-~/AppData/Roaming/sldl/sldl.conf
-~/.config/sldl/sldl.conf
-$XDG_CONFIG_HOME/sldl/sldl.conf
-```
+
+- `~/AppData/Roaming/sldl/sldl.conf`
+- `~/.config/sldl/sldl.conf`
+- `$XDG_CONFIG_HOME/sldl/sldl.conf`
+
 as well as in the directory of the executable.
 
 ### Syntax
@@ -632,20 +615,28 @@ sldl --profile wishlist
 ```
 
 ## Notes
-- For macOS builds you can use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
-- The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
+- **macOS builds**: Use publish.sh to build the app. Download dotnet from https://dotnet.microsoft.com/en-us/download/dotnet/6.0, then run `chmod +x publish.sh && sh publish.sh`. For intel macs, uncomment the x64 and comment the arm64 section in publish.sh. 
+- **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
+- **Soulseek's rate limits**: The server bans users for 30 minutes if too many searches are performed within a short timespan. sldl has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when the limit is reached, the status of the downloads will be 'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
 
 ## Tips
 
+### Searching
+
+- Just like in other soulseek clients, when searching it's best to provide the least input necessary to uniquely identify an album or song.
+  - When downloading a spotify or bandcamp album, you can remove the artist name with `--regex A:.*`.
+- You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
+- When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
+
 ### Filtering Irrelevant Results
 
-sldl typically selects the correct files as long as they appear in the search results. By default, it always downloads the best result without additional filtering. However, you can use the following options to filter your downloads:
+sldl typically selects the correct files as long as they appear in the search results. By default, it always tries to download something and does no additional filtering. However, you can use the following options to filter your downloads:
 
 - `--strict-title`, `--strict-artist`, `--strict-album`  
   Filters out files whose paths do not include the specified title, artist, or album name (ignoring case and using boundary characters). Note that the preferred versions of these options are enabled by default and hence these are generally only needed in special cases, such as when song or album names are very short (one or two characters).
 
 - `--length-tol`  
-  For standard downloads, this option sets a tolerance level by which the file’s length can differ from the input length. The default preference (--pref-length-tol) is set to 3 seconds.
+  For normal downloads, this option sets a tolerance level by which the file’s length can differ from the input length. The default preference (--pref-length-tol) is set to 3 seconds.
 
 - `--album-track-count`  
   When downloading an album, you can specify this option to ensure the album contains a certain number of tracks. For instance, if the input is a Spotify or Bandcamp album, this field is automatically set to `n+` (where n is the number of tracks on the album). This ensures that only albums with at least n tracks are accepted (useful when there are more complete versions of the album on soulseek).  
@@ -653,8 +644,7 @@ sldl typically selects the correct files as long as they appear in the search re
 
 
 ### Speeding things up
-The following options will make it go faster, but may decrease search result quality or cause
-instability:
+The following options will make it go faster, but may decrease search result quality or cause instability:
 
 - `--fast-search` skips waiting until the search completes and downloads as soon as a file matching the preferred conditions is found
 - `--concurrent-downloads` can be set it to 4 or more. This only affects normal downloads (not album).
