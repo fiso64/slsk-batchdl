@@ -85,7 +85,7 @@ Usage: sldl <input> [OPTIONS]
                                 'json-all': Print json of all results in sorted order
                                 'link': Print first result slsk:// link
                                 'index': Print sldl index as formatted json
-                                'index-failed': Print failed downloads from sldl index                          
+                                'index-failed': Print failed downloads from sldl index
 ```
 #### Search Options
 ```
