@@ -642,8 +642,7 @@ sldl typically selects the correct files as long as they appear in the search re
   For normal downloads, this option sets a tolerance level by which the file’s length can differ from the input length. The default preference (--pref-length-tol) is set to 3 seconds.
 
 - `--album-track-count`  
-  When downloading an album, you can specify this option to ensure the album contains a certain number of tracks. For instance, if the input is a Spotify or Bandcamp album, this field is automatically set to `n+` (where n is the number of tracks on the album). This ensures that only albums with at least n tracks are accepted (useful when there are more complete versions of the album on soulseek).  
-  Note: The initial search returns only files whose paths match the query, not the full album contents. For example, if you search by a single song name, the search may only show 1 track even if the album contains more. With a lower bound, this folder might be incorrectly excluded; with an upper bound, it might be wrongly accepted. These issues rarely occur when searching with the album name.
+  When downloading an album, you can specify this option to ensure the album contains a certain number of tracks. For instance, if the input is a Spotify or Bandcamp album, this field is automatically set to `n+` (where n is the number of tracks on the album). This ensures that only albums with at least n tracks are accepted (useful when there are more complete versions of the album on soulseek).
 
 
 ### Speeding things up
