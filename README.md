@@ -26,7 +26,7 @@ See the [usage examples](#examples-2).
  - [Configuration](#configuration)
  - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
  - [Examples](#examples-2)
- - [Notes](#notes-2)
+ - [Notes](#notes-1)
  - [Tips](#tips)
  - [Docker](#docker)
 
