@@ -1508,7 +1508,7 @@ public static partial class Program
         {
             if (string.IsNullOrEmpty(config.indexFilePath))
             {
-                Logger.Error("Error: No index file path provided");
+                Logger.Fatal("Error: No index file path provided");
                 Environment.Exit(1);
             }
 
@@ -1516,7 +1516,7 @@ public static partial class Program
             
             if (!File.Exists(indexFilePath))
             {
-                Logger.Error($"Error: Index file {indexFilePath} does not exist");
+                Logger.Fatal($"Error: Index file {indexFilePath} does not exist");
                 Environment.Exit(1);
             }
 
