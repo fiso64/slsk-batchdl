@@ -86,6 +86,7 @@ public class Config
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
     public int maxAlbumTrackCount = -1;
+    public int albumTrackCountMaxRetries = 3;
     public int fastSearchDelay = 300;
     public int minSharesAggregate = 2;
     public int maxTracks = int.MaxValue;
@@ -1089,6 +1090,9 @@ public class Config
                     case "--emtc":
                     case "--extract-min-track-count":
                         setFlag(ref setAlbumMinTrackCount, ref i);
+                        break;
+                    case "--album-track-count-max-retries":
+                        albumTrackCountMaxRetries = getIntParameter(ref i);
                         break;
                     case "--aa":
                     case "--album-art":

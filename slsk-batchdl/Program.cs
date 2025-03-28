@@ -662,6 +662,7 @@ public static partial class Program
         string? soulseekDir = null;
         string? filterStr = null;
         int index = 0;
+        int albumTrackCountRetries = config.albumTrackCountMaxRetries;
 
         async Task runAlbumDownloads(List<Track> tracks, SemaphoreSlim semaphore, CancellationTokenSource cts)
         {
@@ -670,6 +671,17 @@ public static partial class Program
                 await DownloadTask(config, tle, track, semaphore, organizer, cts, true, true, true);
             });
             await Task.WhenAll(downloadTasks);
+        }
+
+        async Task<int> getFullFolder(List<Track> tracks, string? soulseekDir = null)
+        {
+            soulseekDir ??= Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+            if (retrievedFolders.Contains(soulseekDir)) return 0;
+
+            Logger.Info("Getting all files in folder...");
+            int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
+            retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
+            return newFilesFound;
         }
 
         while (tle.list.Count > 0 && !config.albumArtOnly)
@@ -694,6 +706,40 @@ public static partial class Program
                 }
 
                 tracks = tle.list[index];
+
+                // Need to check track counts again in case search results did not contain full folders.
+                // New track count will always be >= old count. Lower bound check in Searcher.GetAlbumDownloads is disabled
+                // when track title is non-empty, therefore need to only check lower bound when title is non-empty.
+                if (config.albumTrackCountMaxRetries > 0 && (config.maxAlbumTrackCount > 0 || (config.minAlbumTrackCount > 0 && tle.source.Title.Length > 0)))
+                {
+                    await getFullFolder(tracks);
+                    int newCount = tracks.Count(t => !t.IsNotAudio);
+                    bool failed = false;
+
+                    if (config.maxAlbumTrackCount > 0 && newCount > config.maxAlbumTrackCount)
+                    {
+                        Logger.Info("New file count above maximum, skipping folder");
+                        failed = true;
+                    }
+                    if (config.minAlbumTrackCount > 0 && newCount < config.minAlbumTrackCount)
+                    {
+                        Logger.Info("New file count below minimum, skipping folder");
+                        failed = true;
+                    }
+
+                    if (failed)
+                    {
+                        tle.list.RemoveAt(index);
+
+                        if (albumTrackCountRetries-- <= 0)
+                        {
+                            Logger.Info($"Failed album track count condition {config.albumTrackCountMaxRetries} times, skipping album.");
+                            tle.source.State = TrackState.Failed;
+                            tle.source.FailureReason = FailureReason.NoSuitableFileFound;
+                            break;
+                        }
+                    }
+                }
             }
 
             soulseekDir = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
@@ -731,11 +777,7 @@ public static partial class Program
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
                     Console.WriteLine();
-                    Logger.Info("Getting all files in folder...");
-
-                    int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
-                    retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
-
+                    int newFilesFound = await getFullFolder(tracks, soulseekDir);
                     if (newFilesFound > 0)
                     {
                         Logger.Info($"Found {newFilesFound} more files, downloading:");

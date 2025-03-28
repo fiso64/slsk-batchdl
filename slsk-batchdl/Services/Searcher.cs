@@ -377,6 +377,13 @@ public class Searcher
             max = track.MaxAlbumTrackCount;
         }
 
+        // If the search query includes track title then the results will not have full folders.
+        // Need to check the actual track count later in Program.DownloadAlbum.
+        if (track.Title.Length > 0)
+        {
+            min = -1;
+        }
+
         bool countIsGood(int count) => count >= min && (max == -1 || count <= max);
 
         var result = new List<List<Track>>();
