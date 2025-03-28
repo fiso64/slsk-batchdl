@@ -153,7 +153,7 @@ public static class Help
           
         --strict-conditions            Skip files with missing properties instead of accepting by
                                        default; if --min-bitrate is set, ignores any files with
-                                       unknown bitrate.
+                                       unknown bitrate. Warning: Available props depend on client
           
       Album Download
         -a, --album                    Album download mode: Download a folder
@@ -347,10 +347,12 @@ public static class Help
         Some info may be unavailable depending on the client used by the peer. If (e.g) `--min-bitrate`
         is set, then sldl will still accept any file with unknown bitrate. To reject all files where one
         or more of the checked properties is null (unknown), enable `--strict-conditions`.  
-        As a consequence, if `--min-bitrate` is also set then any files shared by users with the default
-        client will be ignored, since the default client does not broadcast the bitrate. Also note that
-        the default preferred conditions will already affect ranking with this option due to the bitrate
-        and samplerate checks.
+
+        This flag should be used with care: It's easy to accidentally exclude all files from users with
+        certain clients. For example, because the standard Soulseek client does not broadcast the bitrate,
+        enabling `--strict-conditions` and setting a `--min-bitrate` will make sldl ignore all files
+        shared by users with the standard client. Even without a required min-bitrate, all those shares
+        will be ranked at the bottom due to the default pref- bitrate checks.
     ";
 
     const string nameFormatHelp = @"

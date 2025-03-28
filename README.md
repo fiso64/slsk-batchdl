@@ -181,7 +181,7 @@ Usage: sldl <input> [OPTIONS]
 
 --strict-conditions             Skip files with missing properties instead of accepting by
                                 default; if --min-bitrate is set, ignores any files with
-                                unknown bitrate.
+                                unknown bitrate. Warning: Available props depend on client
 ```
 #### Album Download Options
 ```
@@ -350,10 +350,12 @@ Conditions can also be supplied as a semicolon-delimited string with `--cond` an
 Some info may be unavailable depending on the client used by the peer. If (e.g) `--min-bitrate`
 is set, then sldl will still accept any file with unknown bitrate. To reject all files where one
 or more of the checked properties is null (unknown), enable `--strict-conditions`.  
-As a consequence, if `--min-bitrate` is also set then any files shared by users with the default
-client will be ignored, since the default client does not broadcast the bitrate. Also note that
-the default preferred conditions will already affect ranking with this option due to the bitrate
-and samplerate checks.
+
+This flag should be used with care: It's easy to accidentally exclude all files from users with
+certain clients. For example, because the standard Soulseek client does not broadcast the bitrate,
+enabling `--strict-conditions` and setting a `--min-bitrate` will make sldl ignore all files
+shared by users with the standard client. Even without a required min-bitrate, all those shares
+will be ranked at the bottom due to the default pref- bitrate checks.
 
 ## Name format
 
@@ -571,7 +573,7 @@ sldl "https://youtube.com/playlist/id" --get-deleted --yt-dlp
 
 Interactive album download:
 ```bash
-sldl "Artist - Some Album" -a -t
+sldl "Album Name" -at
 ```
 
 <br>
@@ -624,17 +626,17 @@ sldl --profile wishlist
 
 ### Searching
 
-- Just like in other soulseek clients, it's always best to provide the least input necessary in the search string to uniquely identify an album or song.
+- Just like in other soulseek clients, it's always best to provide the least input in the search string necessary to uniquely identify an album or song.
   - When downloading a spotify or bandcamp album, you can remove the artist name with `--regex A:.*`.
 - You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
 - When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
 
 ### Filtering Irrelevant Results
 
-sldl typically selects the correct files as long as they appear in the search results. By default, it always tries to download something and does no additional filtering. However, you can use the following options to filter your downloads:
+sldl typically selects the correct files as long as they appear in the search results. By default, it always tries to download something and does no additional filtering. However, you can use the following options to filter your search results:
 
 - `--strict-title`, `--strict-artist`, `--strict-album`  
-  Filters out files whose paths do not include the specified title, artist, or album name (ignoring case and using boundary characters). Note that the preferred versions of these options are enabled by default and hence these are generally only needed in special cases, such as when song or album names are very short (one or two characters).
+  Filters out files whose paths do not include the specified title, artist, or album name (ignoring case and using boundary characters). Because the pref- versions of these options are enabled by default, they are only recommended when you want to reduce false downloads, e.g. for [wishlists](#advanced-example-automatic-wishlist-downloader) where there is a high probability that the item does not exist on the network.
 
 - `--length-tol`  
   For normal downloads, this option sets a tolerance level by which the file’s length can differ from the input length. The default preference (--pref-length-tol) is set to 3 seconds.
