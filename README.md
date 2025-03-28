@@ -195,7 +195,7 @@ Usage: sldl <input> [OPTIONS]
                                 'most': Download from the folder containing the most images
 --album-art-only                Only download album art for the provided album
 --no-browse-folder              Do not automatically browse user shares to get all files in
-                                in the folder
+                                the folder
 --failed-album-path             Path to move all album files to when one of the items from
                                 the directory fails to download. Set to 'delete' to delete
                                 the files instead. Set to 'disable' keep them where they 

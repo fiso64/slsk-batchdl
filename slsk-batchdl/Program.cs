@@ -1,15 +1,13 @@
-﻿using AngleSharp.Text;
-using Soulseek;
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Net.Sockets;
+using Soulseek;
 using Models;
 using Enums;
 using Extractors;
 using Services;
-using System.Text;
 using Konsole;
 
 using Directory = System.IO.Directory;
@@ -1372,7 +1370,7 @@ public static partial class Program
                         readOutput = true;
                         onComplete = onComplete[2..];
                     }
-                    else if (onComplete[0].IsDigit())
+                    else if (char.IsDigit(onComplete[0]))
                     {
                         if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
                         onComplete = onComplete[2..];
@@ -1531,6 +1529,7 @@ public static partial class Program
             JsonPrinter.PrintIndexJson(data);
         }
     }
+
 
     public static async Task WaitForLogin(Config config)
     {
