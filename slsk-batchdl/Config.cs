@@ -275,6 +275,9 @@ public class Config
         
         nameFormat = nameFormat.Trim();
 
+        if (string.IsNullOrWhiteSpace(parentDir))
+            parentDir = Directory.GetCurrentDirectory();
+
         confPath        = Utils.GetFullPath(Utils.ExpandVariables(confPath));
         parentDir       = Utils.GetFullPath(Utils.ExpandVariables(parentDir));
         m3uFilePath     = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
