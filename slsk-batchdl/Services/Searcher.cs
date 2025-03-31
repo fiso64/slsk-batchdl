@@ -921,21 +921,22 @@ public class Searcher
 
     static string CleanSearchString(string str, bool removeSpecialChars)
     {
+        str = str.ToLower();
         string old;
+
         if (removeSpecialChars)
         {
             old = str;
             str = str.ReplaceSpecialChars(" ").Trim().RemoveConsecutiveWs();
             if (str.Length == 0) str = old;
         }
+
         foreach (var banned in bannedTerms)
         {
-            string b1 = banned;
-            string b2 = banned.Replace(" ", "-");
-            string b3 = banned.Replace(" ", "_");
-            string b4 = banned.Replace(" ", "");
-            foreach (var s in new string[] { b1, b2, b3, b4 })
-                str = str.Replace(s, string.Concat("*", s.AsSpan(1)), StringComparison.OrdinalIgnoreCase);
+            if (banned.All(x => str.Contains(x)))
+            {
+                str = str.Replace(banned[0], string.Concat("*", banned[0].AsSpan(1)));
+            }
         }
 
         return str.Trim();
@@ -1130,13 +1131,46 @@ public class Searcher
         return true;
     }
 
-
-    static readonly List<string> bannedTerms = new()
+    // copyright is joke
+    public static readonly string[][] bannedTerms =
     {
-        "depeche mode", "beatles", "prince revolutions", "michael jackson", "coexist", "bob dylan", "enter shikari",
-        "village people", "lenny kravitz", "beyonce", "beyoncé", "lady gaga", "jay z", "kanye west", "rihanna",
-        "adele", "kendrick lamar", "bad romance", "born this way", "weeknd", "broken hearted", "highway 61 revisited",
-        "west gold digger", "west good life"
+        new string[] { "depeche", "mode" },
+        new string[] { "beatles" },
+        new string[] { "prince", "revolutions" },
+        new string[] { "michael", "jackson" },
+        new string[] { "coexist" },
+        new string[] { "bob", "dylan" },
+        new string[] { "enter", "shikari" },
+        new string[] { "village", "people" },
+        new string[] { "lenny", "kravitz" },
+        new string[] { "beyonce" },
+        new string[] { "beyoncé" },
+        new string[] { "lady", "gaga" },
+        new string[] { "jay", "z" },
+        new string[] { "kanye", "west" },
+        new string[] { "rihanna" },
+        new string[] { "adele" },
+        new string[] { "kendrick", "lamar" },
+        new string[] { "romance", "bad" },
+        new string[] { "born", "this", "way" },
+        new string[] { "weeknd" },
+        new string[] { "broken", "hearted" },
+        new string[] { "highway", "61", "revisited" },
+        new string[] { "west", "gold", "digger" },
+        new string[] { "west", "good", "life" },
+        new string[] { "hold", "my", "hand" },
+        new string[] { "ymca" },
+        new string[] { "navy", "in", "the" },
+        new string[] { "macho" },
+        new string[] { "west", "go" },
+        new string[] { "hot", "cop" },
+        new string[] { "phone", "sex", "over", "the" },
+        new string[] { "minaj" },
+        new string[] { "government", "hooker" },
+        new string[] { "wayne", "lil" },
+        new string[] { "mood", "4", "eva" },
+        new string[] { "ghosts", "again" },
+        new string[] { "purple", "rain" }
     };
 }
 

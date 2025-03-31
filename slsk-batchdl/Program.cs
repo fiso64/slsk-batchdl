@@ -1342,7 +1342,7 @@ public static partial class Program
                 if (!config.noModifyShareCount)
                 {
                     Logger.Debug($"Setting share count");
-                    await client.SetSharedCountsAsync(20, 100);
+                    await client.SetSharedCountsAsync(50, 1000);
                 }
                 break;
             }
