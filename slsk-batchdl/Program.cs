@@ -30,6 +30,7 @@ public static partial class Program
     public static readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public static readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public static readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
+    public static readonly ConcurrentDictionary<string, Track> downloadedFiles = new();
 
     public static async Task Main(string[] args)
     {
