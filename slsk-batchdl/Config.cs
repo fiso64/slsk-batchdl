@@ -86,7 +86,7 @@ public class Config
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
     public int maxAlbumTrackCount = -1;
-    public int albumTrackCountMaxRetries = 3;
+    public int albumTrackCountMaxRetries = 5;
     public int fastSearchDelay = 300;
     public int minSharesAggregate = 2;
     public int maxTracks = int.MaxValue;

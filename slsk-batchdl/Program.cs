@@ -680,7 +680,7 @@ public static partial class Program
 
             Logger.Info("Getting all files in folder...");
             int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
-            retrievedFolders.Add(tracks[0].FirstUsername + '\\' + soulseekDir);
+            retrievedFolders.Add(soulseekDir);
             return newFilesFound;
         }
 
@@ -718,12 +718,12 @@ public static partial class Program
 
                     if (config.maxAlbumTrackCount > 0 && newCount > config.maxAlbumTrackCount)
                     {
-                        Logger.Info("New file count above maximum, skipping folder");
+                        Logger.Info($"New file count ({newCount}) above maximum ({config.maxAlbumTrackCount}), skipping folder");
                         failed = true;
                     }
                     if (config.minAlbumTrackCount > 0 && newCount < config.minAlbumTrackCount)
                     {
-                        Logger.Info("New file count below minimum, skipping folder");
+                        Logger.Info($"New file count ({newCount}) below minimum ({config.minAlbumTrackCount}), skipping folder");
                         failed = true;
                     }
 
@@ -731,13 +731,15 @@ public static partial class Program
                     {
                         tle.list.RemoveAt(index);
 
-                        if (albumTrackCountRetries-- <= 0)
+                        if (--albumTrackCountRetries <= 0)
                         {
                             Logger.Info($"Failed album track count condition {config.albumTrackCountMaxRetries} times, skipping album.");
                             tle.source.State = TrackState.Failed;
                             tle.source.FailureReason = FailureReason.NoSuitableFileFound;
                             break;
                         }
+
+                        continue;
                     }
                 }
             }
@@ -761,8 +763,9 @@ public static partial class Program
             bool userCancelled = false;
             void onKeyPressed(object? sender, ConsoleKey key)
             {
-                if (key == ConsoleKey.C)
+                if (key == ConsoleKey.C && !userCancelled)
                 {
+                    Logger.Debug("User cancelled download");
                     userCancelled = true;
                     cts.Cancel();
                 }
