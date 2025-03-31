@@ -989,9 +989,7 @@ public static partial class Program
 
         bool needImageDownload(List<Track> list)
         {
-            if (list.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
-                return false;
-            else if (option == AlbumArtOption.Most)
+            if (option == AlbumArtOption.Most)
                 return mCount < list.Count;
             else if (option == AlbumArtOption.Largest)
                 return mSize < list.Max(t => t.FirstDownload.Size) - 1024 * 50;
@@ -1026,7 +1024,8 @@ public static partial class Program
 
             albumArtLists.RemoveAt(index);
 
-            if (!needImageDownload(tracks))
+            bool allDownloaded = tracks.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists);
+            if (allDownloaded || !wasInteractive && !needImageDownload(tracks))
             {
                 Logger.Info("Image requirements already satisfied.");
                 return downloadedImages;
