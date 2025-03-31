@@ -82,6 +82,7 @@ public static class Logger
 
     public static void AddOrReplaceFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath));
         OutputConfigs.RemoveAll(config => config.IsFileOutput);
         AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel, isFileOutput: true);
     }
