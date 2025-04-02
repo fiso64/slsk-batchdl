@@ -154,8 +154,6 @@ public class FileManager
 
     string ApplyNameFormat(string format, Track track, Soulseek.File? slfile)
     {
-        string newName = format;
-
         TagLib.File? file = null;
         bool triedGettingFile = false;
         TagLib.File? getTagFile()
@@ -169,6 +167,12 @@ public class FileManager
             return file;
         }
 
+        return ApplyNameFormatInternal(format, config, tle, getTagFile, slfile, track, remoteCommonDir);
+    }
+
+    static string ApplyNameFormatInternal(string format, Config config, TrackListEntry tle, Func<TagLib.File?> getTagFile, Soulseek.File? slfile, Track track, string? remoteCommonDir)
+    {
+        string newName = format;
         var regex = new Regex(@"(\{(?:\{??[^\{]*?\}))");
         var matches = regex.Matches(newName);
 

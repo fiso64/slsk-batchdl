@@ -130,6 +130,8 @@ public class Config
     bool hasConfiguredIndex = false;
     bool confPathChanged = false;
 
+    public Config() { }
+
     public Config(string[] args)
     {
         configProfiles = new Dictionary<string, (List<string> args, string? cond)>();

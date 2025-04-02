@@ -22,7 +22,7 @@ namespace Tests.Extractors
         public void Setup()
         {
             extractor = new StringExtractor();
-            config = new Config(new string[] { });
+            config = new Config();
             config.aggregate = false;
 
             testStrings = new List<string>

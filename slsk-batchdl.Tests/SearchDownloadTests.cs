@@ -84,7 +84,7 @@ namespace Tests.SearchDownloadTests
             var album = new Track() { Album = "testalbum", Artist = "testartist", Type = Enums.TrackType.Album };
 
             // Act
-            var results = await searcher.GetAlbumDownloads(album, new ResponseData(), new Config(Array.Empty<string>()));
+            var results = await searcher.GetAlbumDownloads(album, new ResponseData(), new Config());
 
             // Assert
             Assert.AreEqual(4, results[0].Count);

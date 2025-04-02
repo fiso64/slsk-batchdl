@@ -44,7 +44,7 @@ namespace Tests.ConfigTests
                 "\nformat = opus";
 
             File.WriteAllText(testConfigPath, content);
-            var config = new Config(new string[] { "-c", testConfigPath });
+            var config = new Config(new string[] { "-c", testConfigPath, "test-input" });
             config.inputType = InputType.YouTube;
             config.interactiveMode = true;
             config.aggregate = false;
@@ -70,7 +70,7 @@ namespace Tests.ConfigTests
                 "\nyt-dlp = true";
 
             File.WriteAllText(testConfigPath, content);
-            var config = new Config(new string[] { "-c", testConfigPath });
+            var config = new Config(new string[] { "-c", testConfigPath, "test-input" });
             config.inputType = InputType.CSV;
             config.album = true;
             config.interactiveMode = true;
@@ -96,7 +96,7 @@ namespace Tests.ConfigTests
                 "\nyt-dlp = true";
 
             File.WriteAllText(testConfigPath, content);
-            var config = new Config(new string[] { "-c", testConfigPath });
+            var config = new Config(new string[] { "-c", testConfigPath, "test-input" });
             config.inputType = InputType.YouTube;
             config.album = false;
             config.interactiveMode = true;
@@ -118,7 +118,7 @@ namespace Tests.ConfigTests
         [TestInitialize]
         public void Setup()
         {
-            config = new Config(new string[] { });
+            config = new Config();
             config.inputType = InputType.YouTube;
             config.interactiveMode = true;
             config.album = true;
