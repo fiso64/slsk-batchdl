@@ -361,7 +361,8 @@ will be ranked at the bottom due to the default pref- bitrate checks.
 
 Variables enclosed in {} will be replaced by the corresponding file tag value.
 Name format supports subdirectories as well as conditional expressions like {tag1|tag2} - If
-tag1 is null, use tag2. String literals enclosed in parentheses are ignored in the null check.
+tag1 is null, use tag2. This can be chained arbitrarily many times. String literals enclosed
+in parentheses are ignored in the null check.
 
 ### Examples
 - `{artist} - {title}`  
