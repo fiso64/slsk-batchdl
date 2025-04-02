@@ -15,7 +15,7 @@ namespace Tests.NameFormat
         public void LongExample_Passes()
         {
             var cfg = new Config();
-            cfg.nameFormat = "{albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
+            cfg.nameFormat = "{albumartist(/)album(/)track(. )title|artist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
             var tle = new TrackListEntry() { config = cfg };
 
             var track = new Track()
@@ -25,6 +25,10 @@ namespace Tests.NameFormat
                 Album = "SourceAlbum",
             };
 
+            var slFile = new Soulseek.File(0, "music\\test\\testfile.mp3", 1, ".mp3");
+
+            var method = typeof(FileManager).GetMethod("ApplyNameFormatInternal", BindingFlags.NonPublic | BindingFlags.Static);
+
             var tagLibFile = CreateEmptyMP3(
                 title: "Title",
                 artist: "Artist",
@@ -32,10 +36,6 @@ namespace Tests.NameFormat
                 albumArtist: "AlbumArtist",
                 track: 1
             );
-
-            var slFile = new Soulseek.File(0, "music\\test\\testfile.mp3", 1, ".mp3");
-
-            var method = typeof(FileManager).GetMethod("ApplyNameFormatInternal", BindingFlags.NonPublic | BindingFlags.Static);
 
             var result = (string?)method.Invoke(null, new object[] {
                 cfg.nameFormat,
@@ -50,9 +50,9 @@ namespace Tests.NameFormat
             Assert.AreEqual("AlbumArtist/Album/01. Title", result.Replace('\\', '/'));
 
             var tagLibFile2 = CreateEmptyMP3(
+                title: "Title",
                 artist: "Artist",
                 album: "Album",
-                albumArtist: "AlbumArtist",
                 track: 1
             );
 
@@ -66,7 +66,26 @@ namespace Tests.NameFormat
                 "music\\test"
             });
 
-            Assert.AreEqual("missing-tags/test/testfile", result2.Replace('\\', '/'));
+            Assert.AreEqual("Artist/Album/01. Title", result2.Replace('\\', '/'));
+
+            var tagLibFile3 = CreateEmptyMP3(
+                artist: "Artist",
+                album: "Album",
+                albumArtist: "AlbumArtist",
+                track: 1
+            );
+
+            var result3 = (string?)method.Invoke(null, new object[] {
+                cfg.nameFormat,
+                cfg,
+                tle,
+                () => tagLibFile3,
+                slFile,
+                track,
+                "music\\test"
+            });
+
+            Assert.AreEqual("missing-tags/test/testfile", result3.Replace('\\', '/'));
         }
 
         [TestCleanup]
