@@ -88,7 +88,7 @@ public class FileManager
             if (remainingOnly && organized.Contains(track))
                 continue;
 
-            OrganizeNonAudio(track, parent, additionalImages.Contains(track));
+            OrganizeNonAudio(track, parent, additionalImages != null && additionalImages.Contains(track));
         }
     }
 
@@ -155,12 +155,18 @@ public class FileManager
     string ApplyNameFormat(string format, Track track, Soulseek.File? slfile)
     {
         string newName = format;
-        TagLib.File? file = null;
 
-        if (HasTagVariables(format))
+        TagLib.File? file = null;
+        bool triedGettingFile = false;
+        TagLib.File? getTagFile()
         {
-            try { file = TagLib.File.Create(track.DownloadPath); }
-            catch { }
+            if (!triedGettingFile && file == null)
+            {
+                triedGettingFile = true;
+                try { file = TagLib.File.Create(track.DownloadPath); }
+                catch { }
+            }
+            return file;
         }
 
         var regex = new Regex(@"(\{(?:\{??[^\{]*?\}))");
@@ -180,7 +186,7 @@ public class FileManager
                 {
                     string[] parts = Regex.Split(opt, @"\([^\)]*\)");
                     string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => TryGetCleanVarValue(x, tle, file, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res) && res.Length > 0))
+                    if (result.All(x => TryGetCleanVarValue(x, tle, getTagFile, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res) && res.Length > 0))
                     {
                         chosenOpt = opt;
                         break;
@@ -198,7 +204,7 @@ public class FileManager
                         return match.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
                     else
                     {
-                        TryGetCleanVarValue(match.Value, tle, file, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res);
+                        TryGetCleanVarValue(match.Value, tle, getTagFile, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res);
                         return res;
                     }
                 });
@@ -305,10 +311,11 @@ public class FileManager
         return Path.Join(r, Path.GetRelativePath(remoteCommonDir, d));
     }
 
-    public static bool TryGetCleanVarValue(string x, TrackListEntry tle, TagLib.File? file, Soulseek.File? slfile, Track track, string? remoteCommonDir, string replaceWith, out string res)
+    public static bool TryGetCleanVarValue(string x, TrackListEntry tle, Func<TagLib.File?> getFile, Soulseek.File? slfile, Track track, string? remoteCommonDir, string replaceWith, out string res)
     {
         if (VarExtractors.TryGetValue(x, out var extractor))
         {
+            var file = TagVars.Contains(x) ? getFile() : null;
             string value = extractor(tle, file, slfile, track, remoteCommonDir);
             if (NoCleanSeparatorVars.Contains(x))
                 res = value;
