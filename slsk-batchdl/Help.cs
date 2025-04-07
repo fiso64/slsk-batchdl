@@ -5,6 +5,7 @@
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
+// --remove-brackets, --no-remove-special-chars
 // For debugging:
 // --mock-files-dir <directory>, --mock-files-no-read-tags
 
@@ -68,8 +69,6 @@ public static class Help
         --fast-search                  Begin downloading as soon as a file satisfying the preferred
                                        conditions is found. Only for normal download mode.
         --remove-ft                    Remove 'feat.' and everything after before searching
-        --no-remove-special-chars      Do not remove special characters before searching
-        --remove-brackets              Remove square brackets and their contents before searching
         --regex <regex>                Remove a regexp from all track titles and artist names.
                                        Optionally specify a replacement regex after a semicolon.
                                        Add 'T:', 'A:' or 'L:' at the start to only apply this to
