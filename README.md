@@ -627,10 +627,10 @@ sldl --profile wishlist
 
 - Just like in other soulseek clients, it's always best to provide the least input in the search string necessary to uniquely identify an album or song.
   - Use `--remove-ft` to remove "feat." or "ft." artists 
-  - When downloading a spotify or bandcamp album, you can remove the artist name with `--regex A:.*`.
+  - For spotify or bandcamp albums, you can remove the artist name with `--regex A:.*`.
 - You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
 - When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
-- When dealing with YouTube videos you may want to remove any text in parentheses (like (Video)), as well as "Official" and "Lyrics" with `--regex "[\[\(].*?[\]\)]|(?i:lyrics)|(?i:official)"` 
+- When dealing YouTube playlists you may want to remove any text in parentheses (like (Video)), as well as "Official" and "Lyrics" with `--regex "[\[\(].*?[\]\)]|(?i:lyrics)|(?i:official)"` 
 
 ### Filtering Irrelevant Results
 
