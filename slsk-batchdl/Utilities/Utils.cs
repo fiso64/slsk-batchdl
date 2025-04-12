@@ -108,6 +108,9 @@ public static class Utils
 
         path = NormalizedPath(path);
 
+        if (path.Length == 0)
+            return path;
+
         if (path[0] == '~' && (path.Length == 1 || path[1] == '/'))
         {
             string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
