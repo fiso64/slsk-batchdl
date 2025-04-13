@@ -5,7 +5,7 @@
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
-// --remove-brackets, --no-remove-special-chars
+// --remove-brackets, --no-remove-special-chars, --parse-title
 // For debugging:
 // --mock-files-dir <directory>, --mock-files-no-read-tags
 

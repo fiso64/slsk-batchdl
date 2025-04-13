@@ -50,6 +50,7 @@ public class Config
     public string failedAlbumPath = "";
     public string logFilePath = "";
     public string mockFilesDir = "";
+    public string parseTitleTemplate = "";
     public bool aggregate = false;
     public bool album = false;
     public bool albumArtOnly = false;
@@ -1396,6 +1397,9 @@ public class Config
                         break;
                     case "--mock-files-no-read-tags":
                         setFlag(ref mockFilesReadTags, ref i, false);
+                        break;
+                    case "--parse-title":
+                        parseTitleTemplate = GetParameter(ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

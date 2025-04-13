@@ -131,6 +131,10 @@ public static partial class Program
             {
                 return;
             }
+            if (config.parseTitleTemplate.Length > 0 && track.Title.Length > 0)
+            {
+                TrackTemplateParser.TryUpdateTrack(track.Title, config.parseTitleTemplate, track);
+            }
             if (config.removeFt)
             {
                 track.Title = track.Title.RemoveFt();
