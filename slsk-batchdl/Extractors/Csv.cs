@@ -87,7 +87,7 @@ namespace Extractors
                 new[] { "title", "song", "track title", "track name", "song name", "track" },
                 new[] { "length", "duration", "track length", "track duration", "song length", "song duration" },
                 new[] { "description", "youtube description" },
-                new[] { "url", "id", "youtube id" },
+                new[] { "url", "track url", "uri", "id", "youtube id" },
                 new[] { "track count", "album track count" }
             };
 
