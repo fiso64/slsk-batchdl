@@ -2,7 +2,7 @@
 using Models;
 using System;
 
-namespace Tests.TrackFactoryTest
+namespace Tests.TrackParserTest
 {
     [TestClass]
     public class TrackTemplateParserTests

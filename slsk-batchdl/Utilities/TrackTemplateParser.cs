@@ -9,10 +9,8 @@ using System.Threading.Tasks;
 public static class TrackTemplateParser
 {
     // Cache compiled regex patterns for performance if the same template is used often
-    private static readonly Dictionary<string, Tuple<Regex, List<string>>> _regexCache =
-        new Dictionary<string, Tuple<Regex, List<string>>>();
-    private static readonly object _cacheLock = new object();
-
+    private static readonly object cacheLock = new();
+    private static Dictionary<string, Tuple<Regex, List<string>>>? regexCache = null;
 
     /// <summary>
     /// Creates a Track object by parsing an input string based on a template.
@@ -107,14 +105,15 @@ public static class TrackTemplateParser
     /// </summary>
     private static (Regex, List<string>) GetOrCreateRegexAndFields(string template)
     {
-        lock (_cacheLock) // Protect cache access
+        lock (cacheLock) // Protect cache access
         {
-            if (!_regexCache.TryGetValue(template, out var cachedData))
+            regexCache ??= new Dictionary<string, Tuple<Regex, List<string>>>();
+            if (!regexCache.TryGetValue(template, out var cachedData))
             {
                 // Build the regex pattern and extract field names from the template
                 // BuildRegexFromTemplate handles its own ArgumentException for invalid templates
                 (Regex patternRegex, List<string> fieldNames) = BuildRegexFromTemplate(template);
-                _regexCache[template] = Tuple.Create(patternRegex, fieldNames);
+                regexCache[template] = Tuple.Create(patternRegex, fieldNames);
                 return (patternRegex, fieldNames);
             }
             else
