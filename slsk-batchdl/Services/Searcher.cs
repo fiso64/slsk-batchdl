@@ -365,17 +365,9 @@ public class Searcher
         }
 
         int min, max;
-        
-        if (config.minAlbumTrackCount > -1 || config.maxAlbumTrackCount > -1)
-        {
-            min = config.minAlbumTrackCount;
-            max = config.maxAlbumTrackCount;
-        }
-        else
-        {
-            min = track.MinAlbumTrackCount;
-            max = track.MaxAlbumTrackCount;
-        }
+
+        min = track.MinAlbumTrackCount;
+        max = track.MaxAlbumTrackCount;
 
         // If the search query includes track title then the results will not have full folders.
         // Need to check the actual track count later in Program.DownloadAlbum.

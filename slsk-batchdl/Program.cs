@@ -166,6 +166,14 @@ public static partial class Program
             {
                 track.ArtistMaybeWrong = true;
             }
+            if (config.minAlbumTrackCount > 0)
+            {
+                track.MinAlbumTrackCount = config.minAlbumTrackCount;
+            }
+            if (config.maxAlbumTrackCount != -1)
+            {
+                track.MaxAlbumTrackCount = config.maxAlbumTrackCount;
+            }
 
             track.Artist = track.Artist.Trim();
             track.Album = track.Album.Trim();
@@ -727,20 +735,20 @@ public static partial class Program
                 // Need to check track counts again in case search results did not contain full folders.
                 // New track count will always be >= old count. Lower bound check in Searcher.GetAlbumDownloads is disabled
                 // when track title is non-empty, therefore need to only check lower bound when title is non-empty.
-                if (config.albumTrackCountMaxRetries > 0 && (config.maxAlbumTrackCount > 0 || (config.minAlbumTrackCount > 0 && tle.source.Title.Length > 0)))
+                if (config.albumTrackCountMaxRetries > 0 && (tle.source.MaxAlbumTrackCount > 0 || (tle.source.MinAlbumTrackCount > 0 && tle.source.Title.Length > 0)))
                 {
                     await getFullFolder(tracks);
                     int newCount = tracks.Count(t => !t.IsNotAudio);
                     bool failed = false;
 
-                    if (config.maxAlbumTrackCount > 0 && newCount > config.maxAlbumTrackCount)
+                    if (tle.source.MaxAlbumTrackCount > 0 && newCount > tle.source.MaxAlbumTrackCount)
                     {
-                        Logger.Info($"New file count ({newCount}) above maximum ({config.maxAlbumTrackCount}), skipping folder");
+                        Logger.Info($"New file count ({newCount}) above maximum ({tle.source.MaxAlbumTrackCount}), skipping folder");
                         failed = true;
                     }
-                    if (config.minAlbumTrackCount > 0 && newCount < config.minAlbumTrackCount)
+                    if (tle.source.MinAlbumTrackCount > 0 && newCount < tle.source.MinAlbumTrackCount)
                     {
-                        Logger.Info($"New file count ({newCount}) below minimum ({config.minAlbumTrackCount}), skipping folder");
+                        Logger.Info($"New file count ({newCount}) below minimum ({tle.source.MinAlbumTrackCount}), skipping folder");
                         failed = true;
                     }
 
