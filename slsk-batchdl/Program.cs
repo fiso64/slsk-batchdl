@@ -190,7 +190,7 @@ public static partial class Program
     static void PrepareListEntries(Config startConfig)
     {
         var editors = new Dictionary<(string path, M3uOption option), M3uEditor>();
-        var skippers = new Dictionary<(string dir, SkipMode mode, bool checkCond), FileSkipper>();
+        var skippers = new Dictionary<(string dir, SkipMode mode, bool checkCond), TrackSkipper>();
 
         foreach (var tle in trackLists.lists)
         {
@@ -259,7 +259,7 @@ public static partial class Program
                 }
                 else
                 {
-                    tle.outputDirSkipper = FileSkipperRegistry.GetSkipper(tle.config.skipMode, tle.config.parentDir, checkCond);
+                    tle.outputDirSkipper = TrackSkipperRegistry.GetSkipper(tle.config.skipMode, tle.config.parentDir, checkCond);
                     skippers.Add((tle.config.parentDir, tle.config.skipMode, checkCond), tle.outputDirSkipper);
                 }
 
@@ -271,7 +271,7 @@ public static partial class Program
                     }
                     else
                     {
-                        tle.musicDirSkipper = FileSkipperRegistry.GetSkipper(tle.config.skipModeMusicDir, tle.config.skipMusicDir, checkCond);
+                        tle.musicDirSkipper = TrackSkipperRegistry.GetSkipper(tle.config.skipModeMusicDir, tle.config.skipMusicDir, checkCond);
                         skippers.Add((tle.config.skipMusicDir, tle.config.skipModeMusicDir, checkCond), tle.musicDirSkipper);
                     }
                 }
@@ -320,7 +320,7 @@ public static partial class Program
 
             if (config.skipExisting && !config.PrintResults && tle.source.State != TrackState.NotFoundLastTime)
             {
-                if (tle.sourceCanBeSkipped && SetExisting(tle, FileSkipperContext.FromTrackListEntry(tle), tle.source))
+                if (tle.sourceCanBeSkipped && SetExisting(tle, TrackSkipperContext.FromTrackListEntry(tle), tle.source))
                     existing.Add(tle.source);
 
                 if (tle.source.State != TrackState.AlreadyExists && !tle.needSourceSearch)
@@ -573,7 +573,7 @@ public static partial class Program
 
     static List<Track> DoSkipExisting(TrackListEntry tle, List<Track> tracks)
     {
-        var context = FileSkipperContext.FromTrackListEntry(tle);
+        var context = TrackSkipperContext.FromTrackListEntry(tle);
         var existing = new List<Track>();
         foreach (var track in tracks)
         {
@@ -586,7 +586,7 @@ public static partial class Program
     }
 
 
-    static bool SetExisting(TrackListEntry tle, FileSkipperContext context, Track track)
+    static bool SetExisting(TrackListEntry tle, TrackSkipperContext context, Track track)
     {
         string? path = null;
 

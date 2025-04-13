@@ -6,12 +6,30 @@ namespace Models
         public string? Artists;
         public string? Title;
         public string? Album;
-        public int Length;
-        public int Bitrate;
-        public int Samplerate;
-        public int Bitdepth;
+        public int? Length;
+        public int? Bitrate;
+        public int? Samplerate;
+        public int? Bitdepth;
 
         public SimpleFile(TagLib.File file)
+        {
+            SetFromTagLib(file);
+        }
+
+        public SimpleFile(string path)
+        {
+            try
+            {
+                var tagFile = TagLib.File.Create(path);
+                SetFromTagLib(tagFile);
+            }
+            catch 
+            {
+                Path = path;
+            }
+        }
+
+        private void SetFromTagLib(TagLib.File file)
         {
             Path = file.Name;
             Artists = file.Tag.JoinedPerformers;

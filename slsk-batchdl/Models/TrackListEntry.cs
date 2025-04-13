@@ -21,8 +21,8 @@ namespace Models
         public FileConditions? extractorPrefCond = null;
         public M3uEditor? playlistEditor = null;
         public M3uEditor? indexEditor = null;
-        public FileSkipper? outputDirSkipper = null;
-        public FileSkipper? musicDirSkipper = null;
+        public TrackSkipper? outputDirSkipper = null;
+        public TrackSkipper? musicDirSkipper = null;
 
         public bool CanParallelSearch => source.Type == TrackType.Album || source.Type == TrackType.Aggregate;
 

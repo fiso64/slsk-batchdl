@@ -467,9 +467,9 @@ public static class Utils
 
     static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@#:*=+{}|'\"$^&`~%<>—–-".ToCharArray());
 
-    public static bool ContainsWithBoundary(this string str, string value, bool ignoreCase = false)
+    public static bool ContainsWithBoundary(this string str, string? value, bool ignoreCase = false)
     {
-        if (value.Length == 0)
+        if (string.IsNullOrEmpty(value))
             return true;
         if (str.Length == 0)
             return false;
@@ -491,9 +491,9 @@ public static class Utils
         return false;
     }
 
-    public static bool ContainsWithBoundaryIgnoreWs(this string str, string value, bool ignoreCase = false, bool acceptLeftDigit = false)
+    public static bool ContainsWithBoundaryIgnoreWs(this string str, string? value, bool ignoreCase = false, bool acceptLeftDigit = false)
     {
-        if (value.Length == 0)
+        if (string.IsNullOrEmpty(value))
             return true;
         if (str.Length == 0)
             return false;
