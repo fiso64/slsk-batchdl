@@ -224,7 +224,7 @@ public static partial class Program
                 if (tle.config.indexFilePath.Length > 0)
                     indexPath = tle.config.indexFilePath.Replace("{playlist-name}", tle.ItemNameOrSource().ReplaceInvalidChars(" ").Trim());
                 else
-                    indexPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName(), "_index.sldl");
+                    indexPath = Path.Join(tle.config.parentDir, tle.DefaultFolderName(), "_index.csv");
 
                 if (editors.TryGetValue((indexPath, indexOption), out var indexEditor))
                 {
