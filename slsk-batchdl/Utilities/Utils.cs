@@ -700,6 +700,58 @@ public static class Utils
         return strict ? path.StartsWith(dir + '/') : path.StartsWith(dir);
     }
 
+    public static (string? Artist, string Title) SplitArtistAndTitle(string inputTitle)
+    {
+        if (string.IsNullOrEmpty(inputTitle))
+        {
+            return (null, inputTitle);
+        }
+
+        const string separator = " - ";
+        inputTitle = inputTitle.Replace(" — ", separator).Replace(" -- ", separator);
+
+        int separatorLength = separator.Length;
+        int lastValidSeparatorIndex = -1;
+        int validSeparatorCount = 0;
+        int parenLevel = 0;
+        int bracketLevel = 0;
+
+        for (int i = 0; i < inputTitle.Length; i++)
+        {
+            char c = inputTitle[i];
+
+            bool isPotentialSeparator = (i <= inputTitle.Length - separatorLength) &&
+                                        string.CompareOrdinal(inputTitle, i, separator, 0, separatorLength) == 0;
+
+            if (isPotentialSeparator && parenLevel == 0 && bracketLevel == 0)
+            {
+                validSeparatorCount++;
+                lastValidSeparatorIndex = i;
+                if (validSeparatorCount > 1) break;
+                i += separatorLength - 1;
+                continue;
+            }
+
+            if (c == '(') parenLevel++;
+            else if (c == ')') parenLevel = Math.Max(0, parenLevel - 1);
+            else if (c == '[') bracketLevel++;
+            else if (c == ']') bracketLevel = Math.Max(0, bracketLevel - 1);
+        }
+
+        if (validSeparatorCount == 1)
+        {
+            string potentialArtist = inputTitle[..lastValidSeparatorIndex].Trim();
+            string potentialTitle = inputTitle[(lastValidSeparatorIndex + separatorLength)..].Trim();
+
+            if (potentialArtist.Length > 0 && potentialTitle.Length > 0)
+            {
+                return (potentialArtist, potentialTitle);
+            }
+        }
+
+        return (null, inputTitle);
+    }
+
     public static bool SequenceEqualUpToPermutation<T>(this IEnumerable<T> list1, IEnumerable<T> list2)
     {
         var cnt = new Dictionary<T, int>();

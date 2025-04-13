@@ -83,6 +83,7 @@ public class Config
     public bool writeIndex = true;
     public bool parallelAlbumSearch = false;
     public bool mockFilesReadTags = true;
+    public bool extractArtist = false;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -1418,6 +1419,10 @@ public class Config
                         break;
                     case "--parse-title":
                         parseTitleTemplate = GetParameter(ref i);
+                        break;
+                    case "--ea":
+                    case "--extract-artist":
+                        setFlag(ref extractArtist, ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

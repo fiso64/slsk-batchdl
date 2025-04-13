@@ -153,6 +153,15 @@ public static partial class Program
             {
                 TrackTemplateParser.TryUpdateTrack(track.Title, config.parseTitleTemplate, track);
             }
+            if (config.extractArtist && track.Title.Length > 0)
+            {
+                (var artist, var title) = Utils.SplitArtistAndTitle(track.Title);
+                if (artist != null)
+                {
+                    track.Artist = artist;
+                    track.Title = title;
+                }
+            }
             if (config.artistMaybeWrong)
             {
                 track.ArtistMaybeWrong = true;
