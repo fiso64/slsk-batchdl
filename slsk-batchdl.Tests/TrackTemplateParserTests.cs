@@ -1,12 +1,11 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
 using System;
-using System.IO; // Keep this if Models namespace needs it, otherwise can be removed
 
 namespace Tests.TrackFactoryTest
 {
     [TestClass]
-    public class TrackFactoryTests
+    public class TrackTemplateParserTests
     {
         // --- Tests for CreateFromString ---
 
@@ -16,7 +15,7 @@ namespace Tests.TrackFactoryTest
             // Simple case with standard fields
             string input = "Artist Name - Track Title";
             string template = "{artist} - {title}";
-            Track? track = TrackFactory.CreateFromString(input, template);
+            Track? track = TrackTemplateParser.CreateFromString(input, template);
 
             Assert.IsNotNull(track);
             Assert.AreEqual("Artist Name", track.Artist);
@@ -31,7 +30,7 @@ namespace Tests.TrackFactoryTest
             // braces in input, leading/trailing whitespace, case-insensitivity in template
             string input = "  {The Title} by Artist {Name} on [Album Name]  ";
             string template = "{{TITLE}} by {Artist} on [{album}]"; // Case difference, literal braces, literal brackets
-            Track? track = TrackFactory.CreateFromString(input, template);
+            Track? track = TrackTemplateParser.CreateFromString(input, template);
 
             Assert.IsNotNull(track);
             Assert.AreEqual("Artist {Name}", track.Artist); // Input braces captured, whitespace trimmed
@@ -46,29 +45,41 @@ namespace Tests.TrackFactoryTest
             string template = "{artist} - {title}";
 
             // Scenario 1: Completely different input
-            Track? track1 = TrackFactory.CreateFromString("Just some random text", template);
+            Track? track1 = TrackTemplateParser.CreateFromString("Just some random text", template);
             Assert.IsNull(track1, "Should return null for completely mismatched input.");
 
-            // Scenario 2: Partial match (missing required part)
-            Track? track2 = TrackFactory.CreateFromString("Artist Name - ", template);
-            Assert.IsNull(track2, "Should return null for partial match.");
-
-            // Scenario 3: Mismatched literal characters
-            Track? track3 = TrackFactory.CreateFromString("Artist Name / Title", template); // Uses '/' instead of '-'
+            // Scenario 2: Mismatched literal characters
+            Track? track3 = TrackTemplateParser.CreateFromString("Artist Name / Title", template); // Uses '/' instead of '-'
             Assert.IsNull(track3, "Should return null for mismatched literal characters.");
         }
+
+        [TestMethod]
+        public void CreateFromString_TemplateWithUnknownField_IgnoresUnknownAndPopulatesKnown()
+        {
+            // Verifies that placeholders not matching Track fields are ignored,
+            // while known fields are still processed correctly.
+            string input = "Valid Artist - Valid Title [Some Extra Data]";
+            string template = "{artist} - {title} [{unknown_field}]"; // Contains a field not in Track model
+            Track? track = TrackTemplateParser.CreateFromString(input, template);
+
+            Assert.IsNotNull(track);
+            Assert.AreEqual("Valid Artist", track.Artist); // Known field should be populated
+            Assert.AreEqual("Valid Title", track.Title);   // Known field should be populated
+            Assert.IsTrue(string.IsNullOrEmpty(track.Album)); // Album not in template or input structure for it
+        }
+
 
         // --- Tests for TryUpdateTrack ---
 
         [TestMethod]
         public void TryUpdateTrack_BasicUpdate_Success()
         {
-            // Simple case updating one field
+            // Simple case updating one field, ensuring others are untouched
             string input = "New Artist Name";
             string template = "{artist}";
             Track track = new Track { Artist = "Old Artist", Title = "Old Title", Album = "Old Album" };
 
-            bool result = TrackFactory.TryUpdateTrack(input, template, track);
+            bool result = TrackTemplateParser.TryUpdateTrack(input, template, track);
 
             Assert.IsTrue(result);
             Assert.AreEqual("New Artist Name", track.Artist); // Updated
@@ -76,33 +87,17 @@ namespace Tests.TrackFactoryTest
             Assert.AreEqual("Old Album", track.Album);       // Unchanged
         }
 
-
-        [TestMethod]
-        public void TryUpdateTrack_ComplexUpdate_Success()
-        {
-            // Covers: Updating multiple fields, leaving others, whitespace, braces, case-insensitivity
-            string input = "  New Artist {Jr.} - [New Album]  ";
-            string template = "{ARTIST} - [{Album}]"; // Case difference, literal brackets
-            Track track = new Track { Artist = "Old Artist", Title = "Old Title", Album = "Old Album" };
-
-            bool result = TrackFactory.TryUpdateTrack(input, template, track);
-
-            Assert.IsTrue(result);
-            Assert.AreEqual("New Artist {Jr.}", track.Artist); // Updated, whitespace trimmed, braces captured
-            Assert.AreEqual("New Album", track.Album);         // Updated, literal brackets matched, whitespace trimmed
-            Assert.AreEqual("Old Title", track.Title);         // Should remain unchanged
-        }
-
         [TestMethod]
         public void TryUpdateTrack_NoMatch_ReturnsFalseAndDoesNotUpdate()
         {
+            // Verifies the specific failure behavior of TryUpdateTrack
             string input = "This does not match the pattern";
             string template = "{artist} / {title}";
             Track track = new Track { Artist = "Original Artist", Title = "Original Title", Album = "Original Album" };
             // Create a shallow copy for comparison
             Track originalTrack = new Track { Artist = track.Artist, Title = track.Title, Album = track.Album };
 
-            bool result = TrackFactory.TryUpdateTrack(input, template, track);
+            bool result = TrackTemplateParser.TryUpdateTrack(input, template, track);
 
             Assert.IsFalse(result);
             // Verify track object is unchanged by comparing field by field

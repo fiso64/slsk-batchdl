@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-public static class TrackFactory
+public static class TrackTemplateParser
 {
     // Cache compiled regex patterns for performance if the same template is used often
     private static readonly Dictionary<string, Tuple<Regex, List<string>>> _regexCache =
@@ -164,7 +164,7 @@ public static class TrackFactory
     private static (Regex, List<string>) BuildRegexFromTemplate(string template)
     {
         var fieldNames = new List<string>();
-        var patternBuilder = new StringBuilder("^"); // Anchor at the start
+        var patternBuilder = new StringBuilder("^\\s*"); // Anchor at the start, allow leading whitespace
 
         // Use regex to find placeholders like {name}
         // This regex finds '{' followed by one or more characters that are not '{' or '}', then '}'
@@ -199,7 +199,7 @@ public static class TrackFactory
             patternBuilder.Append(Regex.Escape(template.Substring(lastIndex)));
         }
 
-        patternBuilder.Append('$'); // Anchor at the end
+        patternBuilder.Append("\\s*$"); // Allow trailing whitespace, anchor at the end
 
         // Compile the regex for performance
         RegexOptions options = RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase; // Case-insensitive matching for literals
