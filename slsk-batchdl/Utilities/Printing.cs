@@ -95,7 +95,7 @@ public static class Printing
                         Console.WriteLine($"  Album:              {tracks[i].Album}");
                     if (tracks[i].MinAlbumTrackCount != -1 || tracks[i].MaxAlbumTrackCount != -1)
                         Console.WriteLine($"  Min,Max tracks:     {tracks[i].MinAlbumTrackCount},{tracks[i].MaxAlbumTrackCount}");
-                    if (tracks[i].Length > -1 || tracks[i].Type == TrackType.Normal)
+                    if (tracks[i].Length > -1)
                         Console.WriteLine($"  Length:             {tracks[i].Length}s");
                     if (!string.IsNullOrEmpty(tracks[i].DownloadPath))
                         Console.WriteLine($"  Local path:         {tracks[i].DownloadPath}");

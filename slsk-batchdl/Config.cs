@@ -104,8 +104,7 @@ public class Config
     public int parallelAlbumSearchProcesses = 5;
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
-    public Track regexToReplace = new();
-    public Track regexReplaceBy = new();
+    public List<(Track, Track)>? regex = null;
     public Logger.LogLevel logLevel = Logger.LogLevel.Info;
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
     public InputType inputType = InputType.None;
@@ -194,8 +193,12 @@ public class Config
         copy.necessaryCond = new FileConditions(necessaryCond);
         copy.preferredCond = new FileConditions(preferredCond);
 
-        copy.regexToReplace = new Track(regexToReplace);
-        copy.regexReplaceBy = new Track(regexReplaceBy);
+        if (regex != null)
+        {
+            copy.regex = new List<(Track, Track)>();
+            foreach (var (x, y) in regex)
+                copy.regex.Add((new Track(x), new Track(y)));
+        }
 
         copy.appliedProfiles = new HashSet<string>(appliedProfiles);
 
@@ -959,6 +962,18 @@ public class Config
                     case "--re":
                     case "--regex":
                         string s = GetParameter(ref i).Replace("\\;", "<<semicol>>");
+                        bool append = false;
+
+                        if (s.TrimStart().StartsWith("+ "))
+                        {
+                            append = true;
+                            s = s.TrimStart().Substring(2);
+                        }
+
+                        regex = regex ?? new();
+                        var regexToReplace = new Track();
+                        var regexReplaceBy = new Track();
+
                         string applyTo = "TAL";
 
                         if (s.Length > 2 && s[1] == ':' && (s[0] == 'T' || s[0] == 'A' || s[0] == 'L'))
@@ -986,6 +1001,9 @@ public class Config
                             regexToReplace.Album = toReplace;
                             regexReplaceBy.Album = replaceBy;
                         }
+
+                        if (!append) regex.Clear();
+                        regex.Add((regexToReplace, regexReplaceBy));
                         break;
                     case "-r":
                     case "--reverse":

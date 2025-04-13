@@ -131,10 +131,6 @@ public static partial class Program
             {
                 return;
             }
-            if (config.parseTitleTemplate.Length > 0 && track.Title.Length > 0)
-            {
-                TrackTemplateParser.TryUpdateTrack(track.Title, config.parseTitleTemplate, track);
-            }
             if (config.removeFt)
             {
                 track.Title = track.Title.RemoveFt();
@@ -144,11 +140,18 @@ public static partial class Program
             {
                 track.Title = track.Title.RemoveSquareBrackets();
             }
-            if (config.regexToReplace.Title.Length + config.regexToReplace.Artist.Length + config.regexToReplace.Album.Length > 0)
+            if (config.regex != null)
             {
-                track.Title = Regex.Replace(track.Title, config.regexToReplace.Title, config.regexReplaceBy.Title);
-                track.Artist = Regex.Replace(track.Artist, config.regexToReplace.Artist, config.regexReplaceBy.Artist);
-                track.Album = Regex.Replace(track.Album, config.regexToReplace.Album, config.regexReplaceBy.Album);
+                foreach (var (toReplace, replaceBy) in config.regex)
+                {
+                    track.Title = Regex.Replace(track.Title, toReplace.Title, replaceBy.Title);
+                    track.Artist = Regex.Replace(track.Artist, toReplace.Artist, replaceBy.Artist);
+                    track.Album = Regex.Replace(track.Album, toReplace.Album, replaceBy.Album);
+                }
+            }
+            if (config.parseTitleTemplate.Length > 0 && track.Title.Length > 0)
+            {
+                TrackTemplateParser.TryUpdateTrack(track.Title, config.parseTitleTemplate, track);
             }
             if (config.artistMaybeWrong)
             {
