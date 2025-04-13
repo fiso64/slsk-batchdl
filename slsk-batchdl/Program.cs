@@ -217,7 +217,7 @@ public static partial class Program
                 tle.extractorPrefCond = null;
             }
 
-            var indexOption = tle.config.writeIndex ? M3uOption.Index : M3uOption.None;
+            var indexOption = tle.config.WillWriteIndex() ? M3uOption.Index : M3uOption.None;
             if (indexOption != M3uOption.None || (tle.config.skipExisting && tle.config.skipMode == SkipMode.Index) || tle.config.skipNotFound)
             {
                 string indexPath;
@@ -358,6 +358,8 @@ public static partial class Program
                 if (tle.source.State == TrackState.AlreadyExists)
                 {
                     Logger.Info($"{tle.source.Type} download '{tle.source.ToString(true)}' already exists at {tle.source.DownloadPath}, skipping");
+                    tle.indexEditor?.Update();
+                    tle.playlistEditor?.Update();
                     continue;
                 }
             

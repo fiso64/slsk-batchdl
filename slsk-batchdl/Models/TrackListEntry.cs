@@ -53,11 +53,25 @@ namespace Models
             SetDefaults();
         }
 
-        public TrackListEntry(Track source)
+        public TrackListEntry(Track source, TrackListEntry? other = null)
         {
             list = new List<List<Track>>();
             this.source = source;
             SetDefaults();
+
+            if (other != null)
+            {
+                itemName = other.itemName;
+                subItemName = other.subItemName;
+                enablesIndexByDefault = other.enablesIndexByDefault;
+                extractorPrefCond = other.extractorPrefCond;
+                extractorCond = other.extractorCond;
+                config = other.config;
+                outputDirSkipper = other.outputDirSkipper;
+                musicDirSkipper = other.musicDirSkipper;
+                playlistEditor = other.playlistEditor;
+                indexEditor = other.indexEditor;
+            }
         }
 
         public TrackListEntry(List<List<Track>> list, Track source)

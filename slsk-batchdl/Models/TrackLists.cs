@@ -122,9 +122,7 @@ namespace Models
                         else if (aggregate)
                             track.Type = TrackType.Aggregate;
 
-                        var newTle = new TrackListEntry(track);
-                        newTle.itemName = tle.itemName;
-                        newTle.subItemName = tle.subItemName;
+                        var newTle = new TrackListEntry(track, tle);
                         newLists.Add(newTle);
                     }
                 }

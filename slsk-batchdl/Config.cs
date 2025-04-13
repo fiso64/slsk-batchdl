@@ -268,14 +268,7 @@ public class Config
 
         ignoreOn = Math.Min(ignoreOn, downrankOn);
 
-        if (DoNotDownload)
-        {
-            writeIndex = false;   
-        }
-        else if (!hasConfiguredIndex && Program.trackLists != null && !Program.trackLists.lists.Any(x => x.enablesIndexByDefault))
-        {
-            writeIndex = false;
-        }    
+        writeIndex = WillWriteIndex();
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
@@ -297,6 +290,20 @@ public class Config
             failedAlbumPath = Path.Join(parentDir, "failed");
         else if (failedAlbumPath != "disable" && failedAlbumPath != "delete")
             failedAlbumPath = Utils.GetFullPath(Utils.ExpandVariables(failedAlbumPath));
+    }
+
+
+    public bool WillWriteIndex()
+    {
+        if (DoNotDownload)
+        {
+            return false;
+        }
+        else if (!hasConfiguredIndex && Program.trackLists != null && !Program.trackLists.lists.Any(x => x.enablesIndexByDefault))
+        {
+            return false;
+        }
+        return writeIndex;
     }
 
 
