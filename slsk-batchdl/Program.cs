@@ -144,9 +144,9 @@ public static partial class Program
             {
                 foreach (var (toReplace, replaceBy) in config.regex)
                 {
-                    track.Title = Regex.Replace(track.Title, toReplace.Title, replaceBy.Title);
-                    track.Artist = Regex.Replace(track.Artist, toReplace.Artist, replaceBy.Artist);
-                    track.Album = Regex.Replace(track.Album, toReplace.Album, replaceBy.Album);
+                    track.Title = Regex.Replace(track.Title, toReplace.Title, replaceBy.Title, RegexOptions.IgnoreCase);
+                    track.Artist = Regex.Replace(track.Artist, toReplace.Artist, replaceBy.Artist, RegexOptions.IgnoreCase);
+                    track.Album = Regex.Replace(track.Album, toReplace.Album, replaceBy.Album, RegexOptions.IgnoreCase);
                 }
             }
             if (config.parseTitleTemplate.Length > 0 && track.Title.Length > 0)
