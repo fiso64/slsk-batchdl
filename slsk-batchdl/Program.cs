@@ -34,6 +34,26 @@ public static partial class Program
 
     public static async Task Main(string[] args)
     {
+        string template1 = "{artist} - {title}";
+        string input1 = "Queen - Bohemian Rhapsody";
+        Track track1 = TrackFactory.CreateFromString(input1, template1);
+        // track1 will have Artist="Queen", Title="Bohemian Rhapsody", Album=""
+
+        string template2 = "[{album}] ({artist}) {title}";
+        string input2 = "[A Night at the Opera] (Queen) Bohemian Rhapsody";
+        Track track2 = TrackFactory.CreateFromString(input2, template2);
+        // track2 will have Artist="Queen", Title="Bohemian Rhapsody", Album="A Night at the Opera"
+
+        string template3 = "{title} by {artist}";
+        string input3 = "  Stairway to Heaven   by   Led Zeppelin  "; // Handles extra spaces
+        Track track3 = TrackFactory.CreateFromString(input3, template3);
+        // track3 will have Artist="Led Zeppelin", Title="Stairway to Heaven", Album=""
+
+        string input4 = "Just a Title"; // Doesn't match template1
+        Track track4 = TrackFactory.CreateFromString(input4, template1);
+
+        return;
+
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Help.PrintAndExitIfNeeded(args);
