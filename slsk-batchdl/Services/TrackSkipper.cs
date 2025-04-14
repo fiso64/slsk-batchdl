@@ -408,12 +408,12 @@ namespace Services
 
                     if (t.OutputsDirectory)
                     {
-                        if (!Directory.Exists(t.DownloadPath))
+                        if (t.DownloadPath.Length != 0 && !Directory.Exists(t.DownloadPath))
                             return false;
                     }
                     else
                     {
-                        if (!File.Exists(t.DownloadPath))
+                        if (t.DownloadPath.Length != 0 && !File.Exists(t.DownloadPath))
                             return false;
                     }
                 }

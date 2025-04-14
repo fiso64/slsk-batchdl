@@ -137,6 +137,11 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
                 previousRunData[track.ToKey()] = track;
 
+                if (track.Type == TrackType.Album && track.Title.Length > 0)
+                {
+                    previousRunData[track.ToKey(forceNormal: true)] = track;
+                }
+
                 if (!useOldFormat)
                     break;
             }
@@ -352,7 +357,6 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
     public Track? PreviousRunResult(Track track)
     {
-        var key = track.ToKey();
         previousRunData.TryGetValue(track.ToKey(), out var t);
         return t;
     }
