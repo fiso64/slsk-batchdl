@@ -3,20 +3,18 @@ using System.Net.Sockets;
 
 public class SoulseekClientManager
 {
-    private readonly Config _initialConfig; // Store config used for client options
+    private readonly Config _initialConfig;
     private ISoulseekClient? _client;
     private bool _isInitialized = false; // Tracks if initialization attempt was made
-    private bool _isDisposed = false;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
 
-    public ISoulseekClient? Client => _client; // Expose the client
+    public ISoulseekClient? Client => _client;
 
     public bool IsConnectedAndLoggedIn =>
         _client != null &&
         _client.State.HasFlag(SoulseekClientStates.Connected) &&
         _client.State.HasFlag(SoulseekClientStates.LoggedIn);
 
-    // Constructor takes the initial config primarily for client options
     public SoulseekClientManager(Config initialConfig)
     {
         _initialConfig = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
@@ -32,8 +30,7 @@ public class SoulseekClientManager
     /// <exception cref="OperationCanceledException">Thrown if cancelled.</exception>
     public async Task EnsureConnectedAndLoggedInAsync(Config loginConfig, CancellationToken cancellationToken = default)
     {
-        if (_isDisposed) throw new ObjectDisposedException(nameof(SoulseekClientManager));
-        if (IsConnectedAndLoggedIn) return; // Already good
+        if (IsConnectedAndLoggedIn) return;
 
         // Use semaphore to prevent concurrent initialization attempts
         await _initializationSemaphore.WaitAsync(cancellationToken);
@@ -147,7 +144,7 @@ public class SoulseekClientManager
                     await client.SetSharedCountsAsync(50, 1000);
                 }
                 Logger.Debug($"Logged in {displayUser}");
-                break; // Success
+                break;
             }
             catch (Exception e)
             {
@@ -160,7 +157,7 @@ public class SoulseekClientManager
                 }
 
                 Logger.Warn($"Login attempt {attempt}/{tries} failed for {displayUser}, retrying...");
-                await Task.Delay(1000, cancellationToken); // Wait before retrying
+                await Task.Delay(1000, cancellationToken);
             }
         }
     }

@@ -6,7 +6,7 @@ using Models;
 using Enums;
 using Extractors;
 using Services;
-using Konsole; // Keep UI related using here for now
+using Konsole;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -14,19 +14,18 @@ using SlFile = Soulseek.File;
 
 public class DownloaderApplication
 {
-    // --- Members moved from static Program ---
     private const int updateInterval = 100;
     private bool initialized = false;
     private bool skipUpdate = false; // Will likely need rethinking later
-    private bool interceptKeys = false; // UI concern, move later
-    private event EventHandler<ConsoleKey>? keyPressed; // UI concern, move later
+    private bool interceptKeys = false; // UI concern, move later?
+    private event EventHandler<ConsoleKey>? keyPressed; // UI concern, move later?
 
     private IExtractor? extractor = null;
     private Searcher? searchService = null;
     private readonly Config defaultConfig;
     private readonly SoulseekClientManager _clientManager;
 
-    // Consider making these private and exposing controlled access if needed
+    // Maybe make these private and exposing controlled access if needed
     public TrackLists? trackLists = null;
     public ISoulseekClient? Client => _clientManager.Client;
     public bool IsConnectedAndLoggedIn => _clientManager.IsConnectedAndLoggedIn;
@@ -34,9 +33,8 @@ public class DownloaderApplication
     public readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
     public readonly ConcurrentDictionary<string, Track> downloadedFiles = new();
-    // --- End Moved Members ---
 
-    private Task? updateTask; // To keep track of the background update task
+    private Task? updateTask;
     private readonly CancellationTokenSource appCts = new(); // For overall app cancellation
 
     public DownloaderApplication(Config config)
@@ -78,12 +76,11 @@ public class DownloaderApplication
 
         PrepareListEntries(defaultConfig);
 
-        if (defaultConfig.NeedLogin) // Only start updater if login might be needed
+        if (defaultConfig.NeedLogin)
         {
-            // Ensure client is ready before starting Update task that might use it
             await EnsureClientReadyAsync(defaultConfig);
-            searchService = new Searcher(this, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime); // 'this' still passed for now
-            updateTask = Task.Run(() => UpdateLoop(defaultConfig, appCts.Token), appCts.Token); // Pass token
+            searchService = new Searcher(this, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime);
+            updateTask = Task.Run(() => UpdateLoop(defaultConfig, appCts.Token), appCts.Token);
             Logger.Debug("Update task started");
         }
 
@@ -99,18 +96,16 @@ public class DownloaderApplication
 
     public async Task EnsureClientReadyAsync(Config config)
     {
-        if (!config.NeedLogin) return; // Don't try to login if not needed
+        if (!config.NeedLogin) return;
 
-        if (_clientManager.IsConnectedAndLoggedIn) return; // Already ready
+        if (_clientManager.IsConnectedAndLoggedIn) return;
 
         try
         {
             await _clientManager.EnsureConnectedAndLoggedInAsync(config, appCts.Token);
 
-            // If Searcher needs the client immediately after login, ensure it's created/updated here
             if (searchService == null && _clientManager.Client != null)
             {
-                // Pass 'this' for now, will be refactored later
                 searchService = new Searcher(this, config.searchesPerTime, config.searchRenewTime);
                 Logger.Debug("Searcher service initialized.");
             }
@@ -118,12 +113,11 @@ public class DownloaderApplication
         catch (OperationCanceledException)
         {
             Logger.Warn("Client initialization cancelled.");
-            throw; // Re-throw cancellation
+            throw;
         }
         catch (Exception ex)
         {
             Logger.Fatal($"Failed to initialize Soulseek client: {ex.Message}");
-            // Optionally, re-throw or handle differently (e.g., exit)
             throw;
         }
     }
