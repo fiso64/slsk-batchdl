@@ -445,7 +445,9 @@ public static partial class Program
                         tle.source.FailureReason = FailureReason.NoSuitableFileFound;
                         var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
                         Printing.RefreshOrPrint(progress, 0, $"No results: {tle.source}{lockedFiles}", true);
-                        await OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
+                        
+                        if (tle.source.Type == TrackType.Album)
+                            await OnComplete(tle, tle.source, tle.indexEditor, tle.playlistEditor);
                     }
                     else if (progress != null)
                     {
@@ -907,7 +909,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        await OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
+        await OnComplete(tle, tle.source, tle.indexEditor, tle.playlistEditor);
     }
 
 
@@ -1256,7 +1258,7 @@ public static partial class Program
             var savedText = progress.Line1;
             var savedPos = progress.Current;
             Printing.RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
-            await OnComplete(tle, track, false, tle.indexEditor, tle.playlistEditor);
+            await OnComplete(tle, track, tle.indexEditor, tle.playlistEditor);
             Printing.RefreshOrPrint(progress, savedPos, savedText);
         }
 
@@ -1388,11 +1390,12 @@ public static partial class Program
     }
 
 
-    static async Task OnComplete(TrackListEntry tle, Track track, bool isAlbumOnComplete, M3uEditor? indexEditor, M3uEditor? playlistEditor)
+    static async Task OnComplete(TrackListEntry tle, Track track, M3uEditor? indexEditor, M3uEditor? playlistEditor)
     {
         if (!tle.config.HasOnComplete)
             return;
 
+        bool isAlbumOnComplete = track.Type == TrackType.Album;
         bool needUpdateIndex = false;
         int firstCommandStatus = -1;
         int prevCommandStatus = -1;
@@ -1410,7 +1413,8 @@ public static partial class Program
 
             bool useShellExecute = false;
             bool createNoWindow = false;
-            bool hasAlbumOnComplete = false;
+            bool onlyTrackOnComplete = false;
+            bool onlyAlbumOnComplete = false;
             bool readOutput = false;
             bool useOutputToUpdateIndex = false;
             var startInfo = new ProcessStartInfo();
@@ -1424,9 +1428,14 @@ public static partial class Program
                         useShellExecute = true;
                         onComplete = onComplete[2..];
                     }
+                    else if (onComplete[0] == 't')
+                    {
+                        onlyTrackOnComplete = true;
+                        onComplete = onComplete[2..];
+                    }
                     else if (onComplete[0] == 'a')
                     {
-                        hasAlbumOnComplete = true;
+                        onlyAlbumOnComplete = true;
                         onComplete = onComplete[2..];
                     }
                     else if (onComplete[0] == 'h')
@@ -1460,7 +1469,11 @@ public static partial class Program
                 }
             }
 
-            if (hasAlbumOnComplete ^ isAlbumOnComplete)
+            if (onlyTrackOnComplete && isAlbumOnComplete)
+            {
+                continue;
+            }
+            if (onlyAlbumOnComplete && !isAlbumOnComplete)
             {
                 continue;
             }
