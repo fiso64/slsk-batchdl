@@ -50,7 +50,7 @@ public class Downloader
             }
         }
 
-        await app.WaitForLogin(config);
+        await app.EnsureClientReadyAsync(config);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
         string incompleteOutputPath = outputPath + ".incomplete";
 
@@ -98,10 +98,10 @@ public class Downloader
 
                     Logger.DebugError($"Error while downloading: {e}");
 
-                    if (retryCount >= maxRetries || app.IsConnectedAndLoggedIn())
+                    if (retryCount >= maxRetries || app.IsConnectedAndLoggedIn)
                         throw;
 
-                    await app.WaitForLogin(config);
+                    await app.EnsureClientReadyAsync(config);
                 }
             }
         }

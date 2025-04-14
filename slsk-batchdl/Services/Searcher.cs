@@ -176,7 +176,7 @@ public class Searcher
                     saveFilePath = "";
                     downloading = 0;
 
-                    if (!app.IsConnectedAndLoggedIn())
+                    if (!app.IsConnectedAndLoggedIn)
                         throw;
 
                     app.userSuccessCounts.AddOrUpdate(response.Username, -1, (k, v) => v - 1);

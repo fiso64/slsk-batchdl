@@ -14,7 +14,5 @@
 
         var app = new DownloaderApplication(config);
         await app.RunAsync();
-
-        Logger.Debug("Program.Main finished.");
     }
 }

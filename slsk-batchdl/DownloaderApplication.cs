@@ -1,7 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Data;
-using System.Diagnostics;
-using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Soulseek;
 using Models;
@@ -26,10 +24,12 @@ public class DownloaderApplication
     private IExtractor? extractor = null;
     private Searcher? searchService = null;
     private readonly Config defaultConfig;
+    private readonly SoulseekClientManager _clientManager;
 
     // Consider making these private and exposing controlled access if needed
     public TrackLists? trackLists = null;
-    public ISoulseekClient Client { get; private set; } = null!;
+    public ISoulseekClient? Client => _clientManager.Client;
+    public bool IsConnectedAndLoggedIn => _clientManager.IsConnectedAndLoggedIn;
     public readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
@@ -42,6 +42,7 @@ public class DownloaderApplication
     public DownloaderApplication(Config config)
     {
         defaultConfig = config;
+        _clientManager = new SoulseekClientManager(defaultConfig);
     }
 
     public async Task RunAsync()
@@ -77,6 +78,15 @@ public class DownloaderApplication
 
         PrepareListEntries(defaultConfig);
 
+        if (defaultConfig.NeedLogin) // Only start updater if login might be needed
+        {
+            // Ensure client is ready before starting Update task that might use it
+            await EnsureClientReadyAsync(defaultConfig);
+            searchService = new Searcher(this, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime); // 'this' still passed for now
+            updateTask = Task.Run(() => UpdateLoop(defaultConfig, appCts.Token), appCts.Token); // Pass token
+            Logger.Debug("Update task started");
+        }
+
         await MainLoop(); // This will be the next big target for refactoring
 
         Logger.Debug("Exiting");
@@ -87,53 +97,35 @@ public class DownloaderApplication
         }
     }
 
-    public async Task InitClientAndUpdateIfNeeded(Config config)
+    public async Task EnsureClientReadyAsync(Config config)
     {
-        if (initialized)
-            return;
+        if (!config.NeedLogin) return; // Don't try to login if not needed
 
-        if (config.NeedLogin)
+        if (_clientManager.IsConnectedAndLoggedIn) return; // Already ready
+
+        try
         {
-            // If client is not null, assume it's injected for testing
-            if (Client == null)
+            await _clientManager.EnsureConnectedAndLoggedInAsync(config, appCts.Token);
+
+            // If Searcher needs the client immediately after login, ensure it's created/updated here
+            if (searchService == null && _clientManager.Client != null)
             {
-                if (!string.IsNullOrEmpty(config.mockFilesDir))
-                {
-                    Client = Tests.ClientTests.MockSoulseekClient.FromLocalPaths(config.mockFilesReadTags, config.mockFilesDir);
-                }
-                else
-                {
-                    var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
-                    {
-                        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
-                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
-                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
-                        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
-                    });
-
-                    var clientOptions = new SoulseekClientOptions(
-                        transferConnectionOptions: connectionOptions,
-                        serverConnectionOptions: connectionOptions,
-                        listenPort: config.listenPort,
-                        maximumConcurrentSearches: int.MaxValue
-                    );
-
-                    Client = new SoulseekClient(clientOptions);
-                }
+                // Pass 'this' for now, will be refactored later
+                searchService = new Searcher(this, config.searchesPerTime, config.searchRenewTime);
+                Logger.Debug("Searcher service initialized.");
             }
-
-            if (!IsConnectedAndLoggedIn() && !config.useRandomLogin && (string.IsNullOrEmpty(config.username) || string.IsNullOrEmpty(config.password)))
-                Config.InputError("No soulseek username or password");
-
-            await Login(config, config.useRandomLogin);
-
-            searchService = new Searcher(this, config.searchesPerTime, config.searchRenewTime);
-
-            updateTask = Task.Run(() => Update(config));
-            Logger.Debug("Update started");
         }
-
-        initialized = true;
+        catch (OperationCanceledException)
+        {
+            Logger.Warn("Client initialization cancelled.");
+            throw; // Re-throw cancellation
+        }
+        catch (Exception ex)
+        {
+            Logger.Fatal($"Failed to initialize Soulseek client: {ex.Message}");
+            // Optionally, re-throw or handle differently (e.g., exit)
+            throw;
+        }
     }
 
 
@@ -304,7 +296,7 @@ public class DownloaderApplication
 
     async Task MainLoop()
     {
-        if (trackLists.Count == 0) return;
+        if (trackLists == null || trackLists.Count == 0) return;
 
         var tle0 = trackLists.lists[0];
         bool enableParallelSearch = tle0.config.parallelAlbumSearch && !tle0.config.PrintResults && !tle0.config.PrintTracks && trackLists.lists.Any(x => x.CanParallelSearch);
@@ -386,7 +378,7 @@ public class DownloaderApplication
 
             if (tle.needSourceSearch)
             {
-                await InitClientAndUpdateIfNeeded(config);
+                await EnsureClientReadyAsync(config);
 
                 ProgressBar? progress = null;
 
@@ -509,7 +501,7 @@ public class DownloaderApplication
 
             if (config.PrintResults)
             {
-                await InitClientAndUpdateIfNeeded(config);
+                await EnsureClientReadyAsync(config);
                 await Printing.PrintResults(tle, existing, notFound, config, searchService);
                 continue;
             }
@@ -550,7 +542,7 @@ public class DownloaderApplication
                 return;
             }
 
-            await InitClientAndUpdateIfNeeded(config);
+            await EnsureClientReadyAsync(config);
 
             if (tle.source.Type == TrackType.Normal)
             {
@@ -1169,7 +1161,7 @@ public class DownloaderApplication
 
         while (tries > 0)
         {
-            await WaitForLogin(config);
+            await EnsureClientReadyAsync(config);
 
             cts.Token.ThrowIfCancellationRequested();
 
@@ -1189,7 +1181,7 @@ public class DownloaderApplication
                     Logger.Debug($"Cancelled: {track}");
                 }
 
-                if (!IsConnectedAndLoggedIn())
+                if (!_clientManager.IsConnectedAndLoggedIn)
                 {
                     continue;
                 }
@@ -1280,7 +1272,7 @@ public class DownloaderApplication
     }
 
 
-    async Task Update(Config startConfig)
+    async Task UpdateLoop(Config startConfig, CancellationToken cancellationToken)
     {
         while (!appCts.IsCancellationRequested)
         {
@@ -1288,7 +1280,7 @@ public class DownloaderApplication
             {
                 try
                 {
-                    if (IsConnectedAndLoggedIn())
+                    if (_clientManager.IsConnectedAndLoggedIn)
                     {
                         foreach (var (key, val) in searches)
                         {
@@ -1325,25 +1317,34 @@ public class DownloaderApplication
                     }
                     else
                     {
-                        if (!Client.State.HasFlag(SoulseekClientStates.LoggedIn)
+                        if (Client != null
+                            && !Client.State.HasFlag(SoulseekClientStates.LoggedIn)
                             && !Client.State.HasFlag(SoulseekClientStates.LoggingIn)
                             && !Client.State.HasFlag(SoulseekClientStates.Connecting))
                         {
                             Logger.Warn($"Disconnected, logging in");
-                            try { await Login(startConfig, startConfig.useRandomLogin); }
+                            try
+                            {
+                                await _clientManager.EnsureConnectedAndLoggedInAsync(startConfig, cancellationToken);
+                                if (_clientManager.IsConnectedAndLoggedIn)
+                                {
+                                    Logger.Info("Reconnected successfully.");
+                                }
+                                else
+                                {
+                                    Logger.Warn("Reconnect attempt did not succeed immediately (might be retrying or failed).");
+                                }
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                Logger.Info("Reconnect cancelled.");
+                                break;
+                            }
                             catch (Exception ex)
                             {
                                 string banMsg = startConfig.useRandomLogin ? "" : " (possibly a 30-minute ban caused by frequent searches)";
-                                Logger.Warn($"{ex.Message}{banMsg}");
+                                Logger.Warn($"Reconnect failed: {ex.Message}{banMsg}");
                             }
-                        }
-
-                        foreach (var (key, val) in downloads)
-                        {
-                            if (val != null)
-                                lock (val) { val.UpdateLastChangeTime(downloads, updateAllFromThisUser: false, forceChanged: true); }
-                            else
-                                downloads.TryRemove(key, out _);
                         }
                     }
                 }
@@ -1361,46 +1362,6 @@ public class DownloaderApplication
 
             await Task.Delay(updateInterval);
         }
-    }
-
-
-    async Task Login(Config config, bool random = false, int tries = 3)
-    {
-        string user = config.username, pass = config.password;
-        if (random)
-        {
-            var r = new Random();
-            const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-            user = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
-            pass = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
-        }
-
-        Logger.Info($"Login {user}");
-
-        while (true)
-        {
-            try
-            {
-                Logger.Debug($"Connecting {user}");
-                await Client.ConnectAsync(user, pass);
-                if (!config.noModifyShareCount)
-                {
-                    Logger.Debug($"Setting share count");
-                    await Client.SetSharedCountsAsync(50, 1000);
-                }
-                break;
-            }
-            catch (Exception e)
-            {
-                Logger.DebugError($"Exception while logging in: {e}");
-                if (!(e is Soulseek.AddressException || e is System.TimeoutException) && --tries == 0)
-                    throw;
-            }
-            await Task.Delay(500);
-            Logger.Debug($"Retry login {user}");
-        }
-
-        Logger.Debug($"Logged in {user}");
     }
 
 
@@ -1432,23 +1393,5 @@ public class DownloaderApplication
 
             JsonPrinter.PrintIndexJson(data);
         }
-    }
-
-
-    public async Task WaitForLogin(Config config)
-    {
-        while (true)
-        {
-            Logger.Trace($"Wait for login, state: {Client.State}");
-            if (IsConnectedAndLoggedIn())
-                break;
-            await Task.Delay(1000);
-        }
-    }
-
-
-    public bool IsConnectedAndLoggedIn()
-    {
-        return Client != null && Client.State.HasFlag(SoulseekClientStates.Connected) && Client.State.HasFlag(SoulseekClientStates.LoggedIn);
     }
 }
