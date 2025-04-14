@@ -252,6 +252,7 @@ public class FileManager
         { "salbum", (_, _, _, t, _) => t.Album },
         { "slength", (_, _, _, t, _) => t.Length.ToString() },
         { "uri", (_, _, _, t, _) => t.URI },
+        { "url", (_, _, _, t, _) => t.URI },
         { "type", (_, _, _, t, _) => t.Type.ToString() },
         { "state", (_, _, _, t, _) => t.State.ToString() },
         { "is-audio", (_, _, _, t, _) => (!t.IsNotAudio).ToString().ToLower() },
