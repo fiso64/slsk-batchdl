@@ -441,8 +441,11 @@ public static partial class Program
 
                     if (!foundSomething)
                     {
+                        tle.source.State = TrackState.Failed;
+                        tle.source.FailureReason = FailureReason.NoSuitableFileFound;
                         var lockedFiles = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
                         Printing.RefreshOrPrint(progress, 0, $"No results: {tle.source}{lockedFiles}", true);
+                        await OnComplete(tle, tle.source, true, tle.indexEditor, tle.playlistEditor);
                     }
                     else if (progress != null)
                     {
