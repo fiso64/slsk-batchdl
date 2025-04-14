@@ -447,7 +447,7 @@ public static partial class Program
                         Printing.RefreshOrPrint(progress, 0, $"No results: {tle.source}{lockedFiles}", true);
                         
                         if (tle.source.Type == TrackType.Album)
-                            await OnComplete(tle, tle.source, tle.indexEditor, tle.playlistEditor);
+                            await OnCompleteExecutor.ExecuteAsync(tle, tle.source, tle.indexEditor, tle.playlistEditor);
                     }
                     else if (progress != null)
                     {
@@ -909,7 +909,7 @@ public static partial class Program
         tle.indexEditor?.Update();
         tle.playlistEditor?.Update();
 
-        await OnComplete(tle, tle.source, tle.indexEditor, tle.playlistEditor);
+        await OnCompleteExecutor.ExecuteAsync(tle, tle.source, tle.indexEditor, tle.playlistEditor);
     }
 
 
@@ -1258,7 +1258,7 @@ public static partial class Program
             var savedText = progress.Line1;
             var savedPos = progress.Current;
             Printing.RefreshOrPrint(progress, savedPos, "  OnComplete:".PadRight(14) + $" {track}");
-            await OnComplete(tle, track, tle.indexEditor, tle.playlistEditor);
+            await OnCompleteExecutor.ExecuteAsync(tle, track, tle.indexEditor, tle.playlistEditor);
             Printing.RefreshOrPrint(progress, savedPos, savedText);
         }
 
@@ -1387,203 +1387,6 @@ public static partial class Program
         }
 
         Logger.Debug($"Logged in {user}");
-    }
-
-
-    static async Task OnComplete(TrackListEntry tle, Track track, M3uEditor? indexEditor, M3uEditor? playlistEditor)
-    {
-        if (!tle.config.HasOnComplete)
-            return;
-
-        bool isAlbumOnComplete = track.Type == TrackType.Album;
-        bool needUpdateIndex = false;
-        int firstCommandStatus = -1;
-        int prevCommandStatus = -1;
-        string? prevStdout = null;
-        string? prevStderr = null;
-        string? firstStdout = null;
-        string? firstStderr = null;
-
-        for (int i = 0; i < tle.config.onComplete.Count; i++)
-        {
-            var onComplete = tle.config.onComplete[i];
-
-            if (string.IsNullOrWhiteSpace(onComplete))
-                continue;
-
-            bool useShellExecute = false;
-            bool createNoWindow = false;
-            bool onlyTrackOnComplete = false;
-            bool onlyAlbumOnComplete = false;
-            bool readOutput = false;
-            bool useOutputToUpdateIndex = false;
-            var startInfo = new ProcessStartInfo();
-
-            while (onComplete.Length > 2)
-            {
-                if (onComplete[1] == ':')
-                {
-                    if (onComplete[0] == 's')
-                    {
-                        useShellExecute = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (onComplete[0] == 't')
-                    {
-                        onlyTrackOnComplete = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (onComplete[0] == 'a')
-                    {
-                        onlyAlbumOnComplete = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (onComplete[0] == 'h')
-                    {
-                        createNoWindow = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (onComplete[0] == 'u')
-                    {
-                        useOutputToUpdateIndex = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (onComplete[0] == 'r')
-                    {
-                        readOutput = true;
-                        onComplete = onComplete[2..];
-                    }
-                    else if (char.IsDigit(onComplete[0]))
-                    {
-                        if ((int)track.State != int.Parse(onComplete[0].ToString())) return;
-                        onComplete = onComplete[2..];
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            if (onlyTrackOnComplete && isAlbumOnComplete)
-            {
-                continue;
-            }
-            if (onlyAlbumOnComplete && !isAlbumOnComplete)
-            {
-                continue;
-            }
-
-            var process = new Process();
-
-            TagLib.File? audio = null;
-
-            if (FileManager.HasTagVariables(onComplete))
-            {
-                try { audio = TagLib.File.Create(track.DownloadPath); }
-                catch { }
-            }
-
-            onComplete = FileManager.ReplaceVariables(onComplete, tle, audio, track.FirstDownload, track, null)
-                .Replace("{exitcode}", prevCommandStatus.ToString())
-                .Replace("{first-exitcode}", firstCommandStatus.ToString())
-                .Replace("{stdout}", string.IsNullOrWhiteSpace(prevStdout) ? "null" : prevStdout)
-                .Replace("{stderr}", string.IsNullOrWhiteSpace(prevStderr) ? "null" : prevStderr)
-                .Replace("{first-stdout}", string.IsNullOrWhiteSpace(firstStdout) ? "null" : firstStdout)
-                .Replace("{first-stderr}", string.IsNullOrWhiteSpace(firstStderr) ? "null" : firstStderr)
-                .Trim();
-
-            if (onComplete[0] == '"')
-            {
-                int e = onComplete.IndexOf('"', 1);
-                if (e > 1)
-                {
-                    startInfo.FileName = onComplete[1..e];
-                    startInfo.Arguments = onComplete.Substring(e + 1, onComplete.Length - e - 1);
-                }
-                else
-                {
-                    startInfo.FileName = onComplete.Trim('"');
-                }
-            }
-            else
-            {
-                string[] parts = onComplete.Split(' ', 2);
-                startInfo.FileName = parts[0];
-                startInfo.Arguments = parts.Length > 1 ? parts[1] : "";
-            }
-
-            startInfo.UseShellExecute = useShellExecute;
-            startInfo.CreateNoWindow = createNoWindow;
-
-            if (useOutputToUpdateIndex || readOutput)
-            {
-                startInfo.UseShellExecute = false;
-                startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
-            }
-
-            process.StartInfo = startInfo;
-
-            Logger.Debug($"on-complete: FileName={startInfo.FileName}, Arguments={startInfo.Arguments}");
-
-            try
-            {
-                process.Start();
-
-                if (startInfo.RedirectStandardOutput)
-                {
-                    var readStdout = process.StandardOutput.ReadToEndAsync();
-                    var readStderr = process.StandardError.ReadToEndAsync();
-                    await Task.WhenAll(readStdout, readStderr);
-
-                    prevStdout = readStdout.Result.Trim().Trim('"');
-                    prevStderr = readStderr.Result.Trim().Trim('"');
-
-                    if (i == 0)
-                    {
-                        firstStdout = prevStdout;
-                        firstStderr = prevStderr;
-                    }
-                }
-
-                await process.WaitForExitAsync();
-
-                if (useOutputToUpdateIndex && !string.IsNullOrWhiteSpace(prevStdout))
-                {
-                    string[] parts = prevStdout.Split(';', 2);
-                    if (int.TryParse(parts[0], out int newState))
-                    {
-                        track.State = (TrackState)newState;
-                        if (parts.Length > 1)
-                            track.DownloadPath = parts[1];
-                        needUpdateIndex = true;
-                    }
-                }
-
-                prevCommandStatus = process.ExitCode;
-                if (i == 0) firstCommandStatus = process.ExitCode;
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Error while executing on-complete action with FileName={startInfo.FileName}, Arguments={startInfo.Arguments}:\n{ex}");
-                return;
-            }
-            finally
-            {
-                process.Close();
-            }
-        }
-
-        if (needUpdateIndex)
-        {
-            indexEditor?.Update();
-            playlistEditor?.Update();
-        }
     }
 
 
