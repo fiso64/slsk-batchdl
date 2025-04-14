@@ -66,7 +66,7 @@ namespace Services
 
             if (track.OutputsDirectory)
             {
-                string? albumArtist = track.Album.Length == 0 ? null : track.Artist;
+                string? albumArtist = track.Title.Length > 0 ? null : track.Artist;
                 string album = Preprocess(track.Album, true, true);
                 var parents = new HashSet<string>();
 
