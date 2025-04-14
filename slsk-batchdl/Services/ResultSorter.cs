@@ -1,6 +1,7 @@
 ﻿using Models;
 using Soulseek;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -14,17 +15,19 @@ public static class ResultSorter
         IEnumerable<KeyValuePair<string, (SearchResponse, Soulseek.File)>> results,
         Track track,
         Config config,
+        ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
         bool useLevenshtein = true,
         bool albumMode = false)
     {
-        return OrderedResults(results.Select(x => x.Value), track, config, useInfer, useLevenshtein, albumMode);
+        return OrderedResults(results.Select(x => x.Value), track, config, userSuccessCounts, useInfer, useLevenshtein, albumMode);
     }
 
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
         IEnumerable<(SearchResponse, Soulseek.File)> results,
         Track track,
         Config config,
+        ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
         bool useLevenshtein = true,
         bool albumMode = false)

@@ -13,13 +13,13 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 
 public class Searcher
 {
-    private readonly ISoulseekClient client;
+    private readonly DownloaderApplication app;
     private RateLimitedSemaphore searchSemaphore;
 
-    public Searcher(ISoulseekClient client, RateLimitedSemaphore searchSemaphore)
+    public Searcher(DownloaderApplication app, int searchesPerTime, int searchRenewTime)
     {
-        this.client = client;
-        this.searchSemaphore = searchSemaphore;
+        this.app = app;
+        searchSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
     }
 
     // very messy function that does everything
@@ -51,7 +51,7 @@ public class Searcher
 
         Printing.RefreshOrPrint(progress, 0, $"Waiting: {track}", false);
 
-        searches.TryAdd(track, new SearchInfo(results, progress));
+        app.searches.TryAdd(track, new SearchInfo(results, progress));
 
         void fastSearchDownload()
         {
@@ -64,7 +64,7 @@ public class Searcher
                     saveFilePath = organizer.GetSavePath(f.Filename);
                     fsUser = r.Username;
                     chosenFile = f;
-                    downloadTask = new Downloader(client).DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
+                    downloadTask = new Downloader(app).DownloadFile(r, f, saveFilePath, track, progress, tle, config, cts?.Token, searchCts);
                 }
             }
         }
@@ -78,7 +78,7 @@ public class Searcher
                 foreach (var file in r.Files)
                     results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
 
-                if (config.fastSearch && userSuccessCounts.GetValueOrDefault(r.Username, 0) > config.downrankOn)
+                if (config.fastSearch && app.userSuccessCounts.GetValueOrDefault(r.Username, 0) > config.downrankOn)
                 {
                     var f = r.Files.First();
 
@@ -115,7 +115,7 @@ public class Searcher
         void onSearch() => Printing.RefreshOrPrint(progress, 0, $"Searching: {track}", true);
         await RunSearches(track, results, getSearchOptions, responseHandler, config, searchCts.Token, onSearch);
 
-        searches.TryRemove(track, out _);
+        app.searches.TryRemove(track, out _);
         searchEnded = true;
         lock (fsDownloadLock) { }
 
@@ -130,7 +130,7 @@ public class Searcher
                 if (downloadTask == null || downloadTask.IsFaulted || downloadTask.IsCanceled)
                     throw new TaskCanceledException();
                 await downloadTask;
-                userSuccessCounts.AddOrUpdate(fsUser, 1, (k, v) => v + 1);
+                app.userSuccessCounts.AddOrUpdate(fsUser, 1, (k, v) => v + 1);
             }
             catch
             {
@@ -139,7 +139,7 @@ public class Searcher
                 if (chosenFile != null && fsUser != null)
                 {
                     results.TryRemove(fsUser + '\\' + chosenFile.Filename, out _);
-                    userSuccessCounts.AddOrUpdate(fsUser, -1, (k, v) => v - 1);
+                    app.userSuccessCounts.AddOrUpdate(fsUser, -1, (k, v) => v - 1);
                 }
             }
         }
@@ -151,7 +151,7 @@ public class Searcher
         if (downloading == 0 && (!results.IsEmpty || orderedResults != null))
         {
             if (orderedResults == null)
-                orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
+                orderedResults = ResultSorter.OrderedResults(results, track, config, app.userSuccessCounts, useInfer: true);
 
             int trackTries = config.maxRetriesPerTrack;
             async Task<bool> process(SlResponse response, SlFile file)
@@ -161,8 +161,8 @@ public class Searcher
                 try
                 {
                     downloading = 1;
-                    await new Downloader(client).DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
-                    userSuccessCounts.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
+                    await new Downloader(app).DownloadFile(response, file, saveFilePath, track, progress, tle, config, cts?.Token);
+                    app.userSuccessCounts.AddOrUpdate(response.Username, 1, (k, v) => v + 1);
                     return true;
                 }
                 catch (Exception e)
@@ -176,10 +176,10 @@ public class Searcher
                     saveFilePath = "";
                     downloading = 0;
 
-                    if (!IsConnectedAndLoggedIn())
+                    if (!app.IsConnectedAndLoggedIn())
                         throw;
 
-                    userSuccessCounts.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
+                    app.userSuccessCounts.AddOrUpdate(response.Username, -1, (k, v) => v - 1);
                     if (--trackTries <= 0)
                     {
                         Printing.RefreshOrPrint(progress, 0, $"Out of download retries: {track}", true);
@@ -192,7 +192,7 @@ public class Searcher
 
             foreach (var (response, file) in orderedResults)
             {
-                if (userSuccessCounts.GetValueOrDefault(response.Username, 0) <= config.ignoreOn)
+                if (app.userSuccessCounts.GetValueOrDefault(response.Username, 0) <= config.ignoreOn)
                     continue;
                 bool success = await process(response, file);
                 if (success) break;
@@ -287,7 +287,7 @@ public class Searcher
 
         // order results first
         // the following loops should preserve the order
-        var orderedResults = ResultSorter.OrderedResults(results, track, config, false, false, albumMode: true);
+        var orderedResults = ResultSorter.OrderedResults(results, track, config, app.userSuccessCounts, false, false, albumMode: true);
 
         //Printing.PrintTrackResults(orderedResults, track, true, config.necessaryCond, config.preferredCond);
 
@@ -479,7 +479,7 @@ public class Searcher
         string albumName = track.Album.Trim();
 
         var equivalentFiles = EquivalentFiles(track, results.Select(x => x.Value), config)
-            .Select(x => (x.Item1, ResultSorter.OrderedResults(x.Item2, track, config, false, false, false))).ToList();
+            .Select(x => (x.Item1, ResultSorter.OrderedResults(x.Item2, track, config, app.userSuccessCounts, false, false, false))).ToList();
 
         if (!config.relax)
         {
@@ -601,7 +601,7 @@ public class Searcher
         var res = new List<(string dir, SlFile file)>();
 
         folderPrefix = folderPrefix.TrimEnd('\\') + '\\';
-        var userFileList = await client.BrowseAsync(user, browseOptions, cancellationToken);
+        var userFileList = await app.Client.BrowseAsync(user, browseOptions, cancellationToken);
 
         foreach (var dir in userFileList.Directories)
         {
@@ -809,7 +809,7 @@ public class Searcher
             search = CleanSearchString(search, !config.noRemoveSpecialChars);
             var q = SearchQuery.FromText(search);
             onSearch?.Invoke();
-            await client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler);
+            await app.Client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler);
         }
         catch (OperationCanceledException) { }
     }
@@ -864,7 +864,7 @@ public class Searcher
             }
             else
             {
-                var orderedResults = ResultSorter.OrderedResults(results, track, config, useInfer: true);
+                var orderedResults = ResultSorter.OrderedResults(results, track, config, app.userSuccessCounts, useInfer: true);
 
                 if (!config.NonVerbosePrint)
                     Console.WriteLine();

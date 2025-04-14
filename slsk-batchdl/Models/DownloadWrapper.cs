@@ -1,4 +1,5 @@
 ﻿using Soulseek;
+using System.Collections.Concurrent;
 using static Program;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
@@ -122,7 +123,7 @@ namespace Models
 
         }
 
-        public DateTime UpdateLastChangeTime(bool updateAllFromThisUser = true, bool forceChanged = false)
+        public DateTime UpdateLastChangeTime(ConcurrentDictionary<string, DownloadWrapper> downloads, bool updateAllFromThisUser = true, bool forceChanged = false)
         {
             bool changed = prevTransferState != transfer?.State || prevBytesTransferred != bytesTransferred;
             if (changed || forceChanged)
@@ -134,7 +135,7 @@ namespace Models
                     foreach (var (_, dl) in downloads)
                     {
                         if (dl != this && dl.response.Username == response.Username)
-                            dl.UpdateLastChangeTime(updateAllFromThisUser: false, forceChanged: true);
+                            dl.UpdateLastChangeTime(downloads, updateAllFromThisUser: false, forceChanged: true);
                     }
                 }
             }

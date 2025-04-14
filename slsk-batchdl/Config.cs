@@ -261,14 +261,14 @@ public class Config
     }
 
 
-    public void PostProcessArgs() // must be run after extracting tracklist
+    public void PostProcessArgs(TrackLists trackLists) // must be run after extracting tracklist
     {
         if (DoNotDownload)
             concurrentProcesses = 1;
 
         ignoreOn = Math.Min(ignoreOn, downrankOn);
 
-        writeIndex = WillWriteIndex();
+        writeIndex = WillWriteIndex(trackLists);
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
@@ -293,13 +293,13 @@ public class Config
     }
 
 
-    public bool WillWriteIndex()
+    public bool WillWriteIndex(TrackLists? trackLists)
     {
         if (DoNotDownload)
         {
             return false;
         }
-        else if (!hasConfiguredIndex && Program.trackLists != null && !Program.trackLists.lists.Any(x => x.enablesIndexByDefault))
+        else if (!hasConfiguredIndex && trackLists != null && !trackLists.lists.Any(x => x.enablesIndexByDefault))
         {
             return false;
         }
@@ -416,7 +416,7 @@ public class Config
     }
 
 
-    public void UpdateProfiles(TrackListEntry tle)
+    public void UpdateProfiles(TrackListEntry tle, TrackLists trackLists)
     {
         if (!NeedUpdateProfiles(tle, out var toApply))
             return;
@@ -434,7 +434,7 @@ public class Config
 
         ProcessArgs(arguments);
         
-        PostProcessArgs();
+        PostProcessArgs(trackLists);
     }
 
 

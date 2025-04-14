@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 
 public class InteractiveModeManager
 {
+    private readonly DownloaderApplication app;
     private readonly TrackListEntry tle;
     private readonly Searcher searchService;
     private readonly List<(List<Track> List, int Index)> original;
@@ -16,8 +17,9 @@ public class InteractiveModeManager
     private string? filterStr;
     private int savedPos;
 
-    public InteractiveModeManager(TrackListEntry tle, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders, Searcher searchService, string? filterStr = null)
+    public InteractiveModeManager(DownloaderApplication app, TrackListEntry tle, List<List<Track>> list, bool retrieveFolder, HashSet<string>? retrievedFolders, Searcher searchService, string? filterStr = null)
     {
+        this.app = app;
         this.tle = tle;
         this.retrieveFolder = retrieveFolder;
         this.retrievedFolders = retrievedFolders;
@@ -212,7 +214,7 @@ public class InteractiveModeManager
                 case "y":
                     Console.WriteLine("Exiting interactive mode");
                     tle.config.interactiveMode = false;
-                    tle.config.UpdateProfiles(tle);
+                    tle.config.UpdateProfiles(tle, app.trackLists);
                     tle.PrintLines();
                     return (index, tracks, true, filterStr);
                 case "r":
