@@ -20,10 +20,10 @@ See the [usage examples](#examples-2).
    - [Album](#album)
    - [Aggregate](#aggregate)
    - [Album Aggregate](#album-aggregate)
+ - [Configuration](#configuration)
  - [File conditions](#file-conditions)
  - [Name format](#name-format)
  - [On-Complete Actions](#on-complete-actions)
- - [Configuration](#configuration)
  - [Shortcuts \& interactive mode](#shortcuts--interactive-mode)
  - [Examples](#examples-2)
  - [Notes](#notes-1)
@@ -317,6 +317,55 @@ that `--min-shares-aggregate` is 2 by default, meaning that albums shared by onl
 will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
 by an artist. It is recommended to pair it with `--interactive`.
 
+## Configuration
+### Config Location
+sldl will look for a file named sldl.conf in the following locations:
+
+- `~/AppData/Roaming/sldl/sldl.conf`
+- `~/.config/sldl/sldl.conf`
+- `$XDG_CONFIG_HOME/sldl/sldl.conf`
+
+as well as in the directory of the executable.
+
+### Syntax
+Example config file:
+```ini
+username = your-username
+password = your-password
+pref-format = flac
+fast-search = true
+```
+Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user
+directory. The path variable `{bindir}` stores the directory of the sldl binary.
+
+### Configuration profiles
+Profiles are supported:
+```ini
+[lossless]
+pref-format = flac,wav
+```
+To activate the above profile, run `--profile lossless`. To list all available profiles,
+run `--profile help`.  
+Profiles can be activated automatically based on a few simple conditions:
+```ini
+# never automatically cancel album downloads in interactive mode
+[no-stale]
+profile-cond = interactive && download-mode == "album"
+max-stale-time = 9999999
+
+# download to another location for youtube
+[youtube]
+profile-cond = input-type == "youtube"
+path = ~/downloads/sldl-youtube
+```
+The following operators are supported for use in profile-cond: &&, ||, ==, !=, !{bool}.  
+The following variables are available:
+```
+input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
+download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
+interactive       (bool)
+```
+
 ## File conditions
 
 Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
@@ -465,55 +514,6 @@ on-complete = + 1:h:r: cmd /c if {stdout}==true (ffmpeg -i "{path}" -q:a 0 "{pat
 on-complete = + 1:h:u: cmd /c if {stdout}==success (del "{path}" & echo "1;{path-noext}.mp3")
 ```
 
-## Configuration
-### Config Location
-sldl will look for a file named sldl.conf in the following locations:
-
-- `~/AppData/Roaming/sldl/sldl.conf`
-- `~/.config/sldl/sldl.conf`
-- `$XDG_CONFIG_HOME/sldl/sldl.conf`
-
-as well as in the directory of the executable.
-
-### Syntax
-Example config file:
-```ini
-username = your-username
-password = your-password
-pref-format = flac
-fast-search = true
-```
-Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user
-directory. The path variable `{bindir}` stores the directory of the sldl binary.
-
-### Configuration profiles
-Profiles are supported:
-```ini
-[lossless]
-pref-format = flac,wav
-```
-To activate the above profile, run `--profile lossless`. To list all available profiles,
-run `--profile help`.  
-Profiles can be activated automatically based on a few simple conditions:
-```ini
-# never automatically cancel album downloads in interactive mode
-[no-stale]
-profile-cond = interactive && download-mode == "album"
-max-stale-time = 9999999
-
-# download to another location for youtube
-[youtube]
-profile-cond = input-type == "youtube"
-path = ~/downloads/sldl-youtube
-```
-The following operators are supported for use in profile-cond: &&, ||, ==, !=, !{bool}.  
-The following variables are available:
-```
-input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
-download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
-interactive       (bool)
-```
-
 ## Shortcuts & interactive mode
 
 ### Shortcuts
@@ -630,7 +630,7 @@ sldl --profile wishlist
   - For spotify or bandcamp albums, you can remove the artist name with `--regex A:.*`.
 - You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
 - When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
-- When dealing YouTube playlists you may want to remove any text in parentheses (like (Video)), as well as "Official" and "Lyrics" with `--regex "[\[\(].*?[\]\)]|(?i:lyrics)|(?i:official)"` 
+- When dealing with YouTube playlists you may want to remove any text in parentheses (like (Video)), as well as "Official" and "Lyrics" with `--regex "[\[\(].*?[\]\)]|(?i:lyrics)|(?i:official)"` 
 
 ### Filtering Irrelevant Results
 
