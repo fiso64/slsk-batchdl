@@ -52,12 +52,12 @@ namespace Models
             LineNumber = other.LineNumber;
         }
 
-        public string ToKey()
+        public string ToKey(bool forceNormal=false)
         {
-            if (Type == TrackType.Album)
+            if (Type == TrackType.Album && !forceNormal)
                 return $"{Artist};{Album};{(int)Type}";
             else if (!IsDirectLink)
-                return $"{Artist};{Album};{Title};{Length};{(int)Type}";
+                return $"{Artist};{Album};{Title};{Length};{(forceNormal ? (int)TrackType.Normal : (int)Type)}";
             else
                 return URI;
         }

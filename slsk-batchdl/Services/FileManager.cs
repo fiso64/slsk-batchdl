@@ -270,6 +270,7 @@ public class FileManager
         { "input", (t, _, _, _, _) => t.config.input },
         { "item-name", (t, _, _, _, _) => t.ItemNameOrSource() },
         { "default-folder", (t, _, _, _, _) => t.DefaultFolderName() },
+        { "output-dir", (t, _, _, _, _) => t.config.parentDir },
         { "path", (_, _, _, t, _) => t.DownloadPath.TrimEnd('/').TrimEnd('\\') },
         { "path-noext", (_, _, _, t, _) => Path.Combine(Path.GetDirectoryName(t.DownloadPath), Path.GetFileNameWithoutExtension(t.DownloadPath)) },
         { "ext", (_, _, _, t, _) => Path.GetExtension(t.DownloadPath) },

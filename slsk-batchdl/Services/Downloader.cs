@@ -11,18 +11,18 @@ using SearchResponse = Soulseek.SearchResponse;
 
 public class Downloader
 {
-    private ISoulseekClient client;
+    private DownloaderApplication app;
 
-    public Downloader(ISoulseekClient client)
+    public Downloader(DownloaderApplication app)
     {
-        this.client = client;
+        this.app = app;
     }
 
     public async Task DownloadFile(SearchResponse response, Soulseek.File file, string outputPath, Track track, ProgressBar progress, TrackListEntry tle, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
-        if (downloadedFiles.TryGetValue(response.Username + '\\' + file.Filename, out var trackObj))
+        if (app.downloadedFiles.TryGetValue(response.Username + '\\' + file.Filename, out var trackObj))
         {
-            lock (trackLists)
+            lock (app.trackLists)
             {
                 var existingPath = trackObj.DownloadPath;
                 var outputFileInfo = new FileInfo(outputPath);
@@ -45,12 +45,12 @@ public class Downloader
                 }
                 else
                 {
-                    downloadedFiles.TryRemove(existingPath, out _);
+                    app.downloadedFiles.TryRemove(existingPath, out _);
                 }
             }
         }
 
-        await Program.WaitForLogin(config);
+        await app.EnsureClientReadyAsync(config);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
         string incompleteOutputPath = outputPath + ".incomplete";
 
@@ -59,12 +59,12 @@ public class Downloader
         var transferOptions = new TransferOptions(
             stateChanged: (state) =>
             {
-                if (Program.downloads.TryGetValue(file.Filename, out var x))
+                if (app.downloads.TryGetValue(file.Filename, out var x))
                     x.transfer = state.Transfer;
             },
             progressUpdated: (progress) =>
             {
-                if (downloads.TryGetValue(file.Filename, out var x))
+                if (app.downloads.TryGetValue(file.Filename, out var x))
                     x.bytesTransferred = progress.PreviousBytesTransferred;
             }
         );
@@ -77,7 +77,7 @@ public class Downloader
 
             using var outputStream = new FileStream(incompleteOutputPath, FileMode.Create);
             var wrapper = new DownloadWrapper(outputPath, response, file, track, downloadCts, progress, tle);
-            downloads.TryAdd(file.Filename, wrapper);
+            app.downloads.TryAdd(file.Filename, wrapper);
 
             int maxRetries = 3;
             int retryCount = 0;
@@ -85,7 +85,7 @@ public class Downloader
             {
                 try
                 {
-                    await client.DownloadAsync(response.Username, file.Filename,
+                    await app.Client.DownloadAsync(response.Username, file.Filename,
                         () => Task.FromResult((Stream)outputStream),
                         file.Size == -1 ? null : file.Size, startOffset: outputStream.Position,
                         options: transferOptions, cancellationToken: downloadCts.Token);
@@ -98,10 +98,10 @@ public class Downloader
 
                     Logger.DebugError($"Error while downloading: {e}");
 
-                    if (retryCount >= maxRetries || IsConnectedAndLoggedIn())
+                    if (retryCount >= maxRetries || app.IsConnectedAndLoggedIn)
                         throw;
 
-                    await WaitForLogin(config);
+                    await app.EnsureClientReadyAsync(config);
                 }
             }
         }
@@ -109,7 +109,7 @@ public class Downloader
         {
             if (File.Exists(incompleteOutputPath))
                 try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.parentDir); } catch { }
-            downloads.TryRemove(file.Filename, out var d);
+            app.downloads.TryRemove(file.Filename, out var d);
             if (d != null)
                 lock (d) { d.UpdateText(); }
             throw;
@@ -120,11 +120,11 @@ public class Downloader
         try 
         { 
             Utils.Move(incompleteOutputPath, outputPath); 
-            downloadedFiles[response.Username + '\\' + file.Filename] = track;
+            app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
         }
         catch (IOException) { Logger.Error($"Failed to rename .incomplete file"); }
 
-        downloads.TryRemove(file.Filename, out var x);
+        app.downloads.TryRemove(file.Filename, out var x);
 
         if (x != null)
         {

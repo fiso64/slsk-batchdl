@@ -80,7 +80,7 @@ namespace Tests.SearchDownloadTests
             // Arrange
             var index = CreateTestIndex();
             var client = new MockSoulseekClient(index);
-            var searcher = new Searcher(client, new RateLimitedSemaphore(999, TimeSpan.FromSeconds(1)));
+            var searcher = new Searcher(client, 999, 1);
             var album = new Track() { Album = "testalbum", Artist = "testartist", Type = Enums.TrackType.Album };
 
             // Act
