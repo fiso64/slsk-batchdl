@@ -9,6 +9,7 @@ using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
+using AngleSharp.Text;
 
 
 public class Searcher
@@ -937,10 +938,33 @@ public class Searcher
 
     public static Track InferTrack(string filename, Track defaultTrack, TrackType type = TrackType.Normal)
     {
-        var t = new Track(defaultTrack) { ItemNumber = -1 };
-        t.Type = type;
+        var t = new Track(defaultTrack)
+        {
+            ItemNumber = -1,
+            Type = type
+        };
 
-        filename = Utils.GetFileNameWithoutExtSlsk(filename).Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
+        filename = Utils.GetFileNameWithoutExtSlsk(filename);
+
+        // Special case: filename is of the form "(tracknum) [Artist] Title"
+        if (filename.Length >= 6 && filename[0] == '(' && filename[1].IsDigit() && filename[2].IsDigit() && filename[3] == ')' && filename[4] == ' ' && filename[5] == '[')
+        {
+            int closingBracketIndex = filename.IndexOf(']', 6);
+            if (closingBracketIndex > 6)
+            {
+                int titleStartIndex = closingBracketIndex + 1;
+                if (titleStartIndex < filename.Length && filename[titleStartIndex] == ' ')
+                    titleStartIndex++;
+
+                if (titleStartIndex < filename.Length)
+                {
+                    t.Artist = filename[6..closingBracketIndex];
+                    t.Title = filename[titleStartIndex..];
+                }
+            }
+        }
+
+        filename = filename.Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
 
         var trackNumStart = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
         var trackNumMiddle = new Regex(@"(?<= - )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
