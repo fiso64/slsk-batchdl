@@ -409,7 +409,7 @@ public static class Help
           item-name                      Name of the playlist/source
           default-folder                 Default sldl folder name
           bindir                         Base application directory
-          path                           Download file path
+          path                           Download file path (or folder if album)
           path-noext                     Download file path without extension
           ext                            File extension
     ";

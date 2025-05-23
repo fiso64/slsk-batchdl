@@ -414,7 +414,7 @@ input                          Input string
 item-name                      Name of the playlist/source
 default-folder                 Default sldl folder name
 bindir                         Base application directory
-path                           Download file path
+path                           Download file path (or folder if album)
 path-noext                     Download file path without extension
 ext                            File extension
 ```
@@ -448,12 +448,19 @@ The available variables are the same as in name-format, with the following addit
 
 ### Examples
 
-Queue downloaded audio files in foobar2000 (Windows):
+The following examples are for Windows, but can be easily adapted for any OS.  
+  
+Search album art with [Cover Fetcher](https://github.com/fiso64/cover-fetcher):
 ```ini
-on-complete = 1:h: cmd /c if {is-audio}==true start "" "C:\Program Files\foobar2000\foobar2000.exe" /immediate /add "{path}"
+on-complete = 1:h:a: cmd /c start "" "path\to\CoverFetcher.exe" --from-dir "{path}"
 ```
 
-Convert downloaded audio files to MP3 (Windows, requires ffmpeg):
+Queue downloaded audio files in foobar2000:
+```ini
+on-complete = 1:h: cmd /c if {is-audio}==true start "" "path\to\foobar2000.exe" /immediate /add "{path}"
+```
+
+Convert downloaded audio files to MP3 (requires ffmpeg):
 ```ini
 # Check if file is audio and not already MP3
 on-complete =   1:h:r: cmd /c if {is-audio}==true if /i not {ext}==.mp3 if not exist "{path-noext}.mp3" echo true
