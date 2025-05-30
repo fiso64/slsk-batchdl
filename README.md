@@ -1,6 +1,6 @@
 # sldl
 
-An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files as well as Spotify and YouTube urls.  
+An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files, Spotify and YouTube URLs, or simple search queries.  
 Supports playlist and album downloads; selects the best files according to user-configured file conditions and heuristics.
 
 See the [usage examples](#examples-2).
