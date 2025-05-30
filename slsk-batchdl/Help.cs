@@ -112,13 +112,13 @@ public static class Help
         --deleted-only                 Only retrieve & download deleted music.
           
       CSV Files
-        --artist-col                   Artist column name
-        --title-col                    Track title column name
-        --album-col                    Album column name
-        --length-col                   Track length column name
-        --album-track-count-col        Album track count column name (sets --album-track-count)
-        --yt-desc-col                  Youtube description column (improves --yt-parse)
-        --yt-id-col                    Youtube video id column (improves --yt-parse)
+        --artist-col <name>            Artist column name
+        --title-col <name>             Track title column name
+        --album-col <name>             Album column name
+        --length-col <name>            Track length column name
+        --album-track-count-col <name> Album track count column name (sets --album-track-count)
+        --yt-desc-col <name>           Youtube description column (improves --yt-parse)
+        --yt-id-col <name>             Youtube video id column (improves --yt-parse)
             
         --time-format <format>         Time format in Length column of the csv file (e.g h:m:s.ms
                                        for durations like 1:04:35.123). Default: s
@@ -204,8 +204,9 @@ public static class Help
         Path to a local CSV file. Use a csv file containing track information to download a list of
         songs or albums. Only the title or album column is required, but extra info may improve search
         result ranking. If the columns have common names ('Artist', 'Title', 'Album', 'Length', etc)
-        then it's not required to manually specify them. Rows that do not have any text in the title
-        column will be treated as album downloads.
+        then it's not required to manually specify them, otherwise you must provide at least `--title-col`
+        or `--album-col`.  
+        Rows that do not have any text in the title column will be treated as album downloads.
             
       YouTube 
         A YouTube playlist url. Download songs from a youtube playlist.
