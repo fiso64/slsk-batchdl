@@ -624,7 +624,7 @@ sldl --profile wishlist
 ```
 
 ## Notes
-- **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
+- **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues. See https://github.com/fiso64/slsk-batchdl/issues/55.
 - **Soulseek's rate limits**: The server bans users for 30 minutes if too many searches are performed within a short timespan. sldl has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when the limit is reached, the status of the downloads will be 'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
 
 ## Tips
