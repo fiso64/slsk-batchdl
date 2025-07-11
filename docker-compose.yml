@@ -1,5 +1,7 @@
 services:
   sldl:
+    ports:
+    - "127.0.0.1:48721:48721"
     build:
       context: .
     environment:
