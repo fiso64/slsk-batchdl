@@ -221,7 +221,7 @@ public static class Help
 
           Using Credentials
             Create a Spotify application at https://developer.spotify.com/dashboard/applications with a 
-            redirect url http://localhost:48721/callback. Obtain an application ID and secret from the 
+            redirect url http://127.0.0.1:48721/callback. Obtain an application ID and secret from the
             created application dashboard.  
             Start sldl with the obtained credentials and an authorized action to trigger the Spotify 
             app login flow:
