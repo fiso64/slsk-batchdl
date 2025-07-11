@@ -29,7 +29,7 @@
     <PackageReference Include="Google.Apis.YouTube.v3" Version="1.69.0.3680" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
     <PackageReference Include="SmallestCSVParser" Version="1.1.1" />
-    <PackageReference Include="Soulseek" Version="7.0.2" />
+    <PackageReference Include="Soulseek" Version="7.1.0" />
     <PackageReference Include="SpotifyAPI.Web" Version="7.2.1" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.2.1" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
