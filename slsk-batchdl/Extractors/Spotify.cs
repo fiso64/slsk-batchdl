@@ -170,7 +170,7 @@ namespace Extractors
             else
             {
                 Swan.Logging.Logger.NoLogging();
-                _server = new EmbedIOAuthServer(new Uri("http://localhost:48721/callback"), 48721);
+                _server = new EmbedIOAuthServer(new Uri("http://127.0.0.1:48721/callback"), 48721);
                 await _server.Start();
 
                 Logger.Debug($"Spotify: AuthServer started");
@@ -236,7 +236,7 @@ namespace Extractors
             {
                 Logger.Info("Trying to renew access with refresh token...");
                 //     var refreshRequest = new TokenSwapRefreshRequest(
-                //     new Uri("http://localhost:48721/refresh"),
+                //     new Uri("http://127.0.0.1:48721/refresh"),
                 //     _clientRefreshToken
                 // );
                 var refreshRequest = new AuthorizationCodeRefreshRequest(_clientId, _clientSecret, _clientRefreshToken);
@@ -271,7 +271,7 @@ namespace Extractors
             Logger.Debug($"Spotify: Getting token response..");
             var tokenResponse = await new OAuthClient(config).RequestToken(
                 new AuthorizationCodeTokenRequest(
-                    _clientId, _clientSecret, response.Code, new Uri("http://localhost:48721/callback")
+                    _clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")
                 )
             );
 
