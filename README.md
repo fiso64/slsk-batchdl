@@ -1,8 +1,10 @@
 # sldl
 
-An automatic downloader for Soulseek built with Soulseek.NET. Accepts CSV files, Spotify and YouTube URLs, or simple search queries. Supports playlist and album downloads; selects the best files according to user-configured file conditions and heuristics.
+A smart and configurable downloader for Soulseek. Accepts CSV files, Spotify and YouTube URLs, or simple search queries. Supports playlist, album, or individual song downloads. See the [usage examples](#examples-2) for a quick start.
 
-See the [usage examples](#examples-2).
+Originally developed as a script for batch-downloading playlists, it has evolved into a more general Soulseek downloader. The best files are selected according to user configuration and heuristics. This means that with the right setup, this tool becomes a zero‐effort way to fetch any album or song from Soulseek – no more scrolling through endless search results. 
+
+Built with Soulseek.NET.
 
 ## Index
  - [Options](#options)
@@ -624,7 +626,7 @@ sldl --profile wishlist
 ```
 
 ## Notes
-- **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues.
+- **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues. See https://github.com/fiso64/slsk-batchdl/issues/55.
 - **Soulseek's rate limits**: The server bans users for 30 minutes if too many searches are performed within a short timespan. sldl has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when the limit is reached, the status of the downloads will be 'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
 
 ## Tips
