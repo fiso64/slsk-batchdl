@@ -10,7 +10,6 @@ using System.Collections.Concurrent;
 
 using Models;
 using Enums;
-using Swan;
 
 namespace Extractors
 {

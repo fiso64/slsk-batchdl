@@ -1,6 +1,5 @@
 using Soulseek;
 using Soulseek.Diagnostics;
-using System.Collections.Concurrent;
 using System.Net;
 
 namespace Tests.ClientTests

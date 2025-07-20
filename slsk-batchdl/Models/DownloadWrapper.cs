@@ -1,6 +1,5 @@
 ﻿using Soulseek;
 using System.Collections.Concurrent;
-using static Program;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 
