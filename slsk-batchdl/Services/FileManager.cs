@@ -2,7 +2,6 @@
 
 using Models;
 using Enums;
-using Soulseek;
 
 
 public class FileManager

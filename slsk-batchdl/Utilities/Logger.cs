@@ -1,14 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using System;
-using System.Collections.Generic;
-using System.IO;
-
-public static class Logger
+﻿public static class Logger
 {
     public enum LogLevel
     {

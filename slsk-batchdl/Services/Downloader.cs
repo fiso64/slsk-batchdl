@@ -1,7 +1,6 @@
 ﻿using Soulseek;
 
 using Models;
-using static Program;
 
 using File = System.IO.File;
 using Directory = System.IO.Directory;

@@ -4,7 +4,6 @@ using System.Text.RegularExpressions;
 
 using Models;
 using Enums;
-using static Program;
 using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
