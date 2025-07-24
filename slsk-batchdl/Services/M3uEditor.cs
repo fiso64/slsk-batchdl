@@ -41,7 +41,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
 
         lines = ReadAllLines().ToList();
-        
+
         if (loadPreviousResults)
             LoadPreviousResults();
     }
@@ -55,19 +55,19 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
         var indexLines = useOldFormat ? new string[] { lines[0] } : lines.Skip(1);
         var currentItem = new StringBuilder();
-        
+
         if (useOldFormat) lines = lines.Skip(1).ToList();
         int offset = useOldFormat ? "#SLDL:".Length : 0;
 
         foreach (var sldlLine in indexLines)
         {
-            if (string.IsNullOrWhiteSpace(sldlLine)) 
+            if (string.IsNullOrWhiteSpace(sldlLine))
                 continue;
 
             int k = offset;
             bool inQuotes = false;
 
-            for (; k < sldlLine.Length && sldlLine[k] == ' '; k++);
+            for (; k < sldlLine.Length && sldlLine[k] == ' '; k++) ;
 
             for (; k < sldlLine.Length; k++)
             {
@@ -153,96 +153,96 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             return;
 
         lock (trackLists) lock (locker)
-        {
-            bool needUpdate = false;
-            int index = 1 + offset;
-
-            bool updateLine(string newLine)
             {
-                bool changed = index >= lines.Count || newLine != lines[index];
+                bool needUpdate = false;
+                int index = 1 + offset;
 
-                while (index >= lines.Count) lines.Add("");
-                lines[index] = newLine;
-
-                return changed;
-            }
-
-            bool trackChanged(Track track, Track? indexTrack)
-            {
-                return indexTrack == null
-                    || indexTrack.State != track.State
-                    || indexTrack.FailureReason != track.FailureReason
-                    || Utils.NormalizedPath(indexTrack.DownloadPath) != Utils.NormalizedPath(track.DownloadPath);
-            }
-
-            void updateIndexTrackIfNeeded(Track track)
-            {
-                if (option == M3uOption.Playlist)
-                    return;
-
-                var key = track.ToKey();
-
-                previousRunData.TryGetValue(key, out Track? indexTrack);
-
-                if (!needUpdate)
-                    needUpdate = trackChanged(track, indexTrack);
-
-                if (needUpdate)
+                bool updateLine(string newLine)
                 {
-                    if (indexTrack == null)
-                        previousRunData[key] = new Track(track);
-                    else
-                    {
-                        indexTrack.State = track.State;
-                        indexTrack.FailureReason = track.FailureReason;
-                        indexTrack.DownloadPath = track.DownloadPath;
-                    }
-                }
-            }
+                    bool changed = index >= lines.Count || newLine != lines[index];
 
-            foreach (var tle in trackLists.lists)
-            {
-                if (tle.source.Type != TrackType.Normal)
-                {
-                    if (tle.source.State != TrackState.Initial)
-                    {
-                        updateIndexTrackIfNeeded(tle.source);
-                    }
+                    while (index >= lines.Count) lines.Add("");
+                    lines[index] = newLine;
+
+                    return changed;
                 }
 
-                for (int k = 0; k < tle.list.Count; k++)
+                bool trackChanged(Track track, Track? indexTrack)
                 {
-                    for (int j = 0; j < tle.list[k].Count; j++)
+                    return indexTrack == null
+                        || indexTrack.State != track.State
+                        || indexTrack.FailureReason != track.FailureReason
+                        || Utils.NormalizedPath(indexTrack.DownloadPath) != Utils.NormalizedPath(track.DownloadPath);
+                }
+
+                void updateIndexTrackIfNeeded(Track track)
+                {
+                    if (option == M3uOption.Playlist)
+                        return;
+
+                    var key = track.ToKey();
+
+                    previousRunData.TryGetValue(key, out Track? indexTrack);
+
+                    if (!needUpdate)
+                        needUpdate = trackChanged(track, indexTrack);
+
+                    if (needUpdate)
                     {
-                        var track = tle.list[k][j];
-
-                        if (track.IsNotAudio)
+                        if (indexTrack == null)
+                            previousRunData[key] = new Track(track);
+                        else
                         {
-                            continue;
-                        }
-                        else if (track.State == TrackState.Initial)
-                        {
-                            index++;
-                            continue;
-                        }
-
-                        updateIndexTrackIfNeeded(track);
-
-                        if (option == M3uOption.All || option == M3uOption.Playlist)
-                        {
-                            needUpdate |= updateLine(TrackToLine(track));
-                            index++;
+                            indexTrack.State = track.State;
+                            indexTrack.FailureReason = track.FailureReason;
+                            indexTrack.DownloadPath = track.DownloadPath;
                         }
                     }
                 }
-            }
 
-            if (needUpdate || needFirstUpdate)
-            {
-                needFirstUpdate = false;
-                WriteAllLines();
+                foreach (var tle in trackLists.lists)
+                {
+                    if (tle.source.Type != TrackType.Normal)
+                    {
+                        if (tle.source.State != TrackState.Initial)
+                        {
+                            updateIndexTrackIfNeeded(tle.source);
+                        }
+                    }
+
+                    for (int k = 0; k < tle.list.Count; k++)
+                    {
+                        for (int j = 0; j < tle.list[k].Count; j++)
+                        {
+                            var track = tle.list[k][j];
+
+                            if (track.IsNotAudio)
+                            {
+                                continue;
+                            }
+                            else if (track.State == TrackState.Initial)
+                            {
+                                index++;
+                                continue;
+                            }
+
+                            updateIndexTrackIfNeeded(track);
+
+                            if (option == M3uOption.All || option == M3uOption.Playlist)
+                            {
+                                needUpdate |= updateLine(TrackToLine(track));
+                                index++;
+                            }
+                        }
+                    }
+                }
+
+                if (needUpdate || needFirstUpdate)
+                {
+                    needFirstUpdate = false;
+                    WriteAllLines();
+                }
             }
-        }
     }
 
     class Writer // temporary fix because streamwriter sometimes writes garbled text (for unknown reasons)
@@ -267,7 +267,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         {
             WriteSldlLine(writer);
         }
-        
+
         if (option != M3uOption.Index)
         {
             foreach (var line in lines)
@@ -314,8 +314,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             if (Utils.NormalizedPath(p).StartsWith(parent))
                 p = "./" + System.IO.Path.GetRelativePath(parent, p); // prepend ./ for LoadPreviousResults to recognize that a rel. path is used
 
-            var items = new string[] 
-            { 
+            var items = new string[]
+            {
                 p,
                 val.Artist,
                 val.Album,

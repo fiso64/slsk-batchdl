@@ -78,7 +78,7 @@ public class TrackJson
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public FailureReason? FailureReason { get; set; } 
+    public FailureReason? FailureReason { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public TrackState State { get; set; } = TrackState.Initial;

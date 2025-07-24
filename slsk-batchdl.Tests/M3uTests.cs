@@ -22,7 +22,7 @@ namespace Tests.M3u
     //    public void Setup()
     //    {
     //        testM3uPath = Path.Join(Directory.GetCurrentDirectory(), "test_m3u.m3u8");
-            
+
     //        config = new Config(new string[] { });
     //        config.skipMode = SkipMode.Index;
     //        config.skipMusicDir = "";
@@ -181,7 +181,7 @@ namespace Tests.M3u
     //            editor.TryGetPreviousRunResult(t, out var prevTrack);
     //            Assert.IsNotNull(prevTrack);
     //            Assert.AreEqual(t.ToKey(), prevTrack.ToKey());
-                
+
     //            string originalPath = t.DownloadPath;
     //            t.DownloadPath = "this should not change prevTrack.DownloadPath";
     //            Assert.AreNotEqual(t.DownloadPath, prevTrack.DownloadPath);
@@ -189,4 +189,4 @@ namespace Tests.M3u
     //        }
     //    }
     //}
-} 
+}

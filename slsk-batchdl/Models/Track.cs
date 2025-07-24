@@ -52,7 +52,7 @@ namespace Models
             LineNumber = other.LineNumber;
         }
 
-        public string ToKey(bool forceNormal=false)
+        public string ToKey(bool forceNormal = false)
         {
             if (Type == TrackType.Album && !forceNormal)
                 return $"{Artist};{Album};{(int)Type}";

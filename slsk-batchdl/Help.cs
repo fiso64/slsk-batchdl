@@ -539,7 +539,7 @@ public static class Help
     {
         string text = helpText;
 
-        var dict = new Dictionary<string, string>() 
+        var dict = new Dictionary<string, string>()
         {
             { "input", inputHelp },
             { "download-modes", downloadModesHelp },

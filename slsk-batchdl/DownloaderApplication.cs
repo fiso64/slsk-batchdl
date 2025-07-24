@@ -90,7 +90,7 @@ public class DownloaderApplication
         appCts.Cancel();
         if (updateTask != null)
         {
-            try { await updateTask; } catch (OperationCanceledException) { } 
+            try { await updateTask; } catch (OperationCanceledException) { }
         }
     }
 

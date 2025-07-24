@@ -22,7 +22,7 @@ namespace Extractors
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, config.artistCol, config.titleCol, config.lengthCol, 
+            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
                 config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
 
             if (reverse)
@@ -30,7 +30,7 @@ namespace Extractors
 
             var trackLists = TrackLists.FromFlattened(tracks.Skip(offset).Take(maxTracks));
             var csvName = Path.GetFileNameWithoutExtension(csvFilePath);
-            
+
             foreach (var tle in trackLists.lists)
             {
                 tle.itemName = csvName;

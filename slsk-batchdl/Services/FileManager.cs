@@ -34,7 +34,7 @@ public class FileManager
         if (!string.IsNullOrEmpty(tle.DefaultFolderName()))
         {
             parent = Path.Join(parent, tle.DefaultFolderName());
-        } 
+        }
 
         if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(rcd))
         {

@@ -114,7 +114,7 @@ namespace Extractors
                 if (playlistUri.Length > 0 && track.URI.Length > 0)
                     await spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
             }
-            catch (Exception e) 
+            catch (Exception e)
             {
                 Logger.Error($"Error removing from source: {e}");
             }
@@ -214,7 +214,7 @@ namespace Extractors
             }
         }
 
-        private async Task<bool> TryExistingToken() 
+        private async Task<bool> TryExistingToken()
         {
             if (_clientToken.Length != 0)
             {
@@ -253,7 +253,9 @@ namespace Extractors
                 {
                     Logger.Info($"Could not refresh access token with refresh token: {ex}");
                 }
-            } else {
+            }
+            else
+            {
                 Logger.Info("No refresh token present, cannot refresh existing access");
             }
 
