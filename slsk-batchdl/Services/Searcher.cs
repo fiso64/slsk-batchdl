@@ -117,6 +117,13 @@ public class Searcher
 
         app.searches.TryRemove(track, out _);
         searchEnded = true;
+
+        Logger.Debug($"{results.Count} results found: {track}");
+        if (results.Count > 0)
+        {
+            Logger.Debug(Printing.FormatList(results, format: result => $"{result.Value.Item1.Username}: {result.Value.Item2.Filename}"));
+        }
+
         lock (fsDownloadLock) { }
 
         if (downloading == 0 && results.IsEmpty && !config.useYtdlp)

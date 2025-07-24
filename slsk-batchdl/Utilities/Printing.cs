@@ -326,6 +326,33 @@ public static class Printing
         return 3 + albumTracks.Count;
     }
 
+    public static string FormatList<T>(ICollection<T> items, Func<T, string> format, string indent = "  ", int maxCount = 10)
+    {
+        var result = new System.Text.StringBuilder();
+
+        int count = 1;
+
+        foreach (var item in items)
+        {
+            if (count > 1)
+            {
+                result.Append('\n');
+            }
+
+            if (count > maxCount)
+            {
+                result.Append($"... and {items.Count - count} more");
+                break;
+            }
+
+            result.Append(indent);
+            result.Append(format(item));
+            count += 1;
+        }
+
+        return result.ToString();
+    }
+
     static (string parents, List<string> props) FolderInfo(IEnumerable<SlFile> files)
     {
         int totalLengthInSeconds = files.Sum(f => f.Length ?? 0);
