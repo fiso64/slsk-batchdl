@@ -118,6 +118,13 @@ public class Searcher
 
         app.searches.TryRemove(track, out _);
         searchEnded = true;
+
+        Logger.Debug($"{results.Count} results found: {track}");
+        if (results.Count > 0)
+        {
+            Logger.Debug(Printing.FormatList(results, format: result => $"{result.Value.Item1.Username}: {result.Value.Item2.Filename}"));
+        }
+
         lock (fsDownloadLock) { }
 
         if (downloading == 0 && results.IsEmpty && !config.useYtdlp)
@@ -329,13 +336,13 @@ public class Searcher
         for (int i = 0; i < sortedKeys.Count; i++)
         {
             var key = sortedKeys[i];
-            if (toRemove.Contains(key)) 
+            if (toRemove.Contains(key))
                 continue;
 
             for (int j = i + 1; j < sortedKeys.Count; j++)
             {
                 var key2 = sortedKeys[j];
-                if (toRemove.Contains(key2)) 
+                if (toRemove.Contains(key2))
                     continue;
 
                 if ((key2 + '\\').StartsWith(key + '\\'))
@@ -420,7 +427,7 @@ public class Searcher
         var parts = track.URI["slsk://".Length..].Split('/', 2);
         var username = parts[0];
         var directory = parts[1].TrimEnd('/').Replace('/', '\\');
-        
+
         var files = await GetAllFilesInFolder(username, directory);
 
         var res = new List<List<Track>> { new List<Track>() };
@@ -498,7 +505,7 @@ public class Searcher
                 kvp.Item1.Downloads = kvp.Item2.ToList();
                 return kvp.Item1;
             }).ToList();
-        
+
         return tracks;
     }
 
@@ -820,7 +827,7 @@ public class Searcher
     {
         foreach (var track in tracks)
         {
-            if (!config.NonVerbosePrint) 
+            if (!config.NonVerbosePrint)
                 Console.WriteLine($"Results for {track}:");
 
             SearchOptions getSearchOptions(int timeout, FileConditions necCond, FileConditions prfCond)
@@ -859,7 +866,7 @@ public class Searcher
                 {
                     JsonPrinter.PrintTrackResultJson(track, Enumerable.Empty<(SearchResponse, Soulseek.File)>());
                 }
-             
+
                 if (!config.NonVerbosePrint)
                     Printing.WriteLine($"No results", ConsoleColor.Yellow);
             }

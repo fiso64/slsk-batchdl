@@ -171,7 +171,7 @@ namespace Models
         {
             return FormatSatisfies(file.Name)
                 && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, track.Title) 
+                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, track.Title)
                 && StrictArtistSatisfies(file.Name, track.Artist) && StrictAlbumSatisfies(file.Name, track.Album));
         }
 
@@ -327,6 +327,11 @@ namespace Models
             if (!BitDepthSatisfies(file))
                 return "BitDepth fails";
             return "Satisfied";
+        }
+
+        public override int GetHashCode()
+        {
+            throw new NotImplementedException();
         }
     }
 }

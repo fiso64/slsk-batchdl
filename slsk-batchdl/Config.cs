@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 public class Config
 {
-    public FileConditions necessaryCond = new() 
+    public FileConditions necessaryCond = new()
     {
         Formats = new string[] { "mp3", "flac", "ogg", "m4a", "opus", "wav", "aac", "alac" },
     };
@@ -152,7 +152,7 @@ public class Config
                 {
                     return arg[1..].Select(c => $"-{c}"); // -abc becomes -a -b -c
                 }
-            } 
+            }
             return new[] { arg };
         }).ToArray();
 
@@ -230,7 +230,7 @@ public class Config
                 return;
 
             confPath = Utils.ExpandVariables(args[idx2 + 1]);
-            if(File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
+            if (File.Exists(Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath)))
                 confPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, confPath);
         }
 
@@ -272,19 +272,19 @@ public class Config
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
-        
+
         nameFormat = nameFormat.Trim();
 
         if (string.IsNullOrWhiteSpace(parentDir))
             parentDir = Directory.GetCurrentDirectory();
 
-        confPath        = Utils.GetFullPath(Utils.ExpandVariables(confPath));
-        parentDir       = Utils.GetFullPath(Utils.ExpandVariables(parentDir));
-        m3uFilePath     = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
-        indexFilePath   = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
-        skipMusicDir    = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
-        logFilePath     = Utils.GetFullPath(Utils.ExpandVariables(logFilePath));
-        mockFilesDir    = Utils.GetFullPath(Utils.ExpandVariables(mockFilesDir));
+        confPath = Utils.GetFullPath(Utils.ExpandVariables(confPath));
+        parentDir = Utils.GetFullPath(Utils.ExpandVariables(parentDir));
+        m3uFilePath = Utils.GetFullPath(Utils.ExpandVariables(m3uFilePath));
+        indexFilePath = Utils.GetFullPath(Utils.ExpandVariables(indexFilePath));
+        skipMusicDir = Utils.GetFullPath(Utils.ExpandVariables(skipMusicDir));
+        logFilePath = Utils.GetFullPath(Utils.ExpandVariables(logFilePath));
+        mockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(mockFilesDir));
 
         if (failedAlbumPath.Length == 0)
             failedAlbumPath = Path.Join(parentDir, "failed");
@@ -313,7 +313,7 @@ public class Config
         var curProfile = "default";
 
         for (int i = 0; i < lines.Length; i++)
-        { 
+        {
             string l = lines[i].Trim();
             if (l.Length == 0 || l.StartsWith('#'))
                 continue;
@@ -372,7 +372,7 @@ public class Config
 
             bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
             bool alreadyApplied = appliedProfiles.Contains(key);
-            
+
             if (condSatisfied && !alreadyApplied)
                 return true;
             if (!condSatisfied && alreadyApplied)
@@ -402,12 +402,12 @@ public class Config
 
             bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
             bool alreadyApplied = appliedProfiles.Contains(key);
-            
+
             if (condSatisfied && !alreadyApplied)
                 needUpdate = true;
             if (!condSatisfied && alreadyApplied)
                 needUpdate = true;
-            
+
             if (condSatisfied)
                 toApply.Add((key, val.args));
         }
@@ -433,7 +433,7 @@ public class Config
         ApplyProfiles(profile);
 
         ProcessArgs(arguments);
-        
+
         PostProcessArgs(trackLists);
     }
 
@@ -470,7 +470,7 @@ public class Config
     {
         static string toKebab(string input)
         {
-            return string.Concat(input.Select((x, i) 
+            return string.Concat(input.Select((x, i)
                 => char.IsUpper(x) && i > 0 ? "-" + char.ToLower(x).ToString() : char.ToLower(x).ToString()));
         }
 
@@ -718,7 +718,7 @@ public class Config
         string GetParameter(ref int i)
         {
             i++;
-            if (i < 0 || i >= args.Count) 
+            if (i < 0 || i >= args.Count)
                 InputError("Option requires parameter");
             return args[i];
         }

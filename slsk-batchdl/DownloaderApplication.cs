@@ -90,7 +90,7 @@ public class DownloaderApplication
         appCts.Cancel();
         if (updateTask != null)
         {
-            try { await updateTask; } catch (OperationCanceledException) { } 
+            try { await updateTask; } catch (OperationCanceledException) { }
         }
     }
 
@@ -1168,7 +1168,7 @@ public class DownloaderApplication
             {
                 if (ex is not OperationCanceledException)
                 {
-                    Logger.DebugError($"{ex}");
+                    // Logger.DebugError($"{ex}");
                 }
                 else
                 {

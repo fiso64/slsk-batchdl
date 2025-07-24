@@ -34,7 +34,7 @@ public static class Logger
 
     private static readonly List<OutputConfig> OutputConfigs = new();
 
-    private static readonly object LockObject = new ();
+    private static readonly object LockObject = new();
 
     public static void SetupExceptionHandling()
     {
@@ -45,7 +45,7 @@ public static class Logger
         };
     }
 
-    private static void AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true, 
+    private static void AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true,
         bool prependLogLevel = true, bool isFileOutput = false)
     {
         lock (LockObject)
