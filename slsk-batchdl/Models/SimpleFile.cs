@@ -23,7 +23,7 @@ namespace Models
                 var tagFile = TagLib.File.Create(path);
                 SetFromTagLib(tagFile);
             }
-            catch 
+            catch
             {
                 Path = path;
             }

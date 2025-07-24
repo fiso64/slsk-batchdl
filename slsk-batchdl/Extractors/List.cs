@@ -18,7 +18,7 @@ namespace Extractors
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandVariables(input);
-            
+
             if (!File.Exists(listFilePath))
                 throw new FileNotFoundException($"List file '{listFilePath}' not found");
 
@@ -36,7 +36,7 @@ namespace Extractors
             for (int i = start; i < lines.Length && i >= 0; i += step)
             {
                 var line = lines[i].Trim();
-                
+
                 if (line.Length == 0 || line.StartsWith('#')) continue;
 
                 if (count++ < offset)
@@ -55,7 +55,7 @@ namespace Extractors
 
                 var fields = ParseLine(line);
 
-                if (isAlbum) 
+                if (isAlbum)
                 {
                     fields[0] = "album://" + fields[0];
                 }
