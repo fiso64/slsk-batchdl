@@ -725,15 +725,17 @@ public class Config
 
         int getIntParameter(ref int i)
         {
-            if (!int.TryParse(GetParameter(ref i), out var res))
-                InputError("Option requires integer parameter");
+            var value = GetParameter(ref i);
+            if (!int.TryParse(value.Replace("_", ""), out var res))
+                InputError($"Option requires integer parameter: {value}");
             return res;
         }
 
         double getDoubleParameter(ref int i)
         {
-            if (!double.TryParse(GetParameter(ref i), out var res))
-                InputError("Option requires double parameter");
+            var value = GetParameter(ref i);
+            if (!double.TryParse(value.Replace("_", ""), out var res))
+                InputError($"Option requires double parameter: {value}");
             return res;
         }
 
