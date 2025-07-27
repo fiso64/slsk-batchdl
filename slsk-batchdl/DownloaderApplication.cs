@@ -15,7 +15,6 @@ using SlFile = Soulseek.File;
 public class DownloaderApplication
 {
     private const int updateInterval = 100;
-    private bool initialized = false;
     private bool skipUpdate = false; // Will likely need rethinking later
     private bool interceptKeys = false; // UI concern, move later?
     private event EventHandler<ConsoleKey>? keyPressed; // UI concern, move later?
