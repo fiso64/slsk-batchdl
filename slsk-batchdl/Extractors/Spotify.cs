@@ -15,7 +15,7 @@ namespace Extractors
         public static bool InputMatches(string input)
         {
             input = input.ToLower();
-            return input == "spotify-likes" || input.IsInternetUrl() && input.Contains("spotify.com");
+            return input == "spotify-likes" || input == "spotify-albums" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
         public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
@@ -24,7 +24,7 @@ namespace Extractors
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            bool needLogin = input == "spotify-likes" || config.removeTracksFromSource;
+            bool needLogin = input == "spotify-likes" || input == "spotify-albums" || config.removeTracksFromSource;
 
             if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
             {
@@ -45,6 +45,11 @@ namespace Extractors
                 tle.itemName = "Spotify Likes";
                 tle.enablesIndexByDefault = true;
                 tle.list.Add(tracks);
+            }
+            else if (input == "spotify-albums")
+            {
+                Logger.Info("Loading Spotify liked albums..");
+                trackLists = await spotifyClient.GetAlbums(max, off);
             }
             else if (input.Contains("/album/"))
             {
@@ -96,7 +101,10 @@ namespace Extractors
                 tle.list.Add(tracks);
             }
 
-            trackLists.AddEntry(tle);
+            // `spotify-albums` is a bit special and sets `trackLists` directly.
+            if (tle != null) {
+                trackLists.AddEntry(tle);
+            }
 
             if (reverse)
             {
@@ -333,6 +341,68 @@ namespace Extractors
                 offset += limit;
                 limit = Math.Min(max - res.Count, 50);
             }
+
+            return res;
+        }
+
+        /// Get a list of the user's liked albums.
+        public async Task<TrackLists> GetAlbums(int max = int.MaxValue, int offset = 0)
+        {
+            if (!loggedIn)
+                throw new Exception("Can't get liked albums as user is not logged in");
+
+            var res = new TrackLists();
+            int limit = Math.Min(max, 50);
+
+            int num = offset + 1;
+            int found = 0;
+            while (true)
+            {
+                var albums = await _client.Library.GetAlbums(new LibraryAlbumsRequest { Limit = limit, Offset = offset });
+
+                foreach (var savedAlbum in albums.Items)
+                {
+                    var album = savedAlbum.Album;
+
+                    string[] artists = album.Artists.Select(artist => artist.Name).ToArray();
+                    string artist = artists[0];
+
+                    var rawTracks = await _client.PaginateAll(album.Tracks);
+
+                    var trackListEntry = new TrackListEntry(new Track {
+                        Album = album.Name,
+                        Artist = artist,
+                        MinAlbumTrackCount = album.TotalTracks,
+                        ItemNumber = num++,
+                        Type = TrackType.Album,
+                    });
+                    trackListEntry.itemName = "Spotify Albums";
+                    trackListEntry.enablesIndexByDefault = true;
+
+                    foreach (var rawTrack in rawTracks)
+                    {
+                        found += 1;
+                        trackListEntry.AddTrack(new Track {
+                            Title = rawTrack.Name,
+                            Album = album.Name,
+                            Artist = rawTrack.Artists[0].Name,
+                            Length = rawTrack.DurationMs / 1000,
+                            MinAlbumTrackCount = album.TotalTracks,
+                            ItemNumber = rawTrack.TrackNumber,
+                        });
+                    }
+
+                    res.AddEntry(trackListEntry);
+                }
+
+                if (albums.Items.Count < limit || res.Count >= max)
+                    break;
+
+                offset += limit;
+                limit = Math.Min(max - res.Count, 50);
+            }
+
+            Logger.Info($"Found {res.lists.Count} liked albums containing a total of {found} tracks on Spotify");
 
             return res;
         }
