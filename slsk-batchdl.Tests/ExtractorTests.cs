@@ -2,10 +2,6 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
 using Enums;
 using Extractors;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using System.Diagnostics;
 
 namespace Tests.Extractors
 {

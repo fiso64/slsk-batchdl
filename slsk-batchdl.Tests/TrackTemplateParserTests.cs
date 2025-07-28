@@ -1,6 +1,5 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
-using System;
 
 namespace Tests.TrackParserTest
 {

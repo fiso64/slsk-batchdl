@@ -1,18 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using Soulseek;
-
-using Models;
-using Enums;
-using Extractors;
-using Services;
-using Tests;
-
-using Directory = Soulseek.Directory;
 using File = Soulseek.File;
 
 namespace Tests.EndToEnd

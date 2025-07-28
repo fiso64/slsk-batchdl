@@ -2,8 +2,6 @@
 using Models;
 using Soulseek;
 using Tests.ClientTests;
-
-using Directory = Soulseek.Directory;
 using File = Soulseek.File;
 
 namespace Tests.SearchDownloadTests

@@ -328,5 +328,10 @@ namespace Models
                 return "BitDepth fails";
             return "Satisfied";
         }
+
+        public override int GetHashCode()
+        {
+            throw new NotImplementedException();
+        }
     }
 }

@@ -1,8 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
 using Enums;
-using System;
-using System.IO;
 
 namespace Tests.ConfigTests
 {

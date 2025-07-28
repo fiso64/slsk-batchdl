@@ -1,7 +1,5 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
-using System;
-using System.IO;
 using System.Reflection;
 
 namespace Tests.NameFormat

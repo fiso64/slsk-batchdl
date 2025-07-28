@@ -1,7 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
-
-using Directory = Soulseek.Directory;
 using File = Soulseek.File;
 
 namespace Tests.ClientTests
