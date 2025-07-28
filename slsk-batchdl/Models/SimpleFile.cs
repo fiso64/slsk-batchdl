@@ -13,6 +13,7 @@ namespace Models
 
         public SimpleFile(TagLib.File file)
         {
+            Path = file.Name;
             SetFromTagLib(file);
         }
 
@@ -21,6 +22,7 @@ namespace Models
             try
             {
                 var tagFile = TagLib.File.Create(path);
+                Path = tagFile.Name;
                 SetFromTagLib(tagFile);
             }
             catch
