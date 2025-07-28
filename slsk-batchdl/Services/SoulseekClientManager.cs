@@ -15,9 +15,14 @@ public class SoulseekClientManager
         _client.State.HasFlag(SoulseekClientStates.Connected) &&
         _client.State.HasFlag(SoulseekClientStates.LoggedIn);
 
-    public SoulseekClientManager(Config initialConfig)
+    public SoulseekClientManager(Config initialConfig, ISoulseekClient? client = null)
     {
         _initialConfig = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
+        if (client != null)
+        {
+            _client = client;
+            _isInitialized = true;
+        }
     }
 
     /// <summary>

@@ -37,10 +37,10 @@ public class DownloaderApplication
     private Task? updateTask;
     private readonly CancellationTokenSource appCts = new(); // For overall app cancellation
 
-    public DownloaderApplication(Config config)
+    public DownloaderApplication(Config config, ISoulseekClient? client = null)
     {
         defaultConfig = config;
-        _clientManager = new SoulseekClientManager(defaultConfig);
+        _clientManager = new SoulseekClientManager(defaultConfig, client);
     }
 
     public async Task RunAsync()
