@@ -418,9 +418,8 @@ public class DownloaderApplication
                         foreach (var item in res)
                         {
                             var newSource = new Track(tle.source) { Type = TrackType.Album, ItemNumber = -1 };
-                            var albumTle = new TrackListEntry()
+                            var albumTle = new TrackListEntry(newSource)
                             {
-                                source = newSource,
                                 list = item,
                                 config = config,
                                 needSourceSearch = false,
