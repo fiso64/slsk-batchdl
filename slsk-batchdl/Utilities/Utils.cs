@@ -58,6 +58,18 @@ public static class Utils
         }
     }
 
+    public async static Task WriteAllLinesAsync(string path, IEnumerable<string> lines, char separator)
+    {
+        using (var writer = new StreamWriter(path))
+        {
+            foreach (var line in lines)
+            {
+                await writer.WriteAsync(line);
+                await writer.WriteAsync(separator);
+            }
+        }
+    }
+
     public static string GetFullPath(string path)
     {
         if (string.IsNullOrEmpty(path))
