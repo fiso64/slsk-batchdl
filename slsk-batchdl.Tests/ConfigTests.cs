@@ -50,8 +50,9 @@ namespace Tests.ConfigTests
             config.aggregate = false;
             config.maxStaleTime = 50000;
             var tle = new TrackListEntry(TrackType.Album);
-
-            config.UpdateProfiles(tle);
+            var ls = new TrackLists();
+            ls.AddEntry(tle);
+            config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(10, config.maxStaleTime);
             Assert.IsFalse(config.fastSearch);
@@ -77,8 +78,9 @@ namespace Tests.ConfigTests
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
             var tle = new TrackListEntry(TrackType.Album);
-
-            config.UpdateProfiles(tle);
+            var ls = new TrackLists();
+            ls.AddEntry(tle);
+            config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(999999, config.maxStaleTime);
             Assert.IsFalse(config.useYtdlp);
@@ -102,8 +104,10 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
-
-            config.UpdateProfiles(new TrackListEntry(TrackType.Normal));
+            var tle = new TrackListEntry(TrackType.Normal);
+            var ls = new TrackLists();
+            ls.AddEntry(tle);
+            config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(50000, config.maxStaleTime);
             Assert.IsTrue(config.useYtdlp);
