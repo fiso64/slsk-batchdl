@@ -20,60 +20,22 @@ namespace Tests.EndToEnd
     [TestClass]
     public class ProgramTests
     {
-        private ISoulseekClient _originalClient;
-        private IExtractor _originalExtractor;
-        private TrackLists _originalTrackLists;
-
-        [TestInitialize]
-        public void TestInitialize()
-        {
-            // Store the original values
-            _originalClient = Program.client;
-            _originalExtractor = Program.extractor;
-            _originalTrackLists = Program.trackLists;
-
-            // Reset static state that Main touches, if necessary
-            Program.searches.Clear();
-            Program.downloads.Clear();
-            Program.userSuccessCounts.Clear();
-            Program.skipUpdate = false;
-            Program.interceptKeys = false;
-            Program.initialized = false; // Reset the initialized flag
-        }
-
-        [TestCleanup]
-        public void TestCleanup()
-        {
-            // Restore original values after each test to prevent state leakage
-            Program.client = _originalClient;
-            Program.extractor = _originalExtractor;
-            Program.trackLists = _originalTrackLists;
-
-            // Reset static state
-            Program.searches.Clear();
-            Program.downloads.Clear();
-            Program.userSuccessCounts.Clear();
-            Program.skipUpdate = false;
-            Program.interceptKeys = false;
-            Program.initialized = false;
-        }
-
-        //[TestMethod]
+        [TestMethod]
         public async Task Main_E2E_Test()
         {
+            Console.ResetColor();
+            Console.OutputEncoding = Encoding.UTF8;
+            Logger.SetupExceptionHandling();
+            Logger.AddConsole();
+            Logger.SetConsoleLogLevel(Logger.LogLevel.Debug);
+
             var testClient = new ClientTests.MockSoulseekClient(CreateTestIndex());
-
-            Program.client = testClient;
-
-            var results = await testClient.SearchAsync(new SearchQuery("testartist - testalbum"));
-
-            var outputDir = Path.Combine(Path.GetTempPath(), "sldl_temp");
-
-            Console.WriteLine($"Downloading to: {outputDir}");
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-batchdl-e2e", Guid.NewGuid().ToString());
+            System.IO.Directory.CreateDirectory(outputDir);
 
             var testArgs = new string[]
             {
-                "--input", "testartist testalbum",
+                "--input", "testartist - testalbum",
                 "--album",
                 "--path", outputDir,
                 "--name-format", "{foldername}/{filename}",
@@ -81,22 +43,28 @@ namespace Tests.EndToEnd
                 "--pass", "test_pass",
             };
 
-            var originalConsoleOut = Console.Out;
-            using var stringWriter = new StringWriter();
-            Console.SetOut(stringWriter);
+            var config = new Config(testArgs);
+            var app = new DownloaderApplication(config, testClient);
 
             try
             {
-                await Program.Main(testArgs);
+                await app.RunAsync();
+
+                // Assertions
+                var downloadedFiles = System.IO.Directory.GetFiles(Path.Combine(outputDir, "(2011) testalbum [MP3]"), "*", SearchOption.AllDirectories);
+                Assert.AreEqual(4, downloadedFiles.Length, "Should download 4 files for the album.");
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("0101. testartist - testsong.mp3")));
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("0102. testartist - testsong2.mp3")));
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("0103. testartist - testsong3.mp3")));
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("cover.jpg")));
             }
             finally
             {
-                Console.SetOut(originalConsoleOut);
+                if (System.IO.Directory.Exists(outputDir))
+                {
+                    System.IO.Directory.Delete(outputDir, true);
+                }
             }
-
-            var consoleOutput = stringWriter.ToString();
-
-            Console.WriteLine("Captured console output:\n" + consoleOutput);
         }
 
         private List<SearchResponse> CreateTestIndex()
@@ -141,7 +109,7 @@ namespace Tests.EndToEnd
             );
 
             var user3SearchResponse = new SearchResponse(
-                username: "user3",
+                username: "testuser",
                 token: 3,
                 hasFreeUploadSlot: true,
                 uploadSpeed: 75,
