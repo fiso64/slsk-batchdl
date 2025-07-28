@@ -116,9 +116,9 @@ public class Downloader
 
         try { searchCts?.Cancel(); } catch { }
 
-        try 
-        { 
-            Utils.Move(incompleteOutputPath, outputPath); 
+        try
+        {
+            Utils.Move(incompleteOutputPath, outputPath);
             app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
         }
         catch (IOException) { Logger.Error($"Failed to rename .incomplete file"); }

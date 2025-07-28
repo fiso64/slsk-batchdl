@@ -66,7 +66,7 @@ public static class Printing
                     {
                         Console.ForegroundColor = ConsoleColor.DarkGray;
                         Console.Write($" [{i + 1:D2}]");
-                        Console.ResetColor(); 
+                        Console.ResetColor();
                     }
                     if (ancestor.Length == 0)
                         Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
@@ -134,7 +134,7 @@ public static class Printing
                     Console.WriteLine();
                 }
 
-                if (i < number - 1) 
+                if (i < number - 1)
                     Console.WriteLine();
             }
         }
@@ -352,12 +352,12 @@ public static class Printing
         propsList.Add($"{totalFileSizeInMB:F2} MB");
 
         string gcp = Utils.GreatestCommonDirectorySlsk(files.Select(x => x.Filename)).TrimEnd('\\');
-    
+
         int lastIndex = gcp.LastIndexOf('\\');
         if (lastIndex != -1)
         {
             int secondLastIndex = gcp.LastIndexOf('\\', lastIndex - 1);
-    
+
             gcp = secondLastIndex == -1 ? gcp : gcp[(secondLastIndex + 1)..];
         }
 
@@ -421,7 +421,7 @@ public static class Printing
                 {
                     return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
                 }
-                catch 
+                catch
                 {
                     return null;
                 }
@@ -433,4 +433,3 @@ public static class Printing
         }
     }
 }
-

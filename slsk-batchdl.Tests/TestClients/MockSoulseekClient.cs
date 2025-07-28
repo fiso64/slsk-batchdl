@@ -25,7 +25,8 @@ namespace Tests.ClientTests
                     : new[] { path });
 
             var fileList = files
-                .Select((path, i) => {
+                .Select((path, i) =>
+                {
 
                     var attributes = new List<Soulseek.FileAttribute>();
 

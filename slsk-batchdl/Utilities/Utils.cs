@@ -206,10 +206,10 @@ public static class Utils
         while (y.StartsWith(x + '/') && FileCountRecursive(y) == 0)
         {
             Directory.Delete(y, true);
-            
+
             string prev = y;
             y = NormalizedPath(Path.GetDirectoryName(y) ?? "");
-            
+
             if (prev.Length == y.Length)
                 break;
         }
@@ -507,7 +507,7 @@ public static class Utils
             while (leftIndex >= 0 && str[leftIndex] == ' ')
                 leftIndex--;
 
-            bool hasLeftBoundary = leftIndex <  0 || acceptLeftDigit && leftIndex < index - 1 && char.IsDigit(str[leftIndex]) || boundarySet.Contains(str[leftIndex]);
+            bool hasLeftBoundary = leftIndex < 0 || acceptLeftDigit && leftIndex < index - 1 && char.IsDigit(str[leftIndex]) || boundarySet.Contains(str[leftIndex]);
 
             int rightIndex = index + value.Length;
             while (rightIndex < str.Length && str[rightIndex] == ' ')

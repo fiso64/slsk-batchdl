@@ -20,7 +20,7 @@ namespace Extractors
             var trackLists = new TrackLists();
             bool isTrack = input.Contains("/track/");
             bool isAlbum = !isTrack && input.Contains("/album/");
-            bool isArtist =!isTrack && !isAlbum;
+            bool isArtist = !isTrack && !isAlbum;
 
             if (isArtist)
             {
