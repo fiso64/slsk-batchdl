@@ -11,7 +11,7 @@
         Fatal
     }
 
-    public class OutputConfig
+    public struct OutputConfig
     {
         public Action<string> Output;
         public LogLevel MinimumLevel;
