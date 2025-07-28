@@ -125,8 +125,14 @@ namespace Models
             _lenTol = lenTol;
         }
 
-        public bool Equals(Track a, Track b)
+        public bool Equals(Track? a, Track? b)
         {
+            if (ReferenceEquals(a, b))
+                return true;
+                
+            if (a == null || b == null)
+                return false;
+
             if (a.Equals(b))
                 return true;
 
