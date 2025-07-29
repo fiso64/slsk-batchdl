@@ -186,6 +186,8 @@ public class DownloaderApplication
 
         preprocessTrack(tle.config, tle.source);
 
+        if (tle.list == null) return;
+
         for (int k = 0; k < tle.list.Count; k++)
         {
             foreach (var ls in tle.list)

@@ -14,7 +14,7 @@ namespace Tests.NameFormat
         {
             var cfg = new Config();
             cfg.nameFormat = "{albumartist(/)album(/)track(. )title|artist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
-            var tle = new TrackListEntry() { config = cfg };
+            var tle = new TrackListEntry(new Track()) { config = cfg };
 
             var track = new Track()
             {
