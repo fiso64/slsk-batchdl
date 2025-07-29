@@ -62,7 +62,8 @@
 
     public static void SetConsoleLogLevel(LogLevel logLevel)
     {
-        OutputConfigs.First(x => x.Output == Console.WriteLine).MinimumLevel = logLevel;
+        var consoleConfig = OutputConfigs.First(x => x.Output == Console.WriteLine);
+        consoleConfig.MinimumLevel = logLevel;
     }
 
     public static void AddFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
