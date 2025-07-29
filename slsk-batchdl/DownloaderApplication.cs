@@ -1230,7 +1230,7 @@ public class DownloaderApplication
                 track.FailureReason = FailureReason.Other;
             }
 
-            finishDownload();
+            FinishDownload();
             cts.Cancel();
             throw new OperationCanceledException();
         }
@@ -1274,7 +1274,7 @@ public class DownloaderApplication
         }
 
         semaphore.Release();
-        finishDownload();
+        FinishDownload();
     }
 
 
