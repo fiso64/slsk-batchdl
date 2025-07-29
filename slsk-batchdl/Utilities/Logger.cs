@@ -11,7 +11,7 @@
         Fatal
     }
 
-    public class OutputConfig
+    public struct OutputConfig
     {
         public Action<string> Output;
         public LogLevel MinimumLevel;
@@ -62,7 +62,8 @@
 
     public static void SetConsoleLogLevel(LogLevel logLevel)
     {
-        OutputConfigs.First(x => x.Output == Console.WriteLine).MinimumLevel = logLevel;
+        var consoleConfig = OutputConfigs.First(x => x.Output == Console.WriteLine);
+        consoleConfig.MinimumLevel = logLevel;
     }
 
     public static void AddFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
@@ -72,7 +73,11 @@
 
     public static void AddOrReplaceFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+        var directoryName = Path.GetDirectoryName(filePath);
+        if (directoryName != null && directoryName != String.Empty)
+        {
+            Directory.CreateDirectory(directoryName);
+        }
         OutputConfigs.RemoveAll(config => config.IsFileOutput);
         AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel, isFileOutput: true);
     }

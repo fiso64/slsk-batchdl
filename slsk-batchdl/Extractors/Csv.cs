@@ -6,8 +6,9 @@ namespace Extractors
     public class CsvExtractor : IExtractor
     {
         string? csvFilePath = null;
-        readonly object csvLock = new();
         int csvColumnCount = -1;
+        /// Async-friendly lock.
+        private readonly SemaphoreSlim csvLock = new SemaphoreSlim(1, 1);
 
         public static bool InputMatches(string input)
         {
@@ -42,19 +43,20 @@ namespace Extractors
 
         public async Task RemoveTrackFromSource(Track track)
         {
-            lock (csvLock)
+            await csvLock.WaitAsync();
+            try
             {
                 if (File.Exists(csvFilePath))
                 {
                     try
                     {
-                        string[] lines = File.ReadAllLines(csvFilePath, System.Text.Encoding.UTF8);
+                        string[] lines = await File.ReadAllLinesAsync(csvFilePath, System.Text.Encoding.UTF8);
                         int idx = track.LineNumber - 1;
 
                         if (idx > -1 && idx < lines.Length)
                         {
                             lines[idx] = new string(',', Math.Max(0, csvColumnCount - 1));
-                            Utils.WriteAllLines(csvFilePath, lines, '\n');
+                            await Utils.WriteAllLinesAsync(csvFilePath, lines, '\n');
                         }
                     }
                     catch (Exception e)
@@ -62,6 +64,11 @@ namespace Extractors
                         Logger.Error($"Error removing from source: {e}");
                     }
                 }
+            }
+
+            finally
+            {
+                csvLock.Release();
             }
         }
 
