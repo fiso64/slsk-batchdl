@@ -28,3 +28,6 @@ jobs:
 
     - name: Build Project
       run: dotnet build --no-restore
+
+    - name: Test Project
+      run: dotnet test --no-build
