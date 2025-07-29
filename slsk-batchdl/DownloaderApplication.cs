@@ -1401,7 +1401,7 @@ public class DownloaderApplication
         }
     }
 
-    void finishDownload()
+    void FinishDownload()
     {
         Interlocked.Increment(ref finishedDownloads);
         double percentComplete = (double)finishedDownloads / totalDownloads;

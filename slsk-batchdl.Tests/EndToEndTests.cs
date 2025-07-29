@@ -8,8 +8,10 @@ namespace Tests.EndToEnd
     [TestClass]
     public class ProgramTests
     {
+        // TODO: Add e2e tests for other input types
+
         [TestMethod]
-        public async Task Main_E2E_Test()
+        public async Task AlbumDownload_E2E()
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
