@@ -44,7 +44,11 @@ namespace Models
 
         private List<string>? printLines = null;
 
-        public TrackListEntry() { }
+        public TrackListEntry(Track source)
+        {
+            this.source = source;
+            SetDefaults();
+        }
 
         public TrackListEntry(TrackType trackType)
         {

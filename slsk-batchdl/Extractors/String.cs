@@ -11,7 +11,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             bool isAlbum = config.album;
 
@@ -38,7 +38,7 @@ namespace Extractors
 
             trackLists.AddEntry(tle);
 
-            return trackLists;
+            return Task.FromResult(trackLists);
         }
 
         public static Track ParseTrackArg(string input, bool isAlbum)

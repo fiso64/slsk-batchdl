@@ -58,6 +58,18 @@ public static class Utils
         }
     }
 
+    public async static Task WriteAllLinesAsync(string path, IEnumerable<string> lines, char separator)
+    {
+        using (var writer = new StreamWriter(path))
+        {
+            foreach (var line in lines)
+            {
+                await writer.WriteAsync(line);
+                await writer.WriteAsync(separator);
+            }
+        }
+    }
+
     public static string GetFullPath(string path)
     {
         if (string.IsNullOrEmpty(path))
@@ -98,7 +110,15 @@ public static class Utils
     public static string GetDirectoryNameSlsk(string fname)
     {
         fname = fname.Replace('\\', Path.DirectorySeparatorChar);
-        return Path.GetDirectoryName(fname);
+        var directoryName = Path.GetDirectoryName(fname);
+        if (directoryName == null || directoryName == String.Empty)
+        {
+            return String.Empty;
+        }
+        else
+        {
+            return directoryName;
+        }
     }
 
     public static string ExpandVariables(string path)

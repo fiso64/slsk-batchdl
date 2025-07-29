@@ -15,7 +15,6 @@ using SlFile = Soulseek.File;
 public class DownloaderApplication
 {
     private const int updateInterval = 100;
-    private bool initialized = false;
     private bool skipUpdate = false; // Will likely need rethinking later
     private bool interceptKeys = false; // UI concern, move later?
     private event EventHandler<ConsoleKey>? keyPressed; // UI concern, move later?
@@ -424,9 +423,8 @@ public class DownloaderApplication
                         foreach (var item in res)
                         {
                             var newSource = new Track(tle.source) { Type = TrackType.Album, ItemNumber = -1 };
-                            var albumTle = new TrackListEntry()
+                            var albumTle = new TrackListEntry(newSource)
                             {
-                                source = newSource,
                                 list = item,
                                 config = config,
                                 needSourceSearch = false,
