@@ -371,8 +371,12 @@ public class DownloaderApplication
 
                 if (tle.source.State == TrackState.NotFoundLastTime)
                 {
-                    Logger.Info($"{tle.source.Type} download '{tle.source.ToString(true)}' was not found during a prior run, skipping");
-                    continue;
+                    if (config.retryNotFound) {
+                        tle.source.State = TrackState.Initial;
+                    } else {
+                        Logger.Info($"{tle.source.Type} download '{tle.source.ToString(true)}' was not found during a prior run, skipping");
+                        continue;
+                    }
                 }
             }
 

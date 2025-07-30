@@ -58,6 +58,7 @@ public class Config
     public bool setAlbumMinTrackCount = true;
     public bool setAlbumMaxTrackCount = false;
     public bool skipNotFound = false;
+    public bool retryNotFound = false;
     public bool desperateSearch = false;
     public bool noRemoveSpecialChars = false;
     public bool artistMaybeWrong = false;
@@ -945,6 +946,10 @@ public class Config
                     case "--snf":
                     case "--skip-not-found":
                         setFlag(ref skipNotFound, ref i);
+                        break;
+                    case "--rnf":
+                    case "--retry-not-found":
+                        setFlag(ref retryNotFound, ref i);
                         break;
                     case "--rfp":
                     case "--rfs":
