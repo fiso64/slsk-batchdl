@@ -23,7 +23,7 @@ namespace Tests.NameFormat
                 Album = "SourceAlbum",
             };
 
-            var slFile = new Soulseek.File(0, "music\\test\\testfile.mp3", 1, ".mp3");
+            var slFile = new Soulseek.File(0, Path.Join("music", "test", "testfile.mp3"), 1, ".mp3");
 
             var method = typeof(FileManager).GetMethod("ApplyNameFormatInternal", BindingFlags.NonPublic | BindingFlags.Static);
 
@@ -42,7 +42,7 @@ namespace Tests.NameFormat
                 () => tagLibFile,
                 slFile,
                 track,
-                "music\\test"
+                Path.Join("music", "test")
             });
 
             Assert.AreEqual("AlbumArtist/Album/01. Title", result.Replace('\\', '/'));
@@ -61,7 +61,7 @@ namespace Tests.NameFormat
                 () => tagLibFile2,
                 slFile,
                 track,
-                "music\\test"
+                Path.Join("music", "test")
             });
 
             Assert.AreEqual("Artist/Album/01. Title", result2.Replace('\\', '/'));
@@ -80,7 +80,7 @@ namespace Tests.NameFormat
                 () => tagLibFile3,
                 slFile,
                 track,
-                "music\\test"
+                Path.Join("music", "test")
             });
 
             Assert.AreEqual("missing-tags/test/testfile", result3.Replace('\\', '/'));

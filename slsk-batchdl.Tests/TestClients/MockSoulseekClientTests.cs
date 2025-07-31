@@ -82,9 +82,9 @@ namespace Tests.ClientTests
 
             // Assert
             Assert.AreEqual(2, result.DirectoryCount);
-            Assert.AreEqual("Music\\Artist1\\Album1", result.Directories.First().Name);
+            Assert.AreEqual(Path.Join("Music", "Artist1", "Album1"), result.Directories.First().Name);
             Assert.AreEqual(5, result.Directories.First().FileCount);
-            Assert.AreEqual("Music\\Artist1\\Album2", result.Directories.ElementAt(1).Name);
+            Assert.AreEqual(Path.Join("Music", "Artist1", "Album2"), result.Directories.ElementAt(1).Name);
             Assert.AreEqual(3, result.Directories.ElementAt(1).FileCount);
         }
 
