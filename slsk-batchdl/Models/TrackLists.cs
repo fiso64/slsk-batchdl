@@ -66,7 +66,12 @@ namespace Models
 
             int i = lists.Count - 1;
 
-            if (lists[i].list.Count == 0)
+            if (lists[i].list == null)
+            {
+                lists[i].list = new List<List<Track>>() { new List<Track>() { track } };
+                return;
+            }
+            else if (lists[i].list.Count == 0)
             {
                 lists[i].list.Add(new List<Track>() { track });
                 return;
@@ -81,6 +86,8 @@ namespace Models
             lists.Reverse();
             foreach (var tle in lists)
             {
+                if (tle.list == null) continue;
+
                 foreach (var ls in tle.list)
                 {
                     ls.Reverse();
@@ -113,17 +120,20 @@ namespace Models
                 }
                 else if (tle.source.Type == TrackType.Normal && (album || aggregate))
                 {
-                    foreach (var track in tle.list[0])
+                    if (tle.list != null)
                     {
-                        if (album && aggregate)
-                            track.Type = TrackType.AlbumAggregate;
-                        else if (album)
-                            track.Type = TrackType.Album;
-                        else if (aggregate)
-                            track.Type = TrackType.Aggregate;
+                        foreach (var track in tle.list[0])
+                        {
+                            if (album && aggregate)
+                                track.Type = TrackType.AlbumAggregate;
+                            else if (album)
+                                track.Type = TrackType.Album;
+                            else if (aggregate)
+                                track.Type = TrackType.Aggregate;
 
-                        var newTle = new TrackListEntry(track, tle);
-                        newLists.Add(newTle);
+                            var newTle = new TrackListEntry(track, tle);
+                            newLists.Add(newTle);
+                        }
                     }
                 }
                 else
