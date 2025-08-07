@@ -36,11 +36,6 @@ public class DownloaderApplication
     private Task? updateTask;
     private readonly CancellationTokenSource appCts = new(); // For overall app cancellation
 
-    private int finishedDownloads = 0;
-    private int totalDownloads = 0;
-    // TODO: This should be configurable.
-    private IntervalLogger finishedDownloadLogInterval = new IntervalLogger(TimeSpan.FromSeconds(30));
-
     public DownloaderApplication(Config config, ISoulseekClient? client = null)
     {
         defaultConfig = config;
@@ -671,21 +666,23 @@ public class DownloaderApplication
     {
         var tracks = tle.list[0];
 
+        // TODO: Maybe make the interval configurable
+        var progressReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, tracks);
+
         var semaphore = new SemaphoreSlim(config.concurrentProcesses);
 
         var organizer = new FileManager(tle, config);
 
-        foreach (var list in tle.list)
-        {
-            totalDownloads += list.Count(track => track.State == TrackState.Initial);
-        }
-
         var downloadTasks = tracks.Select(async (track, index) =>
         {
             using var cts = new CancellationTokenSource();
+            bool wasInitial = track.State == TrackState.Initial;
+            
             await DownloadTask(config, tle, track, semaphore, organizer, cts, false, true, true);
+            
             tle.indexEditor?.Update();
             tle.playlistEditor?.Update();
+            if (wasInitial) progressReporter.MaybeReport(track.State);
         });
 
         await Task.WhenAll(downloadTasks);
@@ -1230,7 +1227,6 @@ public class DownloaderApplication
                 track.FailureReason = FailureReason.Other;
             }
 
-            FinishDownload();
             cts.Cancel();
             throw new OperationCanceledException();
         }
@@ -1274,7 +1270,6 @@ public class DownloaderApplication
         }
 
         semaphore.Release();
-        FinishDownload();
     }
 
 
@@ -1399,12 +1394,5 @@ public class DownloaderApplication
 
             JsonPrinter.PrintIndexJson(data);
         }
-    }
-
-    void FinishDownload()
-    {
-        Interlocked.Increment(ref finishedDownloads);
-        double percentComplete = (double)finishedDownloads / totalDownloads;
-        finishedDownloadLogInterval.MaybeLog(() => Logger.Info($"Completed {finishedDownloads}/{totalDownloads} downloads = {percentComplete:P}"));
     }
 }

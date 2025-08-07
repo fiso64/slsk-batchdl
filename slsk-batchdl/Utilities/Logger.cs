@@ -11,9 +11,9 @@
         Fatal
     }
 
-    public struct OutputConfig
+    public class OutputConfig
     {
-        public Action<string> Output;
+        public Action<string> Output = null!;
         public LogLevel MinimumLevel;
         public bool PrependDate;
         public bool PrependLogLevel;
@@ -82,7 +82,7 @@
         AddOutput(message => File.AppendAllText(filePath, message + '\n'), minimumLevel, prependDate, prependLogLevel, isFileOutput: true);
     }
 
-    public static void Log(LogLevel level, string message, IEnumerable<OutputConfig>? outputs = null)
+    public static void Log(LogLevel level, string message, ConsoleColor? color = null, IEnumerable<OutputConfig>? outputs = null)
     {
         if (outputs == null)
             outputs = OutputConfigs;
@@ -99,7 +99,14 @@
 
                 if (config.IsConsoleOutput && config.UseConsoleColors)
                 {
-                    SetConsoleColor(level);
+                    if (color.HasValue)
+                    {
+                        Console.ForegroundColor = color.Value;
+                    }
+                    else
+                    {
+                        SetConsoleColor(level);
+                    }
                     config.Output(logEntry);
                     Console.ResetColor();
                 }
@@ -113,7 +120,7 @@
 
     public static void LogNonConsole(LogLevel level, string message)
     {
-        Log(level, message, OutputConfigs.Where(x => x.Output != Console.WriteLine));
+        Log(level, message, color: null, outputs: OutputConfigs.Where(x => x.Output != Console.WriteLine));
     }
 
     private static string BuildLogEntry(LogLevel level, string message, bool prependDate, bool prependLogLevel)
@@ -145,11 +152,11 @@
         };
     }
 
-    public static void Trace(string message) => Log(LogLevel.Trace, message);
-    public static void Debug(string message) => Log(LogLevel.Debug, message);
-    public static void DebugError(string message) => Log(LogLevel.DebugError, message);
-    public static void Info(string message) => Log(LogLevel.Info, message);
-    public static void Warn(string message) => Log(LogLevel.Warn, message);
-    public static void Error(string message) => Log(LogLevel.Error, message);
-    public static void Fatal(string message) => Log(LogLevel.Fatal, message);
+    public static void Trace(string message, ConsoleColor? color = null) => Log(LogLevel.Trace, message, color);
+    public static void Debug(string message, ConsoleColor? color = null) => Log(LogLevel.Debug, message, color);
+    public static void DebugError(string message, ConsoleColor? color = null) => Log(LogLevel.DebugError, message, color);
+    public static void Info(string message, ConsoleColor? color = null) => Log(LogLevel.Info, message, color);
+    public static void Warn(string message, ConsoleColor? color = null) => Log(LogLevel.Warn, message, color);
+    public static void Error(string message, ConsoleColor? color = null) => Log(LogLevel.Error, message, color);
+    public static void Fatal(string message, ConsoleColor? color = null) => Log(LogLevel.Fatal, message, color);
 }
