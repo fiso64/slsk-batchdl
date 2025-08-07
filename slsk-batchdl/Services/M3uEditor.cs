@@ -210,6 +210,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                         }
                     }
 
+                    if (tle.list == null) continue;
+
                     for (int k = 0; k < tle.list.Count; k++)
                     {
                         for (int j = 0; j < tle.list[k].Count; j++)

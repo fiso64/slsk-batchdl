@@ -150,7 +150,7 @@ namespace Models
             {
                 if ((addSources || sourcesOnly) && tle.source != null && tle.source.Type != TrackType.Normal)
                     yield return tle.source;
-                if (!sourcesOnly && tle.list.Count > 0 && (tle.source.Type == TrackType.Normal || addSpecialSourceTracks))
+                if (!sourcesOnly && tle.list?.Count > 0 && (tle.source.Type == TrackType.Normal || addSpecialSourceTracks))
                 {
                     foreach (var t in tle.list[0])
                         yield return t;
