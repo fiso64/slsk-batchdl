@@ -102,7 +102,8 @@ namespace Extractors
             }
 
             // `spotify-albums` is a bit special and sets `trackLists` directly.
-            if (tle != null) {
+            if (tle != null)
+            {
                 trackLists.AddEntry(tle);
             }
 
@@ -366,7 +367,8 @@ namespace Extractors
                     string[] artists = album.Artists.Select(artist => artist.Name).ToArray();
                     string artist = artists[0];
 
-                    var trackListEntry = new TrackListEntry(new Track {
+                    var trackListEntry = new TrackListEntry(new Track
+                    {
                         Album = album.Name,
                         Artist = artist,
                         MinAlbumTrackCount = album.TotalTracks,
