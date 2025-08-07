@@ -111,10 +111,10 @@ namespace Tests.ClientTests
             var directories = user.Files
                 .GroupBy(x => Utils.GetDirectoryNameSlsk(x.Filename))
                 .Select(g => new Soulseek.Directory(
-                    g.Key,
+                    g.Key.Replace('/', '\\'), // Soulseek ALWAYS returns paths with separator \, regardless of OS.
                     g.Select(f => new Soulseek.File(
                         f.Code,
-                        Utils.GetFileNameSlsk(f.Filename),
+                        f.Filename.Replace('/', '\\'),
                         f.Size,
                         f.Extension,
                         f.Attributes

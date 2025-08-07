@@ -788,7 +788,7 @@ public class DownloaderApplication
             if (tle.source.IsDirectLink)
                 retrievedFolders.Add(soulseekDir);
 
-            organizer.SetRemoteCommonDir(soulseekDir);
+            organizer.SetremoteBaseDir(soulseekDir);
 
             if (!config.interactiveMode && !wasInteractive)
             {
@@ -874,7 +874,7 @@ public class DownloaderApplication
 
             if (!succeeded)
             {
-                organizer.SetRemoteCommonDir(null);
+                organizer.SetremoteBaseDir(null);
                 tle.list.RemoveAt(index);
             }
         }

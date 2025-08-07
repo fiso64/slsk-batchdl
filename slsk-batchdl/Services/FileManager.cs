@@ -8,7 +8,7 @@ public class FileManager
 {
     readonly TrackListEntry tle;
     readonly HashSet<Track> organized = new();
-    public string? remoteCommonDir { get; private set; }
+    public string? remoteBaseDir { get; private set; }
     public string? remoteImagesCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }
     public bool downloadingAdditinalImages = false;
@@ -27,7 +27,7 @@ public class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string? rcd = downloadingAdditinalImages ? remoteImagesCommonDir : remoteCommonDir;
+        string? rcd = downloadingAdditinalImages ? remoteImagesCommonDir : remoteBaseDir;
         string parent = config.parentDir;
         string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
@@ -47,14 +47,14 @@ public class FileManager
         return Path.Join(parent, name).CleanPath(config.invalidReplaceStr);
     }
 
-    public void SetRemoteCommonDir(string? remoteCommonDir)
+    public void SetremoteBaseDir(string? remoteBaseDir)
     {
-        this.remoteCommonDir = remoteCommonDir != null ? Utils.NormalizedPath(remoteCommonDir) : null;
+        this.remoteBaseDir = remoteBaseDir != null ? Utils.NormalizedPath(remoteBaseDir) : null;
     }
 
-    public void SetRemoteCommonImagesDir(string? remoteCommonDir)
+    public void SetRemoteCommonImagesDir(string? remoteBaseDir)
     {
-        this.remoteImagesCommonDir = remoteCommonDir != null ? Utils.NormalizedPath(remoteCommonDir) : null;
+        this.remoteImagesCommonDir = remoteBaseDir != null ? Utils.NormalizedPath(remoteBaseDir) : null;
     }
 
     public void SetDefaultFolderName(string? defaultFolderName)
@@ -127,7 +127,7 @@ public class FileManager
 
         string? part = null;
 
-        string? rcd = isAdditionalImage ? remoteImagesCommonDir : remoteCommonDir;
+        string? rcd = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
 
         if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(track.FirstDownload.Filename), rcd, true))
         {
@@ -166,10 +166,10 @@ public class FileManager
             return file;
         }
 
-        return ApplyNameFormatInternal(format, config, tle, getTagFile, slfile, track, remoteCommonDir);
+        return ApplyNameFormatInternal(format, config, tle, getTagFile, slfile, track, remoteBaseDir);
     }
 
-    static string ApplyNameFormatInternal(string format, Config config, TrackListEntry tle, Func<TagLib.File?> getTagFile, Soulseek.File? slfile, Track track, string? remoteCommonDir)
+    static string ApplyNameFormatInternal(string format, Config config, TrackListEntry tle, Func<TagLib.File?> getTagFile, Soulseek.File? slfile, Track track, string? remoteBaseDir)
     {
         string newName = format;
         var regex = new Regex(@"(\{(?:\{??[^\{]*?\}))");
@@ -189,7 +189,7 @@ public class FileManager
                 {
                     string[] parts = Regex.Split(opt, @"\([^\)]*\)");
                     string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => TryGetCleanVarValue(x, tle, getTagFile, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res) && res.Length > 0))
+                    if (result.All(x => TryGetCleanVarValue(x, tle, getTagFile, slfile, track, remoteBaseDir, config.invalidReplaceStr, out string res) && res.Length > 0))
                     {
                         chosenOpt = opt;
                         break;
@@ -207,7 +207,7 @@ public class FileManager
                         return match.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
                     else
                     {
-                        TryGetCleanVarValue(match.Value, tle, getTagFile, slfile, track, remoteCommonDir, config.invalidReplaceStr, out string res);
+                        TryGetCleanVarValue(match.Value, tle, getTagFile, slfile, track, remoteBaseDir, config.invalidReplaceStr, out string res);
                         return res;
                     }
                 });
@@ -300,28 +300,30 @@ public class FileManager
         return TagVars.Any(v => x.Contains($"{{{v}}}"));
     }
 
-    private static string GetFolderName(Soulseek.File? slfile, string? remoteCommonDir)
+    private static string GetFolderName(Soulseek.File? slfile, string? remoteBaseDir)
     {
-        if (string.IsNullOrEmpty(remoteCommonDir) || slfile == null)
+        if (string.IsNullOrEmpty(remoteBaseDir) || slfile == null)
         {
-            if (!string.IsNullOrEmpty(remoteCommonDir))
-                return Path.GetFileName(Utils.NormalizedPath(remoteCommonDir));
+            if (!string.IsNullOrEmpty(remoteBaseDir))
+                return Path.GetFileName(Utils.NormalizedPath(remoteBaseDir));
             if (slfile != null)
                 return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)));
             return "";
         }
 
+        string normalizedRbd = Utils.NormalizedPath(remoteBaseDir);
         string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
-        string r = Path.GetFileName(remoteCommonDir);
-        return Path.Join(r, Path.GetRelativePath(remoteCommonDir, d));
+        string r = Path.GetFileName(normalizedRbd);
+        string result = Path.Join(r, Path.GetRelativePath(normalizedRbd, d));
+        return result;
     }
 
-    public static bool TryGetCleanVarValue(string x, TrackListEntry tle, Func<TagLib.File?> getFile, Soulseek.File? slfile, Track track, string? remoteCommonDir, string replaceWith, out string res)
+    public static bool TryGetCleanVarValue(string x, TrackListEntry tle, Func<TagLib.File?> getFile, Soulseek.File? slfile, Track track, string? remoteBaseDir, string replaceWith, out string res)
     {
         if (VarExtractors.TryGetValue(x, out var extractor))
         {
             var file = TagVars.Contains(x) ? getFile() : null;
-            string value = extractor(tle, file, slfile, track, remoteCommonDir);
+            string value = extractor(tle, file, slfile, track, remoteBaseDir);
             if (NoCleanSeparatorVars.Contains(x))
                 res = value;
             else if (PreserveSeparatorVars.Contains(x))
@@ -340,14 +342,14 @@ public class FileManager
         return VarExtractors.Keys;
     }
 
-    public static string ReplaceVariables(string x, TrackListEntry tle, TagLib.File? file, Soulseek.File? slfile, Track track, string? remoteCommonDir)
+    public static string ReplaceVariables(string x, TrackListEntry tle, TagLib.File? file, Soulseek.File? slfile, Track track, string? remoteBaseDir)
     {
         foreach (var (key, extractor) in VarExtractors)
         {
             var k = '{' + key + '}';
             if (x.Contains(k))
             {
-                var val = extractor(tle, file, slfile, track, remoteCommonDir);
+                var val = extractor(tle, file, slfile, track, remoteBaseDir);
                 x = x.Replace(k, val);
             }
         }
