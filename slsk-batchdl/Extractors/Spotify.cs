@@ -355,7 +355,6 @@ namespace Extractors
             int limit = Math.Min(max, 50);
 
             int num = offset + 1;
-            int found = 0;
             while (true)
             {
                 var albums = await _client.Library.GetAlbums(new LibraryAlbumsRequest { Limit = limit, Offset = offset });
@@ -367,8 +366,6 @@ namespace Extractors
                     string[] artists = album.Artists.Select(artist => artist.Name).ToArray();
                     string artist = artists[0];
 
-                    var rawTracks = await _client.PaginateAll(album.Tracks);
-
                     var trackListEntry = new TrackListEntry(new Track {
                         Album = album.Name,
                         Artist = artist,
@@ -378,19 +375,6 @@ namespace Extractors
                     });
                     trackListEntry.itemName = "Spotify Albums";
                     trackListEntry.enablesIndexByDefault = true;
-
-                    foreach (var rawTrack in rawTracks)
-                    {
-                        found += 1;
-                        trackListEntry.AddTrack(new Track {
-                            Title = rawTrack.Name,
-                            Album = album.Name,
-                            Artist = rawTrack.Artists[0].Name,
-                            Length = rawTrack.DurationMs / 1000,
-                            MinAlbumTrackCount = album.TotalTracks,
-                            ItemNumber = rawTrack.TrackNumber,
-                        });
-                    }
 
                     res.AddEntry(trackListEntry);
                 }
@@ -402,7 +386,7 @@ namespace Extractors
                 limit = Math.Min(max - res.Count, 50);
             }
 
-            Logger.Info($"Found {res.lists.Count} liked albums containing a total of {found} tracks on Spotify");
+            Logger.Info($"Found {res.lists.Count} liked albums on Spotify");
 
             return res;
         }
