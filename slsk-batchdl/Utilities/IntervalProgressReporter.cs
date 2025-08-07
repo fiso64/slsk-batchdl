@@ -24,7 +24,7 @@ public class IntervalProgressReporter
 
         foreach (var track in tracks)
         {
-            if (track.State == TrackState.Downloaded ||  track.State == TrackState.AlreadyExists)
+            if (track.State == TrackState.Downloaded || track.State == TrackState.AlreadyExists)
                 downloadedCount++;
             else if (track.State == TrackState.Failed || track.State == TrackState.NotFoundLastTime)
                 failedCount++;

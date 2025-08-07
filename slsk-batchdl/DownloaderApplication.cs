@@ -677,9 +677,9 @@ public class DownloaderApplication
         {
             using var cts = new CancellationTokenSource();
             bool wasInitial = track.State == TrackState.Initial;
-            
+
             await DownloadTask(config, tle, track, semaphore, organizer, cts, false, true, true);
-            
+
             tle.indexEditor?.Update();
             tle.playlistEditor?.Update();
             if (wasInitial) progressReporter.MaybeReport(track.State);
