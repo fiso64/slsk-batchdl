@@ -1191,7 +1191,7 @@ public class DownloaderApplication
                     lock (trackLists)
                     {
                         track.State = TrackState.Failed;
-                        track.FailureReason = sdEx.reason;
+                        track.FailureReason = sdEx.Reason;
                     }
 
                     if (cancelOnFail)

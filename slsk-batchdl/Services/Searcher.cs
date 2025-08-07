@@ -191,7 +191,7 @@ public class Searcher
                     {
                         Printing.RefreshOrPrint(progress, 0, $"Out of download retries: {track}", true);
                         Printing.WriteLine("Last error was: " + e.Message, ConsoleColor.DarkYellow);
-                        throw new SearchAndDownloadException(FailureReason.OutOfDownloadRetries);
+                        throw new OutOfDownloadRetriesException(e);
                     }
                     return false;
                 }
@@ -235,7 +235,7 @@ public class Searcher
                 saveFilePath = "";
                 downloading = 0;
                 Printing.RefreshOrPrint(progress, 0, $"{e.Message}", true);
-                throw new SearchAndDownloadException(FailureReason.NoSuitableFileFound);
+                throw new NoSuitableFileFoundException("yt-dlp failed to find or download a suitable video.", e);
             }
         }
 
@@ -245,12 +245,12 @@ public class Searcher
             {
                 string lockedFilesStr = responseData.lockedFilesCount > 0 ? $" (Found {responseData.lockedFilesCount} locked files)" : "";
                 Printing.RefreshOrPrint(progress, 0, $"Not found: {track}{lockedFilesStr}", true);
-                throw new SearchAndDownloadException(FailureReason.NoSuitableFileFound);
+                throw new NoSuitableFileFoundException(lockedFilesStr.Trim());
             }
             else
             {
                 Printing.RefreshOrPrint(progress, 0, $"All downloads failed: {track}", true);
-                throw new SearchAndDownloadException(FailureReason.AllDownloadsFailed);
+                throw new AllDownloadsFailedException();
             }
         }
 
@@ -1196,8 +1196,46 @@ public class Searcher
     };
 }
 
-public class SearchAndDownloadException : Exception
+public abstract class SearchAndDownloadException : Exception
 {
-    public FailureReason reason;
-    public SearchAndDownloadException(FailureReason reason, string text = "") : base(text) { this.reason = reason; }
+    public FailureReason Reason { get; }
+
+    protected SearchAndDownloadException(FailureReason reason, string message) : base(message)
+    {
+        Reason = reason;
+    }
+
+    protected SearchAndDownloadException(FailureReason reason, string message, Exception innerException) : base(message, innerException)
+    {
+        Reason = reason;
+    }
+}
+
+public class OutOfDownloadRetriesException : SearchAndDownloadException
+{
+    public OutOfDownloadRetriesException(Exception innerException)
+        : base(FailureReason.OutOfDownloadRetries, "Exceeded maximum download retries for the track.", innerException)
+    {
+    }
+}
+
+public class NoSuitableFileFoundException : SearchAndDownloadException
+{
+    public NoSuitableFileFoundException(string? details = null)
+        : base(FailureReason.NoSuitableFileFound, $"No suitable file was found on Soulseek. {details}".Trim())
+    {
+    }
+
+    public NoSuitableFileFoundException(string details, Exception innerException)
+        : base(FailureReason.NoSuitableFileFound, $"No suitable file was found on Soulseek: {details}", innerException)
+    {
+    }
+}
+
+public class AllDownloadsFailedException : SearchAndDownloadException
+{
+    public AllDownloadsFailedException()
+        : base(FailureReason.AllDownloadsFailed, "All potential downloads for the track failed.")
+    {
+    }
 }
