@@ -6,6 +6,11 @@ on:
   push:
     branches:
       - master
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - '**.sln'
+      - '.editorconfig'
 
   pull_request:
     branches:
