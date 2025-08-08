@@ -1354,7 +1354,7 @@ public class DownloaderApplication
                     Logger.Error($"{ex.Message}");
                 }
 
-                if (interceptKeys && Console.KeyAvailable)
+                if (interceptKeys && !Console.IsInputRedirected && Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(intercept: true).Key;
                     keyPressed?.Invoke(null, key);

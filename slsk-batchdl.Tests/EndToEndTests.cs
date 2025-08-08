@@ -25,6 +25,8 @@ namespace Tests.EndToEnd
 
             var testArgs = new string[]
             {
+                // Don't use any global configs during testing!
+                "--config", "none",
                 "--input", "testartist - testalbum",
                 "--album",
                 "--path", outputDir,
