@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>sldl</AssemblyName>
     <VersionPrefix>2.4.7</VersionPrefix>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
