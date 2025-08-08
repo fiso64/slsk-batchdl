@@ -6,10 +6,26 @@ on:
   pull_request:
     branches:
       - master
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - '**.sln'
+      - '**/packages.lock.json'
+      - '.editorconfig'
+      - '**/global.json'
+      - '**/nuget.config'
 
   push:
     branches:
       - master
+    paths:
+      - '**.cs'
+      - '**.csproj'
+      - '**.sln'
+      - '**/packages.lock.json'
+      - '.editorconfig'
+      - '**/global.json'
+      - '**/nuget.config'
 
 jobs:
   build-and-test:
