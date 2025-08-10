@@ -1,10 +1,31 @@
 # sldl
 
-A smart and configurable downloader for Soulseek. Accepts CSV files, Spotify and YouTube URLs, or simple search queries. Supports playlist, album, or individual song downloads. See the [usage examples](#examples-2) for a quick start.
-
-Originally developed as a script for batch-downloading playlists, it has evolved into a more general Soulseek downloader. The best files are selected according to user configuration and heuristics. This means that with the right setup, this tool becomes a zero‐effort way to fetch any album or song from Soulseek – no more scrolling through endless search results. 
-
+A smart and configurable downloader for Soulseek.
 Built with Soulseek.NET.
+
+### Features
+
+- Accepts various input sources like CSV files, Spotify or YouTube URLs, or standard text queries
+- Can download individual songs, playlists, albums, or even full artist discographies
+- Intelligently selects the best album or song based on user configuration and heuristics
+- For those who don't trust full auto selection, album downloads can be [interactive](#shortcuts--interactive-mode). The best results will be listed first, but you get to choose.
+- Special "aggregate" modes which can list all distinct songs or albums by a given artist available on Soulseek, sorted by popularity
+- Can skip downloading songs or albums found in a given music directory
+- Supports configuration profiles and auto profiles
+- Supports arbitratry name formatting for downloaded files
+
+## Setup
+
+**Disclaimer:** `sldl` does not share your folders. For the sake of Soulseek's health, I ask you to share your music through a standard client such as [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd). It is recommended to use `sldl` with a **separate Soulseek account** to avoid connection problems.
+
+1. Head to the [releases](https://github.com/fiso64/slsk-batchdl/releases) page and get an appropriate release for your system.
+2. Put your soulseek username and password in the [configuration file](#configuration).
+3. Try it:
+    ```bash
+    sldl "Artist - Your Favorite Album" -at
+    ```
+    This will search for the album and show an interactive UI for result selection.  
+    For more examples, see the [usage examples section](#examples-2).
 
 ## Index
  - [Options](#options)
@@ -139,13 +160,13 @@ Usage: sldl <input> [OPTIONS]
 ```
 #### CSV File Options
 ```
---artist-col <name>            Artist column name
---title-col <name>             Track title column name
---album-col <name>             Album column name
---length-col <name>            Track length column name
---album-track-count-col <name> Album track count column name (sets --album-track-count)
---yt-desc-col <name>           Youtube description column (improves --yt-parse)
---yt-id-col <name>             Youtube video id column (improves --yt-parse)
+--artist-col <name>             Artist column name
+--title-col <name>              Track title column name
+--album-col <name>              Album column name
+--length-col <name>             Track length column name
+--album-track-count-col <name>  Album track count column name (sets --album-track-count)
+--yt-desc-col <name>            Youtube description column (improves --yt-parse)
+--yt-id-col <name>              Youtube video id column (improves --yt-parse)
 
 --time-format <format>          Time format in Length column of the csv file (e.g h:m:s.ms
                                 for durations like 1:04:35.123). Default: s
@@ -213,14 +234,14 @@ Usage: sldl <input> [OPTIONS]
                                 more results
 ```
 ### Notes
-- Flags can be explicitly disabled by setting them to false, e.g `--interactive false`.
+- Flags can be explicitly disabled by setting them to false, e.g. `--interactive false`.
 - Single-character flags can be combined, e.g. `-at` for `-a -t`.
 - Acronyms of two- and `--three-word-flags` like `--twf` are also accepted. E.g. `--Mbr` for `--max-bitrate`.
 
 ## Input types
 
-The input type is usually determined automatically, however it's possible to manually set it
-with `--input-type`. The following input types are available:
+The input type is usually determined automatically. You can also manually set it with `--input-type`.  
+The following input types are available:
 
 ###  CSV file
 Path to a local CSV file. Use a csv file containing track information to download a list of
@@ -230,15 +251,15 @@ then it's not required to manually specify them, otherwise you must provide at l
 Rows that do not have any text in the title column will be treated as album downloads.
 
 ###  YouTube
-A YouTube playlist url. Download songs from a youtube playlist.
-The default method to retrieve playlists does not reliably return all videos. To get all
-video titles, you can use the official API by providing a key with `--youtube-key`. A key can
+A YouTube playlist url. Download songs from a youtube playlist.  
+**Note:** The default method to retrieve playlists might not reliably return all videos. To get all
+videos, you can use the official API by providing a key with `--youtube-key`. A key can
 be obtained at https://console.cloud.google.com. Create a new project, click 'Enable Api' and
 search for 'youtube data', then follow the prompts.
 
 ### Spotify
-A playlist/album url, or 'spotify-likes'. Download a spotify playlist, album, or your
-liked songs. Credentials are required when downloading a private playlist or liked music.
+Any playlist or album url, or `spotify-likes` for your liked songs, or `spotify-albums` for liked albums.  
+Credentials are required when downloading a private playlist or liked music.
 
 #### Using Credentials
 
@@ -283,21 +304,24 @@ will be parsed as `artist=ARTIST, title=TITLE` when downloading songs, and
 `artist=ARTIST, album=TITLE` when run with `--album`.
 
 ### List file
-List input must be manually activated with `--input-type=list`. The input is a path to a text
+List input must be manually activated with `--input-type=list`. The input must be a path to a text
 file containing lines of the following form:
 ```ini
-# input                         conditions                    pref. conditions
-"artist=Artist,album=Album"     "format=mp3; br>128"          "br >= 320"
+# Any input type                conditions (optional)           pref. conditions (optional)
+"Artist - Song"                 "format=mp3; br>128"            "br >= 320"
+
+# Album download shorthand:
+a:"Artist - Album"              format=flac
+# Add strict-* conditions depending on the name 
+a:"Another Album"               strict-album=true
 ```
-The input can be any of the above input types. The conditions are added on top of the
-configured conditions and can be omitted.   
-For album downloads, the above example can be written briefly as `a:"Artist - Album"` (note
-that `a:` must appear outside the quotes).
+The inputs can be any of the above input types, including links. The conditions are added on top of the
+configured conditions and can be omitted. 
 
 ## Download modes
 
 ### Normal
-The default. Downloads a single file for every input entry.
+The default for playlists. Downloads a single file for every input entry.
 
 ### Album
 sldl will search for the album and download an entire folder including non-audio
@@ -325,8 +349,7 @@ sldl will look for a file named sldl.conf in the following locations:
 - `~/AppData/Roaming/sldl/sldl.conf`
 - `~/.config/sldl/sldl.conf`
 - `$XDG_CONFIG_HOME/sldl/sldl.conf`
-
-as well as in the directory of the executable.
+- `{sldl executable dir}/sldl.conf`
 
 ### Syntax
 Example config file:
@@ -336,8 +359,8 @@ password = your-password
 pref-format = flac
 fast-search = true
 ```
-Lines starting with hashtags (#) will be ignored. Tildes in paths are expanded as the user
-directory. The path variable `{bindir}` stores the directory of the sldl binary.
+Lines starting with hashtags # will be treated as comments. Tildes in paths are expanded as the user
+directory (even on windows). The path variable `{bindir}` stores the directory of the sldl binary.
 
 ### Configuration profiles
 Profiles are supported:
@@ -578,9 +601,9 @@ sldl "https://youtube.com/playlist/id" --get-deleted --yt-dlp
 
 <br>
 
-Interactive album download:
+Interactive album download, only show albums with 13 or more tracks:
 ```bash
-sldl "Album Name" -at
+sldl "Album Name" -at --atc 13+
 ```
 
 <br>
