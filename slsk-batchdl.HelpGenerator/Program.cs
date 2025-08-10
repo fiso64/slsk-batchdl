@@ -41,7 +41,7 @@ static string ToPlainText(string markdown)
     var document = Markdown.Parse(markdown, pipeline);
     var sb = new StringBuilder();
     var currentIndent = 0;
-    
+
     var headings = document.Descendants<HeadingBlock>();
     var minLevel = headings.Any() ? headings.Min(h => h.Level) : 1;
 
@@ -50,8 +50,8 @@ static string ToPlainText(string markdown)
     {
         if (inline == null) return "";
         var inlineSb = new StringBuilder();
-        
-        switch(inline)
+
+        switch (inline)
         {
             case LiteralInline literal:
                 inlineSb.Append(literal.Content.ToString().Replace("\"", "\"\""));
@@ -71,7 +71,7 @@ static string ToPlainText(string markdown)
         }
         return inlineSb.ToString();
     }
-    
+
     // Local function for word wrapping and indentation
     string WrapAndIndent(string text, int indent, int subsequentIndent = -1)
     {
@@ -101,7 +101,7 @@ static string ToPlainText(string markdown)
                     currentLine.Append(subsequentIndentStr);
                     firstWord = true;
                 }
-                
+
                 if (!firstWord)
                 {
                     currentLine.Append(' ');
@@ -113,7 +113,7 @@ static string ToPlainText(string markdown)
         }
         return result.ToString().TrimEnd();
     }
-    
+
     // Local function to process each block
     void ProcessBlock(MarkdownObject block)
     {
@@ -165,7 +165,7 @@ static string ToPlainText(string markdown)
                     }
                 }
                 break;
-                
+
             case HtmlBlock:
                 // Ignore blocks like <details>
                 break;
@@ -176,7 +176,7 @@ static string ToPlainText(string markdown)
     {
         ProcessBlock(b);
     }
-    
+
     // Final cleanup of extra newlines
     var finalString = Regex.Replace(sb.ToString(), @"([ \t]*(\r\n|\n)){3,}", Environment.NewLine + Environment.NewLine);
     return finalString.TrimEnd();
