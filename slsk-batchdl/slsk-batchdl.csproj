@@ -37,4 +37,17 @@
     <PackageReference Include="YoutubeExplode" Version="6.5.4" />
   </ItemGroup>
 
+  
+  <ItemGroup>
+    <None Include="../README.md" />
+  </ItemGroup>
+
+  <Target Name="GenerateHelpFile" 
+          BeforeTargets="CoreCompile"
+          Inputs="../README.md;../slsk-batchdl.HelpGenerator/Program.cs"
+          Outputs="Help.Content.cs">
+    <Message Text="Help.Content.cs is out of date, regenerating from README.md..." Importance="high" />
+    <Exec Command="dotnet run --project ../slsk-batchdl.HelpGenerator" />
+  </Target>
+
 </Project>

@@ -1,22 +1,20 @@
 # sldl
 
-A smart and configurable downloader for Soulseek.
-Built with Soulseek.NET.
+A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 
 ### Features
 
 - Accepts various input sources like CSV files, Spotify or YouTube URLs, or standard text queries
 - Can download individual songs, playlists, albums, or even full artist discographies
 - Intelligently selects the best album or song based on user configuration and heuristics
-- For those who don't trust full auto selection, album downloads can be [interactive](#shortcuts--interactive-mode). The best results will be listed first, but you get to choose.
+- For those who don't trust full auto selection, album downloads can be [interactive](#shortcuts--interactive-mode). The best results will be listed first.
 - Special "aggregate" modes which can list all distinct songs or albums by a given artist available on Soulseek, sorted by popularity
 - Can skip downloading songs or albums found in a given music directory
-- Supports configuration profiles and auto profiles
-- Supports arbitratry name formatting for downloaded files
+- Configuration profiles and auto profiles
+- Arbitratry name formatting for downloaded files
+- On-complete commands that can run when a download succeeds or fails
 
 ## Setup
-
-**Disclaimer:** `sldl` does not share your folders. For the sake of Soulseek's health, I ask you to share your music through a standard client such as [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd). It is recommended to use `sldl` with a **separate Soulseek account** to avoid connection problems.
 
 1. Head to the [releases](https://github.com/fiso64/slsk-batchdl/releases) page and get an appropriate release for your system.
 2. Put your soulseek username and password in the [configuration file](#configuration).
@@ -26,6 +24,10 @@ Built with Soulseek.NET.
     ```
     This will search for the album and show an interactive UI for result selection.  
     For more examples, see the [usage examples section](#examples-2).
+
+> [!NOTE]
+> `sldl` itself doesn't share your music folders. To keep the Soulseek network healthy over the long term, please also share your collection using a regular client like [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd).  
+> It is recommended to use `sldl` with a **separate Soulseek account** to avoid connection problems.
 
 ## Index
  - [Options](#options)
@@ -54,10 +56,7 @@ Built with Soulseek.NET.
 
 
 ## Options
-
-```
-Usage: sldl <input> [OPTIONS]
-```
+<!-- sldl-help:start(main) -->
 #### Required Arguments
 ```
 <input>                         A url, search string, or path to a local CSV file.
@@ -237,9 +236,10 @@ Usage: sldl <input> [OPTIONS]
 - Flags can be explicitly disabled by setting them to false, e.g. `--interactive false`.
 - Single-character flags can be combined, e.g. `-at` for `-a -t`.
 - Acronyms of two- and `--three-word-flags` like `--twf` are also accepted. E.g. `--Mbr` for `--max-bitrate`.
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(input) -->
 ## Input types
-
 The input type is usually determined automatically. You can also manually set it with `--input-type`.  
 The following input types are available:
 
@@ -317,9 +317,10 @@ a:"Another Album"               strict-album=true
 ```
 The inputs can be any of the above input types, including links. The conditions are added on top of the
 configured conditions and can be omitted. 
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(download-modes) -->
 ## Download modes
-
 ### Normal
 The default for playlists. Downloads a single file for every input entry.
 
@@ -341,7 +342,9 @@ download one of each distinct album, starting with the one shared by the most us
 that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
 will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
 by an artist. It is recommended to pair it with `--interactive`.
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(config) -->
 ## Configuration
 ### Config Location
 sldl will look for a file named sldl.conf in the following locations:
@@ -389,9 +392,10 @@ input-type        ("youtube"|"csv"|"string"|"bandcamp"|"spotify")
 download-mode     ("normal"|"aggregate"|"album"|"album-aggregate")
 interactive       (bool)
 ```
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(file-conditions) -->
 ## File conditions
-
 Files not satisfying the required conditions will be ignored. Files satisfying pref-conditions
 will be preferred: With `--pref-format flac,wav`, sldl will try to download lossless files if
 available while still accepting lossy files.
@@ -427,9 +431,10 @@ certain clients. For example, because the standard Soulseek client does not broa
 enabling `--strict-conditions` and setting a `--min-bitrate` will make sldl ignore all files
 shared by users with the standard client. Even without a required min-bitrate, all those shares
 will be ranked at the bottom due to the default pref- bitrate checks.
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(name-format) -->
 ## Name format
-
 Variables enclosed in {} will be replaced by the corresponding file tag value.
 Name format supports subdirectories as well as conditional expressions like {tag1|tag2} - If
 tag1 is null, use tag2. This can be chained arbitrarily many times. String literals enclosed
@@ -491,9 +496,10 @@ path                           Download file path (or folder if album)
 path-noext                     Download file path without extension
 ext                            File extension
 ```
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(on-complete) -->
 ## On-Complete Actions
-
 The `--on-complete` parameter allows executing commands after a track or album is downloaded. Multiple actions can be chained using the `+ ` prefix (note the space after +).
 
 **Syntax:** `--on-complete [prefixes:]command`
@@ -544,9 +550,10 @@ on-complete = + 1:h:r: cmd /c if {stdout}==true (ffmpeg -i "{path}" -q:a 0 "{pat
 # Delete original and update index if conversion succeeded
 on-complete = + 1:h:u: cmd /c if {stdout}==success (del "{path}" & echo "1;{path-noext}.mp3")
 ```
+<!-- sldl-help:end -->
 
+<!-- sldl-help:start(shortcuts) -->
 ## Shortcuts & interactive mode
-
 ### Shortcuts
 To cancel a running album download, press `C`.
 
@@ -570,6 +577,7 @@ f:query         filter folders containing files matching query
 cd ..           load parent folder
 cd subdir       go to subfolder
 ```
+<!-- sldl-help:end -->
 
 ## Examples
 
@@ -648,6 +656,7 @@ Now you can manually run, or set up a cron job / scheduled task to periodically 
 sldl --profile wishlist
 ```
 
+<!-- sldl-help:start(notes-and-tips) -->
 ## Notes
 - **Terminal display issues**: The printed output may appear duplicated, overlap, or not update on some configurations (new windows terminal, git bash). Use another terminal or `--no-progress` in case of issues. See https://github.com/fiso64/slsk-batchdl/issues/55.
 - **Soulseek's rate limits**: The server bans users for 30 minutes if too many searches are performed within a short timespan. sldl has a search limiter which can be adjusted with `--searches-per-time` and `--searches-renew-time` (when the limit is reached, the status of the downloads will be 'Waiting'). By default it is configured to allow up to 34 searches every 220 seconds.
@@ -684,6 +693,8 @@ The following options will make it go faster, but may decrease search result qua
 - `--concurrent-downloads` can be set it to 4 or more. This only affects normal downloads (not album).
 - `--max-stale-time` is set to 30 seconds by default, sldl will wait a long time before giving up on a file.
 - `--album-parallel-search` enables parallel searching for album entries
+
+<!-- sldl-help:end -->
 
 ## Docker
 
