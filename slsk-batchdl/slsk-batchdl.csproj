@@ -30,7 +30,7 @@
     <PackageReference Include="Google.Apis.YouTube.v3" Version="1.69.0.3680" />
     <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
     <PackageReference Include="SmallestCSVParser" Version="1.1.1" />
-    <PackageReference Include="Soulseek" Version="7.1.1" />
+    <PackageReference Include="Soulseek" Version="7.1.2" />
     <PackageReference Include="SpotifyAPI.Web" Version="7.2.1" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.2.1" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
@@ -42,10 +42,7 @@
     <None Include="../README.md" />
   </ItemGroup>
 
-  <Target Name="GenerateHelpFile" 
-          BeforeTargets="CoreCompile"
-          Inputs="../README.md;../slsk-batchdl.HelpGenerator/Program.cs"
-          Outputs="Help.Content.cs">
+  <Target Name="GenerateHelpFile" BeforeTargets="CoreCompile" Inputs="../README.md;../slsk-batchdl.HelpGenerator/Program.cs" Outputs="Help.Content.cs">
     <Message Text="Help.Content.cs is out of date, regenerating from README.md..." Importance="high" />
     <Exec Command="dotnet run --project ../slsk-batchdl.HelpGenerator" />
   </Target>
