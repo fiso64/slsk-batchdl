@@ -679,7 +679,8 @@ namespace Extractors
                 return savePathNoExt + ".opus";
 
             string parentDirectory = Path.GetDirectoryName(savePathNoExt);
-            var musicFiles = Directory.GetFiles(parentDirectory, savePathNoExt + ".*", SearchOption.TopDirectoryOnly)
+            string fileName = Path.GetFileName(savePathNoExt);
+            var musicFiles = Directory.GetFiles(parentDirectory, fileName + ".*", SearchOption.TopDirectoryOnly)
                 .Where(file => Utils.IsMusicFile(file) || Utils.IsVideoFile(file))
                 .OrderByDescending(file => Utils.IsMusicFile(file))
                 .ThenBy(file => Utils.IsVideoFile(file));
