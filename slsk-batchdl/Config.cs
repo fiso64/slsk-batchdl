@@ -3,6 +3,15 @@ using Models;
 using System.Text;
 using System.Text.RegularExpressions;
 
+// undocumented options
+// --login, --random-login, --no-modify-share-count, --unknown-error-retries
+// --invalid-replace-str, --cond, --pref
+// --fast-search-delay, --fast-search-min-up-speed
+// --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
+// --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
+// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist
+// For debugging:
+// --mock-files-dir <directory>, --mock-files-no-read-tags
 
 public class Config
 {
@@ -102,7 +111,7 @@ public class Config
     public int searchesPerTime = 34;
     public int searchRenewTime = 220;
     public int aggregateLengthTol = 3;
-    public int parallelAlbumSearchProcesses = 5;
+    public int parallelAlbumSearchProcesses = 15;
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
     public List<(Track, Track)>? regex = null;
