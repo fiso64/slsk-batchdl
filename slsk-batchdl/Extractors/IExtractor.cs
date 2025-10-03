@@ -18,6 +18,7 @@ namespace Extractors
             (InputType.YouTube,     YouTubeExtractor.InputMatches,  () => new YouTubeExtractor()),
             (InputType.Spotify,     SpotifyExtractor.InputMatches,  () => new SpotifyExtractor()),
             (InputType.Bandcamp,    BandcampExtractor.InputMatches, () => new BandcampExtractor()),
+            (InputType.MusicBrainz, MusicBrainzExtractor.InputMatches,() => new MusicBrainzExtractor()),
             (InputType.Soulseek,    SoulseekExtractor.InputMatches, () => new SoulseekExtractor()),
             (InputType.String,      StringExtractor.InputMatches,   () => new StringExtractor()),
             (InputType.List,        ListExtractor.InputMatches,     () => new ListExtractor()),

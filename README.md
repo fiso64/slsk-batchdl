@@ -36,6 +36,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
    - [YouTube](#youtube)
    - [Spotify](#spotify)
    - [Bandcamp](#bandcamp)
+   - [MusicBrainz](#musicbrainz)
    - [Soulseek Link](#soulseek-link)
    - [Search string](#search-string)
    - [List file](#list-file)
@@ -287,6 +288,12 @@ spotify-token access is only valid for 1 hour. spotify-refresh will enable sldl 
 ### Bandcamp
 A bandcamp track, album, or artist url. Download a single track, an album, or an artist's
 entire discography.
+
+### MusicBrainz
+A MusicBrainz.org URL for a release, release group, or collection.
+- A `/release/...` URL is treated as a single album download with a strict track count.
+- A `/release-group/...` URL is also treated as a single album download. It tries to pick the most common version of the album. Sets the minimum album track count to the chosen release track count, and no maximum track count unless `--extract-max-track-count` is set.
+- A `/collection/...` URL is treated as a list of albums, downloading each release contained within the collection.
 
 ### Soulseek Link
 A direct path starting with `slsk://`. Paths ending in `/` will be treated as album downloads.

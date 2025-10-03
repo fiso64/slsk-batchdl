@@ -37,6 +37,7 @@ namespace Enums
         String,
         List,
         Soulseek,
+        MusicBrainz,
         None = -1,
     }
 
