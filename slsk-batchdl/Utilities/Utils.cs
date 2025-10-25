@@ -213,6 +213,10 @@ public static class Utils
             }
             File.Move(sourceFilePath, destinationFilePath);
         }
+        else
+        {
+            throw new IOException($"Source file does not exist at path: {sourceFilePath}");
+        }
     }
 
     public static void DeleteAncestorsIfEmpty(string startDir, string root)

@@ -19,6 +19,12 @@
 
 - Make album download mode the default, add -s/--song flag. Don't forget to update it for lists as well (add s: prefix). Also explain that the previous default behavior (default to song search, album with -a) can be restored by adding `song = true` to the config (ensure this works).
 
+- Why do all active downloads always go stale after disconnecting and reconnecting?
+
+- Improve reconnection logic (more than 3 attempts, increasing delay)
+
+- Skip retrieve full folder contents whenever it's already guaranteed to contain all files (e.g. when it was `cd`'d into).
+
 ## Advanced TODO (probably not happening any time soon)
 
 - Big refactor. The refactor should be done with the following three todos in mind (fast-search for albums, interactive mode for individual songs, parallel album downloading), and (in particular) make them much easier to implement. Here is everything wrong with the current code:

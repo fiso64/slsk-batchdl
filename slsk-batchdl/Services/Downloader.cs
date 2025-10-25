@@ -121,7 +121,7 @@ public class Downloader
             Utils.Move(incompleteOutputPath, outputPath);
             app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
         }
-        catch (IOException) { Logger.Error($"Failed to rename .incomplete file"); }
+        catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }
 
         app.downloads.TryRemove(file.Filename, out var x);
 
