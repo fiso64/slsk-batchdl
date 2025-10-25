@@ -131,7 +131,17 @@ namespace Extractors
             while (true)
             {
                 index++;
-                var values = parser.ReadNextRow();
+                List<string>? values = null;
+
+                try
+                {
+                    values = parser.ReadNextRow();
+                }
+                catch (Exception e)
+                {
+                    throw new InvalidDataException($"Error parsing CSV at line {index}: {e.Message}", e);
+                }
+
                 if (values == null)
                     break;
                 if (!values.Any(t => t.Trim().Length > 0))
