@@ -91,7 +91,7 @@ public class SoulseekClientManager
         else
         {
             Logger.Debug("Configuring real Soulseek Client connection options.");
-            var connectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+            var serverConnectionOptions = new ConnectionOptions(configureSocket: (socket) =>
             {
                 socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
                 socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
@@ -99,11 +99,21 @@ public class SoulseekClientManager
                 socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
             });
 
+            var transferConnectionOptions = new ConnectionOptions(
+                inactivityTimeout: int.MaxValue, // this is handled by --max-stale-time
+                configureSocket: (socket) =>
+                {
+                    socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                    socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
+                });
+
             var clientOptions = new SoulseekClientOptions(
-                transferConnectionOptions: connectionOptions,
-                serverConnectionOptions: connectionOptions,
+                transferConnectionOptions: transferConnectionOptions,
+                serverConnectionOptions: serverConnectionOptions,
                 listenPort: config.listenPort,
-                maximumConcurrentSearches: int.MaxValue // Or from config if needed later
+                maximumConcurrentSearches: int.MaxValue // this is limited later in the searcher code
             );
 
             return new SoulseekClient(clientOptions);

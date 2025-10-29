@@ -188,8 +188,8 @@
       },
       "Soulseek": {
         "type": "Transitive",
-        "resolved": "7.1.2",
-        "contentHash": "zwz+PkvK3sjub9G3YyqelbnXMnYGxoaA4tDb1prbmseDNRVFeIcgzMwdhdN6lW8zqTLYyy0Z/YtIc5tLHzUcCQ==",
+        "resolved": "8.4.1",
+        "contentHash": "RzRtOeXxpFMwKyTADIujgLAUxmvX7xszs26G5b3IyRX364aS+FBAeCap7gO56abVSi/v9aCTrZYQtra8NBu5vw==",
         "dependencies": {
           "Microsoft.CSharp": "4.7.0",
           "System.Memory": "4.6.0"
@@ -325,7 +325,7 @@
           "Google.Apis.YouTube.v3": "[1.69.0.3680, )",
           "HtmlAgilityPack": "[1.11.72, )",
           "SmallestCSVParser": "[1.2.0, )",
-          "Soulseek": "[7.1.2, )",
+          "Soulseek": "[8.4.1, )",
           "SpotifyAPI.Web": "[7.2.1, )",
           "SpotifyAPI.Web.Auth": "[7.2.1, )",
           "TagLibSharp": "[2.3.0, )",

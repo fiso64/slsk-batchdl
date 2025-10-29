@@ -56,6 +56,7 @@ public class Downloader
         Logger.Debug($"Downloading: {track} to '{incompleteOutputPath}'");
 
         var transferOptions = new TransferOptions(
+            disposeOutputStreamOnCompletion: false,
             stateChanged: (state) =>
             {
                 if (app.downloads.TryGetValue(file.Filename, out var x))

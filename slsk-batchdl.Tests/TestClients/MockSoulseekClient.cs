@@ -187,12 +187,13 @@ namespace Tests.ClientTests
             }
 
             var search = new Search(
-                searchText: query.SearchText,
+                query: query,
                 token: searchToken,
                 state: SearchStates.Completed,
                 responseCount: responses.Count,
                 fileCount: totalFileCount,
-                lockedFileCount: totalLockedFileCount
+                lockedFileCount: totalLockedFileCount,
+                scope: new SearchScope(SearchScopeType.Network)
             );
 
             return Task.FromResult((search, (IReadOnlyCollection<SearchResponse>)responses));
