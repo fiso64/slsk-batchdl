@@ -223,6 +223,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
                                 the files instead. Set to 'disable' keep them where they 
                                 are. Default: {configured output dir}/failed
 --album-parallel-search         Run album searches in parallel, then download sequentially.
+--album-parallel-search-count <num> Number of parallel album searches (default: 5) 
 ```
 #### Aggregate Download Options
 ```
