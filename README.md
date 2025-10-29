@@ -80,7 +80,9 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 --concurrent-downloads <num>    Max concurrent downloads for normal mode (default: 2)
 --write-playlist                Create an m3u playlist file in the output directory
 --playlist-path <path>          Override default path for m3u playlist file
-
+--no-incomplete-ext             Save files with their final name instead of a temporary
+                                `.incomplete` extension.
+    
 --no-skip-existing              Do not skip downloaded tracks
 --no-write-index                Do not create a file indexing all downloaded tracks
 --index-path <path>             Override default path for sldl index

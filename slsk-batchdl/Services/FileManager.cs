@@ -105,14 +105,18 @@ public class FileManager
         string pathPart = ApplyNameFormat(config.nameFormat, track, file);
         string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
 
-        try
+        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(track.DownloadPath))
         {
-            Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Failed to move: {ex.Message}");
-            return;
+            try
+            {
+                Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to move: {ex}");
+                return;
+            }
+
         }
 
         track.DownloadPath = newFilePath;
@@ -136,14 +140,17 @@ public class FileManager
 
         string newFilePath = Path.Join(parent, part, Path.GetFileName(track.DownloadPath));
 
-        try
+        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(track.DownloadPath))
         {
-            Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Failed to move: {ex.Message}");
-            return;
+            try
+            {
+                Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to move: {ex}");
+                return;
+            }
         }
 
         track.DownloadPath = newFilePath;

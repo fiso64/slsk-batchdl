@@ -93,6 +93,7 @@ public class Config
     public bool parallelAlbumSearch = false;
     public bool mockFilesReadTags = true;
     public bool extractArtist = false;
+    public bool noIncompleteExt = false;
     public int downrankOn = -1;
     public int ignoreOn = -2;
     public int minAlbumTrackCount = -1;
@@ -1441,6 +1442,10 @@ public class Config
                     case "--ea":
                     case "--extract-artist":
                         setFlag(ref extractArtist, ref i);
+                        break;
+                    case "--nie":
+                    case "--no-incomplete-ext":
+                        setFlag(ref noIncompleteExt, ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

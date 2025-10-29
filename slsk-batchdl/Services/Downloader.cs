@@ -51,7 +51,7 @@ public class Downloader
 
         await app.EnsureClientReadyAsync(config);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-        string incompleteOutputPath = outputPath + ".incomplete";
+        string incompleteOutputPath = config.noIncompleteExt ? outputPath : outputPath + ".incomplete";
 
         Logger.Debug($"Downloading: {track} to '{incompleteOutputPath}'");
 
@@ -116,12 +116,19 @@ public class Downloader
 
         try { searchCts?.Cancel(); } catch { }
 
-        try
+        if (!config.noIncompleteExt)
         {
-            Utils.Move(incompleteOutputPath, outputPath);
+            try
+            {
+                Utils.Move(incompleteOutputPath, outputPath);
+                app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
+            }
+            catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }
+        }
+        else
+        {
             app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
         }
-        catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }
 
         app.downloads.TryRemove(file.Filename, out var x);
 
