@@ -33,8 +33,8 @@
       },
       "AngleSharp": {
         "type": "Transitive",
-        "resolved": "1.2.0",
-        "contentHash": "uF/PzSCVcb+b2nqVvHZbOqexoJ9R6QLjonugPf0PQl+0h7YKaFZeXyspctbHe5HGlx7/Iuk5BErtk+t63ac/ZA=="
+        "resolved": "1.3.0",
+        "contentHash": "iHzfn4cK6CmhuURNdEpmSQCq5/HZFldEpkbnmqT9My8+6l2Sz3F+NxoqRA8z/jTkWB+SAu5boRdp4v/WtyjuIQ=="
       },
       "EmbedIO": {
         "type": "Transitive",
@@ -183,8 +183,8 @@
       },
       "SmallestCSVParser": {
         "type": "Transitive",
-        "resolved": "1.1.1",
-        "contentHash": "1OaIm2cPL8dqtcbJFUoQYxG0e8BukHQezrJE4KQY49PZFLQCmdCmHzcDyOUpwzHzEA7JhDzq5KibFIiBaIgY7A=="
+        "resolved": "1.2.0",
+        "contentHash": "yCc84rzTlnXPEJnrMo7QQUXcnG0em1NAN7BQZxhksvxUo7SGnTW+ya86R34q3EwoUV+hZ4ZoRiLAyEmY7254hA=="
       },
       "Soulseek": {
         "type": "Transitive",
@@ -309,10 +309,10 @@
       },
       "YoutubeExplode": {
         "type": "Transitive",
-        "resolved": "6.5.4",
-        "contentHash": "SWMvvvC/xEjkDEnQW28xeBXn0mgB7tsNtXvtcMpxYioyVuUWzsx94oWVQgUZIaT+Zbmvj03LaKIwK9mTGKMZQg==",
+        "resolved": "6.5.6",
+        "contentHash": "W0iR/zLll4UwgsfPvgGkNtn+f01ut8Mm3lDrU2V3iujRmQSnelKUXWsFvZYojw/gPD+pvTS4/MMYNkDvwocbvg==",
         "dependencies": {
-          "AngleSharp": "1.2.0",
+          "AngleSharp": "1.3.0",
           "Microsoft.Bcl.AsyncInterfaces": "9.0.1",
           "System.Text.Json": "9.0.1",
           "System.Threading.Tasks.Extensions": "4.6.0"
@@ -324,12 +324,12 @@
           "Goblinfactory.ProgressBar": "[1.0.0, )",
           "Google.Apis.YouTube.v3": "[1.69.0.3680, )",
           "HtmlAgilityPack": "[1.11.72, )",
-          "SmallestCSVParser": "[1.1.1, )",
+          "SmallestCSVParser": "[1.2.0, )",
           "Soulseek": "[7.1.2, )",
           "SpotifyAPI.Web": "[7.2.1, )",
           "SpotifyAPI.Web.Auth": "[7.2.1, )",
           "TagLibSharp": "[2.3.0, )",
-          "YoutubeExplode": "[6.5.4, )"
+          "YoutubeExplode": "[6.5.6, )"
         }
       }
     }
