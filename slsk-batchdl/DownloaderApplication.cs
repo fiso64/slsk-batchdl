@@ -905,7 +905,19 @@ public class DownloaderApplication
         {
             Logger.Info($"Downloading additional images:");
             additionalImages = await DownloadImages(config, tle, tle.list, config.albumArtOption, tle.list[index], organizer);
-            tracks?.AddRange(additionalImages);
+
+            if (tracks != null && additionalImages != null && additionalImages.Any())
+            {
+                var additionalImagePaths = additionalImages
+                    .Select(t => Utils.NormalizedPath(t.DownloadPath))
+                    .Where(p => !string.IsNullOrEmpty(p))
+                    .ToHashSet();
+
+                tracks.RemoveAll(t => t.IsNotAudio && !string.IsNullOrEmpty(t.DownloadPath) && additionalImagePaths.Contains(Utils.NormalizedPath(t.DownloadPath)));
+
+                // Add the new, de-duplicated images to the main tracks list.
+                tracks.AddRange(additionalImages);
+            }
         }
 
         if (tracks != null && tle.source.DownloadPath.Length > 0)

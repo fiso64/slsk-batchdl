@@ -62,9 +62,9 @@ public class FileManager
         this.defaultFolderName = defaultFolderName != null ? Utils.NormalizedPath(defaultFolderName) : null;
     }
 
-    public void OrganizeAlbum(Track source, List<Track> tracks, List<Track>? additionalImages, bool remainingOnly = true)
+    public void OrganizeAlbum(Track source, List<Track> allDownloadedFiles, List<Track>? additionalImages, bool remainingOnly = true)
     {
-        foreach (var track in tracks.Where(t => !t.IsNotAudio))
+        foreach (var track in allDownloadedFiles.Where(t => !t.IsNotAudio))
         {
             if (remainingOnly && organized.Contains(track))
                 continue;
@@ -72,15 +72,15 @@ public class FileManager
             OrganizeAudio(track, track.FirstDownload);
         }
 
-        source.DownloadPath = Utils.GreatestCommonDirectory(tracks.Where(t => !t.IsNotAudio).Select(t => t.DownloadPath));
+        source.DownloadPath = Utils.GreatestCommonDirectory(allDownloadedFiles.Where(t => !t.IsNotAudio).Select(t => t.DownloadPath));
 
-        var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat) ? additionalImages : tracks.Where(t => t.IsNotAudio);
+        var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat) ? additionalImages : allDownloadedFiles.Where(t => t.IsNotAudio);
 
         if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
             return;
 
         string parent = Utils.GreatestCommonDirectory(
-            tracks.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0).Select(t => t.DownloadPath));
+            allDownloadedFiles.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0).Select(t => t.DownloadPath));
 
         foreach (var track in nonAudioToOrganize)
         {

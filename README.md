@@ -69,7 +69,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 #### General Options
 ```
 -p, --path <path>               Download directory
---input-type <type>             [csv|youtube|spotify|bandcamp|string|list]
+--input-type <type>             [csv|youtube|spotify|bandcamp|string|list] (default: auto)
 --name-format <format>          Name format for downloaded tracks. See `--help name-format`
     
 -n, --number <maxtracks>        Download the first n tracks of a playlist
@@ -223,7 +223,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
                                 the files instead. Set to 'disable' keep them where they 
                                 are. Default: {configured output dir}/failed
 --album-parallel-search         Run album searches in parallel, then download sequentially.
---album-parallel-search-count <num> Number of parallel album searches (default: 5) 
+--album-parallel-search-count   Number of parallel album searches (default: 5) 
 ```
 #### Aggregate Download Options
 ```
