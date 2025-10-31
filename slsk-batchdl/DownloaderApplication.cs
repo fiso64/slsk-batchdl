@@ -712,17 +712,6 @@ public class DownloaderApplication
             await Task.WhenAll(downloadTasks);
         }
 
-        async Task<int> getFullFolder(List<Track> tracks, string? soulseekDir = null)
-        {
-            soulseekDir ??= Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
-            if (retrievedFolders.Contains(soulseekDir)) return 0;
-
-            Logger.Info("Getting all files in folder...");
-            int newFilesFound = await searchService.CompleteFolder(tracks, tracks[0].FirstResponse, soulseekDir);
-            retrievedFolders.Add(soulseekDir);
-            return newFilesFound;
-        }
-
         while (tle.list.Count > 0 && !config.albumArtOnly)
         {
             bool wasInteractive = config.interactiveMode;
@@ -751,7 +740,16 @@ public class DownloaderApplication
                 // when track title is non-empty, therefore need to only check lower bound when title is non-empty.
                 if (config.albumTrackCountMaxRetries > 0 && (tle.source.MaxAlbumTrackCount > 0 || (tle.source.MinAlbumTrackCount > 0 && tle.source.Title.Length > 0)))
                 {
-                    await getFullFolder(tracks);
+                    string currentSoulseekDir = Utils.GreatestCommonDirectorySlsk(tracks.Select(t => t.FirstDownload.Filename));
+                    if (!retrievedFolders.Contains(currentSoulseekDir))
+                    {
+                        string customMessage = $"Verifying album track count.\n    Retrieving full folder contents... (Press 'c' to cancel)";
+                        var (wasCancelled, _) = await RetrieveFullFolderCancellableAsync(tracks, tracks[0].FirstResponse, currentSoulseekDir, customMessage);
+                        if (!wasCancelled)
+                        {
+                            retrievedFolders.Add(currentSoulseekDir);
+                        }
+                    }
                     int newCount = tracks.Count(t => !t.IsNotAudio);
                     bool failed = false;
 
@@ -819,15 +817,20 @@ public class DownloaderApplication
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(soulseekDir))
                 {
                     Console.WriteLine();
-                    int newFilesFound = await getFullFolder(tracks, soulseekDir);
-                    if (newFilesFound > 0)
+                    (var wasCancelled, var newFilesFound) = await RetrieveFullFolderCancellableAsync(tracks, tracks[0].FirstResponse, soulseekDir);
+
+                    if (!wasCancelled)
                     {
-                        Logger.Info($"Found {newFilesFound} more files, downloading:");
-                        await runAlbumDownloads(tracks, semaphore, cts);
-                    }
-                    else
-                    {
-                        Logger.Info("No more files found.");
+                        retrievedFolders.Add(soulseekDir);
+                        if (newFilesFound > 0)
+                        {
+                            Logger.Info($"Found {newFilesFound} more files, downloading:");
+                            await runAlbumDownloads(tracks, semaphore, cts);
+                        }
+                        else
+                        {
+                            Logger.Info("No more files found.");
+                        }
                     }
                 }
 
@@ -966,6 +969,36 @@ public class DownloaderApplication
                 }
             }
         }
+    }
+
+    public async Task<(bool WasCancelled, int FileCount)> RetrieveFullFolderCancellableAsync(List<Track> tracks, SearchResponse response, string soulseekDir, string? customMessage = null)
+    {
+        customMessage = customMessage ?? "Getting all files in folder... (Press 'c' to cancel)";
+        Logger.Info(customMessage);
+        using var cts = new CancellationTokenSource();
+        var completeFolderTask = searchService.CompleteFolder(tracks, response, soulseekDir, cts.Token);
+
+        while (!completeFolderTask.IsCompleted)
+        {
+            if (Console.KeyAvailable && !Console.IsInputRedirected)
+            {
+                if (Console.ReadKey(true).Key == ConsoleKey.C)
+                {
+                    cts.Cancel();
+                    try
+                    {
+                        await completeFolderTask;
+                    }
+                    catch (OperationCanceledException) { }
+                    Logger.Info("Folder retrieval cancelled by user.");
+                    return (true, 0);
+                }
+            }
+            await Task.Delay(100);
+        }
+
+        int fileCount = await completeFolderTask;
+        return (false, fileCount);
     }
 
 

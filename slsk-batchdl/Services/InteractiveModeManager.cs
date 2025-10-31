@@ -258,21 +258,34 @@ public class InteractiveModeManager
                         break;
                     }
                 case "complete_folder":
-                    if (retrieveFolder && !retrievedFolders.Contains(username + '\\' + folder))
+                    if (retrieveFolder)
                     {
-                        Console.WriteLine("Getting all files in folder...");
-                        int newFiles = await searchService.CompleteFolder(tracks, response, folder);
-                        retrievedFolders.Add(username + '\\' + folder);
-                        if (newFiles == 0)
+                        if (!retrievedFolders.Contains(username + '\\' + folder))
                         {
-                            Console.WriteLine("No more files found.");
-                            goto Loop;
+                            (var wasCancelled, var newFiles) = await app.RetrieveFullFolderCancellableAsync(tracks, response, folder);
+
+                            if (wasCancelled)
+                            {
+                                goto Loop;
+                            }
+
+                            retrievedFolders.Add(username + '\\' + folder);
+                            if (newFiles == 0)
+                            {
+                                Console.WriteLine("No more files found.");
+                                goto Loop;
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Found {newFiles} more files in the folder:");
+                                ClearOutput(savedPos);
+                                break;
+                            }
                         }
                         else
                         {
-                            Console.WriteLine($"Found {newFiles} more files in the folder:");
-                            ClearOutput(savedPos);
-                            break;
+                            Console.WriteLine($"Already retrieved this folder.");
+                            goto Loop;
                         }
                     }
                     goto Loop;

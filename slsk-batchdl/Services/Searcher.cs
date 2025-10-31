@@ -632,6 +632,10 @@ public class Searcher
             {
                 allFiles = await GetAllFilesInFolder(response.Username, folder, cancellationToken);
             }
+            catch (OperationCanceledException)
+            {
+                return 0;
+            }
             catch (Exception e)
             {
                 Logger.Error($"Error getting all files in directory '{folder}: {e}'");
