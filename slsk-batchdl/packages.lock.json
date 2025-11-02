@@ -32,9 +32,9 @@
       },
       "Soulseek": {
         "type": "Direct",
-        "requested": "[8.4.1, )",
-        "resolved": "8.4.1",
-        "contentHash": "RzRtOeXxpFMwKyTADIujgLAUxmvX7xszs26G5b3IyRX364aS+FBAeCap7gO56abVSi/v9aCTrZYQtra8NBu5vw==",
+        "requested": "[8.5.0, )",
+        "resolved": "8.5.0",
+        "contentHash": "PNmdER1Fjn0CFEYjp8F8XcFEgdldVQ5rkEcAE5yZOFy8uTb3aHMk3NUH6uQnqL/SINOWSuIJBmGimSW85aTy8A==",
         "dependencies": {
           "Microsoft.CSharp": "4.7.0",
           "System.Memory": "4.6.0"
