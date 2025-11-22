@@ -20,9 +20,49 @@ namespace Extractors
             var trackLists = new TrackLists();
             bool isTrack = input.Contains("/track/");
             bool isAlbum = !isTrack && input.Contains("/album/");
-            bool isArtist = !isTrack && !isAlbum;
+            bool isWishlist = !isTrack && !isAlbum && input.Contains("/wishlist");
+            bool isArtist = !isTrack && !isAlbum && !isWishlist;
 
-            if (isArtist)
+            if (isWishlist)
+            {
+                Logger.Info("Retrieving bandcamp wishlist..");
+                var web = new HtmlWeb();
+                var doc = await web.LoadFromWebAsync(input);
+
+                var items = doc.DocumentNode.SelectNodes("//li[contains(@class, 'collection-item-container')]");
+
+                if (items != null)
+                {
+                    int num = 1;
+                    foreach (var item in items)
+                    {
+                        var titleNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-title')]");
+                        var artistNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-artist')]");
+
+                        if (titleNode != null && artistNode != null)
+                        {
+                            string album = titleNode.InnerText.UnHtmlString().Trim();
+                            string artist = artistNode.InnerText.UnHtmlString().Trim();
+
+                            if (artist.StartsWith("by ", StringComparison.OrdinalIgnoreCase))
+                                artist = artist.Substring(3).Trim();
+
+                            var track = new Track()
+                            {
+                                Album = album,
+                                Artist = artist,
+                                Type = TrackType.Album,
+                                ItemNumber = num++,
+                            };
+
+                            var tle = new TrackListEntry(track);
+                            tle.enablesIndexByDefault = true;
+                            trackLists.AddEntry(tle);
+                        }
+                    }
+                }
+            }
+            else if (isArtist)
             {
                 Logger.Info("Retrieving bandcamp artist discography..");
                 string artistUrl = input.TrimEnd('/');
