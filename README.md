@@ -637,6 +637,7 @@ Download all albums by an artist interactively:
 ```bash
 sldl "artist=MC MENTAL" -a -g -t
 ```
+For some artists, you may want to add `--strict-artist` to avoid listing wrong results. 
 
 <br>
 
