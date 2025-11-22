@@ -26,8 +26,18 @@ namespace Extractors
             if (isWishlist)
             {
                 Logger.Info("Retrieving bandcamp wishlist..");
-                var web = new HtmlWeb();
-                var doc = await web.LoadFromWebAsync(input);
+                HtmlDocument doc;
+
+                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                {
+                    doc = new HtmlDocument();
+                    doc.Load(config.htmlFromFile);
+                }
+                else
+                {
+                    var web = new HtmlWeb();
+                    doc = await web.LoadFromWebAsync(input);
+                }
 
                 var items = doc.DocumentNode.SelectNodes("//li[contains(@class, 'collection-item-container')]");
 
@@ -65,13 +75,22 @@ namespace Extractors
             else if (isArtist)
             {
                 Logger.Info("Retrieving bandcamp artist discography..");
-                string artistUrl = input.TrimEnd('/');
-
-                if (!artistUrl.EndsWith("/music"))
-                    artistUrl += "/music";
-
                 using var httpClient = new HttpClient();
-                var response = await httpClient.GetStringAsync(artistUrl);
+                string response;
+
+                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                {
+                    response = await File.ReadAllTextAsync(config.htmlFromFile);
+                }
+                else
+                {
+                    string artistUrl = input.TrimEnd('/');
+
+                    if (!artistUrl.EndsWith("/music"))
+                        artistUrl += "/music";
+
+                    response = await httpClient.GetStringAsync(artistUrl);
+                }
 
                 string idPattern = @"band_id=(\d+)&";
                 var match = Regex.Match(response, idPattern);
@@ -107,8 +126,18 @@ namespace Extractors
             else
             {
                 Logger.Info("Retrieving bandcamp item..");
-                var web = new HtmlWeb();
-                var doc = await web.LoadFromWebAsync(input);
+                HtmlDocument doc;
+
+                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                {
+                    doc = new HtmlDocument();
+                    doc.Load(config.htmlFromFile);
+                }
+                else
+                {
+                    var web = new HtmlWeb();
+                    doc = await web.LoadFromWebAsync(input);
+                }
 
                 var nameSection = doc.DocumentNode.SelectSingleNode("//div[@id='name-section']");
                 var name = nameSection.SelectSingleNode(".//h2[contains(@class, 'trackTitle')]").InnerText.UnHtmlString().Trim();

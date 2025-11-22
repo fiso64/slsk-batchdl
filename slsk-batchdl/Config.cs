@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
-// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist
+// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html
 // For debugging:
 // --mock-files-dir <directory>, --mock-files-no-read-tags
 
@@ -60,6 +60,7 @@ public class Config
     public string logFilePath = "";
     public string mockFilesDir = "";
     public string parseTitleTemplate = "";
+    public string htmlFromFile = "";
     public bool aggregate = false;
     public bool album = false;
     public bool albumArtOnly = false;
@@ -1438,6 +1439,9 @@ public class Config
                         break;
                     case "--parse-title":
                         parseTitleTemplate = GetParameter(ref i);
+                        break;
+                    case "--from-html":
+                        htmlFromFile = GetParameter(ref i);
                         break;
                     case "--ea":
                     case "--extract-artist":
