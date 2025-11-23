@@ -91,7 +91,9 @@ public class SoulseekClientManager
         else
         {
             Logger.Debug("Configuring real Soulseek Client connection options.");
-            var serverConnectionOptions = new ConnectionOptions(configureSocket: (socket) =>
+            var serverConnectionOptions = new ConnectionOptions(
+            connectTimeout: config.connectTimeout,
+            configureSocket: (socket) =>
             {
                 socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
                 socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
