@@ -1449,8 +1449,8 @@ public class Config
                         setFlag(ref noIncompleteExt, ref i);
                         break;
                     case "--cto":
-                    case "--connect-timeout":;
-                        connectTimeout = getIntParameter(ref i); 
+                    case "--connect-timeout":
+                        connectTimeout = getIntParameter(ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");
