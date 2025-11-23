@@ -113,6 +113,7 @@ public class Config
     public int searchRenewTime = 220;
     public int aggregateLengthTol = 3;
     public int parallelAlbumSearchProcesses = 5;
+    public int connectTimeout = 20000;
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
     public List<(Track, Track)>? regex = null;
@@ -1446,6 +1447,10 @@ public class Config
                     case "--nie":
                     case "--no-incomplete-ext":
                         setFlag(ref noIncompleteExt, ref i);
+                        break;
+                    case "--cto":
+                    case "--connect-timeout":;
+                        connectTimeout = getIntParameter(ref i); 
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");
