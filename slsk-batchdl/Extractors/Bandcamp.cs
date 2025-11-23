@@ -26,11 +26,9 @@ namespace Extractors
             if (isWishlist)
             {
                 Logger.Info("Retrieving bandcamp wishlist..");
-                Logger.Debug($"Wishlist URL: {input}");
 
                 if (!string.IsNullOrEmpty(config.htmlFromFile))
                 {
-                    // Use HTML parsing when HTML file is provided
                     await ParseWishlistFromHtml(input, config, trackLists);
                 }
                 else
@@ -159,17 +157,8 @@ namespace Extractors
             Logger.Info("Parsing wishlist from HTML...");
             HtmlDocument doc;
 
-            if (!string.IsNullOrEmpty(config.htmlFromFile))
-            {
-                doc = new HtmlDocument();
-                doc.Load(config.htmlFromFile);
-            }
-            else
-            {
-                var web = new HtmlWeb();
-                doc = await web.LoadFromWebAsync(input);
-            }
-
+            var web = new HtmlWeb();
+            doc = await web.LoadFromWebAsync(input);
             var items = doc.DocumentNode.SelectNodes("//li[contains(@class, 'collection-item-container')]");
 
             if (items != null)
@@ -201,12 +190,6 @@ namespace Extractors
                         trackLists.AddEntry(tle);
                     }
                 }
-
-                Logger.Info($"Successfully parsed {trackLists.lists.Count} items from HTML");
-            }
-            else
-            {
-                Logger.Warn("No wishlist items found in HTML");
             }
         }
     }
