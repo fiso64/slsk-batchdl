@@ -653,6 +653,8 @@ namespace Extractors
             var process = new Process();
             var startInfo = new ProcessStartInfo();
 
+            bool isCustomPath = ytdlpArgument.Length > 0 && !ytdlpArgument.Contains("{savepath-noext}.%(ext)s") && !ytdlpArgument.Contains("{savepath}.%(ext)s");
+
             if (ytdlpArgument.Length == 0)
                 ytdlpArgument = "\"{id}\" -f bestaudio/best -ci -o \"{savepath-noext}.%(ext)s\" -x";
 
@@ -680,10 +682,24 @@ namespace Extractors
 
             string parentDirectory = Path.GetDirectoryName(savePathNoExt);
             string fileName = Path.GetFileName(savePathNoExt);
-            var musicFiles = Directory.GetFiles(parentDirectory, fileName + ".*", SearchOption.TopDirectoryOnly)
-                .Where(file => Utils.IsMusicFile(file) || Utils.IsVideoFile(file))
-                .OrderByDescending(file => Utils.IsMusicFile(file))
-                .ThenBy(file => Utils.IsVideoFile(file));
+
+            var musicFiles = Enumerable.Empty<string>();
+            try
+            {
+                musicFiles = Directory.GetFiles(parentDirectory, fileName + ".*", SearchOption.TopDirectoryOnly)
+                    .Where(file => Utils.IsMusicFile(file) || Utils.IsVideoFile(file))
+                    .OrderByDescending(file => Utils.IsMusicFile(file))
+                    .ThenBy(file => Utils.IsVideoFile(file));
+            }
+            catch (DirectoryNotFoundException) { }
+
+            if (!musicFiles.Any())
+            {
+                if (isCustomPath)
+                    Logger.Debug($"Could not find yt-dlp output file. This is expected if using a custom output path argument.");
+                else
+                    throw new FileNotFoundException($"Could not find yt-dlp output file after download in {parentDirectory}/{fileName}.*");
+            }
 
             return musicFiles.FirstOrDefault() ?? "";
         }

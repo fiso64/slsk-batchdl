@@ -135,6 +135,8 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 --yt-dlp-argument <str>         The command line arguments when running yt-dlp. Default:
                                 "{id}" -f bestaudio/best -cix -o "{savepath}.%(ext)s"
                                 Available vars are: {id}, {savedir}, {savepath} (w/o ext).
+                                Warning: If you change the -o parameter, sldl won't be able
+                                to index the downloaded files.
                                 Note that -x causes yt-dlp to download webms in case ffmpeg
                                 is unavailable.
 
