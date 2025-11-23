@@ -28,16 +28,23 @@ namespace Extractors
                 Logger.Info("Retrieving bandcamp wishlist..");
                 Logger.Debug($"Wishlist URL: {input}");
 
-                // Extract fan_id using the API helper
-                string? fanId = await BandcampApi.ExtractFanIdFromPage(input);
-                if (fanId == null)
+                if (!string.IsNullOrEmpty(config.htmlFromFile))
                 {
-                    return trackLists;
+                    // Use HTML parsing when HTML file is provided
+                    await ParseWishlistFromHtml(input, config, trackLists);
                 }
+                else
+                {
+                    // Use API approach when no HTML file is provided
+                    string? fanId = await BandcampApi.ExtractFanIdFromPage(input);
+                    if (fanId == null)
+                    {
+                        return trackLists;
+                    }
 
-                // Use the API to fetch all items
-                Logger.Info("Getting wishlist items from API...");
-                await BandcampApi.FetchWishlistItemsFromAPI(fanId, trackLists);
+                    Logger.Info("Getting wishlist items from API...");
+                    await BandcampApi.FetchWishlistItemsFromAPI(fanId, trackLists);
+                }
             }
             else if (isArtist)
             {
@@ -145,6 +152,62 @@ namespace Extractors
                 trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
 
             return trackLists;
+        }
+
+        private static async Task ParseWishlistFromHtml(string input, Config config, TrackLists trackLists)
+        {
+            Logger.Info("Parsing wishlist from HTML...");
+            HtmlDocument doc;
+
+            if (!string.IsNullOrEmpty(config.htmlFromFile))
+            {
+                doc = new HtmlDocument();
+                doc.Load(config.htmlFromFile);
+            }
+            else
+            {
+                var web = new HtmlWeb();
+                doc = await web.LoadFromWebAsync(input);
+            }
+
+            var items = doc.DocumentNode.SelectNodes("//li[contains(@class, 'collection-item-container')]");
+
+            if (items != null)
+            {
+                int num = 1;
+                foreach (var item in items)
+                {
+                    var titleNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-title')]");
+                    var artistNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-artist')]");
+
+                    if (titleNode != null && artistNode != null)
+                    {
+                        string album = titleNode.InnerText.UnHtmlString().Trim();
+                        string artist = artistNode.InnerText.UnHtmlString().Trim();
+
+                        if (artist.StartsWith("by ", StringComparison.OrdinalIgnoreCase))
+                            artist = artist.Substring(3).Trim();
+
+                        var track = new Track()
+                        {
+                            Album = album,
+                            Artist = artist,
+                            Type = TrackType.Album,
+                            ItemNumber = num++,
+                        };
+
+                        var tle = new TrackListEntry(track);
+                        tle.enablesIndexByDefault = true;
+                        trackLists.AddEntry(tle);
+                    }
+                }
+
+                Logger.Info($"Successfully parsed {trackLists.lists.Count} items from HTML");
+            }
+            else
+            {
+                Logger.Warn("No wishlist items found in HTML");
+            }
         }
     }
 }
