@@ -94,7 +94,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
                                 during the last run.
     
 --listen-port <port>            Port for incoming connections (default: 49998)
---connect-timeout <ms>          Timeout value used when logging in to Soulseek (default: 20000ms)
+--connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
 
 --on-complete <command>         Run a command when a download completes. See `--help
                                 on-complete`
