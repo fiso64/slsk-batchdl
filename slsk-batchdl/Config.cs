@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
-// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html
+// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html, --user-description
 // For debugging:
 // --mock-files-dir <directory>, --mock-files-no-read-tags
 
@@ -61,6 +61,7 @@ public class Config
     public string mockFilesDir = "";
     public string parseTitleTemplate = "";
     public string htmlFromFile = "";
+    public string userDescription = "";
     public bool aggregate = false;
     public bool album = false;
     public bool albumArtOnly = false;
@@ -1455,6 +1456,9 @@ public class Config
                     case "--cto":
                     case "--connect-timeout":
                         connectTimeout = getIntParameter(ref i);
+                        break;
+                    case "--user-description":
+                        userDescription = GetParameter(ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

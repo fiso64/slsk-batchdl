@@ -111,11 +111,23 @@ public class SoulseekClientManager
                     socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
                 });
 
+            Func<string, System.Net.IPEndPoint, Task<UserInfo>>? userInfoResolver = null;
+            if (!string.IsNullOrEmpty(config.userDescription))
+            {
+                userInfoResolver = (username, ip) => Task.FromResult(new UserInfo(
+                    description: config.userDescription,
+                    uploadSlots: 1,
+                    queueLength: 0,
+                    hasFreeUploadSlot: true
+                ));
+            }
+
             var clientOptions = new SoulseekClientOptions(
                 transferConnectionOptions: transferConnectionOptions,
                 serverConnectionOptions: serverConnectionOptions,
                 listenPort: config.listenPort,
-                maximumConcurrentSearches: int.MaxValue // this is limited later in the searcher code
+                maximumConcurrentSearches: int.MaxValue, // this is limited later in the searcher code
+                userInfoResolver: userInfoResolver
             );
 
             return new SoulseekClient(clientOptions);
