@@ -111,16 +111,12 @@ public class SoulseekClientManager
                     socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 15);
                 });
 
-            Func<string, System.Net.IPEndPoint, Task<UserInfo>>? userInfoResolver = null;
-            if (!string.IsNullOrEmpty(config.userDescription))
-            {
-                userInfoResolver = (username, ip) => Task.FromResult(new UserInfo(
-                    description: config.userDescription,
-                    uploadSlots: 1,
-                    queueLength: 0,
-                    hasFreeUploadSlot: true
-                ));
-            }
+            Task<UserInfo> userInfoResolver(string username, System.Net.IPEndPoint ip) => Task.FromResult(new UserInfo(
+                description: config.userDescription ?? "",
+                uploadSlots: 1,
+                queueLength: 0,
+                hasFreeUploadSlot: true
+            ));
 
             var clientOptions = new SoulseekClientOptions(
                 transferConnectionOptions: transferConnectionOptions,
