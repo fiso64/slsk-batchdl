@@ -10,8 +10,6 @@ using System.Text.RegularExpressions;
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
 // --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html, --user-description
-// For debugging:
-// --mock-files-dir <directory>, --mock-files-no-read-tags
 
 public class Config
 {

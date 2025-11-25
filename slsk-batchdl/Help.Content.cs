@@ -56,20 +56,6 @@ public static partial class Help
     
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
-    
-    -v, --verbose                   Print extra debug info
-    --log-file <path>               Write debug info to a specified file
-    --no-progress                   Disable progress bars/percentages, only simple printing
-    --print <option>                Print tracks or search results instead of downloading:
-                                    'tracks': Print all tracks to be downloaded
-                                    'tracks-full': Print extended information about all tracks
-                                    'results': Print search results satisfying file conditions
-                                    'results-full': Print search results including full paths.
-                                    'json': Print first result in json format
-                                    'json-all': Print json of all results in sorted order
-                                    'link': Print first result slsk:// link
-                                    'index': Print sldl index as formatted json
-                                    'index-failed': Print failed downloads from sldl index
 
   Search Options
 
@@ -197,6 +183,25 @@ public static partial class Help
                                     downloaded in aggregate mode. (Default: 2)
     --relax-filtering               Slightly relax file filtering in aggregate mode to include
                                     more results
+
+  Printing & Debug Options
+
+    -v, --verbose                   Print extra debug info
+    --log-file <path>               Write debug info to a specified file
+    --no-progress                   Disable progress bars/percentages, only simple printing
+    --print <option>                Print tracks or search results instead of downloading:
+                                    'tracks': Print all tracks to be downloaded
+                                    'tracks-full': Print extended information about all tracks
+                                    'results': Print search results satisfying file conditions
+                                    'results-full': Print search results including full paths.
+                                    'json': Print first result in json format
+                                    'json-all': Print json of all results in sorted order
+                                    'link': Print first result slsk:// link
+                                    'index': Print sldl index as formatted json
+                                    'index-failed': Print failed downloads from sldl index
+    
+    --mock-files-dir <path>         Directory containing files to simulate download results
+    --mock-files-no-read-tags       Only read filenames when simulating (much faster)
 
 Notes
   - Flags can be explicitly disabled by setting them to false, e.g. --interactive false.
@@ -458,6 +463,7 @@ On-Complete Actions
   The --on-complete parameter allows executing commands after a track or album is downloaded.
   Multiple actions can be chained using the + prefix (note the space after +).
   Syntax: --on-complete [prefixes:]command
+  Hint: You can use --mock-files-dir to test your commands (see Testing Options).
 
   Prefixes
     - 1: - Execute only if track downloaded successfully
@@ -578,5 +584,16 @@ Tips
       album).
     - --max-stale-time is set to 30 seconds by default, sldl will wait a long time before giving up
       on a file.
-    - --album-parallel-search enables parallel searching for album entries";
+    - --album-parallel-search enables parallel searching for album entries
+
+  Testing Options
+    You can test almost any aspect of the search and downloading logic by using --mock-files-dir and
+    pointing it to a local directory containing audio files. This directory will then be used
+    instead of searching Soulseek. Example:
+
+    sldl ""Artist - Album"" -at --mock-files-dir /path/to/dir
+
+    If you plan to use a large music library, you may want to add --mock-files-no-read-tags to
+    improve the initial loading performance. But note that reading tags is required when filtering
+    by metadata such as length or bitrate.";
 }
