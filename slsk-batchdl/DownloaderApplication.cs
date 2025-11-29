@@ -204,7 +204,7 @@ public class DownloaderApplication
         foreach (var tle in trackLists.lists)
         {
             tle.config = startConfig.Copy();
-            tle.config.UpdateProfiles(tle, trackLists);
+            tle.config = tle.config.UpdateProfiles(tle, trackLists);
             startConfig = tle.config;
 
             if (tle.extractorCond != null)
@@ -859,7 +859,7 @@ public class DownloaderApplication
                     {
                         Logger.Info("Entering interactive mode");
                         config.interactiveMode = true;
-                        tle.config.UpdateProfiles(tle, trackLists);
+                        tle.config = tle.config.UpdateProfiles(tle, trackLists);
                         tle.PrintLines();
                     }
                 }

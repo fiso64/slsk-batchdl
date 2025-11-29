@@ -50,7 +50,7 @@ namespace Tests.ConfigTests
             var tle = new TrackListEntry(TrackType.Album);
             var ls = new TrackLists();
             ls.AddEntry(tle);
-            config.UpdateProfiles(tle, ls);
+            config = config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(10, config.maxStaleTime);
             Assert.IsFalse(config.fastSearch);
@@ -78,7 +78,7 @@ namespace Tests.ConfigTests
             var tle = new TrackListEntry(TrackType.Album);
             var ls = new TrackLists();
             ls.AddEntry(tle);
-            config.UpdateProfiles(tle, ls);
+            config = config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(999999, config.maxStaleTime);
             Assert.IsFalse(config.useYtdlp);
@@ -105,10 +105,47 @@ namespace Tests.ConfigTests
             var tle = new TrackListEntry(TrackType.Normal);
             var ls = new TrackLists();
             ls.AddEntry(tle);
-            config.UpdateProfiles(tle, ls);
+            config = config.UpdateProfiles(tle, ls);
 
             Assert.AreEqual(50000, config.maxStaleTime);
             Assert.IsTrue(config.useYtdlp);
+        }
+
+        [TestMethod]
+        public void UpdateProfiles_DoesNotDuplicateAppendableArgs()
+        {
+            string content =
+                "on-complete = + action_default" +
+                "\n[auto-profile]" +
+                "\nprofile-cond = interactive" +
+                "\nfast-search = true";
+
+            File.WriteAllText(testConfigPath, content);
+
+            // Simulating CLI args that also add an action
+            var args = new string[] { "-c", testConfigPath, "--on-complete", "+ action_cli", "test-input" };
+
+            var config = new Config(args);
+            config.interactiveMode = true; // Enable the profile condition
+
+            // Pre-check: Constructor should have applied default + cli
+            Assert.IsNotNull(config.onComplete);
+            Assert.AreEqual(2, config.onComplete.Count);
+            Assert.AreEqual("action_default", config.onComplete[0]);
+            Assert.AreEqual("action_cli", config.onComplete[1]);
+
+            var tle = new TrackListEntry(TrackType.Normal);
+            var ls = new TrackLists();
+            ls.AddEntry(tle);
+
+            // Act
+            config = config.UpdateProfiles(tle, ls);
+
+            // Assert
+            Assert.IsTrue(config.fastSearch, "Auto profile should have been applied");
+            Assert.AreEqual(2, config.onComplete.Count, "on-complete list should not have duplicates");
+            Assert.AreEqual("action_default", config.onComplete[0]);
+            Assert.AreEqual("action_cli", config.onComplete[1]);
         }
     }
 

@@ -427,25 +427,35 @@ public class Config
     }
 
 
-    public void UpdateProfiles(TrackListEntry tle, TrackLists trackLists)
+    public Config UpdateProfiles(TrackListEntry tle, TrackLists trackLists)
     {
         if (!NeedUpdateProfiles(tle, out var toApply))
-            return;
+            return this;
 
-        ApplyDefaultConfig();
+        var newConfig = this.Copy();
+
+        // don't forget to reset appendable config vars
+        newConfig.onComplete = null;
+        newConfig.regex = null;
+        
+        newConfig.appliedProfiles.Clear();
+
+        newConfig.ApplyDefaultConfig();
 
         foreach (var (name, args) in toApply)
         {
             tle.AddPrintLine($"Applying auto profile: {name}");
-            ProcessArgs(args);
-            appliedProfiles.Add(name);
+            newConfig.ProcessArgs(args);
+            newConfig.appliedProfiles.Add(name);
         }
 
-        ApplyProfiles(profile);
+        newConfig.ApplyProfiles(newConfig.profile);
 
-        ProcessArgs(arguments);
+        newConfig.ProcessArgs(newConfig.arguments);
 
-        PostProcessArgs(trackLists);
+        newConfig.PostProcessArgs(trackLists);
+
+        return newConfig;
     }
 
 
