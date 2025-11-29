@@ -5,9 +5,9 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 ### Features
 
 - Accepts various input sources like CSV files, Spotify or YouTube URLs, or standard text queries
-- Can download individual songs, playlists, albums, or even full artist discographies
+- Can download individual songs, playlists, albums, or full artist discographies
 - Intelligently selects the best album or song based on user configuration and heuristics
-- For those who don't trust full auto selection, album downloads can be [interactive](#shortcuts--interactive-mode). The best results will be listed first.
+- For those who don't trust full auto downloading, album downloads can be [interactive](#shortcuts--interactive-mode). The best results will be listed first.
 - Special "aggregate" modes which can list all distinct songs or albums by a given artist available on Soulseek, sorted by popularity
 - Can skip downloading songs or albums found in a given music directory
 - Configuration profiles and auto profiles
@@ -360,7 +360,7 @@ Activated when both `--album` and `--aggregate` are enabled. sldl will group sha
 download one of each distinct album, starting with the one shared by the most users. Note
 that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
 will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
-by an artist. It is recommended to pair it with `--interactive`.
+by an artist. It is recommended to pair it with `--interactive`. See [Example](#download-all-albums-by-an-artist-interactively) for more details.
 <!-- sldl-help:end -->
 
 <!-- sldl-help:start(config) -->
@@ -674,9 +674,9 @@ sldl --profile wishlist
 
 ### Searching
 
-- Just like in other soulseek clients, it's always best to provide the least input in the search string necessary to uniquely identify an album or song.
+- It's always best to provide the least input necessary to uniquely identify an album or song.
+  - Sometimes including the artist can be undesirable (e.g. "Various Artists"). For spotify or bandcamp inputs, you can remove the artist name with `--regex A:.*`.
   - Use `--remove-ft` to remove "feat." or "ft." artists 
-  - For spotify or bandcamp albums, you can remove the artist name with `--regex A:.*`.
 - You can download an entire album based on the name of one of its songs by searching for that name with `-a/--album`. 
 - When searching for a single song with a string input, you can provide the album name in addition. The album name will not be included in the query, but search results containing it will be preferred (due to pref-strict-album).
 - When dealing with YouTube playlists you may want to remove any text in parentheses (like (Video)), as well as "Official" and "Lyrics" with `--regex "[\[\(].*?[\]\)]|(?i:lyrics)|(?i:official)"` 

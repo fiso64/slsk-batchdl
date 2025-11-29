@@ -316,7 +316,7 @@ Download modes
     of each distinct album, starting with the one shared by the most users. Note that
     --min-shares-aggregate is 2 by default, meaning that albums shared by only one user will be
     ignored. Album-aggregate mode can be used to download the most popular (or all) albums by an
-    artist. It is recommended to pair it with --interactive.";
+    artist. It is recommended to pair it with --interactive. See Example for more details.";
 
     const string fileConditionsHelp = @"
 File conditions
@@ -546,8 +546,7 @@ Notes
 Tips
 
   Searching
-    - Just like in other soulseek clients, it's always best to provide the least input in the search
-      string necessary to uniquely identify an album or song.
+    - It's always best to provide the least input necessary to uniquely identify an album or song.
     - You can download an entire album based on the name of one of its songs by searching for that
       name with -a/--album.
     - When searching for a single song with a string input, you can provide the album name in
