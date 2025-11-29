@@ -53,6 +53,7 @@ public static partial class Help
         
     --listen-port <port>            Port for incoming connections (default: 49998)
     --connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
+    --user-description <desc>       Optional description text for your Soulseek account
     
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
@@ -255,7 +256,8 @@ Input types
 
   Bandcamp
     A bandcamp track, album, or artist url. Download a single track, an album, or an artist's entire
-    discography.
+    discography. Also accepts wishlist URLs. Extraction might fail due to cloudflare; download the
+    html to a local file and point sldl to it using --from-html in case of issues.
 
   MusicBrainz
     A MusicBrainz.org URL for a release, release group, or collection.

@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 // --fast-search-delay, --fast-search-min-up-speed
 // --min-album-track-count, --max-album-track-count, --extract-max-track-count, --extract-min-track-count 
 // --skip-mode-music-dir, --skip-mode-output-dir, --album-parallel-search-count, --album-track-count-max-retries
-// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html, --user-description
+// --remove-brackets, --no-remove-special-chars, --parse-title, --extract-artist, --from-html
 
 public class Config
 {
