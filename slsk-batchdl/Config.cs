@@ -437,7 +437,7 @@ public class Config
         // don't forget to reset appendable config vars
         newConfig.onComplete = null;
         newConfig.regex = null;
-        
+
         newConfig.appliedProfiles.Clear();
 
         newConfig.ApplyDefaultConfig();

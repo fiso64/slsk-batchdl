@@ -134,7 +134,7 @@ public static partial class Help
     --max-samplerate <rate>         Maximum file sample rate
     --min-bitdepth <depth>          Minimum bit depth
     --max-bitdepth <depth>          Maximum bit depth
-    --strict-title                  File name must contain title
+    --strict-title                  File name must contain track title
     --strict-artist                 File path must contain artist name
     --strict-album                  File path must contain album name
     --banned-users <list>           Comma-separated list of users to ignore
