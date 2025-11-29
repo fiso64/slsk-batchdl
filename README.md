@@ -176,7 +176,7 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 --max-samplerate <rate>         Maximum file sample rate
 --min-bitdepth <depth>          Minimum bit depth
 --max-bitdepth <depth>          Maximum bit depth
---strict-title                  File name must contain title
+--strict-title                  File name must contain track title
 --strict-artist                 File path must contain artist name
 --strict-album                  File path must contain album name
 --banned-users <list>           Comma-separated list of users to ignore
@@ -602,57 +602,44 @@ cd subdir       go to subfolder
 
 ## Examples
 
-Download tracks from a csv file:
+##### Download tracks from a csv file
 ```bash
 sldl "tracks.csv"
 ```
-<br>
 
-Download a Spotify playlist, or your liked songs:
+##### Download a Spotify playlist or your liked songs
 ```bash
 sldl "https://open.spotify.com/playlist/id"
 sldl "spotify-likes"
 ```
 
-<br>
-
-Download the albums of a spotify playlist:
+##### Download the albums of a spotify playlist
 ```bash
 sldl "https://open.spotify.com/playlist/id" -a
 ```
 
-<br>
-
-Download a youtube playlist, retrieving deleted video names and with yt-dlp fallback:
+##### Download a youtube playlist with yt-dlp fallback & retrieving deleted video names
 ```bash
 sldl "https://youtube.com/playlist/id" --get-deleted --yt-dlp
 ```
 
-<br>
-
-Interactive album download, only show albums with 13 or more tracks:
+##### Interactive album download, only include albums with 13 or more tracks
 ```bash
 sldl "Album Name" -at --atc 13+
 ```
 
-<br>
-
-Download a specific song by name and length, preferring lossless:
+##### Download a specific song by name and length, preferring lossless
 ```bash
 sldl "MC MENTAL @ HIS BEST, length=242" --pref-format "flac,wav"
 ``` 
 
-<br>
-
-Download all albums by an artist interactively:
+##### Download all albums by an artist interactively
 ```bash
-sldl "artist=MC MENTAL" -a -g -t
+sldl "artist=MC MENTAL" -agt
 ```
-For some artists, you may want to add `--strict-artist` to avoid listing wrong results. 
+This command will show an interactive UI listing all albums with appearances by the specified artist, starting with the most popular (based on the number of shares). You can download or skip albums as needed. sldl will do its best to group shares of the same album into a single entry (but due to differences in filenames this will not be 100% reliable). For some artists, it can be useful to add `--strict-artist` to avoid listing incorrect results. There is currently no way to only include albums *by that artist*, rather than every album/compilation where that artist appeared (feel free to request it if needed).
 
-<br>
-
-Print all songs by an artist which are not in your library:
+##### Print all songs by an artist which are not in your library
 ```bash
 sldl "artist=MC MENTAL" -g --skip-music-dir "path/to/music" --print results
 ```
