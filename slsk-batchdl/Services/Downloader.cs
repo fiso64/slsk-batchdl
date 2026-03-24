@@ -66,6 +66,7 @@ public class Downloader
             {
                 if (app.downloads.TryGetValue(file.Filename, out var x))
                     x.bytesTransferred = progress.PreviousBytesTransferred;
+                app.ProgressReporter.ReportDownloadProgress(track, progress.PreviousBytesTransferred, file.Size > 0 ? file.Size : 0);
             }
         );
 
@@ -78,6 +79,8 @@ public class Downloader
             using var outputStream = new FileStream(incompleteOutputPath, FileMode.Create);
             var wrapper = new DownloadWrapper(outputPath, response, file, track, downloadCts, progress, tle);
             app.downloads.TryAdd(file.Filename, wrapper);
+
+            app.ProgressReporter.ReportDownloadStart(track, response.Username, file);
 
             int maxRetries = 3;
             int retryCount = 0;
