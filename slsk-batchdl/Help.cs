@@ -47,12 +47,12 @@ public static partial class Help
         if (helpIdx >= 0)
         {
             PrintHelp(helpIdx + 1 < args.Length ? args[helpIdx + 1] : null);
-            Environment.Exit(0);
+            return;
         }
         else if (args.Contains("--version"))
         {
             PrintVersion();
-            Environment.Exit(0);
+            return;
         }
     }
 }

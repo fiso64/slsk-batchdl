@@ -49,8 +49,7 @@ namespace Extractors
                     trackLists = await musicBrainzClient.GetCollectionReleases(mbid, max, off);
                     break;
                 case "artist":
-                    Logger.Fatal("Error: MusicBrainz artist download currently not supported.");
-                    Environment.Exit(1);
+                    throw new Exception("MusicBrainz artist download currently not supported.");
                     break;
                 default:
                     throw new ArgumentException($"Unsupported MusicBrainz entity type: {entityType}");

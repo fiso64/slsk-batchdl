@@ -28,8 +28,7 @@ namespace Extractors
 
             if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
             {
-                Logger.Fatal("Error: Credentials are required when downloading liked music or removing from source playlists.");
-                Environment.Exit(1);
+                throw new Exception("Credentials are required when downloading liked music or removing from source playlists.");
             }
 
             spotifyClient = new Spotify(config.spotifyId, config.spotifySecret, config.spotifyToken, config.spotifyRefresh);
@@ -66,8 +65,7 @@ namespace Extractors
             }
             else if (input.Contains("/artist/"))
             {
-                Logger.Fatal("Error: Spotify artist download currently not supported.");
-                Environment.Exit(1);
+                throw new Exception("Spotify artist download currently not supported.");
             }
             else
             {
@@ -90,8 +88,7 @@ namespace Extractors
                     }
                     else if (!needLogin)
                     {
-                        Logger.Fatal("Error: Spotify playlist not found (it may be set to private, but no credentials have been provided).");
-                        Environment.Exit(1);
+                        throw new Exception("Spotify playlist not found (it may be set to private, but no credentials have been provided).");
                     }
                     else throw;
                 }
