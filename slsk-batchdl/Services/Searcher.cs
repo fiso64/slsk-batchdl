@@ -113,12 +113,14 @@ public class Searcher
         }
 
         void onSearch() => Printing.RefreshOrPrint(progress, 0, $"Searching: {track}", true);
+        app.ProgressReporter.ReportSearchStart(track);
         await RunSearches(track, results, getSearchOptions, responseHandler, config, searchCts.Token, onSearch);
 
         app.searches.TryRemove(track, out _);
         searchEnded = true;
 
         Logger.Debug($"{results.Count} results found: {track}");
+        app.ProgressReporter.ReportSearchResult(track, results.Count);
         if (results.Count > 0)
         {
             Logger.Debug(Printing.FormatList(results, format: result => $"{result.Value.Item1.Username}: {result.Value.Item2.Filename}"));

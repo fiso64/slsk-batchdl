@@ -87,6 +87,7 @@ public class Config
     public bool skipCheckCond = false;
     public bool skipCheckPrefCond = false;
     public bool noProgress = false;
+    public bool progressJson = false;
     public bool writePlaylist = false;
     public bool skipExisting = true;
     public bool writeIndex = true;
@@ -108,7 +109,7 @@ public class Config
     public int concurrentProcesses = 2;
     public int unknownErrorRetries = 2;
     public int maxRetriesPerTrack = 30;
-    public int listenPort = 49998;
+    public int? listenPort = 49998;
     public int searchesPerTime = 34;
     public int searchRenewTime = 220;
     public int aggregateLengthTol = 3;
@@ -186,7 +187,7 @@ public class Config
             if (profile == "help" || profile == "list")
             {
                 ListProfiles();
-                Environment.Exit(0);
+                return;
             }
         }
 
@@ -1072,6 +1073,9 @@ public class Config
                     case "--listen-port":
                         listenPort = getIntParameter(ref i);
                         break;
+                    case "--no-listen":
+                        listenPort = null;
+                        break;
                     case "--st":
                     case "--search-time":
                     case "--search-timeout":
@@ -1312,6 +1316,9 @@ public class Config
                     case "--progress":
                         setFlag(ref noProgress, ref i, false);
                         break;
+                    case "--progress-json":
+                        setFlag(ref progressJson, ref i);
+                        break;
                     case "--smod":
                     case "--skip-mode-output-dir":
                         skipMode = GetParameter(ref i).ToLower().Trim() switch
@@ -1532,8 +1539,7 @@ public class Config
 
     public static void InputError(string message)
     {
-        Logger.Fatal($"Input error: {message}");
-        Environment.Exit(1);
+        throw new Exception($"Input error: {message}");
     }
 
 

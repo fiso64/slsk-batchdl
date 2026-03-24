@@ -7,6 +7,7 @@ using Enums;
 using Extractors;
 using Services;
 using Konsole;
+using Utilities;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -23,11 +24,13 @@ public class DownloaderApplication
     private Searcher? searchService = null;
     private readonly Config defaultConfig;
     private readonly SoulseekClientManager _clientManager;
+    private readonly IProgressReporter _progressReporter;
 
     // Maybe make these private and exposing controlled access if needed
     public TrackLists? trackLists = null;
     public ISoulseekClient? Client => _clientManager.Client;
     public bool IsConnectedAndLoggedIn => _clientManager.IsConnectedAndLoggedIn;
+    public IProgressReporter ProgressReporter => _progressReporter;
     public readonly ConcurrentDictionary<Track, SearchInfo> searches = new();
     public readonly ConcurrentDictionary<string, DownloadWrapper> downloads = new();
     public readonly ConcurrentDictionary<string, int> userSuccessCounts = new();
@@ -36,10 +39,13 @@ public class DownloaderApplication
     private Task? updateTask;
     private readonly CancellationTokenSource appCts = new(); // For overall app cancellation
 
-    public DownloaderApplication(Config config, ISoulseekClient? client = null)
+    public void Cancel() => appCts.Cancel();
+
+    public DownloaderApplication(Config config, ISoulseekClient? client = null, IProgressReporter? progressReporter = null)
     {
         defaultConfig = config;
         _clientManager = new SoulseekClientManager(defaultConfig, client);
+        _progressReporter = progressReporter ?? NullProgressReporter.Instance;
     }
 
     public async Task RunAsync()
@@ -67,6 +73,16 @@ public class DownloaderApplication
         }
 
         Logger.Debug("Got tracks");
+
+        // Report the track list to the progress reporter
+        for (int i = 0; i < trackLists.lists.Count; i++)
+        {
+            var tle = trackLists.lists[i];
+            if (tle.list.Count > 0 && tle.list[0].Count > 0)
+            {
+                _progressReporter.ReportTrackList(tle.list[0], i);
+            }
+        }
 
         defaultConfig.PostProcessArgs(trackLists);
 
@@ -682,10 +698,22 @@ public class DownloaderApplication
 
             tle.indexEditor?.Update();
             tle.playlistEditor?.Update();
-            if (wasInitial) progressReporter.MaybeReport(track.State);
+            if (wasInitial)
+            {
+                progressReporter.MaybeReport(track.State);
+                int downloaded = tracks.Count(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists);
+                int failed = tracks.Count(t => t.State == TrackState.Failed);
+                _progressReporter.ReportOverallProgress(downloaded, failed, tracks.Count);
+            }
         });
 
         await Task.WhenAll(downloadTasks);
+
+        {
+            int downloaded = tracks.Count(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists);
+            int failed = tracks.Count(t => t.State == TrackState.Failed);
+            _progressReporter.ReportJobComplete(downloaded, failed, tracks.Count);
+        }
 
         if (config.removeTracksFromSource && tracks.All(t => t.State == TrackState.Downloaded || t.State == TrackState.AlreadyExists))
             await extractor.RemoveTrackFromSource(tle.source);
@@ -723,7 +751,7 @@ public class DownloaderApplication
                 var interactive = new InteractiveModeManager(this, tle, tle.list, true, retrievedFolders, searchService, filterStr);
                 (index, tracks, retrieveCurrent, filterStr) = await interactive.Run();
                 if (index == -1) break;
-                if (index == -2) Environment.Exit(0);
+                if (index == -2) return;
             }
             else
             {
@@ -848,7 +876,7 @@ public class DownloaderApplication
                     {
                         var defaultAction = config.DeleteAlbumOnFail ? "Yes" : config.IgnoreAlbumFail ? "No" : $"Move to {config.failedAlbumPath}";
                         Console.Write($"Delete files? [Y/n] (default: {defaultAction}): ");
-                        var res = Console.ReadLine().Trim().ToLower();
+                        var res = Console.IsInputRedirected ? "" : (Console.ReadLine() ?? "").Trim().ToLower();
                         if (res == "y")
                             OnAlbumFail(tracks, true, config);
                         else if (res == "" && !config.IgnoreAlbumFail)
@@ -1092,7 +1120,7 @@ public class DownloaderApplication
                 var interactive = new InteractiveModeManager(this, tle, albumArtLists, false, null, searchService, filterStr);
                 (index, tracks, _, filterStr) = await interactive.Run();
                 if (index == -1) break;
-                if (index == -2) Environment.Exit(0);
+                if (index == -2) return downloadedImages;
             }
             else
             {
@@ -1160,7 +1188,7 @@ public class DownloaderApplication
                     if (tracks.Any(t => t.State == TrackState.Downloaded && t.DownloadPath.Length > 0))
                     {
                         Console.Write("Delete files? [Y/n] (default: Yes): ");
-                        var res = Console.ReadLine().Trim().ToLower();
+                        var res = Console.IsInputRedirected ? "" : (Console.ReadLine() ?? "").Trim().ToLower();
                         if (res == "y" || res == "")
                             OnAlbumFail(tracks, true, config);
                     }
@@ -1238,6 +1266,7 @@ public class DownloaderApplication
                         track.State = TrackState.Failed;
                         track.FailureReason = sdEx.Reason;
                     }
+                    _progressReporter.ReportTrackStateChanged(track);
 
                     if (cancelOnFail)
                     {
@@ -1252,6 +1281,7 @@ public class DownloaderApplication
                         track.State = TrackState.Failed;
                         track.FailureReason = FailureReason.Other;
                     }
+                    _progressReporter.ReportTrackStateChanged(track);
                     throw;
                 }
                 else
@@ -1271,6 +1301,7 @@ public class DownloaderApplication
                 track.State = TrackState.Failed;
                 track.FailureReason = FailureReason.Other;
             }
+            _progressReporter.ReportTrackStateChanged(track);
 
             cts.Cancel();
             throw new OperationCanceledException();
@@ -1283,6 +1314,7 @@ public class DownloaderApplication
                 track.State = TrackState.Downloaded;
                 track.DownloadPath = savedFilePath;
             }
+            _progressReporter.ReportTrackStateChanged(track, null, chosenFile);
 
             if (removeFromSource && config.removeTracksFromSource)
             {
@@ -1418,7 +1450,7 @@ public class DownloaderApplication
             if (string.IsNullOrEmpty(config.indexFilePath))
             {
                 Logger.Fatal("Error: No index file path provided");
-                Environment.Exit(1);
+                return;
             }
 
             var indexFilePath = Utils.GetFullPath(Utils.ExpandVariables(config.indexFilePath));
@@ -1426,7 +1458,7 @@ public class DownloaderApplication
             if (!File.Exists(indexFilePath))
             {
                 Logger.Fatal($"Error: Index file {indexFilePath} does not exist");
-                Environment.Exit(1);
+                return;
             }
 
             var index = new M3uEditor(indexFilePath, new TrackLists(), M3uOption.Index, true);
