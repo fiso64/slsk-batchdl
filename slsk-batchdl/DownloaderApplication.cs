@@ -78,7 +78,7 @@ public class DownloaderApplication
         for (int i = 0; i < trackLists.lists.Count; i++)
         {
             var tle = trackLists.lists[i];
-            if (tle.list.Count > 0 && tle.list[0].Count > 0)
+            if (tle.list != null && tle.list.Count > 0 && tle.list[0].Count > 0)
             {
                 _progressReporter.ReportTrackList(tle.list[0], i);
             }
