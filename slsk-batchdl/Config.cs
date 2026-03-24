@@ -145,6 +145,19 @@ public class Config
 
     public Config() { }
 
+    public static IReadOnlyList<string> GetAvailableProfiles()
+    {
+        var c = new Config();
+        c.configProfiles = new Dictionary<string, (List<string> args, string? cond)>();
+        c.SetConfigPath(Array.Empty<string>());
+        if (c.confPath != "none" && File.Exists(c.confPath))
+            c.ParseConfig(c.confPath);
+        return c.configProfiles.Keys
+            .Where(k => k != "default")
+            .OrderBy(k => k)
+            .ToList();
+    }
+
     public Config(string[] args)
     {
         configProfiles = new Dictionary<string, (List<string> args, string? cond)>();
