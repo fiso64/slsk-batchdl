@@ -1,4 +1,6 @@
-﻿public static partial class Program
+﻿using Utilities;
+
+internal static partial class Program
 {
     public static async Task Main(string[] args)
     {
@@ -12,7 +14,13 @@
         var config = new Config(args);
         Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
 
-        var app = new DownloaderApplication(config);
+        IProgressReporter? reporter = null;
+        if (config.progressJson)
+        {
+            reporter = new JsonStreamProgressReporter(Console.Out);
+        }
+
+        var app = new DownloaderApplication(config, progressReporter: reporter);
         await app.RunAsync();
     }
 }

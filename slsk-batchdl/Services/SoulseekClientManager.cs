@@ -118,15 +118,27 @@ public class SoulseekClientManager
                 hasFreeUploadSlot: true
             ));
 
-            var clientOptions = new SoulseekClientOptions(
+            var clientOptionsBuilder = new SoulseekClientOptions(
                 transferConnectionOptions: transferConnectionOptions,
                 serverConnectionOptions: serverConnectionOptions,
-                listenPort: config.listenPort,
+                listenPort: config.listenPort ?? 49998,
                 maximumConcurrentSearches: int.MaxValue, // this is limited later in the searcher code
                 userInfoResolver: userInfoResolver
             );
 
-            return new SoulseekClient(clientOptions);
+            if (config.listenPort == null)
+            {
+                // No listen port: create client without listener to avoid bind failures
+                clientOptionsBuilder = new SoulseekClientOptions(
+                    transferConnectionOptions: transferConnectionOptions,
+                    serverConnectionOptions: serverConnectionOptions,
+                    enableListener: false,
+                    maximumConcurrentSearches: int.MaxValue,
+                    userInfoResolver: userInfoResolver
+                );
+            }
+
+            return new SoulseekClient(clientOptionsBuilder);
         }
     }
 
