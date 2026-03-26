@@ -177,8 +177,7 @@ public class SoulseekClientManager
                 if (!config.noModifyShareCount)
                 {
                     Logger.Debug($"Setting share count for {displayUser}");
-                    // Pass cancellation token if supported
-                    await client.SetSharedCountsAsync(50, 1000);
+                    await client.SetSharedCountsAsync(config.sharedFiles, config.sharedFolders, cancellationToken);
                 }
                 Logger.Debug($"Logged in {displayUser}");
                 break;

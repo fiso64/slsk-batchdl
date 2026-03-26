@@ -54,6 +54,8 @@ public static partial class Help
     --listen-port <port>            Port for incoming connections (default: 49998)
     --connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
     --user-description <desc>       Optional description text for your Soulseek account
+    --shared-files <int>            Number of files you share on Soulseek (default: 0)
+    --shared-folders <int>          Number of folders you share on Soulseek (default: 0)
     
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
