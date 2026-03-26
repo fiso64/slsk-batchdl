@@ -33,8 +33,8 @@
       },
       "AngleSharp": {
         "type": "Transitive",
-        "resolved": "1.3.0",
-        "contentHash": "iHzfn4cK6CmhuURNdEpmSQCq5/HZFldEpkbnmqT9My8+6l2Sz3F+NxoqRA8z/jTkWB+SAu5boRdp4v/WtyjuIQ=="
+        "resolved": "1.4.0",
+        "contentHash": "6ph8mpaQx0KL0COYRt0kI8MB9gSp1PtKijKMhJU//+aVFgKAJLKDesG/+26JSaVCOrHNgPf12wpfoyRcMYOeXg=="
       },
       "EmbedIO": {
         "type": "Transitive",
@@ -96,11 +96,6 @@
         "dependencies": {
           "System.Diagnostics.DiagnosticSource": "5.0.0"
         }
-      },
-      "Microsoft.Bcl.AsyncInterfaces": {
-        "type": "Transitive",
-        "resolved": "9.0.1",
-        "contentHash": "IVkmUqf+KzbuXKrxi2tyQlg11RArYk26t2eU5cHekff+7Ao09vH8vt8idC0BJSMnpiRV2OK66zM2EwJU6Tm5Cw=="
       },
       "Microsoft.CodeCoverage": {
         "type": "Transitive",
@@ -197,19 +192,19 @@
       },
       "SpotifyAPI.Web": {
         "type": "Transitive",
-        "resolved": "7.2.1",
-        "contentHash": "7yatLKdwPmigJ+GGPUHwZppYzWNIPOSrpA3KKK/kndJl657zm1yzaAQ7j2xy3G7lyiKsdRZtz4k6CpFN32pyng==",
+        "resolved": "7.4.2",
+        "contentHash": "DxyIO+oxI7gyqyGJ5QzVWf31JInRDRhqGtTXIKX6HUJBie+aR+OuB4bFSYWNVO6GL4V+Tm3PQBKNBa+UJzchOA==",
         "dependencies": {
           "Newtonsoft.Json": "13.0.3"
         }
       },
       "SpotifyAPI.Web.Auth": {
         "type": "Transitive",
-        "resolved": "7.2.1",
-        "contentHash": "/U/KCV4iBsG3rHBCDL7THKkJcNdfP0Lqhq87afKeTjP7EQGM5haDy6rNblZlL/t9RnK9+DFhWCdAKVQagDB6bg==",
+        "resolved": "7.4.2",
+        "contentHash": "+Og2S4d8Q/lrZsBXlgPt0FieigtzVHj1Lg6+eDF+5RwVpKsfwQjW7aVfaDyktVCo56T2qOBjbqC/XluIxXGJgQ==",
         "dependencies": {
           "EmbedIO": "3.5.2",
-          "SpotifyAPI.Web": "7.2.1"
+          "SpotifyAPI.Web": "7.4.2"
         }
       },
       "System.CodeDom": {
@@ -221,11 +216,6 @@
         "type": "Transitive",
         "resolved": "5.0.0",
         "contentHash": "tCQTzPsGZh/A9LhhA6zrqCRV4hOHsK90/G7q3Khxmn6tnB1PuNU0cRaKANP2AWcF9bn0zsuOoZOSrHuJk6oNBA=="
-      },
-      "System.IO.Pipelines": {
-        "type": "Transitive",
-        "resolved": "9.0.1",
-        "contentHash": "uXf5o8eV/gtzDQY4lGROLFMWQvcViKcF8o4Q6KpIOjloAQXrnscQSu6gTxYJMHuNJnh7szIF9AzkaEq+zDLoEg=="
       },
       "System.Management": {
         "type": "Transitive",
@@ -244,25 +234,6 @@
         "type": "Transitive",
         "resolved": "1.6.0",
         "contentHash": "COC1aiAJjCoA5GBF+QKL2uLqEBew4JsCkQmoHKbN3TlOZKa2fKLz5CpiRQKDz0RsAOEGsVKqOD5bomsXq/4STQ=="
-      },
-      "System.Text.Encodings.Web": {
-        "type": "Transitive",
-        "resolved": "9.0.1",
-        "contentHash": "XkspqduP2t1e1x2vBUAD/xZ5ZDvmywuUwsmB93MvyQLospJfqtX0GsR/kU0vUL2h4kmvf777z3txV2W4NrQ9Qg=="
-      },
-      "System.Text.Json": {
-        "type": "Transitive",
-        "resolved": "9.0.1",
-        "contentHash": "eqWHDZqYPv1PvuvoIIx5pF74plL3iEOZOl/0kQP+Y0TEbtgNnM2W6k8h8EPYs+LTJZsXuWa92n5W5sHTWvE3VA==",
-        "dependencies": {
-          "System.IO.Pipelines": "9.0.1",
-          "System.Text.Encodings.Web": "9.0.1"
-        }
-      },
-      "System.Threading.Tasks.Extensions": {
-        "type": "Transitive",
-        "resolved": "4.6.0",
-        "contentHash": "I5G6Y8jb0xRtGUC9Lahy7FUvlYlnGMMkbuKAQBy8Jb7Y6Yn8OlBEiUOY0PqZ0hy6Ua8poVA1ui1tAIiXNxGdsg=="
       },
       "System.ValueTuple": {
         "type": "Transitive",
@@ -284,13 +255,10 @@
       },
       "YoutubeExplode": {
         "type": "Transitive",
-        "resolved": "6.5.6",
-        "contentHash": "W0iR/zLll4UwgsfPvgGkNtn+f01ut8Mm3lDrU2V3iujRmQSnelKUXWsFvZYojw/gPD+pvTS4/MMYNkDvwocbvg==",
+        "resolved": "6.5.7",
+        "contentHash": "oIJpcxpgSUaPxg73iYj1a0hckbCbOHOrE1OzeCH9lNf6oRjJp2awOyPaWvf1qRm6kYFJ88FktdMeT+lGyNUcvA==",
         "dependencies": {
-          "AngleSharp": "1.3.0",
-          "Microsoft.Bcl.AsyncInterfaces": "9.0.1",
-          "System.Text.Json": "9.0.1",
-          "System.Threading.Tasks.Extensions": "4.6.0"
+          "AngleSharp": "1.4.0"
         }
       },
       "sldl": {
@@ -301,10 +269,10 @@
           "HtmlAgilityPack": "[1.11.72, )",
           "SmallestCSVParser": "[1.2.0, )",
           "Soulseek": "[8.5.0, )",
-          "SpotifyAPI.Web": "[7.2.1, )",
-          "SpotifyAPI.Web.Auth": "[7.2.1, )",
+          "SpotifyAPI.Web": "[7.4.2, )",
+          "SpotifyAPI.Web.Auth": "[7.4.2, )",
           "TagLibSharp": "[2.3.0, )",
-          "YoutubeExplode": "[6.5.6, )"
+          "YoutubeExplode": "[6.5.7, )"
         }
       }
     }
