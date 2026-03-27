@@ -25,8 +25,9 @@ namespace Models
                 Path = tagFile.Name;
                 SetFromTagLib(tagFile);
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Trace($"Failed to read tags for '{path}': {ex.Message}");
                 Path = path;
             }
         }
