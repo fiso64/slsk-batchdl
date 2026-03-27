@@ -37,11 +37,16 @@
     <PackageReference Include="YoutubeExplode" Version="6.5.7" />
   </ItemGroup>
 
-  <!-- TagLib# uses reflection to instantiate format-specific file types (Ogg, Mpeg, Flac, etc.)
-       via Activator.CreateInstance. The trimmer can't trace these as reachable and strips their
-       constructors, causing MissingMethodException on trimmed Linux/macOS builds. -->
+  <!-- Libraries excluded from trimming.
+       TagLibSharp: uses Activator.CreateInstance via reflection to create format-specific file types (Ogg, Mpeg, etc.) —
+         the trimmer cannot trace these as reachable so strips their constructors.
+       Soulseek: core dependency; better safe than sorry.
+       Newtonsoft.Json: transitively required by SpotifyAPI.Web and Google.Apis.Core; notoriously reflection-heavy
+         serializer that is explicitly not trim-compatible and will produce IL2104 warnings / runtime failures when trimmed. -->
   <ItemGroup Condition="'$(PublishTrimmed)' == 'true'">
     <TrimmerRootAssembly Include="TagLibSharp" />
+    <TrimmerRootAssembly Include="Soulseek" />
+    <TrimmerRootAssembly Include="Newtonsoft.Json" />
   </ItemGroup>
 
   
