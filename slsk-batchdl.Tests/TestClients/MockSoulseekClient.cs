@@ -246,7 +246,7 @@ namespace Tests.ClientTests
             if (username == "local")
             {
                 // For local user, try to find the actual file in the filesystem
-                sourceFilePath = Path.GetFullPath(remoteFilename);
+                sourceFilePath = Path.GetFullPath(Utils.GetAsPathSlsk(remoteFilename));
                 if (!System.IO.File.Exists(sourceFilePath))
                 {
                     throw new FileNotFoundException($"Local file {sourceFilePath} not found");
