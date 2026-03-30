@@ -25,14 +25,16 @@
 
 - Skip retrieve full folder contents whenever it's already guaranteed to contain all files (e.g. when it was `cd`'d into).
 
-## Advanced TODO (probably not happening any time soon)
+## Advanced TODO
 
-- Big refactor. The refactor should be done with the following three todos in mind (fast-search for albums, interactive mode for individual songs, parallel album downloading), and (in particular) make them much easier to implement. Here is everything wrong with the current code:
-    1. DownloaderApplication.cs is a god class that does too much. Some functions (e.g. MainLoop) are also way too long and unreadable.
+- Big refactor. The refactor should be done with the below todos in mind, and (in particular) make them much easier to implement. Here is everything wrong with the current code:
+    1. DownloaderApplication.cs is a god class that does too much. Some functions (e.g. MainLoop) are also way too long and unreadable. Global variables are bad.
     2. Searcher.SearchAndDownload is too long, messy, and unreadable. 
     3. State managment with `searches`, `downloads`, `downloadedFiles`, etc. needs rethinking. The way downloads are marked as stale and cancelled might also need rethinking.
-    4. Data models (`TrackListEntry`, `Track`, etc.) are poorly designed. `TrackListEntry` is hard to work with.
+    4. Data models (`TrackListEntry`, `Track`, etc.) are poorly designed. Rethink from scratch.
     5. Config class needs to be refactored. Adding new flags is annoying. Will probably have to write a custom parser library as existing ones on nuget are unlikely to support all features of the current code. Use [Attributes]. Might also want to split config into several subclasses (search config, youtube config, etc.) (optional).
+
+- Make it usable as a library/backend for GUIs.
 
 - fast-search for albums
 
