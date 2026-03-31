@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set FRAMEWORK=net8.0
+set FRAMEWORK=net10.0
 
 set RID=%1
 
