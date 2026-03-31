@@ -287,6 +287,26 @@ namespace Tests.ConfigTests
             Assert.AreEqual(10, result.maxStaleTime);
             Assert.IsTrue(result.fastSearch);
         }
+
+        [TestMethod]
+        public void Priority_RuntimeFields_PreservedOnResult()
+        {
+            // inputType, interactiveMode, album, aggregate are set at runtime (not in config/CLI).
+            // They must survive the UpdateProfiles rebuild — guards against a naive "rebuild from scratch" fix.
+            var config = MakeConfig("[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
+            config.inputType = InputType.YouTube;
+            config.interactiveMode = true;
+            config.album = true;
+            config.aggregate = true;
+            var (cfg, tle, ls) = SetupUpdateCall(config);
+
+            var result = cfg.UpdateProfiles(tle, ls);
+
+            Assert.AreEqual(InputType.YouTube, result.inputType);
+            Assert.IsTrue(result.interactiveMode);
+            Assert.IsTrue(result.album);
+            Assert.IsTrue(result.aggregate);
+        }
     }
 
     [TestClass]
@@ -412,8 +432,6 @@ namespace Tests.ConfigTests
         {
             // Profile A: always satisfied (interactive). Profile B: flips false.
             // When B flips false, A's setting should still apply.
-            // Note: B's setting (fast-search) is NOT reset because UpdateProfiles rebuilds from a
-            // copy of the previous result — it only reverts values explicitly set in [default] or CLI args.
             var config = MakeConfig(
                 "max-stale-time = 1\n" +
                 "[profile-a]\nprofile-cond = interactive\nmax-stale-time = 10\n" +
@@ -428,8 +446,28 @@ namespace Tests.ConfigTests
             first.album = false;
             var second = DoUpdate(first, interactiveMode: true);
             Assert.AreEqual(10, second.maxStaleTime, "profile-a still applies");
-            // fast-search persists from the copy because [default] doesn't reset it
         }
+
+        // BUG: When a profile's condition flips false, settings it applied are NOT reverted to their
+        // built-in defaults — they persist in the copy that UpdateProfiles starts from. Only values
+        // explicitly set in [default] or CLI args get reset. Root cause: Config mixes runtime state
+        // (interactiveMode, inputType, etc.) with configured state (maxStaleTime, fastSearch, etc.),
+        // so UpdateProfiles can't know which fields to reset without a clean base to rebuild from.
+        // Fix requires separating runtime state from configured state — address in the config refactor.
+        //
+        // [TestMethod]
+        // public void ConditionFlip_ProfileRemoved_RevertsToBuiltInDefault()
+        // {
+        //     var config = MakeConfig(
+        //         "[auto]\nprofile-cond = interactive\nfast-search = true");
+        //     // No [default] section, no CLI --fast-search flag
+        //
+        //     var first = DoUpdate(config, interactiveMode: true);
+        //     Assert.IsTrue(first.fastSearch);
+        //
+        //     var second = DoUpdate(first, interactiveMode: false);
+        //     Assert.IsFalse(second.fastSearch, "should revert to built-in default (false) when profile removed");
+        // }
 
         [TestMethod]
         public void ConditionFlip_TrueToFalseToTrue_CorrectOnEachCall()
