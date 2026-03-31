@@ -365,11 +365,15 @@ public class Config
             if (!configProfiles.ContainsKey(curProfile))
                 configProfiles[curProfile] = (new List<string>(), null);
 
-            if (key == "profile-cond" && curProfile != "default")
+            if (key == "profile-cond")
             {
-                var a = configProfiles[curProfile].args;
-                configProfiles[curProfile] = (a, val);
-                HasAutoProfiles = true;
+                if (curProfile != "default")
+                {
+                    var a = configProfiles[curProfile].args;
+                    configProfiles[curProfile] = (a, val);
+                    HasAutoProfiles = true;
+                }
+                // profile-cond in [default] is silently ignored
             }
             else
             {

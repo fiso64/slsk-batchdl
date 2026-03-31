@@ -1,6 +1,8 @@
 
 ## TODO
 
+- Downloads always fail in the trimmed build (long Soulseek.NET error). A change between commit 88336b8c567d8f3778839a01dce980b7accfc450 and abe86e906257d9ce18d46983b161c4c01c8ef600 broke it, most likely the change from net 6 to 8. Expected it to work after excluding Soulseek.NET from trimming. Look for a way to restore old net 6 trimming logic (the new aggressive trim does not appear to save much more space, but breaks many things).
+
 - Bug: Album downloads go stale and cancel when there are multiple files downloading from the same user and one triggers the stale timeout. To repro:
     1. Find an album share by a user whose client is configured to allow multiple simultaneous uploads to the same user
     2. Download the album. The following must now happen for the bug to occur:
