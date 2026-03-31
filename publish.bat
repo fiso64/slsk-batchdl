@@ -53,7 +53,9 @@ exit /b
 
 :publish_and_zip
 dotnet publish slsk-batchdl\slsk-batchdl.csproj -c Release -r %1 -p:PublishSingleFile=true -p:PublishTrimmed=%2 --self-contained=%2
+
+if exist LICENSE copy /Y LICENSE "slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish\"
+
 if exist slsk-batchdl\bin\zips\%3 del /F /Q slsk-batchdl\bin\zips\%3
 powershell.exe -nologo -noprofile -command "& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('slsk-batchdl\bin\Release\%FRAMEWORK%\%1\publish', 'slsk-batchdl\bin\zips\%3'); }"
 exit /b
-
