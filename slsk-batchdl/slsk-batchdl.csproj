@@ -37,15 +37,22 @@
     <PackageReference Include="YoutubeExplode" Version="6.5.7" />
   </ItemGroup>
 
-  <!-- Libraries excluded from trimming.
+  <!-- Trimming configuration.
+       TrimMode=partial restores the .NET 6 trimming behavior: only assemblies that have explicitly opted
+       into trimming are trimmed. This prevents the .NET 8 default member-level trimming from stripping
+       overloads that are only reachable via dynamic dispatch (e.g. Soulseek.NET's Waiter.Cancel uses
+       'dynamic' to call TaskCompletionSource<T>.TrySetCanceled(CancellationToken), and the .NET 8
+       aggressive trimmer removes that overload since it's not statically reachable).
+
        TagLibSharp: uses Activator.CreateInstance via reflection to create format-specific file types (Ogg, Mpeg, etc.) —
          the trimmer cannot trace these as reachable so strips their constructors.
-       Soulseek: core dependency; better safe than sorry.
        Newtonsoft.Json: transitively required by SpotifyAPI.Web and Google.Apis.Core; notoriously reflection-heavy
          serializer that is explicitly not trim-compatible and will produce IL2104 warnings / runtime failures when trimmed. -->
+  <PropertyGroup Condition="'$(PublishTrimmed)' == 'true'">
+    <TrimMode>partial</TrimMode>
+  </PropertyGroup>
   <ItemGroup Condition="'$(PublishTrimmed)' == 'true'">
     <TrimmerRootAssembly Include="TagLibSharp" />
-    <TrimmerRootAssembly Include="Soulseek" />
     <TrimmerRootAssembly Include="Newtonsoft.Json" />
   </ItemGroup>
 
