@@ -36,7 +36,7 @@
     4. Data models (`TrackListEntry`, `Track`, etc.) are poorly designed. Rethink from scratch.
     5. Config class needs to be refactored. Adding new flags is annoying. Will probably have to write a custom parser library as existing ones on nuget are unlikely to support all features of the current code. Use [Attributes]. Might also want to split config into several subclasses (search config, youtube config, etc.) (optional).
 
-- Make it usable as a library/backend for GUIs.
+- Make it usable as a library/backend for GUIs. The CLI downloader should become a consumer.
 
 - fast-search for albums
 
