@@ -118,6 +118,8 @@ public class Config
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
     public List<(Track, Track)>? regex = null;
+    public bool enableSharing = false;
+    public List<string> shareFolders = new();
     public Logger.LogLevel logLevel = Logger.LogLevel.Info;
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
     public InputType inputType = InputType.None;
@@ -1088,6 +1090,12 @@ public class Config
                         break;
                     case "--no-listen":
                         listenPort = null;
+                        break;
+                    case "--enable-sharing":
+                        setFlag(ref enableSharing, ref i);
+                        break;
+                    case "--share-folders":
+                        shareFolders = GetParameter(ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                         break;
                     case "--st":
                     case "--search-time":
