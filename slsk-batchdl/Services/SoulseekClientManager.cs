@@ -7,6 +7,7 @@ public class SoulseekClientManager
     private ISoulseekClient? _client;
     private bool _isInitialized = false; // Tracks if initialization attempt was made
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
+    private FileShareService? _fileShareService;
 
     public ISoulseekClient? Client => _client;
 
@@ -23,6 +24,11 @@ public class SoulseekClientManager
             _client = client;
             _isInitialized = true;
         }
+    }
+
+    public void SetFileShareService(FileShareService fileShareService)
+    {
+        _fileShareService = fileShareService;
     }
 
     /// <summary>
@@ -79,6 +85,15 @@ public class SoulseekClientManager
         }
     }
 
+    public void Disconnect()
+    {
+        if (_client == null) return;
+        try { _client.Disconnect(); } catch { }
+        (_client as IDisposable)?.Dispose();
+        _client = null;
+        _isInitialized = false;
+    }
+
 
     private ISoulseekClient CreateClientInstance(Config config)
     {
@@ -118,21 +133,41 @@ public class SoulseekClientManager
                 hasFreeUploadSlot: true
             ));
 
-            var clientOptionsBuilder = new SoulseekClientOptions(
-                transferConnectionOptions: transferConnectionOptions,
-                serverConnectionOptions: serverConnectionOptions,
-                listenPort: config.listenPort ?? 49998,
-                maximumConcurrentSearches: int.MaxValue, // this is limited later in the searcher code
-                userInfoResolver: userInfoResolver
-            );
+            SoulseekClientOptions clientOptionsBuilder;
 
-            if (config.listenPort == null)
+            if (config.listenPort == null && _fileShareService == null)
             {
-                // No listen port: create client without listener to avoid bind failures
+                // No listen port and no sharing: create client without listener to avoid bind failures
                 clientOptionsBuilder = new SoulseekClientOptions(
                     transferConnectionOptions: transferConnectionOptions,
                     serverConnectionOptions: serverConnectionOptions,
                     enableListener: false,
+                    maximumConcurrentSearches: int.MaxValue,
+                    userInfoResolver: userInfoResolver
+                );
+            }
+            else if (_fileShareService != null)
+            {
+                // Sharing enabled: wire delegates and ensure listener is active
+                clientOptionsBuilder = new SoulseekClientOptions(
+                    transferConnectionOptions: transferConnectionOptions,
+                    serverConnectionOptions: serverConnectionOptions,
+                    listenPort: config.listenPort ?? 49998,
+                    enableListener: true,
+                    maximumConcurrentSearches: int.MaxValue,
+                    userInfoResolver: userInfoResolver,
+                    browseResponseResolver: _fileShareService.BrowseResponseResolver,
+                    searchResponseResolver: _fileShareService.SearchResponseResolver,
+                    directoryContentsResolver: _fileShareService.DirectoryContentsResolver,
+                    enqueueDownload: _fileShareService.EnqueueDownloadHandler
+                );
+            }
+            else
+            {
+                clientOptionsBuilder = new SoulseekClientOptions(
+                    transferConnectionOptions: transferConnectionOptions,
+                    serverConnectionOptions: serverConnectionOptions,
+                    listenPort: config.listenPort ?? 49998,
                     maximumConcurrentSearches: int.MaxValue,
                     userInfoResolver: userInfoResolver
                 );
@@ -177,8 +212,16 @@ public class SoulseekClientManager
                 if (!config.noModifyShareCount)
                 {
                     Logger.Debug($"Setting share count for {displayUser}");
-                    // Pass cancellation token if supported
-                    await client.SetSharedCountsAsync(50, 1000);
+                    if (_fileShareService != null)
+                    {
+                        _fileShareService.SetClient(client);
+                        var (dirs, files) = _fileShareService.GetShareCounts();
+                        await client.SetSharedCountsAsync(dirs, files);
+                    }
+                    else
+                    {
+                        await client.SetSharedCountsAsync(50, 1000);
+                    }
                 }
                 Logger.Debug($"Logged in {displayUser}");
                 break;
