@@ -115,6 +115,8 @@ public class Config
     public int aggregateLengthTol = 3;
     public int parallelAlbumSearchProcesses = 5;
     public int connectTimeout = 20000;
+    public int sharedFiles = 0;
+    public int sharedFolders = 0;
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
     public List<(Track, Track)>? regex = null;
@@ -365,11 +367,15 @@ public class Config
             if (!configProfiles.ContainsKey(curProfile))
                 configProfiles[curProfile] = (new List<string>(), null);
 
-            if (key == "profile-cond" && curProfile != "default")
+            if (key == "profile-cond")
             {
-                var a = configProfiles[curProfile].args;
-                configProfiles[curProfile] = (a, val);
-                HasAutoProfiles = true;
+                if (curProfile != "default")
+                {
+                    var a = configProfiles[curProfile].args;
+                    configProfiles[curProfile] = (a, val);
+                    HasAutoProfiles = true;
+                }
+                // profile-cond in [default] is silently ignored
             }
             else
             {
@@ -1495,6 +1501,12 @@ public class Config
                         break;
                     case "--user-description":
                         userDescription = GetParameter(ref i);
+                        break;
+                    case "--shared-files":
+                        sharedFiles = getIntParameter(ref i);
+                        break;
+                    case "--shared-folders":
+                        sharedFolders = getIntParameter(ref i);
                         break;
                     default:
                         InputError($"Unknown argument: {args[i]}");

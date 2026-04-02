@@ -216,11 +216,11 @@ public class SoulseekClientManager
                     {
                         _fileShareService.SetClient(client);
                         var (dirs, files) = _fileShareService.GetShareCounts();
-                        await client.SetSharedCountsAsync(dirs, files);
+                        await client.SetSharedCountsAsync(files, dirs, cancellationToken);
                     }
                     else
                     {
-                        await client.SetSharedCountsAsync(50, 1000);
+                        await client.SetSharedCountsAsync(config.sharedFiles, config.sharedFolders, cancellationToken);
                     }
                 }
                 Logger.Debug($"Logged in {displayUser}");

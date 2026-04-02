@@ -25,9 +25,12 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
     This will search for the album and show an interactive UI for result selection.  
     For more examples, see the [usage examples section](#examples-2).
 
+## Important
 > [!NOTE]
-> `sldl` itself doesn't share your music folders. To keep the Soulseek network healthy over the long term, please also share your collection using a regular client like [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd).  
-> It is recommended to use `sldl` with a **separate Soulseek account** to avoid connection problems.
+> `sldl` doesn't share your music folders by itself. To keep the Soulseek network healthy over the long term, please also share your collection using a regular client like [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd). 
+
+> [!NOTE]
+> Because it's not possible to run the same account on two separate clients simultaneously, it is recommended to use `sldl` with a **separate Soulseek account** to avoid connection problems.
 
 ## Index
  - [Options](#options)
@@ -96,6 +99,8 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 --listen-port <port>            Port for incoming connections (default: 49998)
 --connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
 --user-description <desc>       Optional description text for your Soulseek account
+--shared-files <int>            Number of files you share on Soulseek (default: 0)
+--shared-folders <int>          Number of folders you share on Soulseek (default: 0)
 
 --on-complete <command>         Run a command when a download completes. See `--help
                                 on-complete`

@@ -1,4 +1,4 @@
-﻿
+
 using Models;
 using Enums;
 
@@ -210,7 +210,7 @@ namespace Services
                 {
                     TagLib.File musicFile;
                     try { musicFile = TagLib.File.Create(path); }
-                    catch { continue; }
+                    catch (Exception ex) { Logger.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
 
                     string ppath = Preprocess(path[..path.LastIndexOf('.')], false, false)[removeLen..];
                     string pname = Path.GetFileName(ppath);
@@ -286,7 +286,7 @@ namespace Services
                 {
                     TagLib.File musicFile;
                     try { musicFile = TagLib.File.Create(path); }
-                    catch { continue; }
+                    catch (Exception ex) { Logger.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
 
                     string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "", false, false);
                     string ptitle = Preprocess(musicFile.Tag.Title ?? "", false, false);
@@ -343,7 +343,7 @@ namespace Services
                 {
                     TagLib.File musicFile;
                     try { musicFile = TagLib.File.Create(path); }
-                    catch { continue; }
+                    catch (Exception ex) { Logger.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
 
                     string partist = Preprocess(musicFile.Tag.JoinedPerformers ?? "", false, false);
                     string ptitle = Preprocess(musicFile.Tag.Title ?? "", false, false);
@@ -459,8 +459,9 @@ namespace Services
                         return false;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Logger.Trace($"Failed to read tags for '{t.DownloadPath}': {ex.Message}");
                     return false;
                 }
             }
@@ -487,7 +488,7 @@ namespace Services
                     {
                         TagLib.File musicFile;
                         try { musicFile = TagLib.File.Create(path); }
-                        catch { return false; }
+                        catch (Exception ex) { Logger.Trace($"Failed to read tags for '{path}': {ex.Message}"); return false; }
 
                         if (!context.conditions.FileSatisfies(musicFile, track))
                             return false;

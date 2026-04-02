@@ -19,6 +19,9 @@ namespace Tests.ClientTests
 
         public static MockSoulseekClient FromLocalPaths(bool useTags, params string[] localPaths)
         {
+            if (useTags)
+                Logger.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
+
             var files = localPaths.SelectMany(path =>
                 System.IO.Directory.Exists(path)
                     ? System.IO.Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
@@ -34,8 +37,9 @@ namespace Tests.ClientTests
                     {
                         if (useTags)
                         {
-                            using (var file = TagLib.File.Create(path))
+                            try
                             {
+                                using var file = TagLib.File.Create(path);
                                 if (file.Properties != null)
                                 {
                                     attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitRate, file.Properties.AudioBitrate));
@@ -49,6 +53,7 @@ namespace Tests.ClientTests
                                         attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitDepth, file.Properties.BitsPerSample));
                                 }
                             }
+                            catch (Exception ex) { Logger.Warn($"Failed to read tags for '{path}': {ex.Message}"); }
                         }
                         else
                         {
@@ -246,7 +251,7 @@ namespace Tests.ClientTests
             if (username == "local")
             {
                 // For local user, try to find the actual file in the filesystem
-                sourceFilePath = Path.GetFullPath(remoteFilename);
+                sourceFilePath = Path.GetFullPath(Utils.GetAsPathSlsk(remoteFilename));
                 if (!System.IO.File.Exists(sourceFilePath))
                 {
                     throw new FileNotFoundException($"Local file {sourceFilePath} not found");

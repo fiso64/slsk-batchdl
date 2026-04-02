@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 
 using Models;
 using Enums;
@@ -168,7 +168,7 @@ public class FileManager
             {
                 triedGettingFile = true;
                 try { file = TagLib.File.Create(track.DownloadPath); }
-                catch { }
+                catch (Exception ex) { Logger.Trace($"Failed to read tags for '{track.DownloadPath}': {ex.Message}"); }
             }
             return file;
         }

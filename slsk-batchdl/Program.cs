@@ -1,4 +1,4 @@
-﻿using Utilities;
+using Utilities;
 
 internal static partial class Program
 {
@@ -6,7 +6,8 @@ internal static partial class Program
     {
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        Help.PrintAndExitIfNeeded(args);
+        if (Help.PrintAndExitIfNeeded(args))
+            return;
 
         Logger.SetupExceptionHandling();
         Logger.AddConsole();

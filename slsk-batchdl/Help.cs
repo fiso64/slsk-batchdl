@@ -30,29 +30,35 @@ public static partial class Help
 
     public static void PrintVersion()
     {
-        Console.WriteLine(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version);
+        var asm = System.Reflection.Assembly.GetExecutingAssembly();
+        var attr = (System.Reflection.AssemblyInformationalVersionAttribute?)
+            System.Attribute.GetCustomAttribute(asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+        var v = attr?.InformationalVersion ?? "";
+        Console.WriteLine(v.Split('+')[0]);
     }
 
-    public static void PrintAndExitIfNeeded(string[] args)
+    public static bool PrintAndExitIfNeeded(string[] args)
     {
         if (args.Length == 0)
         {
             Console.WriteLine(usageText.Trim());
             Console.WriteLine();
             Console.WriteLine("Type sldl --help to see a list of all options.");
-            return;
+            return true;
         }
 
         int helpIdx = Array.FindLastIndex(args, x => x == "--help" || x == "-h");
         if (helpIdx >= 0)
         {
             PrintHelp(helpIdx + 1 < args.Length ? args[helpIdx + 1] : null);
-            return;
+            return true;
         }
         else if (args.Contains("--version"))
         {
             PrintVersion();
-            return;
+            return true;
         }
+
+        return false;
     }
 }
