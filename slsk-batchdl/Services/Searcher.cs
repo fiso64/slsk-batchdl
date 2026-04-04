@@ -461,7 +461,9 @@ public class Searcher
         {
             artist = realParts[0];
             title  = realParts[1];
-            if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
+            if (maybeRemix)
+                artistMaybeWrong = true;
+            else if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
                 artistMaybeWrong = true;
         }
         else if (parts.Length == 3)

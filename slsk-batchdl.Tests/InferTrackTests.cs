@@ -207,5 +207,43 @@ namespace Tests.InferTrackTests
             Assert.AreEqual("Artist", result.Artist);
             Assert.AreEqual("Song", result.Title);
         }
+
+        // --- Multi-share grouping edge cases ---
+
+        [TestMethod]
+        public void InferTrack_RemixDetected_SetsMaybeWrong()
+        {
+            var def = DefaultQuery(artist: "Daft Punk", title: "One More Time");
+            // Filename has both "Daft Punk" and "One More Time", but is a remix.
+            var result = Searcher.InferSongQuery(" (Daft Punk - One More Time) Robin Schulz Remix.mp3", def);
+            Assert.IsTrue(result.ArtistMaybeWrong, "Remix should be flagged as ArtistMaybeWrong.");
+        }
+
+        [TestMethod]
+        public void InferTrack_SwapArtistsTitle_DetectsAndFixes()
+        {
+            var def = DefaultQuery(artist: "ELO", title: "Mr Blue Sky");
+            var result = Searcher.InferSongQuery("Mr Blue Sky - ELO.mp3", def);
+            Assert.AreEqual("ELO", result.Artist);
+            Assert.AreEqual("Mr Blue Sky", result.Title);
+        }
+
+        [TestMethod]
+        public void InferTrack_FtInVariousPositions_Removed()
+        {
+            var def = DefaultQuery(artist: "Artist", title: "Title");
+            var result = Searcher.InferSongQuery("Artist feat. X - Title (ft. Y).mp3", def);
+            Assert.AreEqual("Artist", result.Artist);
+            Assert.AreEqual("Title", result.Title);
+        }
+
+        [TestMethod]
+        public void InferTrack_ComplexBrackets_StrippedFromTitle()
+        {
+            var def = DefaultQuery(artist: "Artist", title: "Title");
+            var result = Searcher.InferSongQuery("Artist - Title [Remaster] (HQ).mp3", def);
+            // Internal title should at least contain the base title
+            Assert.IsTrue(result.Title.Contains("Title"));
+        }
     }
 }

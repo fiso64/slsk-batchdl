@@ -3,6 +3,8 @@ using Models;
 using Jobs;
 using Enums;
 using System.Reflection;
+using System.IO;
+using Services;
 
 namespace Tests.FileManagerTests
 {
@@ -202,6 +204,163 @@ namespace Tests.FileManagerTests
         public void HasTagVariables_PlainText_ReturnsFalse()
         {
             Assert.IsFalse(FileManager.HasTagVariables("just a plain string"));
+        }
+    }
+
+    [TestClass]
+    public class OrganizationTests
+    {
+        private string testRoot = "";
+        private Config config = null!;
+
+        [TestInitialize]
+        public void Setup()
+        {
+            testRoot = Path.Combine(Path.GetTempPath(), "slsk-org-tests-" + Guid.NewGuid().ToString().Substring(0, 8));
+            Directory.CreateDirectory(testRoot);
+            config = new Config(new string[] { "--path", testRoot, "--config", "none", "dummy_input" });
+        }
+
+        [TestCleanup]
+        public void Cleanup()
+        {
+            if (Directory.Exists(testRoot))
+                Directory.Delete(testRoot, true);
+        }
+
+        [TestMethod]
+        public void AlbumJob_DefaultOrganization_UsesRemoteFolderName()
+        {
+            // Setup
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var manager = new FileManager(job, config);
+            manager.SetremoteBaseDir(@"Artist1\Album1"); // slsk-style path
+
+            // File paths
+            string source = Path.Combine(testRoot, "temp_download.mp3");
+            File.WriteAllText(source, "dummy");
+
+            // Execute
+            string target = manager.GetSavePath(source);
+
+            // Verify
+            // Should be {testRoot}/Album1/temp_download.mp3
+            string expected = Path.Combine(testRoot, "Album1", "temp_download.mp3");
+            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+        }
+
+        [TestMethod]
+        public void SongListJob_DefaultOrganization_UsesItemName()
+        {
+            // Setup
+            var job = new SongListJob();
+            job.ItemName = "MyPlaylist";
+            var manager = new FileManager(job, config);
+
+            // File paths
+            string source = Path.Combine(testRoot, "temp_song.mp3");
+            File.WriteAllText(source, "dummy");
+
+            // Execute
+            string target = manager.GetSavePath(source);
+
+            // Verify
+            // Should be {testRoot}/MyPlaylist/temp_song.mp3
+            string expected = Path.Combine(testRoot, "MyPlaylist", "temp_song.mp3");
+            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+        }
+
+        [TestMethod]
+        public void AlbumJob_NameFormat_MovesCoverIntelligently()
+        {
+            // Setup
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            config.nameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
+            var manager = new FileManager(job, config);
+            manager.SetremoteBaseDir(@"Artist1\Album1");
+
+            // Create some "downloaded" files
+            string audio1Base = Path.Combine(testRoot, "dl1.mp3");
+            string audio2Base = Path.Combine(testRoot, "dl2.mp3");
+            string coverBase = Path.Combine(testRoot, "cover.jpg");
+            File.WriteAllText(audio1Base, "audio1");
+            File.WriteAllText(audio2Base, "audio2");
+            File.WriteAllText(coverBase, "jpg");
+
+            var file1 = new AlbumFile(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track1" }, 
+                                     new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
+                                                       new Soulseek.File(0, @"Artist1\Album1\01. Track1.mp3", 0, "mp3")), false);
+            file1.DownloadPath = audio1Base;
+            file1.State = TrackState.Downloaded;
+
+            var file2 = new AlbumFile(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track2" }, 
+                                     new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
+                                                       new Soulseek.File(0, @"Artist1\Album1\02. Track2.mp3", 0, "mp3")), false);
+            file2.DownloadPath = audio2Base;
+            file2.State = TrackState.Downloaded;
+
+            var coverFile = new AlbumFile(new SongQuery(), 
+                                         new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
+                                                           new Soulseek.File(0, @"Artist1\Album1\Cover.jpg", 0, "jpg")), true);
+            coverFile.State = TrackState.Downloaded;
+            coverFile.DownloadPath = coverBase;
+
+            var allFiles = new List<AlbumFile> { file1, file2, coverFile };
+
+            // Execute
+            manager.OrganizeAlbum(job, allFiles, null, remainingOnly: false);
+
+            // Verify audio files are moved to NF location
+            // NF is "OrgTest/{sartist}/{salbum}/{filename}". {filename} for file1 is "01. Track1"
+            string expectedAudio1 = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "01. Track1.mp3");
+            string expectedAudio2 = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "02. Track2.mp3");
+            Assert.IsTrue(File.Exists(expectedAudio1), "Audio 1 not found at target");
+            Assert.IsTrue(File.Exists(expectedAudio2), "Audio 2 not found at target");
+
+            // Verify cover is moved specifically to the common parent of the audio files
+            string expectedCover = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "cover.jpg");
+            Assert.IsTrue(File.Exists(expectedCover), $"Cover not found at {expectedCover}");
+        }
+
+        [TestMethod]
+        public void AlbumAggregate_ArtistOnly_CreatesSubfoldersForAlbums()
+        {
+            // main use case for -ag: find all albums by an artist.
+            var aggJob = new AggregateAlbumJob(new AlbumQuery { Artist = "Artist1" });
+            aggJob.ItemName = "Artist1"; // Set by JobQueue
+            
+            // Simulating an AlbumJob spawned from this aggregate (e.g. for 'Album1')
+            var albumJob = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            albumJob.ItemName = aggJob.ItemName; // Inherited from AggregateAlbumJob
+            
+            var manager = new FileManager(albumJob, config);
+            manager.SetremoteBaseDir(@"User1\Artist1\Album1"); // Remote path
+            
+            string source = Path.Combine(testRoot, "track.mp3");
+            File.WriteAllText(source, "data");
+            
+            // Should be {testRoot}/Artist1/Album1/track.mp3
+            string target = manager.GetSavePath(source);
+            string expected = Path.Combine(testRoot, "Artist1", "Album1", "track.mp3");
+            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+        }
+
+        [TestMethod]
+        public void SongAggregate_ArtistOnly_GroupsIntoArtistFolder()
+        {
+            // main use case for -g: find all songs by an artist.
+            var job = new AggregateJob(new SongQuery { Artist = "Artist1" });
+            job.ItemName = "Artist1"; // Set by JobQueue
+            
+            var manager = new FileManager(job, config);
+            
+            string source = Path.Combine(testRoot, "temp.mp3");
+            File.WriteAllText(source, "data");
+            
+            // Should be {testRoot}/Artist1/temp.mp3
+            string target = manager.GetSavePath(source);
+            string expected = Path.Combine(testRoot, "Artist1", "temp.mp3");
+            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
         }
     }
 }
