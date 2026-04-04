@@ -1,6 +1,25 @@
-﻿using Models;
+using Jobs;
+using Models;
 using Enums;
 using System.Text;
+
+
+// Holds the persisted state of one entry read from a prior-run index file.
+public class IndexEntry
+{
+    public string       DownloadPath  { get; set; } = "";
+    public string       Artist        { get; set; } = "";
+    public string       Album         { get; set; } = "";
+    public string       Title         { get; set; } = "";
+    public int          Length        { get; set; } = -1;
+    public TrackState   State         { get; set; } = TrackState.Initial;
+    public FailureReason FailureReason { get; set; } = FailureReason.None;
+    // True when a Normal-type entry was promoted to also be keyed as an Album entry.
+    public bool         IsAlbum       { get; set; }
+
+    public string ToKey() =>
+        $"{Artist.ToLower()}\n{Album.ToLower()}\n{Title.ToLower()}\n{Length}";
+}
 
 
 public class M3uEditor // todo: separate into M3uEditor and IndexEditor
@@ -11,20 +30,20 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     List<string> lines;
     bool needFirstUpdate = false;
     int offset = 0;
-    readonly TrackLists trackLists;
-    readonly Dictionary<string, Track> previousRunData = new(); // { track.ToKey(), track }
+    readonly JobQueue queue;
+    readonly Dictionary<string, IndexEntry> previousRunData = new(); // key → IndexEntry
 
     private readonly object locker = new();
 
-    private M3uEditor(TrackLists trackLists, M3uOption option, int offset = 0)
+    private M3uEditor(JobQueue queue, M3uOption option, int offset = 0)
     {
-        this.trackLists = trackLists;
+        this.queue  = queue;
         this.option = option;
         this.offset = offset;
         this.needFirstUpdate = option == M3uOption.All || option == M3uOption.Playlist;
     }
 
-    public M3uEditor(string path, TrackLists trackLists, M3uOption option, bool loadPreviousResults) : this(trackLists, option)
+    public M3uEditor(string path, JobQueue queue, M3uOption option, bool loadPreviousResults) : this(queue, option)
     {
         SetPathAndLoad(path, loadPreviousResults);
     }
@@ -38,7 +57,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             return;
 
         this.path = Utils.GetFullPath(path);
-        parent = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
+        parent    = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
 
         lines = ReadAllLines().ToList();
 
@@ -53,25 +72,25 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
         bool useOldFormat = lines[0].StartsWith("#SLDL:");
 
-        var indexLines = useOldFormat ? new string[] { lines[0] } : lines.Skip(1);
-        var currentItem = new StringBuilder();
+        var indexLines   = useOldFormat ? new string[] { lines[0] } : lines.Skip(1);
+        var currentItem  = new StringBuilder();
 
         if (useOldFormat) lines = lines.Skip(1).ToList();
-        int offset = useOldFormat ? "#SLDL:".Length : 0;
+        int startOffset = useOldFormat ? "#SLDL:".Length : 0;
 
         foreach (var sldlLine in indexLines)
         {
             if (string.IsNullOrWhiteSpace(sldlLine))
                 continue;
 
-            int k = offset;
+            int  k       = startOffset;
             bool inQuotes = false;
 
             for (; k < sldlLine.Length && sldlLine[k] == ' '; k++) ;
 
             for (; k < sldlLine.Length; k++)
             {
-                var track = new Track();
+                var entry = new IndexEntry();
                 int field = 0;
                 for (int i = k; i < sldlLine.Length; i++)
                 {
@@ -97,27 +116,21 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                         {
                             if (x.StartsWith("./"))
                                 x = Path.Join(parent, x[2..]);
-                            track.DownloadPath = x;
+                            entry.DownloadPath = x;
                         }
-                        else if (field == 1)
-                            track.Artist = x;
-                        else if (field == 2)
-                            track.Album = x;
-                        else if (field == 3)
-                            track.Title = x;
-                        else if (field == 4)
-                            track.Length = int.Parse(x);
-                        else if (field == 5)
-                            track.Type = (TrackType)int.Parse(currentItem.ToString());
-                        else if (field == 6)
-                            track.State = (TrackState)int.Parse(x);
+                        else if (field == 1) entry.Artist = x;
+                        else if (field == 2) entry.Album  = x;
+                        else if (field == 3) entry.Title  = x;
+                        else if (field == 4) entry.Length = int.Parse(x);
+                        else if (field == 5) { /* tracktype — ignored, determined by Title/Album */ }
+                        else if (field == 6) entry.State  = (TrackState)int.Parse(x);
 
                         currentItem.Clear();
                         field++;
                     }
                     else if (field == 7 && c == ';' && useOldFormat)
                     {
-                        track.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
+                        entry.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
                         currentItem.Clear();
                         k = i;
                         break;
@@ -130,15 +143,24 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
                 if (!useOldFormat)
                 {
-                    track.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
+                    entry.FailureReason = (FailureReason)int.Parse(currentItem.ToString());
                     currentItem.Clear();
                 }
 
-                previousRunData[track.ToKey()] = track;
+                previousRunData[entry.ToKey()] = entry;
 
-                if (track.Type == TrackType.Album && track.Title.Length > 0)
+                // When an entry has both album and title set, also register it under the album-only key
+                // so AlbumJob lookups (which use empty title) can find it.
+                if (entry.Title.Length > 0 && entry.Album.Length > 0)
                 {
-                    previousRunData[track.ToKey(forceNormal: true)] = track;
+                    var albumKey = new IndexEntry
+                    {
+                        Artist = entry.Artist,
+                        Album  = entry.Album,
+                        Title  = "",
+                        Length = -1,
+                    }.ToKey();
+                    previousRunData.TryAdd(albumKey, entry);
                 }
 
                 if (!useOldFormat)
@@ -152,106 +174,116 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         if (option == M3uOption.None)
             return;
 
-        lock (trackLists) lock (locker)
+        lock (queue) lock (locker)
+        {
+            bool needUpdate = false;
+            int  index      = 1 + offset;
+
+            bool updateLine(string newLine)
             {
-                bool needUpdate = false;
-                int index = 1 + offset;
+                bool changed = index >= lines.Count || newLine != lines[index];
+                while (index >= lines.Count) lines.Add("");
+                lines[index] = newLine;
+                return changed;
+            }
 
-                bool updateLine(string newLine)
+            bool entryChanged(IndexEntry? prev, string downloadPath, TrackState state, FailureReason reason)
+            {
+                return prev == null
+                    || prev.State != state
+                    || prev.FailureReason != reason
+                    || Utils.NormalizedPath(prev.DownloadPath) != Utils.NormalizedPath(downloadPath ?? "");
+            }
+
+            void updateEntryIfNeeded(string key, string downloadPath, string artist, string album,
+                string title, int length, TrackState state, FailureReason reason, bool isAlbum = false)
+            {
+                if (option == M3uOption.Playlist)
+                    return;
+
+                previousRunData.TryGetValue(key, out var prev);
+
+                if (!needUpdate)
+                    needUpdate = entryChanged(prev, downloadPath, state, reason);
+
+                if (needUpdate)
                 {
-                    bool changed = index >= lines.Count || newLine != lines[index];
-
-                    while (index >= lines.Count) lines.Add("");
-                    lines[index] = newLine;
-
-                    return changed;
-                }
-
-                bool trackChanged(Track track, Track? indexTrack)
-                {
-                    return indexTrack == null
-                        || indexTrack.State != track.State
-                        || indexTrack.FailureReason != track.FailureReason
-                        || Utils.NormalizedPath(indexTrack.DownloadPath) != Utils.NormalizedPath(track.DownloadPath);
-                }
-
-                void updateIndexTrackIfNeeded(Track track)
-                {
-                    if (option == M3uOption.Playlist)
-                        return;
-
-                    var key = track.ToKey();
-
-                    previousRunData.TryGetValue(key, out Track? indexTrack);
-
-                    if (!needUpdate)
-                        needUpdate = trackChanged(track, indexTrack);
-
-                    if (needUpdate)
+                    if (prev == null)
                     {
-                        if (indexTrack == null)
-                            previousRunData[key] = new Track(track);
-                        else
+                        previousRunData[key] = new IndexEntry
                         {
-                            indexTrack.State = track.State;
-                            indexTrack.FailureReason = track.FailureReason;
-                            indexTrack.DownloadPath = track.DownloadPath;
-                        }
+                            DownloadPath  = downloadPath ?? "",
+                            Artist        = artist,
+                            Album         = album,
+                            Title         = title,
+                            Length        = length,
+                            State         = state,
+                            FailureReason = reason,
+                            IsAlbum       = isAlbum,
+                        };
                     }
-                }
-
-                foreach (var tle in trackLists.lists)
-                {
-                    if (tle.source.Type != TrackType.Normal)
+                    else
                     {
-                        if (tle.source.State != TrackState.Initial)
-                        {
-                            updateIndexTrackIfNeeded(tle.source);
-                        }
+                        prev.State         = state;
+                        prev.FailureReason = reason;
+                        prev.DownloadPath  = downloadPath ?? "";
                     }
-
-                    if (tle.list == null) continue;
-
-                    for (int k = 0; k < tle.list.Count; k++)
-                    {
-                        for (int j = 0; j < tle.list[k].Count; j++)
-                        {
-                            var track = tle.list[k][j];
-
-                            if (track.IsNotAudio)
-                            {
-                                continue;
-                            }
-                            else if (track.State == TrackState.Initial)
-                            {
-                                index++;
-                                continue;
-                            }
-
-                            updateIndexTrackIfNeeded(track);
-
-                            if (option == M3uOption.All || option == M3uOption.Playlist)
-                            {
-                                needUpdate |= updateLine(TrackToLine(track));
-                                index++;
-                            }
-                        }
-                    }
-                }
-
-                if (needUpdate || needFirstUpdate)
-                {
-                    needFirstUpdate = false;
-                    WriteAllLines();
                 }
             }
+
+            foreach (var job in queue.Jobs)
+            {
+                // Job-level entry (for AlbumJob and non-Normal jobs that have their own index row)
+                if (job is AlbumJob albumJob && albumJob.State != JobState.Pending)
+                {
+                    var (state, reason) = JobStateToTrackState(albumJob);
+                    string key = MakeAlbumKey(albumJob.Query.Artist, albumJob.Query.Album);
+                    updateEntryIfNeeded(key, albumJob.DownloadPath ?? "",
+                        albumJob.Query.Artist, albumJob.Query.Album, "", -1, state, reason, isAlbum: true);
+                }
+
+                // Per-song entries
+                IEnumerable<SongJob> songs = job switch
+                {
+                    SongListJob slj => slj.Songs,
+                    AggregateJob ag => ag.Songs,
+                    _               => Enumerable.Empty<SongJob>(),
+                };
+
+                foreach (var song in songs)
+                {
+                    if (song.State == TrackState.Initial)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    string key = MakeSongKey(song);
+                    updateEntryIfNeeded(key, song.DownloadPath ?? "",
+                        song.Query.Artist, song.Query.Album, song.Query.Title, song.Query.Length,
+                        song.State, song.FailureReason);
+
+                    if (option == M3uOption.All || option == M3uOption.Playlist)
+                    {
+                        needUpdate |= updateLine(SongToLine(song));
+                        index++;
+                    }
+                }
+            }
+
+            if (needUpdate || needFirstUpdate)
+            {
+                needFirstUpdate = false;
+                WriteAllLines();
+            }
+        }
     }
 
-    class Writer // temporary fix because streamwriter sometimes writes garbled text (for unknown reasons)
+    class Writer
     {
-        private StringBuilder sb = new();
+        private readonly StringBuilder sb = new();
         public void Write(string s) => sb.Append(s);
-        public void Write(char c) => sb.Append(c);
+        public void Write(char c)   => sb.Append(c);
         public override string ToString() => sb.ToString();
     }
 
@@ -260,15 +292,10 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         if (!Directory.Exists(parent))
             Directory.CreateDirectory(parent);
 
-        //using var fileStream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write/*, FileShare.ReadWrite*/);
-        //using var writer = new StreamWriter(fileStream, encoding: Encoding.UTF8);
-        //using var writer = TextWriter.Synchronized(new StreamWriter(fileStream, encoding: Encoding.UTF8));
         var writer = new Writer();
 
         if (option != M3uOption.Playlist)
-        {
             WriteSldlLine(writer);
-        }
 
         if (option != M3uOption.Index)
         {
@@ -289,8 +316,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             bool comma = false;
             foreach (var item in items)
             {
-                if (comma)
-                    writer.Write(',');
+                if (comma) writer.Write(',');
 
                 if (item.Contains(',') || item.Contains('\"'))
                 {
@@ -302,19 +328,20 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 {
                     writer.Write(item);
                 }
-
                 comma = true;
             }
         }
 
-        //writer.Write("#SLDL:");
         writer.Write("filepath,artist,album,title,length,tracktype,state,failurereason\n");
 
         foreach (var val in previousRunData.Values)
         {
             string p = val.DownloadPath;
             if (Utils.NormalizedPath(p).StartsWith(parent))
-                p = "./" + System.IO.Path.GetRelativePath(parent, p); // prepend ./ for LoadPreviousResults to recognize that a rel. path is used
+                p = "./" + System.IO.Path.GetRelativePath(parent, p);
+
+            // tracktype: 1 for album entries, 0 for song entries (backward-compat with old readers)
+            int tracktype = val.IsAlbum || val.Title.Length == 0 ? 1 : 0;
 
             var items = new string[]
             {
@@ -323,55 +350,62 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 val.Album,
                 val.Title,
                 val.Length.ToString(),
-                ((int)val.Type).ToString(),
+                tracktype.ToString(),
                 ((int)val.State).ToString(),
                 ((int)val.FailureReason).ToString(),
             };
 
             writeCsvLine(items);
-            //writer.Write(';');
             writer.Write('\n');
         }
 
         writer.Write('\n');
     }
 
-    private string TrackToLine(Track track)
+    private string SongToLine(SongJob song)
     {
-        string? failureReason = track.FailureReason != FailureReason.None ? track.FailureReason.ToString() : null;
-        if (failureReason == null && track.State == TrackState.NotFoundLastTime)
+        string? failureReason = song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null;
+        if (failureReason == null && song.State == TrackState.NotFoundLastTime)
             failureReason = nameof(FailureReason.NoSuitableFileFound);
 
         if (failureReason != null)
-            return $"#FAIL: {track} [{failureReason}]";
+            return $"#FAIL: {song} [{failureReason}]";
 
-        if (track.DownloadPath.Length > 0)
+        if (!string.IsNullOrEmpty(song.DownloadPath))
         {
-            if (Utils.NormalizedPath(track.DownloadPath).StartsWith(parent))
-                return Path.GetRelativePath(parent, track.DownloadPath);
+            if (Utils.NormalizedPath(song.DownloadPath).StartsWith(parent))
+                return Path.GetRelativePath(parent, song.DownloadPath);
             else
-                return track.DownloadPath;
+                return song.DownloadPath;
         }
 
-        return $"# {track}";
+        return $"# {song}";
     }
 
-    public Track? PreviousRunResult(Track track)
+    // Looks up the persisted state for a SongJob from a prior run.
+    public IndexEntry? PreviousRunResult(SongJob song)
     {
-        previousRunData.TryGetValue(track.ToKey(), out var t);
+        previousRunData.TryGetValue(MakeSongKey(song), out var t);
         return t;
     }
 
-    public bool TryGetPreviousRunResult(Track track, out Track? result)
+    // Looks up the persisted state for an AlbumJob from a prior run.
+    public IndexEntry? PreviousRunResult(AlbumJob job)
     {
-        previousRunData.TryGetValue(track.ToKey(), out result);
+        previousRunData.TryGetValue(MakeAlbumKey(job.Query.Artist, job.Query.Album), out var t);
+        return t;
+    }
+
+    public bool TryGetPreviousRunResult(SongJob song, out IndexEntry? result)
+    {
+        previousRunData.TryGetValue(MakeSongKey(song), out result);
         return result != null;
     }
 
-    public bool TryGetFailureReason(Track track, out FailureReason reason)
+    public bool TryGetFailureReason(SongJob song, out FailureReason reason)
     {
         reason = FailureReason.None;
-        var t = PreviousRunResult(track);
+        var t = PreviousRunResult(song);
         if (t != null && t.State == TrackState.Failed)
         {
             reason = t.FailureReason;
@@ -380,22 +414,51 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         return false;
     }
 
+    public IReadOnlyCollection<IndexEntry> GetPreviousRunData() => previousRunData.Values;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static string MakeSongKey(SongJob song)
+    {
+        return new IndexEntry
+        {
+            Artist = song.Query.Artist,
+            Album  = song.Query.Album,
+            Title  = song.Query.Title,
+            Length = song.Query.Length,
+        }.ToKey();
+    }
+
+    private static string MakeAlbumKey(string artist, string album)
+    {
+        return new IndexEntry { Artist = artist, Album = album, Title = "", Length = -1 }.ToKey();
+    }
+
+    // Maps JobState → TrackState for writing album entries to the index.
+    private static (TrackState state, FailureReason reason) JobStateToTrackState(DownloadJob job)
+    {
+        return job.State switch
+        {
+            JobState.Done    => (TrackState.Downloaded,    job.FailureReason),
+            JobState.Failed  => (TrackState.Failed,        job.FailureReason),
+            JobState.Skipped => job.FailureReason != FailureReason.None
+                                    ? (TrackState.NotFoundLastTime, job.FailureReason)
+                                    : (TrackState.AlreadyExists,    FailureReason.None),
+            _                => (TrackState.Initial,       FailureReason.None),
+        };
+    }
+
     private string ReadAllText()
     {
         if (!File.Exists(path))
             return "";
-        using var fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var streamReader = new StreamReader(fileStream, encoding: Encoding.UTF8);
+        using var fileStream    = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var streamReader  = new StreamReader(fileStream, encoding: Encoding.UTF8);
         return streamReader.ReadToEnd();
     }
 
     private string[] ReadAllLines()
     {
         return ReadAllText().TrimEnd().Split('\n');
-    }
-
-    public IReadOnlyCollection<Track> GetPreviousRunData()
-    {
-        return previousRunData.Values;
     }
 }

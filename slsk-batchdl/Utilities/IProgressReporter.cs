@@ -1,37 +1,70 @@
+using Jobs;
 using Models;
-using Soulseek;
 
 namespace Utilities
 {
     /// <summary>
-    /// Interface for reporting structured progress events from sldl.
-    /// Used by the web server to get real-time, machine-readable progress updates.
+    /// Interface for reporting progress events from the download engine.
+    ///
+    /// Two families of methods:
+    ///   - "Structured" methods (ReportSearchStart, ReportDownloadStart, …) carry
+    ///     machine-readable data; used by JsonStreamProgressReporter.
+    ///   - "Display" methods (ReportJobSearching, ReportSongSearching, …) carry
+    ///     human-readable text for terminal rendering; used by CliProgressReporter.
+    ///
+    /// Implementations that don't care about a family leave those methods as no-ops.
     /// </summary>
     public interface IProgressReporter
     {
-        void ReportTrackList(List<Track> tracks, int listIndex = 0);
-        void ReportSearchStart(Track track);
-        void ReportSearchResult(Track track, int resultCount, string? chosenUser = null, Soulseek.File? chosenFile = null);
-        void ReportDownloadStart(Track track, string username, Soulseek.File file);
-        void ReportDownloadProgress(Track track, long bytesTransferred, long totalBytes);
-        void ReportTrackStateChanged(Track track, string? username = null, Soulseek.File? chosenFile = null);
+        // ── structured events (machine-readable) ────────────────────────────
+        void ReportTrackList(IEnumerable<SongJob> songs, int listIndex = 0);
+        void ReportSearchStart(SongJob song);
+        void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null);
+        void ReportDownloadStart(SongJob song, FileCandidate candidate);
+        void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes);
+        void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null);
         void ReportOverallProgress(int downloaded, int failed, int total);
         void ReportJobComplete(int downloaded, int failed, int total);
+
+        // ── display events (terminal rendering) ─────────────────────────────
+        // Job-level (album / aggregate source searches)
+        void ReportJobSearching(DownloadJob job, bool createBar);
+        void ReportJobFolderRetrieving(DownloadJob job);
+        void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles);
+
+        // Song-level
+        void ReportSongSearching(SongJob song);              // each search attempt (first + retries)
+        void ReportSongNotFound(SongJob song);
+        void ReportSongFailed(SongJob song);
+        void ReportDownloadStateChanged(SongJob song, string stateLabel);  // Soulseek transfer state
+
+        // OnComplete around a song download
+        void ReportOnCompleteStart(SongJob song);
+        void ReportOnCompleteEnd(SongJob song);
     }
 
     /// <summary>
-    /// No-op implementation of IProgressReporter for CLI use (no structured progress output).
+    /// No-op implementation — used when neither CLI bars nor JSON output is wanted.
     /// </summary>
     public class NullProgressReporter : IProgressReporter
     {
         public static readonly NullProgressReporter Instance = new();
-        public void ReportTrackList(List<Track> tracks, int listIndex = 0) { }
-        public void ReportSearchStart(Track track) { }
-        public void ReportSearchResult(Track track, int resultCount, string? chosenUser = null, Soulseek.File? chosenFile = null) { }
-        public void ReportDownloadStart(Track track, string username, Soulseek.File file) { }
-        public void ReportDownloadProgress(Track track, long bytesTransferred, long totalBytes) { }
-        public void ReportTrackStateChanged(Track track, string? username = null, Soulseek.File? chosenFile = null) { }
+        public void ReportTrackList(IEnumerable<SongJob> songs, int listIndex = 0) { }
+        public void ReportSearchStart(SongJob song) { }
+        public void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null) { }
+        public void ReportDownloadStart(SongJob song, FileCandidate candidate) { }
+        public void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes) { }
+        public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null) { }
         public void ReportOverallProgress(int downloaded, int failed, int total) { }
         public void ReportJobComplete(int downloaded, int failed, int total) { }
+        public void ReportJobSearching(DownloadJob job, bool createBar) { }
+        public void ReportJobFolderRetrieving(DownloadJob job) { }
+        public void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles) { }
+        public void ReportSongSearching(SongJob song) { }
+        public void ReportSongNotFound(SongJob song) { }
+        public void ReportSongFailed(SongJob song) { }
+        public void ReportDownloadStateChanged(SongJob song, string stateLabel) { }
+        public void ReportOnCompleteStart(SongJob song) { }
+        public void ReportOnCompleteEnd(SongJob song) { }
     }
 }

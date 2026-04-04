@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Enums;
 
 namespace Tests.ConfigTests
@@ -47,10 +48,10 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.aggregate = false;
             config.maxStaleTime = 50000;
-            var tle = new TrackListEntry(TrackType.Album);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            config = config.UpdateProfiles(tle, ls);
+            var job = new AlbumJob(new AlbumQuery());
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            config = config.UpdateProfiles(job, queue);
 
             Assert.AreEqual(10, config.maxStaleTime);
             Assert.IsFalse(config.fastSearch);
@@ -75,10 +76,10 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
-            var tle = new TrackListEntry(TrackType.Album);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            config = config.UpdateProfiles(tle, ls);
+            var job = new AlbumJob(new AlbumQuery());
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            config = config.UpdateProfiles(job, queue);
 
             Assert.AreEqual(999999, config.maxStaleTime);
             Assert.IsFalse(config.useYtdlp);
@@ -102,10 +103,10 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
-            var tle = new TrackListEntry(TrackType.Normal);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            config = config.UpdateProfiles(tle, ls);
+            var job = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            config = config.UpdateProfiles(job, queue);
 
             Assert.AreEqual(50000, config.maxStaleTime);
             Assert.IsTrue(config.useYtdlp);
@@ -134,12 +135,12 @@ namespace Tests.ConfigTests
             Assert.AreEqual("action_default", config.onComplete[0]);
             Assert.AreEqual("action_cli", config.onComplete[1]);
 
-            var tle = new TrackListEntry(TrackType.Normal);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
+            var job = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(job);
 
             // Act
-            config = config.UpdateProfiles(tle, ls);
+            config = config.UpdateProfiles(job, queue);
 
             // Assert
             Assert.IsTrue(config.fastSearch, "Auto profile should have been applied");
@@ -174,12 +175,12 @@ namespace Tests.ConfigTests
             return new Config(args);
         }
 
-        private (Config config, TrackListEntry tle, TrackLists ls) SetupUpdateCall(Config config)
+        private (Config config, DownloadJob job, JobQueue queue) SetupUpdateCall(Config config)
         {
-            var tle = new TrackListEntry(TrackType.Normal);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            return (config, tle, ls);
+            var job = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            return (config, job, queue);
         }
 
         [TestMethod]
@@ -189,9 +190,9 @@ namespace Tests.ConfigTests
                 "max-stale-time = 1\n" +
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2");
             config.interactiveMode = false;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(1, result.maxStaleTime);
         }
@@ -203,9 +204,9 @@ namespace Tests.ConfigTests
                 "max-stale-time = 1\n" +
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2");
             config.interactiveMode = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(2, result.maxStaleTime);
         }
@@ -219,9 +220,9 @@ namespace Tests.ConfigTests
                 "[manual]\nmax-stale-time = 3",
                 new[] { "--profile", "manual" });
             config.interactiveMode = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(3, result.maxStaleTime);
         }
@@ -235,9 +236,9 @@ namespace Tests.ConfigTests
                 "[manual]\nmax-stale-time = 3",
                 new[] { "--profile", "manual", "--max-stale-time", "4" });
             config.interactiveMode = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(4, result.maxStaleTime);
         }
@@ -249,9 +250,9 @@ namespace Tests.ConfigTests
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2",
                 new[] { "--max-stale-time", "4" });
             config.interactiveMode = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(4, result.maxStaleTime);
         }
@@ -265,9 +266,9 @@ namespace Tests.ConfigTests
                 "[second]\nprofile-cond = album\nmax-stale-time = 20");
             config.interactiveMode = true;
             config.album = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(20, result.maxStaleTime);
         }
@@ -280,9 +281,9 @@ namespace Tests.ConfigTests
                 "[second]\nprofile-cond = album\nfast-search = true");
             config.interactiveMode = true;
             config.album = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(10, result.maxStaleTime);
             Assert.IsTrue(result.fastSearch);
@@ -298,9 +299,9 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.album = true;
             config.aggregate = true;
-            var (cfg, tle, ls) = SetupUpdateCall(config);
+            var (cfg, job, queue) = SetupUpdateCall(config);
 
-            var result = cfg.UpdateProfiles(tle, ls);
+            var result = cfg.UpdateProfiles(job, queue);
 
             Assert.AreEqual(InputType.YouTube, result.inputType);
             Assert.IsTrue(result.interactiveMode);
@@ -335,10 +336,10 @@ namespace Tests.ConfigTests
         private Config DoUpdate(Config config, bool interactiveMode)
         {
             config.interactiveMode = interactiveMode;
-            var tle = new TrackListEntry(TrackType.Normal);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            return config.UpdateProfiles(tle, ls);
+            var job = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            return config.UpdateProfiles(job, queue);
         }
 
         [TestMethod]
@@ -513,10 +514,10 @@ namespace Tests.ConfigTests
         private Config DoUpdate(Config config, bool interactiveMode = false)
         {
             config.interactiveMode = interactiveMode;
-            var tle = new TrackListEntry(TrackType.Normal);
-            var ls = new TrackLists();
-            ls.AddEntry(tle);
-            return config.UpdateProfiles(tle, ls);
+            var job = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(job);
+            return config.UpdateProfiles(job, queue);
         }
 
         [TestMethod]
@@ -527,8 +528,8 @@ namespace Tests.ConfigTests
                 "[default]\nprofile-cond = interactive\nmax-stale-time = 99");
             config.interactiveMode = true;
 
-            var tle = new TrackListEntry(TrackType.Normal);
-            Assert.IsFalse(config.NeedUpdateProfiles(tle));
+            var job = new SongListJob();
+            Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 
         [TestMethod]
@@ -550,8 +551,8 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
 
             Assert.IsFalse(config.HasAutoProfiles);
-            var tle = new TrackListEntry(TrackType.Normal);
-            Assert.IsFalse(config.NeedUpdateProfiles(tle));
+            var job = new SongListJob();
+            Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 
         [TestMethod]
@@ -560,8 +561,8 @@ namespace Tests.ConfigTests
             var config = MakeConfig("max-stale-time = 5");
 
             Assert.IsFalse(config.HasAutoProfiles);
-            var tle = new TrackListEntry(TrackType.Normal);
-            Assert.IsFalse(config.NeedUpdateProfiles(tle));
+            var job = new SongListJob();
+            Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 
         [TestMethod]

@@ -86,7 +86,7 @@ public class SoulseekClientManager
         if (!string.IsNullOrEmpty(config.mockFilesDir))
         {
             Logger.Info("Using Mock Soulseek Client.");
-            return Tests.ClientTests.MockSoulseekClient.FromLocalPaths(config.mockFilesReadTags, config.mockFilesDir);
+            return Tests.ClientTests.MockSoulseekClient.FromLocalPaths(config.mockFilesReadTags, config.mockFilesSlow, config.mockFilesDir);
         }
         else
         {

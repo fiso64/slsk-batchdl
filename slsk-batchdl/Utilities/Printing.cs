@@ -1,4 +1,5 @@
-﻿using Models;
+using Jobs;
+using Models;
 using Enums;
 using Konsole;
 using ProgressBar = Konsole.ProgressBar;
@@ -9,19 +10,20 @@ public static class Printing
 {
     static readonly object consoleLock = new();
 
-    public static string DisplayString(Track t, Soulseek.File? file = null, SearchResponse? response = null, FileConditions? nec = null,
-        FileConditions? pref = null, bool fullpath = false, string customPath = "", bool infoFirst = false, bool showUser = true, bool showSpeed = false)
+    public static string DisplayString(SongQuery query, Soulseek.File? file = null, SearchResponse? response = null,
+        FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
+        bool infoFirst = false, bool showUser = true, bool showSpeed = false)
     {
         if (file == null)
-            return t.ToString();
+            return query.ToString();
 
-        string sampleRate = file.SampleRate.HasValue ? $"{(file.SampleRate.Value / 1000.0).Normalize()}kHz" : "";
-        string bitRate = file.BitRate.HasValue ? $"{file.BitRate}kbps" : "";
-        string fileSize = $"{file.Size / (float)(1024 * 1024):F1}MB";
-        string user = showUser && response?.Username != null ? response.Username + "\\" : "";
-        string speed = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
-        string fname = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath);
-        string length = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
+        string sampleRate  = file.SampleRate.HasValue ? $"{(file.SampleRate.Value / 1000.0).Normalize()}kHz" : "";
+        string bitRate     = file.BitRate.HasValue ? $"{file.BitRate}kbps" : "";
+        string fileSize    = $"{file.Size / (float)(1024 * 1024):F1}MB";
+        string user        = showUser && response?.Username != null ? response.Username + "\\" : "";
+        string speed       = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
+        string fname       = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath);
+        string length      = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
         string displayText;
         if (!infoFirst)
         {
@@ -34,9 +36,9 @@ public static class Printing
             displayText = $"[{info}] {speed}{user}{fname}";
         }
 
-        string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(file, t, response)}, " : "";
-        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(file, t, response)}" : "";
-        string cond = "";
+        string necStr  = nec  != null ? $"nec:{nec.GetNotSatisfiedName(file, query, response)}, " : "";
+        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(file, query, response)}" : "";
+        string cond    = "";
         if (nec != null || pref != null)
             cond = $" ({(necStr + prefStr).TrimEnd(' ', ',')})";
 
@@ -44,23 +46,25 @@ public static class Printing
     }
 
 
-    public static void PrintTracks(List<Track> tracks, int number = int.MaxValue, bool fullInfo = false, bool pathsOnly = false, bool showAncestors = true, bool infoFirst = false, bool showUser = true, bool indices = false)
+    public static void PrintTracks(IEnumerable<SongJob> songs, int number = int.MaxValue, bool fullInfo = false,
+        bool pathsOnly = false, bool showAncestors = true, bool infoFirst = false, bool showUser = true, bool indices = false)
     {
-        if (tracks.Count == 0)
+        var songList = songs.ToList();
+        if (songList.Count == 0)
             return;
 
-        number = Math.Min(tracks.Count, number);
+        number = Math.Min(songList.Count, number);
 
         string ancestor = "";
-
         if (!showAncestors)
-            ancestor = Utils.GreatestCommonDirectorySlsk(tracks.SelectMany(x => x.Downloads.Select(y => y.Item2.Filename)));
+            ancestor = Utils.GreatestCommonDirectorySlsk(
+                songList.SelectMany(s => s.Candidates?.Select(c => c.Filename) ?? Enumerable.Empty<string>()));
 
         if (pathsOnly)
         {
             for (int i = 0; i < number; i++)
             {
-                foreach (var x in tracks[i].Downloads)
+                foreach (var c in songList[i].Candidates ?? Enumerable.Empty<FileCandidate>())
                 {
                     if (indices)
                     {
@@ -69,69 +73,47 @@ public static class Printing
                         Console.ResetColor();
                     }
                     if (ancestor.Length == 0)
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
+                        Console.WriteLine("    " + DisplayString(songList[i].Query, c.File, c.Response, infoFirst: infoFirst, showUser: showUser));
                     else
-                        Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
+                        Console.WriteLine("    " + DisplayString(songList[i].Query, c.File, c.Response, customPath: c.File.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
                 }
             }
         }
         else if (!fullInfo)
         {
             for (int i = 0; i < number; i++)
-            {
-                Console.WriteLine($"  {tracks[i]}");
-            }
+                Console.WriteLine($"  {songList[i]}");
         }
         else
         {
             for (int i = 0; i < number; i++)
             {
-                if (!tracks[i].IsNotAudio)
+                var s = songList[i];
+                Console.WriteLine($"  Artist:             {s.Query.Artist}");
+                Console.WriteLine($"  Title:              {s.Query.Title}");
+                if (!string.IsNullOrEmpty(s.Query.Album))
+                    Console.WriteLine($"  Album:              {s.Query.Album}");
+                if (s.Query.Length > -1)
+                    Console.WriteLine($"  Length:             {s.Query.Length}s");
+                if (!string.IsNullOrEmpty(s.DownloadPath))
+                    Console.WriteLine($"  Local path:         {s.DownloadPath}");
+                if (!string.IsNullOrEmpty(s.Query.URI))
+                    Console.WriteLine($"  URL/ID:             {s.Query.URI}");
+                if (!string.IsNullOrEmpty(s.Other))
+                    Console.WriteLine($"  Other:              {s.Other}");
+                if (s.Query.ArtistMaybeWrong)
+                    Console.WriteLine($"  Artist maybe wrong: {s.Query.ArtistMaybeWrong}");
+                if (s.Candidates != null)
                 {
-                    Console.WriteLine($"  Artist:             {tracks[i].Artist}");
-                    if (!string.IsNullOrEmpty(tracks[i].Title) || tracks[i].Type == TrackType.Normal)
-                        Console.WriteLine($"  Title:              {tracks[i].Title}");
-                    if (!string.IsNullOrEmpty(tracks[i].Album) || tracks[i].Type == TrackType.Album)
-                        Console.WriteLine($"  Album:              {tracks[i].Album}");
-                    if (tracks[i].MinAlbumTrackCount != -1 || tracks[i].MaxAlbumTrackCount != -1)
-                        Console.WriteLine($"  Min,Max tracks:     {tracks[i].MinAlbumTrackCount},{tracks[i].MaxAlbumTrackCount}");
-                    if (tracks[i].Length > -1)
-                        Console.WriteLine($"  Length:             {tracks[i].Length}s");
-                    if (!string.IsNullOrEmpty(tracks[i].DownloadPath))
-                        Console.WriteLine($"  Local path:         {tracks[i].DownloadPath}");
-                    if (!string.IsNullOrEmpty(tracks[i].URI))
-                        Console.WriteLine($"  URL/ID:             {tracks[i].URI}");
-                    if (tracks[i].Type != TrackType.Normal)
-                        Console.WriteLine($"  Type:               {tracks[i].Type}");
-                    if (!string.IsNullOrEmpty(tracks[i].Other))
-                        Console.WriteLine($"  Other:              {tracks[i].Other}");
-                    if (tracks[i].ArtistMaybeWrong)
-                        Console.WriteLine($"  Artist maybe wrong: {tracks[i].ArtistMaybeWrong}");
-                    if (tracks[i].Downloads != null)
-                    {
-                        Console.WriteLine($"  Shares:             {tracks[i].Downloads.Count}");
-                        foreach (var x in tracks[i].Downloads)
-                        {
-                            if (ancestor.Length == 0)
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
-                            else
-                                Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
-                        }
-                        if (tracks[i].Downloads?.Count > 0) Console.WriteLine();
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"  File:               {Utils.GetFileNameSlsk(tracks[i].Downloads[0].Item2.Filename)}");
-                    Console.WriteLine($"  Shares:             {tracks[i].Downloads.Count}");
-                    foreach (var x in tracks[i].Downloads)
+                    Console.WriteLine($"  Shares:             {s.Candidates.Count}");
+                    foreach (var c in s.Candidates)
                     {
                         if (ancestor.Length == 0)
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, infoFirst: infoFirst, showUser: showUser));
+                            Console.WriteLine("    " + DisplayString(s.Query, c.File, c.Response, infoFirst: infoFirst, showUser: showUser));
                         else
-                            Console.WriteLine("    " + DisplayString(tracks[i], x.Item2, x.Item1, customPath: x.Item2.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
+                            Console.WriteLine("    " + DisplayString(s.Query, c.File, c.Response, customPath: c.File.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
                     }
-                    Console.WriteLine();
+                    if (s.Candidates.Count > 0) Console.WriteLine();
                 }
 
                 if (i < number - 1)
@@ -139,65 +121,64 @@ public static class Printing
             }
         }
 
-        if (number < tracks.Count)
+        if (number < songList.Count)
             Console.WriteLine($"  ... (etc)");
     }
 
 
-    public static async Task PrintResults(TrackListEntry tle, List<Track> existing, List<Track> notFound, Config config, Searcher searchService)
+    public static async Task PrintResults(DownloadJob job, List<SongJob> existing, List<SongJob> notFound, Config config, Searcher searchService)
     {
-        if (tle.source.Type == TrackType.Normal)
+        if (job is SongListJob slj)
         {
-            await searchService.SearchAndPrintResults(tle.list[0], config);
+            await searchService.SearchAndPrintResults(slj.Songs, config);
         }
-        else if (tle.source.Type == TrackType.Aggregate)
+        else if (job is AggregateJob ag)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
-                var tracks = tle.list[0].Where(t => t.State == TrackState.Initial).ToList();
-                JsonPrinter.PrintAggregateJson(tracks);
+                JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == TrackState.Initial));
             }
             else if (config.printOption.HasFlag(PrintOption.Link))
             {
-                var first = tle.list[0].First();
-                PrintLink(first.FirstResponse.Username, first.FirstDownload.Filename);
+                var first = ag.Songs.FirstOrDefault(s => s.ChosenCandidate != null);
+                if (first?.ChosenCandidate != null)
+                    PrintLink(first.ChosenCandidate.Username, first.ChosenCandidate.Filename);
             }
             else
             {
-                Console.WriteLine($"Results for aggregate {tle.source.ToString(true)}:");
-                PrintTracksTbd(tle.list[0].Where(t => t.State == TrackState.Initial).ToList(), existing, notFound, tle.source.Type, config);
+                Console.WriteLine($"Results for aggregate {job.ToString(true)}:");
+                PrintTracksTbd(ag.Songs.Where(s => s.State == TrackState.Initial).ToList(), existing, notFound, false, config);
             }
         }
-        else if (tle.source.Type == TrackType.Album)
+        else if (job is AlbumJob albumJob)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
-                var albumsToPrint = config.printOption.HasFlag(PrintOption.Full)
-                    ? tle.list
-                    : tle.list.Take(1).ToList();
-
-                JsonPrinter.PrintAlbumJson(albumsToPrint, tle.source);
+                var foldersToPrint = config.printOption.HasFlag(PrintOption.Full)
+                    ? albumJob.FoundFolders
+                    : albumJob.FoundFolders.Take(1).ToList();
+                JsonPrinter.PrintAlbumJson(foldersToPrint, albumJob);
             }
             else if (config.printOption.HasFlag(PrintOption.Link))
             {
-                PrintAlbumLink(tle.list[0]);
+                if (albumJob.FoundFolders.Count > 0)
+                    PrintAlbumLink(albumJob.FoundFolders[0]);
             }
             else
             {
                 if (!config.printOption.HasFlag(PrintOption.Full))
-                    Console.WriteLine($"Result 1 of {tle.list.Count} for album {tle.source.ToString(true)}:");
+                    Console.WriteLine($"Result 1 of {albumJob.FoundFolders.Count} for album {job.ToString(true)}:");
                 else
-                    Console.WriteLine($"Results ({tle.list.Count}) for album {tle.source.ToString(true)}:");
+                    Console.WriteLine($"Results ({albumJob.FoundFolders.Count}) for album {job.ToString(true)}:");
 
-                if (tle.list.Count > 0 && tle.list[0].Count > 0)
+                if (albumJob.FoundFolders.Count > 0)
                 {
                     if (!config.noBrowseFolder)
                         Console.WriteLine("[Skipping full folder retrieval]");
 
-                    foreach (var ls in tle.list)
+                    foreach (var folder in albumJob.FoundFolders)
                     {
-                        PrintAlbum(ls);
-
+                        PrintAlbum(folder);
                         if (!config.printOption.HasFlag(PrintOption.Full))
                             break;
                     }
@@ -211,16 +192,30 @@ public static class Printing
     }
 
 
-    public static void PrintComplete(TrackLists trackLists)
+    public static void PrintComplete(JobQueue queue)
     {
-        var ls = trackLists.Flattened(true, false);
         int successes = 0, fails = 0;
-        foreach (var x in ls)
+        foreach (var job in queue.Jobs)
         {
-            if (x.State == TrackState.Downloaded)
-                successes++;
-            else if (x.State == TrackState.Failed)
-                fails++;
+            IEnumerable<SongJob> songs = job switch
+            {
+                SongListJob slj => slj.Songs,
+                AggregateJob ag => ag.Songs,
+                _               => Enumerable.Empty<SongJob>(),
+            };
+            foreach (var s in songs)
+            {
+                if (s.State == TrackState.Downloaded) successes++;
+                else if (s.State == TrackState.Failed)   fails++;
+            }
+            if (job is AlbumJob albumJob && albumJob.ChosenFolder != null)
+            {
+                foreach (var f in albumJob.ChosenFolder.Files.Where(f => !f.IsNotAudio))
+                {
+                    if (f.State == TrackState.Downloaded) successes++;
+                    else if (f.State == TrackState.Failed)   fails++;
+                }
+            }
         }
         if (successes + fails > 1)
         {
@@ -230,24 +225,25 @@ public static class Printing
     }
 
 
-    public static void PrintTracksTbd(List<Track> toBeDownloaded, List<Track> existing, List<Track> notFound, TrackType type, Config config, bool summary = true)
+    public static void PrintTracksTbd(List<SongJob> toBeDownloaded, List<SongJob> existing, List<SongJob> notFound,
+        bool isNormal, Config config, bool summary = true)
     {
-        if (type == TrackType.Normal && !config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
+        if (isNormal && !config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
             return;
 
         string notFoundLastTime = notFound.Count > 0 ? $"{notFound.Count} not found" : "";
-        string alreadyExist = existing.Count > 0 ? $"{existing.Count} already exist" : "";
+        string alreadyExist     = existing.Count > 0 ? $"{existing.Count} already exist" : "";
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        bool full = config.printOption.HasFlag(PrintOption.Full);
+        bool full       = config.printOption.HasFlag(PrintOption.Full);
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
-        if (summary && (type == TrackType.Normal || skippedTracks.Length > 0))
-            Logger.Info($"Downloading {toBeDownloaded.Count(x => !x.IsNotAudio)} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+        if (summary && (isNormal || skippedTracks.Length > 0))
+            Logger.Info($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
 
         if (toBeDownloaded.Count > 0)
         {
-            bool showAll = type != TrackType.Normal || config.PrintTracks || config.PrintResults;
+            bool showAll = !isNormal || config.PrintTracks || config.PrintResults;
             PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: config.PrintTracks);
 
             if (full && (existing.Count > 0 || notFound.Count > 0))
@@ -270,15 +266,16 @@ public static class Printing
     }
 
 
-    public static void PrintTrackResults(IEnumerable<(SearchResponse, Soulseek.File)> orderedResults, Track track, bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
+    public static void PrintTrackResults(IEnumerable<(SearchResponse, Soulseek.File)> orderedResults, SongQuery query,
+        bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
     {
         int count = 0;
         foreach (var (response, file) in orderedResults)
         {
-            Console.WriteLine(Printing.DisplayString(track, file, response,
+            Console.WriteLine(DisplayString(query, file, response,
                 full ? necCond : null, full ? prefCond : null,
                 fullpath: full, infoFirst: true, showSpeed: full));
-            count += 1;
+            count++;
         }
         WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
     }
@@ -291,27 +288,25 @@ public static class Printing
     }
 
 
-    public static void PrintAlbumLink(List<Track> albumTracks)
+    public static void PrintAlbumLink(AlbumFolder folder)
     {
-        if (albumTracks.Count == 0) return;
-        var username = albumTracks[0].FirstResponse.Username;
-        var directory = Utils.GreatestCommonDirectorySlsk(albumTracks.Select(t => t.FirstDownload.Filename));
-        var link = $"slsk://{username}/{directory.Replace('\\', '/').TrimEnd('/')}/";
+        if (folder.Files.Count == 0) return;
+        string directory = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.Candidate.Filename));
+        var link = $"slsk://{folder.Username}/{directory.Replace('\\', '/').TrimEnd('/')}/";
         Console.WriteLine(link);
     }
 
 
-    public static int PrintAlbum(List<Track> albumTracks, bool indices = false)
+    public static int PrintAlbum(AlbumFolder folder, bool indices = false)
     {
-        if (albumTracks.Count == 0 && albumTracks[0].Downloads.Count == 0)
-            return 0;
+        if (folder.Files.Count == 0) return 0;
 
-        var response = albumTracks[0].FirstResponse;
-        string noSlot = !response.HasFreeUploadSlot ? ", no upload slots" : "";
-        string userInfo = $"{response.Username} ({((float)response.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
-        var (parents, propsList) = FolderInfo(albumTracks.Select(x => x.FirstDownload));
+        var firstResponse = folder.Files[0].Candidate.Response;
+        string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
+        string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
+        var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.Candidate.File));
 
-        string format = propsList.FirstOrDefault() ?? "";
+        string format     = propsList.FirstOrDefault() ?? "";
         string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
 
         Console.ForegroundColor = ConsoleColor.White;
@@ -321,35 +316,37 @@ public static class Printing
         Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine(otherProps + "]");
         Console.ResetColor();
-        PrintTracks(albumTracks.ToList(), pathsOnly: true, showAncestors: false, showUser: false, indices: true);
 
-        return 3 + albumTracks.Count;
+        string ancestor = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.Candidate.Filename));
+        int i = 0;
+        foreach (var af in folder.Files)
+        {
+            if (indices)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write($" [{i + 1:D2}]");
+                Console.ResetColor();
+            }
+            string customPath = ancestor.Length > 0 ? af.Candidate.File.Filename.Replace(ancestor, "").TrimStart('\\') : "";
+            Console.WriteLine("    " + DisplayString(af.Info, af.Candidate.File, af.Candidate.Response, customPath: customPath, showUser: false));
+            i++;
+        }
+
+        return 3 + folder.Files.Count;
     }
 
     public static string FormatList<T>(ICollection<T> items, Func<T, string> format, string indent = "  ", int maxCount = 10)
     {
         var result = new System.Text.StringBuilder();
-
         int count = 1;
-
         foreach (var item in items)
         {
-            if (count > 1)
-            {
-                result.Append('\n');
-            }
-
-            if (count > maxCount)
-            {
-                result.Append($"... and {items.Count - count} more");
-                break;
-            }
-
+            if (count > 1) result.Append('\n');
+            if (count > maxCount) { result.Append($"... and {items.Count - count} more"); break; }
             result.Append(indent);
             result.Append(format(item));
-            count += 1;
+            count++;
         }
-
         return result.ToString();
     }
 
@@ -379,30 +376,27 @@ public static class Printing
         propsList.Add($"{totalFileSizeInMB:F2} MB");
 
         string gcp = Utils.GreatestCommonDirectorySlsk(files.Select(x => x.Filename)).TrimEnd('\\');
-
         int lastIndex = gcp.LastIndexOf('\\');
         if (lastIndex != -1)
         {
             int secondLastIndex = gcp.LastIndexOf('\\', lastIndex - 1);
-
             gcp = secondLastIndex == -1 ? gcp : gcp[(secondLastIndex + 1)..];
         }
 
         return (gcp, propsList);
     }
 
-
     static ConsoleColor GetFormatColor(string format)
     {
         return format.ToLower() switch
         {
             "flac" => ConsoleColor.DarkYellow,
-            "mp3" => ConsoleColor.DarkRed,
-            "ogg" => ConsoleColor.DarkGreen,
-            "wav" => ConsoleColor.White,
+            "mp3"  => ConsoleColor.DarkRed,
+            "ogg"  => ConsoleColor.DarkGreen,
+            "wav"  => ConsoleColor.White,
             "opus" => ConsoleColor.DarkBlue,
-            "m4a" => ConsoleColor.Cyan,
-            _ => ConsoleColor.Gray,
+            "m4a"  => ConsoleColor.Cyan,
+            _      => ConsoleColor.Gray,
         };
     }
 
@@ -414,9 +408,7 @@ public static class Printing
             catch { }
 
             if (print)
-            {
                 Logger.LogNonConsole(Logger.LogLevel.Info, item);
-            }
         }
         else if ((progress == null || Console.IsOutputRedirected) && print)
         {
@@ -444,19 +436,10 @@ public static class Printing
         {
             if (!config.noProgress)
             {
-                try
-                {
-                    return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
-                }
-                catch
-                {
-                    return null;
-                }
+                try { return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' '); }
+                catch { return null; }
             }
-            else
-            {
-                return null;
-            }
+            return null;
         }
     }
 }

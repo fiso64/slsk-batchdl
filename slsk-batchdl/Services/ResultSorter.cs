@@ -1,4 +1,4 @@
-﻿using Models;
+using Models;
 using Soulseek;
 using System.Collections.Concurrent;
 
@@ -6,19 +6,19 @@ public static class ResultSorter
 {
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
         IEnumerable<KeyValuePair<string, (SearchResponse, Soulseek.File)>> results,
-        Track track,
+        SongQuery query,
         Config config,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
         bool useLevenshtein = true,
         bool albumMode = false)
     {
-        return OrderedResults(results.Select(x => x.Value), track, config, userSuccessCounts, useInfer, useLevenshtein, albumMode);
+        return OrderedResults(results.Select(x => x.Value), query, config, userSuccessCounts, useInfer, useLevenshtein, albumMode);
     }
 
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
         IEnumerable<(SearchResponse, Soulseek.File)> results,
-        Track track,
+        SongQuery query,
         Config config,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
@@ -27,50 +27,50 @@ public static class ResultSorter
     {
         bool useBracketCheck = !albumMode;
         useLevenshtein = albumMode ? false : useLevenshtein;
-        useInfer = albumMode ? false : useInfer;
+        useInfer       = albumMode ? false : useInfer;
 
-        var infTracksAndCounts = GetInferredTracks(results, track, config, useInfer);
+        var infQueriesAndCounts = GetInferredQueries(results, query, config, useInfer);
         var random = new Random();
 
-        (Track, int) inferredTrack((SearchResponse response, Soulseek.File file) x)
+        (SongQuery, int) inferredQuery((SearchResponse response, Soulseek.File file) x)
         {
             string key = $"{x.response.Username}\\{x.file.Filename}";
-            if (infTracksAndCounts != null && infTracksAndCounts.ContainsKey(key))
-                return infTracksAndCounts[key];
-            return (new Track(), 0);
+            if (infQueriesAndCounts != null && infQueriesAndCounts.ContainsKey(key))
+                return infQueriesAndCounts[key];
+            return (new SongQuery(), 0);
         }
 
         Func<(SearchResponse response, Soulseek.File file), SortingCriteria> getSortingCriteria =
             result => new SortingCriteria
             {
-                UserSuccessAboveDownrank = userSuccessCounts.GetValueOrDefault(result.response.Username, 0) > config.downrankOn,
-                NecessaryConditionsMet = config.necessaryCond.FileSatisfies(result.file, track, result.response),
-                PreferredUserConditionsMet = config.preferredCond.BannedUsersSatisfies(result.response),
-                HasValidLength = (result.file.Length != null && result.file.Length > 0) ||
-                                config.preferredCond.AcceptNoLength == null ||
-                                config.preferredCond.AcceptNoLength.Value,
-                BracketCheckPassed = !useBracketCheck || FileConditions.BracketCheck(track, inferredTrack((result.response, result.file)).Item1),
-                StrictTitleMatch = config.preferredCond.StrictTitleSatisfies(result.file.Filename, track.Title),
-                AlbumModeStrictAlbumMatch = !albumMode || config.preferredCond.StrictAlbumSatisfies(result.file.Filename, track.Album),
-                StrictArtistMatch = config.preferredCond.StrictArtistSatisfies(result.file.Filename, track.Title),
-                LengthToleranceMatch = config.preferredCond.LengthToleranceSatisfies(result.file, track.Length),
-                FormatMatch = config.preferredCond.FormatSatisfies(result.file.Filename),
-                NonAlbumModeStrictAlbumMatch = albumMode || config.preferredCond.StrictAlbumSatisfies(result.file.Filename, track.Album),
-                BitrateMatch = config.preferredCond.BitrateSatisfies(result.file),
-                SampleRateMatch = config.preferredCond.SampleRateSatisfies(result.file),
-                BitDepthMatch = config.preferredCond.BitDepthSatisfies(result.file),
-                FileSatisfies = config.preferredCond.FileSatisfies(result.file, track, result.response),
-                HasFreeUploadSlot = result.response.HasFreeUploadSlot,
-                NoQueue = result.response.QueueLength == 0,
-                UploadSpeedFast = result.response.UploadSpeed / 1024 / 650,
-                NonAlbumModeStrictString = albumMode || FileConditions.StrictString(result.file.Filename, track.Title),
-                AlbumModeStrictString = !albumMode || FileConditions.StrictString(Utils.GetDirectoryNameSlsk(result.file.Filename), track.Album),
-                StrictArtistString = FileConditions.StrictString(result.file.Filename, track.Artist, boundarySkipWs: false),
-                InferredTrackCount = useInfer ? inferredTrack((result.response, result.file)).Item2 : 0,
-                UploadSpeedMedium = result.response.UploadSpeed / 1024 / 350,
-                BitRate = (result.file.BitRate ?? 0) / 80,
-                LevenshteinScore = useLevenshtein ? CalculateLevenshtein(track, inferredTrack((result.response, result.file)).Item1) / 5 : 0,
-                RandomTiebreaker = random.Next()
+                UserSuccessAboveDownrank    = userSuccessCounts.GetValueOrDefault(result.response.Username, 0) > config.downrankOn,
+                NecessaryConditionsMet      = config.necessaryCond.FileSatisfies(result.file, query, result.response),
+                PreferredUserConditionsMet  = config.preferredCond.BannedUsersSatisfies(result.response),
+                HasValidLength              = (result.file.Length != null && result.file.Length > 0)
+                                              || config.preferredCond.AcceptNoLength == null
+                                              || config.preferredCond.AcceptNoLength.Value,
+                BracketCheckPassed          = !useBracketCheck || FileConditions.BracketCheck(query, inferredQuery((result.response, result.file)).Item1),
+                StrictTitleMatch            = config.preferredCond.StrictTitleSatisfies(result.file.Filename, query.Title),
+                AlbumModeStrictAlbumMatch   = !albumMode || config.preferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
+                StrictArtistMatch           = config.preferredCond.StrictArtistSatisfies(result.file.Filename, query.Title),
+                LengthToleranceMatch        = config.preferredCond.LengthToleranceSatisfies(result.file, query.Length),
+                FormatMatch                 = config.preferredCond.FormatSatisfies(result.file.Filename),
+                NonAlbumModeStrictAlbumMatch = albumMode || config.preferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
+                BitrateMatch                = config.preferredCond.BitrateSatisfies(result.file),
+                SampleRateMatch             = config.preferredCond.SampleRateSatisfies(result.file),
+                BitDepthMatch               = config.preferredCond.BitDepthSatisfies(result.file),
+                FileSatisfies               = config.preferredCond.FileSatisfies(result.file, query, result.response),
+                HasFreeUploadSlot           = result.response.HasFreeUploadSlot,
+                NoQueue                     = result.response.QueueLength == 0,
+                UploadSpeedFast             = result.response.UploadSpeed / 1024 / 650,
+                NonAlbumModeStrictString    = albumMode || FileConditions.StrictString(result.file.Filename, query.Title),
+                AlbumModeStrictString       = !albumMode || FileConditions.StrictString(Utils.GetDirectoryNameSlsk(result.file.Filename), query.Album),
+                StrictArtistString          = FileConditions.StrictString(result.file.Filename, query.Artist, boundarySkipWs: false),
+                InferredTrackCount          = useInfer ? inferredQuery((result.response, result.file)).Item2 : 0,
+                UploadSpeedMedium           = result.response.UploadSpeed / 1024 / 350,
+                BitRate                     = (result.file.BitRate ?? 0) / 80,
+                LevenshteinScore            = useLevenshtein ? CalculateLevenshtein(query, inferredQuery((result.response, result.file)).Item1) / 5 : 0,
+                RandomTiebreaker            = random.Next()
             };
 
         return results
@@ -79,32 +79,33 @@ public static class ResultSorter
             .OrderByDescending(x => getSortingCriteria(x));
     }
 
-    private static Dictionary<string, (Track, int)>? GetInferredTracks(
+    private static Dictionary<string, (SongQuery, int)>? GetInferredQueries(
         IEnumerable<(SearchResponse, Soulseek.File)> results,
-        Track track,
+        SongQuery query,
         Config config,
         bool useInfer)
     {
         if (!useInfer) return null;
 
-        var equivalentFiles = Searcher.EquivalentFiles(track, results, config, 1);
+        var equivalentFiles = Searcher.EquivalentFiles(query, results, config, 1);
+
         return equivalentFiles
-            .SelectMany(t => t.Item2, (t, f) => new
+            .SelectMany(t => t.candidates, (t, c) => new
             {
-                t.Item1,
-                f.response.Username,
-                f.file.Filename,
-                Count = t.Item2.Count()
+                InferredQuery = t.query,
+                c.Response.Username,
+                c.File.Filename,
+                Count = t.candidates.Count()
             })
             .ToSafeDictionary(
                 x => $"{x.Username}\\{x.Filename}",
-                y => (y.Item1, y.Count));
+                y => (y.InferredQuery, y.Count));
     }
 
-    private static int CalculateLevenshtein(Track track, Track inferredTrack)
+    private static int CalculateLevenshtein(SongQuery query, SongQuery inferred)
     {
-        string t1 = track.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
-        string t2 = inferredTrack.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
+        string t1 = query.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
+        string t2 = inferred.Title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
         return Utils.Levenshtein(t1, t2);
     }
 }
@@ -128,15 +129,15 @@ public class SortingCriteria : IComparable<SortingCriteria>
     public bool FileSatisfies;
     public bool HasFreeUploadSlot;
     public bool NoQueue;
-    public int UploadSpeedFast;
+    public int  UploadSpeedFast;
     public bool NonAlbumModeStrictString;
     public bool AlbumModeStrictString;
     public bool StrictArtistString;
-    public int InferredTrackCount;
-    public int UploadSpeedMedium;
-    public int BitRate;
-    public int LevenshteinScore;
-    public int RandomTiebreaker;
+    public int  InferredTrackCount;
+    public int  UploadSpeedMedium;
+    public int  BitRate;
+    public int  LevenshteinScore;
+    public int  RandomTiebreaker;
 
     public int CompareTo(SortingCriteria? other)
     {

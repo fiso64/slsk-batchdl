@@ -1,6 +1,5 @@
-﻿
 using Models;
-using Enums;
+using Jobs;
 
 namespace Extractors
 {
@@ -11,7 +10,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             bool isAlbum = config.album;
 
@@ -21,69 +20,96 @@ namespace Extractors
                 input = input[8..];
             }
 
-            var trackLists = new TrackLists();
-            var music = ParseTrackArg(input, isAlbum);
-            TrackListEntry tle;
+            var queue = new JobQueue();
 
-            if (isAlbum || (music.Title.Length == 0 && music.Album.Length > 0))
+            // ParseArgs builds into mutable holders; then we build typed queries.
+            ParseArgs(input, isAlbum,
+                out string artist, out string title, out string album, out string uri, out int length,
+                out bool artistMaybeWrong, out bool isDirectLink,
+                out int minAlbumTrackCount, out int maxAlbumTrackCount);
+
+            bool treatAsAlbum = isAlbum || (title.Length == 0 && album.Length > 0);
+
+            if (treatAsAlbum)
             {
-                music.Type = TrackType.Album;
-                tle = new TrackListEntry(music);
+                var query = new AlbumQuery
+                {
+                    Artist          = artist,
+                    Album           = album,        // empty = no folder-name constraint
+                    SearchHint      = title,        // song-title hint for network search when Album is empty
+                    URI             = uri,
+                    ArtistMaybeWrong = artistMaybeWrong,
+                    IsDirectLink    = isDirectLink,
+                    MinTrackCount   = minAlbumTrackCount,
+                    MaxTrackCount   = maxAlbumTrackCount,
+                };
+                queue.Enqueue(new AlbumJob(query));
             }
             else
             {
-                tle = new TrackListEntry(TrackType.Normal);
-                tle.AddTrack(music);
+                var query = new SongQuery
+                {
+                    Artist          = artist,
+                    Title           = title,
+                    Album           = album,
+                    URI             = uri,
+                    Length          = length,
+                    ArtistMaybeWrong = artistMaybeWrong,
+                    IsDirectLink    = isDirectLink,
+                };
+                var slj = new SongListJob();
+                slj.Songs.Add(new SongJob(query));
+                queue.Enqueue(slj);
             }
 
-            trackLists.AddEntry(tle);
-
-            return Task.FromResult(trackLists);
+            return Task.FromResult(queue);
         }
 
-        public static Track ParseTrackArg(string input, bool isAlbum)
+        // Parses a "Artist - Title/Album, key=value, ..." string.
+        // Returns all parsed fields as out parameters so callers can build any query type.
+        public static void ParseArgs(string input, bool isAlbum,
+            out string artist, out string title, out string album, out string uri, out int length,
+            out bool artistMaybeWrong, out bool isDirectLink,
+            out int minAlbumTrackCount, out int maxAlbumTrackCount)
         {
             input = input.Trim();
-            var track = new Track();
+            artist = ""; title = ""; album = ""; uri = "";
+            length = -1; artistMaybeWrong = false; isDirectLink = false;
+            minAlbumTrackCount = -1; maxAlbumTrackCount = -1;
+
+            // Capture refs for the closure
+            string _artist = "", _title = "", _album = "", _uri = "";
+            int _length = -1;
+            bool _artistMaybeWrong = false, _isDirectLink = false;
+            int _minCount = -1, _maxCount = -1;
+
             var keys = new string[] { "title", "artist", "length", "album", "artist-maybe-wrong", "album-track-count" };
 
             void setProperty(string key, string value)
             {
                 switch (key)
                 {
-                    case "title":
-                        track.Title = value;
-                        break;
-                    case "artist":
-                        track.Artist = value;
-                        break;
-                    case "length":
-                        track.Length = int.Parse(value);
-                        break;
-                    case "album":
-                        track.Album = value;
-                        break;
+                    case "title":   _title  = value; break;
+                    case "artist":  _artist = value; break;
+                    case "length":  _length = int.Parse(value); break;
+                    case "album":   _album  = value; break;
                     case "artist-maybe-wrong":
-                        if (value == "true") track.ArtistMaybeWrong = true;
+                        if (value == "true") _artistMaybeWrong = true;
                         break;
                     case "album-track-count":
                         if (value == "-1")
                         {
-                            track.MinAlbumTrackCount = -1;
-                            track.MaxAlbumTrackCount = -1;
+                            _minCount = -1;
+                            _maxCount = -1;
                         }
                         else if (value.Last() == '-')
-                        {
-                            track.MaxAlbumTrackCount = int.Parse(value[..^1]);
-                        }
+                            _maxCount = int.Parse(value[..^1]);
                         else if (value.Last() == '+')
-                        {
-                            track.MinAlbumTrackCount = int.Parse(value[..^1]);
-                        }
+                            _minCount = int.Parse(value[..^1]);
                         else
                         {
-                            track.MinAlbumTrackCount = int.Parse(value);
-                            track.MaxAlbumTrackCount = track.MinAlbumTrackCount;
+                            _minCount = int.Parse(value);
+                            _maxCount = _minCount;
                         }
                         break;
                 }
@@ -116,9 +142,7 @@ namespace Extractors
                 }
 
                 if (!keyval && currentVal != null)
-                {
                     currentVal += ',' + x;
-                }
 
                 if (!otherFieldDone)
                 {
@@ -131,45 +155,60 @@ namespace Extractors
                 setProperty(currentKey, currentVal.Trim());
 
             other = other.Trim();
-            if (other.Length > 0 && (isAlbum && track.Album.Length > 0 || !isAlbum && track.Title.Length > 0))
+
+            if (other.Length > 0 && (isAlbum && _album.Length > 0 || !isAlbum && _title.Length > 0))
             {
                 Logger.Warn($"Warning: Input part '{other}' provided without a property name " +
                     $"and album or title is already set. Ignoring.");
             }
             else if (other.Length > 0)
             {
-                string artist = "", album = "", title = "";
-                parts = other.Split(" - ", 2, StringSplitOptions.TrimEntries);
+                var splitParts = other.Split(" - ", 2, StringSplitOptions.TrimEntries);
 
-                if (parts.Length == 1 || track.Artist.Length > 0)
+                if (splitParts.Length == 1 || _artist.Length > 0)
                 {
                     if (isAlbum)
-                        album = other.Trim();
+                        _album = other.Trim();
                     else
-                        title = other.Trim();
+                        _title = other.Trim();
                 }
-                else if (parts.Length == 2)
+                else
                 {
-                    artist = parts[0];
-
+                    _artist = splitParts[0];
                     if (isAlbum)
-                        album = parts[1];
+                        _album = splitParts[1];
                     else
-                        title = parts[1];
+                        _title = splitParts[1];
                 }
-
-                if (track.Artist.Length == 0)
-                    track.Artist = artist;
-                if (track.Album.Length == 0)
-                    track.Album = album;
-                if (track.Title.Length == 0)
-                    track.Title = title;
             }
 
-            if (track.Title.Length == 0 && track.Album.Length == 0 && track.Artist.Length == 0)
+            if (_title.Length == 0 && _album.Length == 0 && _artist.Length == 0)
                 throw new ArgumentException("Track string must contain title, album or artist.");
 
-            return track;
+            artist = _artist; title = _title; album = _album; uri = _uri;
+            length = _length; artistMaybeWrong = _artistMaybeWrong; isDirectLink = _isDirectLink;
+            minAlbumTrackCount = _minCount; maxAlbumTrackCount = _maxCount;
+        }
+
+        // Legacy shim kept for ListExtractor which calls this with track-shaped results.
+        public static SongQuery ParseTrackArg(string input, bool isAlbum)
+        {
+            ParseArgs(input, isAlbum,
+                out string artist, out string title, out string album, out string uri, out int length,
+                out bool artistMaybeWrong, out bool isDirectLink,
+                out int _min, out int _max);
+
+            string effectiveTitle = isAlbum ? (album.Length > 0 ? album : title) : title;
+            return new SongQuery
+            {
+                Artist          = artist,
+                Title           = effectiveTitle,
+                Album           = album,
+                URI             = uri,
+                Length          = length,
+                ArtistMaybeWrong = artistMaybeWrong,
+                IsDirectLink    = isDirectLink,
+            };
         }
     }
 }

@@ -15,13 +15,21 @@ internal static partial class Program
         var config = new Config(args);
         Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
 
-        IProgressReporter? reporter = null;
+        IProgressReporter reporter;
+        DownloadEngine app;
+
         if (config.progressJson)
         {
             reporter = new JsonStreamProgressReporter(Console.Out);
+            app = new DownloadEngine(config, progressReporter: reporter);
+        }
+        else
+        {
+            var cliReporter = new CliProgressReporter(config);
+            app = new DownloadEngine(config, progressReporter: cliReporter);
+            cliReporter.OnKeyPressed = key => app.OnKeyPressed(key);
         }
 
-        var app = new DownloaderApplication(config, progressReporter: reporter);
         await app.RunAsync();
     }
 }

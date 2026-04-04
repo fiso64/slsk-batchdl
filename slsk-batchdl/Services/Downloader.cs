@@ -1,86 +1,90 @@
-﻿using Soulseek;
-
+using Soulseek;
+using Jobs;
 using Models;
+using Enums;
 
 using File = System.IO.File;
 using Directory = System.IO.Directory;
-using ProgressBar = Konsole.ProgressBar;
-using SearchResponse = Soulseek.SearchResponse;
 
 
 public class Downloader
 {
-    private DownloaderApplication app;
+    private readonly DownloadEngine engine;
 
-    public Downloader(DownloaderApplication app)
+    public Downloader(DownloadEngine engine)
     {
-        this.app = app;
+        this.engine = engine;
     }
 
-    public async Task DownloadFile(SearchResponse response, Soulseek.File file, string outputPath, Track track, ProgressBar progress, TrackListEntry tle, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
+    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
-        if (app.downloadedFiles.TryGetValue(response.Username + '\\' + file.Filename, out var trackObj))
-        {
-            lock (app.trackLists)
-            {
-                var existingPath = trackObj.DownloadPath;
-                var outputFileInfo = new FileInfo(outputPath);
-                var existingFileInfo = new FileInfo(existingPath);
+        string fileKey = candidate.Username + '\\' + candidate.Filename;
 
-                if (existingFileInfo.Exists && existingFileInfo.Length == file.Size)
+        if (engine.downloadedFiles.TryGetValue(fileKey, out var existingSong))
+        {
+            lock (engine.downloadedFiles)
+            {
+                var existingPath     = existingSong.DownloadPath;
+                var outputFileInfo   = new FileInfo(outputPath);
+                var existingFileInfo = new FileInfo(existingPath ?? "");
+
+                if (existingFileInfo.Exists && existingFileInfo.Length == candidate.File.Size)
                 {
-                    Logger.Debug($"File \"{file.Filename}\" already downloaded at {existingPath}");
+                    Logger.Debug($"File \"{candidate.Filename}\" already downloaded at {existingPath}");
 
                     if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
                     {
-                        Logger.Debug($"Copying to new output path");
-                        Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-                        File.Copy(existingPath, outputPath, true);
+                        Logger.Debug("Copying to new output path");
+                        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                        File.Copy(existingPath!, outputPath, true);
                     }
 
-                    Printing.RefreshOrPrint(progress, 100, $"Succeeded (already downloaded): {Printing.DisplayString(track, file, response)}", true, true);
-
+                    song.DownloadPath = outputPath;
+                    song.State        = TrackState.Downloaded;
                     return;
                 }
                 else
                 {
-                    app.downloadedFiles.TryRemove(existingPath, out _);
+                    engine.downloadedFiles.TryRemove(fileKey, out _);
                 }
             }
         }
 
-        await app.EnsureClientReadyAsync(config);
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+        await engine.EnsureClientReadyAsync(config);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         string incompleteOutputPath = config.noIncompleteExt ? outputPath : outputPath + ".incomplete";
 
-        Logger.Debug($"Downloading: {track} to '{incompleteOutputPath}'");
+        Logger.Debug($"Downloading: {song} to '{incompleteOutputPath}'");
 
         var transferOptions = new TransferOptions(
             disposeOutputStreamOnCompletion: false,
             stateChanged: (state) =>
             {
-                if (app.downloads.TryGetValue(file.Filename, out var x))
-                    x.transfer = state.Transfer;
+                if (engine.downloads.TryGetValue(candidate.Filename, out var x))
+                    x.Transfer = state.Transfer;
+                engine.ProgressReporter.ReportDownloadStateChanged(song, GetStateLabel(state.Transfer.State));
             },
             progressUpdated: (progress) =>
             {
-                if (app.downloads.TryGetValue(file.Filename, out var x))
-                    x.bytesTransferred = progress.PreviousBytesTransferred;
-                app.ProgressReporter.ReportDownloadProgress(track, progress.PreviousBytesTransferred, file.Size > 0 ? file.Size : 0);
+                if (engine.downloads.TryGetValue(candidate.Filename, out var x))
+                    x.Song.BytesTransferred = progress.PreviousBytesTransferred;
+                engine.ProgressReporter.ReportDownloadProgress(song, progress.PreviousBytesTransferred, candidate.File.Size > 0 ? candidate.File.Size : 0);
             }
         );
 
         try
         {
-            using var downloadCts = ct != null ?
-                CancellationTokenSource.CreateLinkedTokenSource((CancellationToken)ct) :
-                new CancellationTokenSource();
+            using var downloadCts = ct != null
+                ? CancellationTokenSource.CreateLinkedTokenSource((CancellationToken)ct)
+                : new CancellationTokenSource();
 
             using var outputStream = new FileStream(incompleteOutputPath, FileMode.Create);
-            var wrapper = new DownloadWrapper(outputPath, response, file, track, downloadCts, progress, tle);
-            app.downloads.TryAdd(file.Filename, wrapper);
 
-            app.ProgressReporter.ReportDownloadStart(track, response.Username, file);
+            song.FileSize = candidate.File.Size;
+            var activeDownload = new ActiveDownload(song, candidate, downloadCts);
+            engine.downloads.TryAdd(candidate.Filename, activeDownload);
+
+            engine.ProgressReporter.ReportDownloadStart(song, candidate);
 
             int maxRetries = 3;
             int retryCount = 0;
@@ -88,23 +92,21 @@ public class Downloader
             {
                 try
                 {
-                    await app.Client.DownloadAsync(response.Username, file.Filename,
+                    await engine.Client!.DownloadAsync(candidate.Username, candidate.Filename,
                         () => Task.FromResult((Stream)outputStream),
-                        file.Size == -1 ? null : file.Size, startOffset: outputStream.Position,
-                        options: transferOptions, cancellationToken: downloadCts.Token);
-
+                        candidate.File.Size == -1 ? null : candidate.File.Size,
+                        startOffset: outputStream.Position,
+                        options: transferOptions,
+                        cancellationToken: downloadCts.Token);
                     break;
                 }
                 catch (SoulseekClientException e)
                 {
                     retryCount++;
-
                     Logger.DebugError($"Error while downloading: {e}");
-
-                    if (retryCount >= maxRetries || app.IsConnectedAndLoggedIn)
+                    if (retryCount >= maxRetries || engine.IsConnectedAndLoggedIn)
                         throw;
-
-                    await app.EnsureClientReadyAsync(config);
+                    await engine.EnsureClientReadyAsync(config);
                 }
             }
         }
@@ -112,9 +114,7 @@ public class Downloader
         {
             if (File.Exists(incompleteOutputPath))
                 try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.parentDir); } catch { }
-            app.downloads.TryRemove(file.Filename, out var d);
-            if (d != null)
-                lock (d) { d.UpdateText(); }
+            engine.downloads.TryRemove(candidate.Filename, out _);
             throw;
         }
 
@@ -122,27 +122,25 @@ public class Downloader
 
         if (!config.noIncompleteExt)
         {
-            try
-            {
-                Utils.Move(incompleteOutputPath, outputPath);
-                app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
-            }
+            try { Utils.Move(incompleteOutputPath, outputPath); }
             catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }
         }
-        else
-        {
-            app.downloadedFiles[response.Username + '\\' + file.Filename] = track;
-        }
 
-        app.downloads.TryRemove(file.Filename, out var x);
+        engine.downloadedFiles[fileKey] = song;
+        engine.downloads.TryRemove(candidate.Filename, out _);
 
-        if (x != null)
-        {
-            lock (x)
-            {
-                x.success = true;
-                x.UpdateText();
-            }
-        }
+        song.ChosenCandidate = candidate;
+        song.DownloadPath    = outputPath;
+        song.State           = TrackState.Downloaded;
+    }
+
+    static string GetStateLabel(TransferStates s)
+    {
+        if (s.HasFlag(TransferStates.InProgress))   return "InProgress";
+        if (s.HasFlag(TransferStates.Queued))
+            return s.HasFlag(TransferStates.Remotely) ? "Queued (R)" :
+                   s.HasFlag(TransferStates.Locally)  ? "Queued (L)" : "Queued";
+        if (s.HasFlag(TransferStates.Initializing)) return "Initialising";
+        return "Requested";
     }
 }

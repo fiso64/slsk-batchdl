@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Enums;
 using System.Reflection;
 
@@ -8,11 +9,11 @@ namespace Tests.FileManagerTests
     [TestClass]
     public class GetSavePathTests
     {
-        private static FileManager MakeManager(Config? config = null, TrackListEntry? tle = null)
+        private static FileManager MakeManager(Config? config = null, DownloadJob? job = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            tle ??= new TrackListEntry(new Track()) { config = config };
-            return new FileManager(tle, config);
+            job ??= new SongListJob();
+            return new FileManager(job, config);
         }
 
         [TestMethod]
@@ -44,9 +45,8 @@ namespace Tests.FileManagerTests
         {
             var config = TestHelpers.CreateDefaultConfig();
             config.parentDir = "/music";
-            var source = new Track { Type = TrackType.Album };
-            var tle = new TrackListEntry(source) { config = config };
-            var manager = new FileManager(tle, config);
+            var job = new AlbumJob(new AlbumQuery());
+            var manager = new FileManager(job, config);
 
             manager.SetremoteBaseDir("Music\\Artist\\Album");
 
@@ -111,20 +111,38 @@ namespace Tests.FileManagerTests
     [TestClass]
     public class TryGetCleanVarValueTests
     {
-        private static TrackListEntry MakeTle(Config? config = null)
+        private static FileManagerContext MakeCtx(
+            string title = "",
+            string artist = "",
+            string album = "",
+            Soulseek.File? slFile = null,
+            string? downloadPath = null,
+            Config? config = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            return new TrackListEntry(new Track()) { config = config };
+            var job = new SongListJob();
+            var query = new SongQuery { Artist = artist, Title = title, Album = album };
+            Soulseek.SearchResponse? response = slFile != null
+                ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })
+                : null;
+            FileCandidate? candidate = slFile != null && response != null
+                ? new FileCandidate(response, slFile)
+                : null;
+            return new FileManagerContext
+            {
+                Job          = job,
+                Query        = query,
+                Candidate    = candidate,
+                DownloadPath = downloadPath,
+            };
         }
 
         [TestMethod]
         public void TryGetCleanVarValue_KnownNonTagVar_ReturnsTrue()
         {
-            var tle = MakeTle();
-            var track = TestHelpers.CreateTrack(title: "MyTitle");
-            track.DownloadPath = "/music/file.mp3";
+            var ctx = MakeCtx(title: "MyTitle", downloadPath: "/music/file.mp3");
 
-            bool found = FileManager.TryGetCleanVarValue("stitle", tle, () => null, null, track, null, " ", out string res);
+            bool found = FileManager.TryGetCleanVarValue("stitle", ctx, () => null, " ", out string res);
 
             Assert.IsTrue(found);
             Assert.AreEqual("MyTitle", res);
@@ -133,10 +151,9 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void TryGetCleanVarValue_UnknownVar_ReturnsFalse()
         {
-            var tle = MakeTle();
-            var track = TestHelpers.CreateTrack();
+            var ctx = MakeCtx();
 
-            bool found = FileManager.TryGetCleanVarValue("nonexistent", tle, () => null, null, track, null, " ", out string res);
+            bool found = FileManager.TryGetCleanVarValue("nonexistent", ctx, () => null, " ", out string res);
 
             Assert.IsFalse(found);
         }
@@ -144,11 +161,10 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void TryGetCleanVarValue_SlskFilename_ReturnsFilenameWithoutExt()
         {
-            var tle = MakeTle();
-            var track = TestHelpers.CreateTrack();
             var file = TestHelpers.CreateSlFile("Music\\Artist\\Album\\My Track.mp3");
+            var ctx = MakeCtx(slFile: file);
 
-            bool found = FileManager.TryGetCleanVarValue("slsk-filename", tle, () => null, file, track, null, " ", out string res);
+            bool found = FileManager.TryGetCleanVarValue("slsk-filename", ctx, () => null, " ", out string res);
 
             Assert.IsTrue(found);
             Assert.AreEqual("My Track", res);

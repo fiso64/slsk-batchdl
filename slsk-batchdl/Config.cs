@@ -1,5 +1,6 @@
 ﻿using Enums;
 using Models;
+using Jobs;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -93,6 +94,7 @@ public class Config
     public bool writeIndex = true;
     public bool parallelAlbumSearch = false;
     public bool mockFilesReadTags = true;
+    public bool mockFilesSlow = false;
     public bool extractArtist = false;
     public bool noIncompleteExt = false;
     public int downrankOn = -1;
@@ -119,7 +121,7 @@ public class Config
     public int sharedFolders = 0;
     public double fastSearchMinUpSpeed = 1.0;
     public List<string>? onComplete = null;
-    public List<(Track, Track)>? regex = null;
+    public List<(RegexFields, RegexFields)>? regex = null;
     public Logger.LogLevel logLevel = Logger.LogLevel.Info;
     public AlbumArtOption albumArtOption = AlbumArtOption.Default;
     public InputType inputType = InputType.None;
@@ -223,9 +225,7 @@ public class Config
 
         if (regex != null)
         {
-            copy.regex = new List<(Track, Track)>();
-            foreach (var (x, y) in regex)
-                copy.regex.Add((new Track(x), new Track(y)));
+            copy.regex = new List<(RegexFields, RegexFields)>(regex);
         }
 
         copy.appliedProfiles = new HashSet<string>(appliedProfiles);
@@ -288,14 +288,14 @@ public class Config
     }
 
 
-    public void PostProcessArgs(TrackLists trackLists) // must be run after extracting tracklist
+    public void PostProcessArgs(JobQueue queue) // must be run after extracting job queue
     {
         if (DoNotDownload)
             concurrentProcesses = 1;
 
         ignoreOn = Math.Min(ignoreOn, downrankOn);
 
-        writeIndex = WillWriteIndex(trackLists);
+        writeIndex = WillWriteIndex(queue);
 
         if (albumArtOnly && albumArtOption == AlbumArtOption.Default)
             albumArtOption = AlbumArtOption.Largest;
@@ -320,13 +320,13 @@ public class Config
     }
 
 
-    public bool WillWriteIndex(TrackLists? trackLists)
+    public bool WillWriteIndex(JobQueue? queue = null)
     {
         if (DoNotDownload)
         {
             return false;
         }
-        else if (!hasConfiguredIndex && trackLists != null && !trackLists.lists.Any(x => x.enablesIndexByDefault))
+        else if (!hasConfiguredIndex && queue != null && !queue.Jobs.Any(x => x.EnablesIndexByDefault))
         {
             return false;
         }
@@ -389,7 +389,7 @@ public class Config
     }
 
 
-    public bool NeedUpdateProfiles(TrackListEntry tle)
+    public bool NeedUpdateProfiles(DownloadJob job)
     {
         if (DoNotDownload)
             return false;
@@ -401,7 +401,7 @@ public class Config
             if (key == "default" || val.cond == null)
                 continue;
 
-            bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
+            bool condSatisfied = ProfileConditionSatisfied(val.cond, job);
             bool alreadyApplied = appliedProfiles.Contains(key);
 
             if (condSatisfied && !alreadyApplied)
@@ -414,7 +414,7 @@ public class Config
     }
 
 
-    public bool NeedUpdateProfiles(TrackListEntry tle, out List<(string name, List<string> args)>? toApply)
+    public bool NeedUpdateProfiles(DownloadJob job, out List<(string name, List<string> args)>? toApply)
     {
         toApply = null;
 
@@ -431,7 +431,7 @@ public class Config
             if (key == "default" || val.cond == null)
                 continue;
 
-            bool condSatisfied = ProfileConditionSatisfied(val.cond, tle);
+            bool condSatisfied = ProfileConditionSatisfied(val.cond, job);
             bool alreadyApplied = appliedProfiles.Contains(key);
 
             if (condSatisfied && !alreadyApplied)
@@ -447,9 +447,9 @@ public class Config
     }
 
 
-    public Config UpdateProfiles(TrackListEntry tle, TrackLists trackLists)
+    public Config UpdateProfiles(DownloadJob job, JobQueue queue)
     {
-        if (!NeedUpdateProfiles(tle, out var toApply))
+        if (!NeedUpdateProfiles(job, out var toApply))
             return this;
 
         var newConfig = this.Copy();
@@ -464,7 +464,7 @@ public class Config
 
         foreach (var (name, args) in toApply)
         {
-            tle.AddPrintLine($"Applying auto profile: {name}");
+            job.AddPrintLine($"Applying auto profile: {name}");
             newConfig.ProcessArgs(args);
             newConfig.appliedProfiles.Add(name);
         }
@@ -473,7 +473,7 @@ public class Config
 
         newConfig.ProcessArgs(newConfig.arguments);
 
-        newConfig.PostProcessArgs(trackLists);
+        newConfig.PostProcessArgs(queue);
 
         return newConfig;
     }
@@ -507,7 +507,7 @@ public class Config
     }
 
 
-    object GetVarValue(string var, TrackListEntry? tle = null)
+    object GetVarValue(string var, DownloadJob? job = null)
     {
         static string toKebab(string input)
         {
@@ -515,20 +515,23 @@ public class Config
                 => char.IsUpper(x) && i > 0 ? "-" + char.ToLower(x).ToString() : char.ToLower(x).ToString()));
         }
 
+        string downloadMode = job != null
+            ? toKebab(job.GetType().Name.Replace("Job", ""))
+            : album && aggregate ? "album-aggregate" : album ? "album" : aggregate ? "aggregate" : "normal";
+
         return var switch
         {
-            "input-type" => inputType.ToString().ToLower(),
-            "download-mode" => tle != null ? toKebab(tle.source.Type.ToString())
-                : album && aggregate ? "album-aggregate" : album ? "album" : aggregate ? "aggregate" : "normal",
-            "interactive" => interactiveMode,
-            "album" => album,
-            "aggregate" => aggregate,
+            "input-type"    => inputType.ToString().ToLower(),
+            "download-mode" => downloadMode,
+            "interactive"   => interactiveMode,
+            "album"         => album,
+            "aggregate"     => aggregate,
             _ => InputError<object>($"Unrecognized profile condition variable {var}")
         };
     }
 
 
-    public bool ProfileConditionSatisfied(string cond, TrackListEntry? tle = null)
+    public bool ProfileConditionSatisfied(string cond, DownloadJob? job = null)
     {
         var tokens = new Queue<string>(Regex.Split(cond, @"(\s+|\(|\)|&&|\|\||==|!=|!|\"".*?\"")").Where(t => !string.IsNullOrWhiteSpace(t)));
 
@@ -593,11 +596,11 @@ public class Config
             {
                 string op = tokens.Dequeue();
                 string value = tokens.Dequeue().Trim('"').ToLower();
-                string varValue = GetVarValue(token, tle).ToString().ToLower();
+                string varValue = GetVarValue(token, job).ToString().ToLower();
                 return op == "==" ? varValue == value : varValue != value;
             }
 
-            return (bool)GetVarValue(token, tle);
+            return (bool)GetVarValue(token, job);
         }
 
         return ParseExpression();
@@ -623,7 +626,7 @@ public class Config
     }
 
 
-    public static FileConditions ParseConditions(string input, Track? track = null)
+    public static FileConditions ParseConditions(string input, Models.AlbumQuery? albumQuery = null)
     {
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
@@ -709,8 +712,13 @@ public class Config
                     cond.AcceptMissingProps = bool.Parse(value);
                     break;
                 case "albumtrackcount":
-                    if (track != null)
-                        UpdateMinMax2(value, condition, ref track.MinAlbumTrackCount, ref track.MaxAlbumTrackCount);
+                    if (albumQuery != null)
+                    {
+                        int minC = albumQuery.MinTrackCount, maxC = albumQuery.MaxTrackCount;
+                        UpdateMinMax2(value, condition, ref minC, ref maxC);
+                        albumQuery.MinTrackCount = minC;
+                        albumQuery.MaxTrackCount = maxC;
+                    }
                     break;
                 default:
                     InputError($"Unknown condition '{condition}'");
@@ -1022,8 +1030,8 @@ public class Config
                         }
 
                         regex = regex ?? new();
-                        var regexToReplace = new Track();
-                        var regexReplaceBy = new Track();
+                        var regexToReplace = new RegexFields();
+                        var regexReplaceBy = new RegexFields();
 
                         string applyTo = "TAL";
 
@@ -1473,6 +1481,9 @@ public class Config
                     case "--mock-files-no-read-tags":
                         setFlag(ref mockFilesReadTags, ref i, false);
                         break;
+                    case "--mock-files-slow":
+                        setFlag(ref mockFilesSlow, ref i);
+                        break;
                     case "--parse-title":
                         parseTitleTemplate = GetParameter(ref i);
                         break;
@@ -1580,4 +1591,12 @@ public class Config
             return Logger.LogLevel.Error;
         return logLevel;
     }
+}
+
+// Holds the Title/Artist/Album fields used by the --regex option.
+public class RegexFields
+{
+    public string Title  = "";
+    public string Artist = "";
+    public string Album  = "";
 }

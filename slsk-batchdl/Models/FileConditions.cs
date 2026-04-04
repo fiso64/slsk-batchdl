@@ -159,28 +159,40 @@ namespace Models
             MaxBitDepth = null;
         }
 
-        public bool FileSatisfies(Soulseek.File file, Track track, SearchResponse? response)
+        public bool FileSatisfies(Soulseek.File file, SongQuery? query, SearchResponse? response)
         {
+            int length    = query?.Length ?? -1;
+            string title  = query?.Title  ?? "";
+            string artist = query?.Artist ?? "";
+            string album  = query?.Album  ?? "";
             return FormatSatisfies(file.Filename)
-                && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && StrictTitleSatisfies(file.Filename, track.Title) && StrictArtistSatisfies(file.Filename, track.Artist)
-                && StrictAlbumSatisfies(file.Filename, track.Album) && BannedUsersSatisfies(response) && BitDepthSatisfies(file);
+                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
+                && StrictTitleSatisfies(file.Filename, title) && StrictArtistSatisfies(file.Filename, artist)
+                && StrictAlbumSatisfies(file.Filename, album) && BannedUsersSatisfies(response) && BitDepthSatisfies(file);
         }
 
-        public bool FileSatisfies(TagLib.File file, Track track, bool filenameChecks = false)
+        public bool FileSatisfies(TagLib.File file, SongQuery? query, bool filenameChecks = false)
         {
+            int length    = query?.Length ?? -1;
+            string title  = query?.Title  ?? "";
+            string artist = query?.Artist ?? "";
+            string album  = query?.Album  ?? "";
             return FormatSatisfies(file.Name)
-                && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, track.Title)
-                && StrictArtistSatisfies(file.Name, track.Artist) && StrictAlbumSatisfies(file.Name, track.Album));
+                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
+                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, title)
+                && StrictArtistSatisfies(file.Name, artist) && StrictAlbumSatisfies(file.Name, album));
         }
 
-        public bool FileSatisfies(SimpleFile file, Track track, bool filenameChecks = false)
+        public bool FileSatisfies(SimpleFile file, SongQuery? query, bool filenameChecks = false)
         {
+            int length    = query?.Length ?? -1;
+            string title  = query?.Title  ?? "";
+            string artist = query?.Artist ?? "";
+            string album  = query?.Album  ?? "";
             return FormatSatisfies(file.Path)
-                && LengthToleranceSatisfies(file, track.Length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Path, track.Title)
-                && StrictArtistSatisfies(file.Path, track.Artist) && StrictAlbumSatisfies(file.Path, track.Album));
+                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
+                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Path, title)
+                && StrictArtistSatisfies(file.Path, artist) && StrictAlbumSatisfies(file.Path, album));
         }
 
         public bool StrictTitleSatisfies(string fname, string tname, bool noPath = true)
@@ -230,13 +242,13 @@ namespace Models
                 return fname.ContainsWithBoundary(tname, ignoreCase);
         }
 
-        public static bool BracketCheck(Track track, Track other)
+        public static bool BracketCheck(SongQuery query, SongQuery inferred)
         {
-            string t1 = track.Title.RemoveFt().Replace('[', '(');
+            string t1 = query.Title.RemoveFt().Replace('[', '(');
             if (t1.Contains('('))
                 return true;
 
-            string t2 = other.Title.RemoveFt().Replace('[', '(');
+            string t2 = inferred.Title.RemoveFt().Replace('[', '(');
             if (!t2.Contains('('))
                 return true;
 
@@ -304,21 +316,23 @@ namespace Models
             return response == null || BannedUsers == null || !BannedUsers.Any(x => x == response.Username);
         }
 
-        public string GetNotSatisfiedName(Soulseek.File file, Track track, SearchResponse? response)
+        public string GetNotSatisfiedName(Soulseek.File file, SongQuery? query, SearchResponse? response)
         {
+            string title  = query?.Title  ?? "";
+            string artist = query?.Artist ?? "";
+            string album  = query?.Album  ?? "";
+            int length    = query?.Length ?? -1;
             if (!BannedUsersSatisfies(response))
                 return "BannedUsers fails";
-            if (!StrictTitleSatisfies(file.Filename, track.Title))
+            if (!StrictTitleSatisfies(file.Filename, title))
                 return "StrictTitle fails";
-            if (track.Type == Enums.TrackType.Album && !StrictAlbumSatisfies(file.Filename, track.Artist))
-                return "StrictAlbum fails";
-            if (!StrictArtistSatisfies(file.Filename, track.Artist))
+            if (!StrictArtistSatisfies(file.Filename, artist))
                 return "StrictArtist fails";
-            if (!LengthToleranceSatisfies(file, track.Length))
+            if (!LengthToleranceSatisfies(file, length))
                 return "LengthTolerance fails";
             if (!FormatSatisfies(file.Filename))
                 return "Format fails";
-            if (track.Type != Enums.TrackType.Album && !StrictAlbumSatisfies(file.Filename, track.Artist))
+            if (!StrictAlbumSatisfies(file.Filename, album))
                 return "StrictAlbum fails";
             if (!BitrateSatisfies(file))
                 return "Bitrate fails";

@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Enums;
 using Extractors;
 
@@ -11,8 +12,12 @@ namespace Tests.Extractors
         private StringExtractor extractor;
         private Config config;
         private List<string> testStrings;
-        private List<Track> expectedTracks;
-        private List<Track> expectedAlbums;
+
+        // Expected SongQuery fields in song mode: (title, artist, album, length)
+        private List<(string title, string artist, string album, int length)> expectedSongs;
+
+        // Expected AlbumQuery fields in album mode: (album, artist)
+        private List<(string album, string artist)> expectedAlbums;
 
         [TestInitialize]
         public void Setup()
@@ -33,28 +38,32 @@ namespace Tests.Extractors
                 "artist=, title=title, album=album",
             };
 
-            expectedTracks = new List<Track>
+            expectedSongs = new List<(string, string, string, int)>
             {
-                new Track() { Title="Some Title" },
-                new Track() { Title="Some, Title" },
-                new Track() { Title = "some title", Artist = "Some artist" },
-                new Track() { Title = "Title", Artist = "Artist", Length = 42 },
-                new Track() { Title="Some, Title", Artist = "Some, Artist", Album = "Some, Album", Length = 42 },
-                new Track() { Title="Some, Title = b", Artist = "Some, Artist = a", Album = "Some, Album", Length = 42 },
-                new Track() { Title="title", Artist="artist", Album="" },
-                new Track() { Title="title", Artist="", Album="album" },
+                ("Some Title",          "",                "",              -1),
+                ("Some, Title",         "",                "",              -1),
+                ("some title",          "Some artist",     "",              -1),
+                ("Title",               "Artist",          "",              42),
+                ("Some, Title",         "Some, Artist",    "Some, Album",   42),
+                ("Some, Title = b",     "Some, Artist = a","Some, Album",   42),
+                ("title",               "artist",          "",              -1),
+                ("title",               "",                "album",         -1),
             };
 
-            expectedAlbums = new List<Track>
+            // In album mode:
+            //   - When album= is given, Album = that value (normal album search)
+            //   - When only title= is given, Album = "" and Title = that value (search by song title, no folder-name filter)
+            //   - When neither is given but other text is present, Album = the text
+            expectedAlbums = new List<(string album, string artist)>
             {
-                new Track() { Album="Some Title", Type = TrackType.Album },
-                new Track() { Album="Some, Title", Type = TrackType.Album },
-                new Track() { Title = "some title", Artist = "Some artist", Type = TrackType.Album },
-                new Track() { Artist = "Artist", Album="Title", Length = 42, Type = TrackType.Album },
-                new Track() { Title="Some, Title", Artist = "Some, Artist", Album = "Some, Album", Length = 42, Type = TrackType.Album },
-                new Track() { Album = "Some, Album", Length = 42, Type = TrackType.Album },
-                new Track() { Title="title", Artist="artist", Album="", Type = TrackType.Album },
-                new Track() { Title="title", Artist="", Album="album", Type = TrackType.Album },
+                ("Some Title",   ""),            // bare text → Album
+                ("Some, Title",  ""),            // bare text → Album
+                ("",             "Some artist"), // title= only → Album stays empty (Title holds the hint)
+                ("Title",        "Artist"),      // "Artist - Title" → Album = Title part
+                ("Some, Album",  "Some, Artist"),// album= explicit → Album
+                ("Some, Album",  ""),            // album= explicit → Album; other part ignored with warning
+                ("",             "artist"),      // album="" explicit empty → Album stays ""
+                ("album",        ""),            // album= explicit → Album
             };
         }
 
@@ -67,10 +76,14 @@ namespace Tests.Extractors
             {
                 config.input = testStrings[i];
                 var result = await extractor.GetTracks(config.input, 0, 0, false, config);
-                var track = result[0].list[0][0];
+                var song = ((SongListJob)result.Jobs[0]).Songs[0];
+                var q = song.Query;
 
                 Assert.IsTrue(StringExtractor.InputMatches(config.input));
-                Assert.AreEqual(expectedTracks[i].ToKey(), track.ToKey());
+                Assert.AreEqual(expectedSongs[i].title,  q.Title,  $"Case {i}: Title mismatch");
+                Assert.AreEqual(expectedSongs[i].artist, q.Artist, $"Case {i}: Artist mismatch");
+                Assert.AreEqual(expectedSongs[i].album,  q.Album,  $"Case {i}: Album mismatch");
+                Assert.AreEqual(expectedSongs[i].length, q.Length, $"Case {i}: Length mismatch");
             }
         }
 
@@ -83,11 +96,15 @@ namespace Tests.Extractors
             {
                 config.input = testStrings[i];
                 var result = await extractor.GetTracks(config.input, 0, 0, false, config);
-                var track = result[0].source;
-                var expected = expectedAlbums[i];
+                var q = ((AlbumJob)result.Jobs[0]).Query;
 
                 Assert.IsTrue(StringExtractor.InputMatches(config.input));
-                Assert.AreEqual(expectedAlbums[i].ToKey(), track.ToKey());
+                Assert.AreEqual(expectedAlbums[i].album,  q.Album,  $"Case {i}: Album mismatch");
+                Assert.AreEqual(expectedAlbums[i].artist, q.Artist, $"Case {i}: Artist mismatch");
+
+                // When Album is empty, song-title hint should be in SearchHint for network search.
+                if (q.Album.Length == 0 && expectedSongs[i].title.Length > 0)
+                    Assert.AreEqual(expectedSongs[i].title, q.SearchHint, $"Case {i}: SearchHint mismatch (needed for search when Album is empty)");
             }
         }
     }

@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Enums;
 using Services;
 
@@ -68,20 +69,22 @@ namespace Tests.TrackSkipperTests
             if (File.Exists(_tempPath)) File.Delete(_tempPath);
         }
 
-        private M3uEditor CreateEditorWithTrack(Track track)
+        private M3uEditor CreateEditorWithSong(SongJob song)
         {
-            var tl = new TrackLists();
-            tl.AddEntry(new TrackListEntry(TrackType.Normal));
-            tl.AddTrackToLast(track);
+            var slj = new SongListJob();
+            slj.AddSong(song);
+            var queue = new JobQueue();
+            queue.Enqueue(slj);
             File.WriteAllText(_tempPath, "");
-            var editor = new M3uEditor(_tempPath, tl, M3uOption.Index, true);
+            var editor = new M3uEditor(_tempPath, queue, M3uOption.Index, true);
             editor.Update();
 
             // Load back via fresh editor so previousRunData is populated
-            var tl2 = new TrackLists();
-            tl2.AddEntry(new TrackListEntry(TrackType.Normal));
-            tl2.AddTrackToLast(new Track { Artist = track.Artist, Title = track.Title });
-            return new M3uEditor(_tempPath, tl2, M3uOption.Index, true);
+            var slj2 = new SongListJob();
+            slj2.AddSong(new SongJob(new SongQuery { Artist = song.Query.Artist, Title = song.Query.Title }));
+            var queue2 = new JobQueue();
+            queue2.Enqueue(slj2);
+            return new M3uEditor(_tempPath, queue2, M3uOption.Index, true);
         }
 
         [TestMethod]
@@ -94,56 +97,49 @@ namespace Tests.TrackSkipperTests
         [TestMethod]
         public void IndexSkipper_DownloadedTrack_ReturnsTrue()
         {
-            var original = new Track
-            {
-                Artist = "Artist1",
-                Title = "Title1",
-                State = TrackState.Downloaded,
-                DownloadPath = "fake/path/file.mp3"
-            };
-            var editor = CreateEditorWithTrack(original);
+            var original = new SongJob(new SongQuery { Artist = "Artist1", Title = "Title1" });
+            original.State = TrackState.Downloaded;
+            original.DownloadPath = "fake/path/file.mp3";
+            var editor = CreateEditorWithSong(original);
 
             var skipper = new IndexSkipper();
-            var query = new Track { Artist = "Artist1", Title = "Title1" };
+            var query = new SongJob(new SongQuery { Artist = "Artist1", Title = "Title1" });
             var context = new TrackSkipperContext { indexEditor = editor, checkFileExists = false };
 
-            bool result = skipper.TrackExists(query, context, out _);
+            bool result = skipper.SongExists(query, context, out _);
             Assert.IsTrue(result);
         }
 
         [TestMethod]
         public void IndexSkipper_FailedTrack_ReturnsFalse()
         {
-            var original = new Track
-            {
-                Artist = "Artist2",
-                Title = "Title2",
-                State = TrackState.Failed,
-                FailureReason = FailureReason.NoSuitableFileFound
-            };
-            var editor = CreateEditorWithTrack(original);
+            var original = new SongJob(new SongQuery { Artist = "Artist2", Title = "Title2" });
+            original.State = TrackState.Failed;
+            original.FailureReason = FailureReason.NoSuitableFileFound;
+            var editor = CreateEditorWithSong(original);
 
             var skipper = new IndexSkipper();
-            var query = new Track { Artist = "Artist2", Title = "Title2" };
+            var query = new SongJob(new SongQuery { Artist = "Artist2", Title = "Title2" });
             var context = new TrackSkipperContext { indexEditor = editor, checkFileExists = false };
 
-            bool result = skipper.TrackExists(query, context, out _);
+            bool result = skipper.SongExists(query, context, out _);
             Assert.IsFalse(result);
         }
 
         [TestMethod]
         public void IndexSkipper_UnknownTrack_ReturnsFalse()
         {
-            var tl = new TrackLists();
-            tl.AddEntry(new TrackListEntry(TrackType.Normal));
+            var slj = new SongListJob();
+            var queue = new JobQueue();
+            queue.Enqueue(slj);
             File.WriteAllText(_tempPath, "");
-            var editor = new M3uEditor(_tempPath, tl, M3uOption.Index, true);
+            var editor = new M3uEditor(_tempPath, queue, M3uOption.Index, true);
 
             var skipper = new IndexSkipper();
-            var query = new Track { Artist = "Nobody", Title = "Nothing" };
+            var query = new SongJob(new SongQuery { Artist = "Nobody", Title = "Nothing" });
             var context = new TrackSkipperContext { indexEditor = editor, checkFileExists = false };
 
-            bool result = skipper.TrackExists(query, context, out _);
+            bool result = skipper.SongExists(query, context, out _);
             Assert.IsFalse(result);
         }
 
@@ -176,10 +172,10 @@ namespace Tests.TrackSkipperTests
             var skipper = new NameSkipper(_tempDir);
             skipper.BuildIndex();
 
-            var track = new Track { Artist = "Cool Artist", Title = "Great Song" };
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Song" });
             var context = new TrackSkipperContext { checkFileExists = false };
 
-            bool result = skipper.TrackExists(track, context, out _);
+            bool result = skipper.SongExists(song, context, out _);
             Assert.IsTrue(result);
         }
 
@@ -191,10 +187,10 @@ namespace Tests.TrackSkipperTests
             var skipper = new NameSkipper(_tempDir);
             skipper.BuildIndex();
 
-            var track = new Track { Artist = "Cool Artist", Title = "Great Song" };
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Song" });
             var context = new TrackSkipperContext { checkFileExists = false };
 
-            bool result = skipper.TrackExists(track, context, out _);
+            bool result = skipper.SongExists(song, context, out _);
             Assert.IsFalse(result);
         }
 
@@ -204,10 +200,10 @@ namespace Tests.TrackSkipperTests
             var skipper = new NameSkipper(_tempDir);
             skipper.BuildIndex();
 
-            var track = new Track { Artist = "Artist", Title = "Title" };
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
             var context = new TrackSkipperContext { checkFileExists = false };
 
-            bool result = skipper.TrackExists(track, context, out _);
+            bool result = skipper.SongExists(song, context, out _);
             Assert.IsFalse(result);
         }
 

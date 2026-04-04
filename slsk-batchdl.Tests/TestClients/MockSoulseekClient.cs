@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Soulseek;
 
 namespace Tests.ClientTests
@@ -11,13 +12,15 @@ namespace Tests.ClientTests
         public SoulseekClientOptions Options => throw new NotImplementedException();
 
         private List<Soulseek.SearchResponse> index;
+        private readonly bool slowMode;
 
-        public MockSoulseekClient(List<Soulseek.SearchResponse> index)
+        public MockSoulseekClient(List<Soulseek.SearchResponse> index, bool slowMode = false)
         {
-            this.index = index;
+            this.index    = index;
+            this.slowMode = slowMode;
         }
 
-        public static MockSoulseekClient FromLocalPaths(bool useTags, params string[] localPaths)
+        public static MockSoulseekClient FromLocalPaths(bool useTags, bool slowMode, params string[] localPaths)
         {
             if (useTags)
                 Logger.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
@@ -85,7 +88,7 @@ namespace Tests.ClientTests
                 )
             };
 
-            return new MockSoulseekClient(index);
+            return new MockSoulseekClient(index, slowMode);
         }
 
 
@@ -204,42 +207,29 @@ namespace Tests.ClientTests
             return Task.FromResult((search, (IReadOnlyCollection<SearchResponse>)responses));
         }
 
-        private static readonly SemaphoreSlim _downloadSemaphore = new SemaphoreSlim(1, 1);
+        // One semaphore per username — each peer allows only one concurrent download,
+        // but files from different peers can transfer in parallel (matching real Soulseek behaviour).
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _userSemaphores = new();
+
+        SemaphoreSlim GetUserSemaphore(string username) =>
+            _userSemaphores.GetOrAdd(username, _ => new SemaphoreSlim(1, 1));
 
         public async Task<Transfer> DownloadAsync(string username, string remoteFilename, string localFilename, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
         {
-            await _downloadSemaphore.WaitAsync(cancellationToken.GetValueOrDefault(CancellationToken.None));
-            try
+            async Task<Stream> StreamFactory()
             {
-                async Task<Stream> StreamFactory()
-                {
-                    var directory = Path.GetDirectoryName(localFilename);
-                    if (!string.IsNullOrEmpty(directory))
-                    {
-                        System.IO.Directory.CreateDirectory(directory);
-                    }
-                    return System.IO.File.Create(localFilename);
-                }
+                var directory = Path.GetDirectoryName(localFilename);
+                if (!string.IsNullOrEmpty(directory))
+                    System.IO.Directory.CreateDirectory(directory);
+                return System.IO.File.Create(localFilename);
+            }
 
-                return await DownloadAsyncInternal(username, remoteFilename, StreamFactory, size, startOffset, token, options, cancellationToken);
-            }
-            finally
-            {
-                _downloadSemaphore.Release();
-            }
+            return await DownloadAsyncInternal(username, remoteFilename, StreamFactory, size, startOffset, token, options, cancellationToken);
         }
 
-        public async Task<Transfer> DownloadAsync(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
+        public Task<Transfer> DownloadAsync(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
         {
-            await _downloadSemaphore.WaitAsync(cancellationToken.GetValueOrDefault(CancellationToken.None));
-            try
-            {
-                return await DownloadAsyncInternal(username, remoteFilename, outputStreamFactory, size, startOffset, token, options, cancellationToken);
-            }
-            finally
-            {
-                _downloadSemaphore.Release();
-            }
+            return DownloadAsyncInternal(username, remoteFilename, outputStreamFactory, size, startOffset, token, options, cancellationToken);
         }
 
         private async Task<Transfer> DownloadAsyncInternal(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
@@ -290,180 +280,144 @@ namespace Tests.ClientTests
             {
                 try
                 {
-                    options?.StateChanged?.Invoke((TransferStates.Initializing, transfer));
-                    //await Task.Delay(100); // Simulate queue wait
+                    var ct = cancellationToken.GetValueOrDefault(CancellationToken.None);
+
+                    Transfer MakeTransfer(TransferStates state, long bytes, double speed = 0, DateTime? startTime = null, DateTime? endTime = null) =>
+                        new Transfer(TransferDirection.Download, username, remoteFilename, transferToken,
+                            state, fileSize, startOffset, bytes, speed, startTime, endTime);
+
+                    void FireState(TransferStates state, long bytes = 0, double speed = 0, DateTime? t0 = null)
+                    {
+                        transfer = MakeTransfer(state, bytes, speed, t0);
+                        options?.StateChanged?.Invoke((state, transfer));
+                    }
+
+                    void FireProgress(long bytes, long prev, double speed, DateTime t0)
+                    {
+                        transfer = MakeTransfer(TransferStates.InProgress, bytes, speed, t0);
+                        options?.ProgressUpdated?.Invoke((prev, transfer));
+                    }
+
+                    // Always fire Queued (R) before acquiring the per-user slot —
+                    // this mirrors real Soulseek where the peer queues your request
+                    // while serving another file to you.
+                    FireState(TransferStates.Queued | TransferStates.Remotely);
+
+                    var userSem = GetUserSemaphore(username);
+                    await userSem.WaitAsync(ct);
+                    try
+                    {
+
+                    // Initialising — peer has accepted the transfer
+                    if (slowMode)
+                    {
+                        await Task.Delay(Random.Shared.Next(50, 150), ct);
+                    }
+                    FireState(TransferStates.Initializing);
 
                     using var outputStream = await outputStreamFactory();
                     var startTime = DateTime.UtcNow;
                     var bytesTransferred = startOffset;
-                    var chunkSize = 16384; // 16KB chunks
+                    const int chunkSize = 16384;
 
-                    if (sourceFilePath != null)
+                    FireState(TransferStates.InProgress, bytesTransferred, 0, startTime);
+
+                    if (slowMode)
                     {
-                        // Copy from local file
-                        using var sourceStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read);
-                        if (startOffset > 0)
+                        // Spread file transfer over 0.5–1.5 s regardless of actual file size.
+                        int totalMs = Random.Shared.Next(500, 1500);
+                        int steps   = 20;
+                        int stepMs  = totalMs / steps;
+
+                        if (startOffset > 0 && sourceFilePath != null)
                         {
-                            sourceStream.Seek(startOffset, SeekOrigin.Begin);
+                            // Seek real file but don't stream it byte-by-byte in slow mode.
                         }
+
+                        for (int step = 1; step <= steps; step++)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            await Task.Delay(stepMs, ct);
+
+                            bytesTransferred = startOffset + (long)(fileSize - startOffset) * step / steps;
+                            var stepElapsed = DateTime.UtcNow - startTime;
+                            var speed       = stepElapsed.TotalSeconds > 0 ? bytesTransferred / stepElapsed.TotalSeconds : 0;
+                            long prev       = startOffset + (long)(fileSize - startOffset) * (step - 1) / steps;
+                            FireProgress(bytesTransferred, prev, speed, startTime);
+                        }
+
+                        // Write placeholder bytes so the file actually exists on disk.
+                        if (sourceFilePath != null)
+                        {
+                            using var src = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read);
+                            await src.CopyToAsync(outputStream, ct);
+                        }
+                        else
+                        {
+                            var dummy = new byte[Math.Max(1, fileSize)];
+                            await outputStream.WriteAsync(dummy, 0, dummy.Length, ct);
+                        }
+                        bytesTransferred = fileSize;
+                    }
+                    else if (sourceFilePath != null)
+                    {
+                        // Copy from local file immediately.
+                        using var sourceStream = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read);
+                        if (startOffset > 0) sourceStream.Seek(startOffset, SeekOrigin.Begin);
                         var buffer = new byte[chunkSize];
                         int bytesRead;
-
-                        options?.StateChanged?.Invoke((TransferStates.InProgress, transfer));
-
-                        while ((bytesRead = await sourceStream.ReadAsync(buffer, 0, chunkSize)) > 0)
+                        while ((bytesRead = await sourceStream.ReadAsync(buffer, 0, chunkSize, ct)) > 0)
                         {
-                            await outputStream.WriteAsync(buffer, 0, bytesRead);
-                            await outputStream.FlushAsync();
+                            ct.ThrowIfCancellationRequested();
+                            await outputStream.WriteAsync(buffer, 0, bytesRead, ct);
+                            await outputStream.FlushAsync(ct);
+                            long prev = bytesTransferred;
                             bytesTransferred += bytesRead;
-
-                            var elapsed = DateTime.UtcNow - startTime;
-                            var speed = bytesTransferred / elapsed.TotalSeconds;
-
-                            transfer = new Transfer(
-                                direction: TransferDirection.Download,
-                                username: username,
-                                filename: remoteFilename,
-                                token: transferToken,
-                                state: TransferStates.InProgress,
-                                size: fileSize,
-                                startOffset: startOffset,
-                                bytesTransferred: bytesTransferred,
-                                averageSpeed: speed,
-                                startTime: startTime
-                            );
-
-                            options?.ProgressUpdated?.Invoke((bytesTransferred - bytesRead, transfer));
-
-                            if (cancellationToken?.IsCancellationRequested == true)
-                            {
-                                transfer = new Transfer(
-                                    direction: TransferDirection.Download,
-                                    username: username,
-                                    filename: remoteFilename,
-                                    token: transferToken,
-                                    state: TransferStates.Cancelled,
-                                    size: fileSize,
-                                    startOffset: startOffset,
-                                    bytesTransferred: bytesTransferred,
-                                    averageSpeed: speed,
-                                    startTime: startTime
-                                );
-                                options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
-                                return;
-                            }
+                            var chunkElapsed = DateTime.UtcNow - startTime;
+                            FireProgress(bytesTransferred, prev, bytesTransferred / Math.Max(chunkElapsed.TotalSeconds, 0.001), startTime);
                         }
                     }
                     else
                     {
-                        // Generate fake data as before
+                        // Generate fake data immediately.
+                        if (startOffset > 0) outputStream.Seek(startOffset, SeekOrigin.Begin);
                         var buffer = new byte[chunkSize];
-                        for (int i = 0; i < buffer.Length; i++)
-                        {
-                            buffer[i] = (byte)(i % 256);
-                        }
-
-                        transfer = new Transfer(
-                            direction: TransferDirection.Download,
-                            username: username,
-                            filename: remoteFilename,
-                            token: transferToken,
-                            state: TransferStates.InProgress,
-                            size: fileSize,
-                            startOffset: startOffset,
-                            bytesTransferred: bytesTransferred,
-                            startTime: startTime
-                        );
-
-                        options?.StateChanged?.Invoke((TransferStates.InProgress, transfer));
-
-                        // Skip to start offset if needed
-                        if (startOffset > 0)
-                        {
-                            outputStream.Seek(startOffset, SeekOrigin.Begin);
-                        }
-
+                        for (int i = 0; i < buffer.Length; i++) buffer[i] = (byte)(i % 256);
                         while (bytesTransferred < fileSize)
                         {
-                            await Task.Delay(50); // Simulate network delay
-                            var remainingBytes = fileSize - bytesTransferred;
-                            var currentChunk = (int)Math.Min(chunkSize, remainingBytes);
-
-                            // Write the actual data
-                            await outputStream.WriteAsync(buffer, 0, currentChunk, cancellationToken.GetValueOrDefault());
-                            await outputStream.FlushAsync(cancellationToken.GetValueOrDefault());
-
+                            ct.ThrowIfCancellationRequested();
+                            var currentChunk = (int)Math.Min(chunkSize, fileSize - bytesTransferred);
+                            await outputStream.WriteAsync(buffer, 0, currentChunk, ct);
+                            await outputStream.FlushAsync(ct);
+                            long prev = bytesTransferred;
                             bytesTransferred += currentChunk;
-
-                            var elapsed = DateTime.UtcNow - startTime;
-                            var speed = bytesTransferred / elapsed.TotalSeconds;
-
-                            transfer = new Transfer(
-                                direction: TransferDirection.Download,
-                                username: username,
-                                filename: remoteFilename,
-                                token: transferToken,
-                                state: TransferStates.InProgress,
-                                size: fileSize,
-                                startOffset: startOffset,
-                                bytesTransferred: bytesTransferred,
-                                averageSpeed: speed,
-                                startTime: startTime
-                            );
-
-                            options?.ProgressUpdated?.Invoke((bytesTransferred - currentChunk, transfer));
-
-                            if (cancellationToken?.IsCancellationRequested == true)
-                            {
-                                transfer = new Transfer(
-                                    direction: TransferDirection.Download,
-                                    username: username,
-                                    filename: remoteFilename,
-                                    token: transferToken,
-                                    state: TransferStates.Cancelled,
-                                    size: fileSize,
-                                    startOffset: startOffset,
-                                    bytesTransferred: bytesTransferred,
-                                    averageSpeed: speed,
-                                    startTime: startTime
-                                );
-                                options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
-                                return;
-                            }
+                            var fakeElapsed = DateTime.UtcNow - startTime;
+                            FireProgress(bytesTransferred, prev, bytesTransferred / Math.Max(fakeElapsed.TotalSeconds, 0.001), startTime);
                         }
                     }
 
-                    transfer = new Transfer(
-                        direction: TransferDirection.Download,
-                        username: username,
-                        filename: remoteFilename,
-                        token: transferToken,
-                        state: TransferStates.Completed,
-                        size: fileSize,
-                        startOffset: startOffset,
-                        bytesTransferred: bytesTransferred,
-                        averageSpeed: bytesTransferred / (DateTime.UtcNow - startTime).TotalSeconds,
-                        startTime: startTime,
-                        endTime: DateTime.UtcNow
-                    );
-
+                    var elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
+                    transfer = new Transfer(TransferDirection.Download, username, remoteFilename, transferToken,
+                        TransferStates.Completed, fileSize, startOffset,
+                        bytesTransferred, elapsed > 0 ? bytesTransferred / elapsed : 0, startTime, DateTime.UtcNow);
                     options?.StateChanged?.Invoke((TransferStates.Completed, transfer));
+
+                    } // end userSem try
+                    finally { userSem.Release(); }
+                }
+                catch (OperationCanceledException)
+                {
+                    transfer = new Transfer(TransferDirection.Download, username, remoteFilename, transferToken,
+                        TransferStates.Cancelled, fileSize, startOffset);
+                    options?.StateChanged?.Invoke((TransferStates.Cancelled, transfer));
+                    throw;
                 }
                 catch (Exception ex)
                 {
-                    transfer = new Transfer(
-                        direction: TransferDirection.Download,
-                        username: username,
-                        filename: remoteFilename,
-                        token: transferToken,
-                        state: TransferStates.Errored,
-                        size: fileSize,
-                        startOffset: startOffset,
-                        exception: ex
-                    );
-
+                    transfer = new Transfer(TransferDirection.Download, username, remoteFilename, transferToken,
+                        TransferStates.Errored, fileSize, startOffset, exception: ex);
                     options?.StateChanged?.Invoke((TransferStates.Errored, transfer));
-                    throw; // rethrow to ensure the outer task also faults
+                    throw;
                 }
             });
 

@@ -1,5 +1,5 @@
-﻿using Models;
-using Enums;
+using Models;
+using Jobs;
 using System.Web;
 using Soulseek;
 
@@ -12,36 +12,38 @@ namespace Extractors
             return input.StartsWith("slsk://", StringComparison.OrdinalIgnoreCase);
         }
 
-        public Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var res = new TrackLists();
-            var track = new Track()
-            {
-                URI = HttpUtility.UrlDecode(input),
-                IsDirectLink = true,
-            };
+            var queue = new JobQueue();
+            var uri = HttpUtility.UrlDecode(input);
 
             if (input.EndsWith('/') || config.album)
             {
-                track.Type = TrackType.Album;
-                res.AddEntry(new TrackListEntry(track));
-                res.lists[0].sourceCanBeSkipped = false;
+                // Direct-link album: the URI is the folder path
+                var query = new AlbumQuery { URI = uri, IsDirectLink = true };
+                var job = new AlbumJob(query) { CanBeSkippedOverride = false };
+                queue.Enqueue(job);
             }
             else
             {
-                var parts = track.URI["slsk://".Length..].Split('/', 2);
+                // Direct-link single file: pre-populate Candidates so search is skipped
+                var parts = uri["slsk://".Length..].Split('/', 2);
                 var username = parts[0];
                 var path = parts[1].TrimEnd('/').Replace('/', '\\');
 
                 var response = new SearchResponse(username, -1, false, -1, -1, null);
                 var file = new Soulseek.File(-1, path, -1, Path.GetExtension(path));
+                var candidate = new FileCandidate(response, file);
 
-                track.Downloads = new() { (response, file) };
+                var query = new SongQuery { URI = uri, IsDirectLink = true };
+                var song = new SongJob(query) { Candidates = new List<FileCandidate> { candidate } };
 
-                res.AddTrackToLast(track);
-                res.lists[0].sourceCanBeSkipped = false;
+                var slj = new SongListJob();
+                slj.Songs.Add(song);
+                queue.Enqueue(slj);
             }
-            return Task.FromResult(res);
+
+            return Task.FromResult(queue);
         }
     }
 }

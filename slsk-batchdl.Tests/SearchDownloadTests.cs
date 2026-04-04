@@ -1,7 +1,7 @@
-﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Soulseek;
-using Tests.ClientTests;
 
 namespace Tests.SearchDownloadTests
 {
@@ -9,21 +9,24 @@ namespace Tests.SearchDownloadTests
     public class MockSoulseekClientTests
     {
         [TestMethod]
-        public async Task GetAlbumDownloads_ReturnsMatchingResults()
+        public async Task SearchAlbum_ReturnsMatchingResults()
         {
             // Arrange
             var index = TestHelpers.CreateTestIndex();
-            var client = new MockSoulseekClient(index);
-            var app = new DownloaderApplication(new Config(), client);
-            var searcher = new Searcher(app, 999, 1);
-            var album = new Track() { Album = "testalbum", Artist = "testartist", Type = Enums.TrackType.Album };
+            var client = new ClientTests.MockSoulseekClient(index);
+            var engine = new DownloadEngine(new Config(), client);
+            var searcher = new Searcher(engine, 999, 1);
+            var job = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
 
             // Act
-            var results = await searcher.GetAlbumDownloads(album, new ResponseData(), new Config());
+            await searcher.SearchAlbum(job, new Config(), new ResponseData(), CancellationToken.None);
 
-            // Assert
-            Assert.AreEqual(4, results[0].Count);
-            CollectionAssert.AreEqual(index.First(x => x.Username == "testuser").Files.Select(x => x.Filename).ToList(), results[0].Select(x => x.FirstDownload.Filename).ToList());
+            // Assert: the testuser folder (4 files) should be found
+            var testUserFolder = job.FoundFolders.First(f => f.Username == "testuser");
+            Assert.AreEqual(4, testUserFolder.Files.Count);
+            CollectionAssert.AreEqual(
+                index.First(x => x.Username == "testuser").Files.Select(x => x.Filename).ToList(),
+                testUserFolder.Files.Select(x => x.Candidate.File.Filename).ToList());
         }
     }
 }

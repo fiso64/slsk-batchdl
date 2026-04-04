@@ -1,4 +1,5 @@
 using Models;
+using Jobs;
 using Enums;
 using Soulseek;
 using File = Soulseek.File;
@@ -88,21 +89,22 @@ namespace Tests
             return new File(1, filename, size, extension, attributeList: attributes);
         }
 
-        public static Track CreateTrack(
+        public static SongQuery CreateQuery(
             string artist = "",
             string title = "",
             string album = "",
-            int length = -1,
-            TrackType type = TrackType.Normal)
+            int length = -1)
         {
-            return new Track
-            {
-                Artist = artist,
-                Title = title,
-                Album = album,
-                Length = length,
-                Type = type
-            };
+            return new SongQuery { Artist = artist, Title = title, Album = album, Length = length };
+        }
+
+        public static SongJob CreateSongJob(
+            string artist = "",
+            string title = "",
+            string album = "",
+            int length = -1)
+        {
+            return new SongJob(new SongQuery { Artist = artist, Title = title, Album = album, Length = length });
         }
 
         public static Config CreateDefaultConfig()

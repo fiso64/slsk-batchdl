@@ -1,4 +1,5 @@
-﻿using Enums;
+using Enums;
+using Jobs;
 using Models;
 using Soulseek;
 using System.Text.Json;
@@ -7,16 +8,16 @@ using System.Text.Json.Serialization;
 
 public class UserInfoJson
 {
-    public string Username { get; set; }
-    public float UploadSpeed { get; set; }
-    public bool HasFreeUploadSlot { get; set; }
+    public string Username          { get; set; }
+    public float  UploadSpeed       { get; set; }
+    public bool   HasFreeUploadSlot { get; set; }
 
     public UserInfoJson() { }
 
     public UserInfoJson(SearchResponse response)
     {
-        Username = response.Username;
-        UploadSpeed = response.UploadSpeed / (1024f * 1024f);
+        Username          = response.Username;
+        UploadSpeed       = response.UploadSpeed / (1024f * 1024f);
         HasFreeUploadSlot = response.HasFreeUploadSlot;
     }
 }
@@ -24,32 +25,32 @@ public class UserInfoJson
 public class FileInfoJson
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int? Length { get; set; }
-    public string Filename { get; set; }
-    public long Size { get; set; }
+    public int?   Length     { get; set; }
+    public string Filename   { get; set; }
+    public long   Size       { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int? Bitrate { get; set; }
+    public int?   Bitrate    { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int? SampleRate { get; set; }
+    public int?   SampleRate { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int? BitDepth { get; set; }
+    public int?   BitDepth   { get; set; }
 
     public FileInfoJson() { }
 
     public FileInfoJson(Soulseek.File file)
     {
-        Length = file.Length;
-        Filename = file.Filename;
-        Size = file.Size;
-        Bitrate = file.BitRate;
+        Length     = file.Length;
+        Filename   = file.Filename;
+        Size       = file.Size;
+        Bitrate    = file.BitRate;
         SampleRate = file.SampleRate;
-        BitDepth = file.BitDepth;
+        BitDepth   = file.BitDepth;
     }
 }
 
 public class AlbumResultJson
 {
-    public UserInfoJson User { get; set; }
+    public UserInfoJson      User  { get; set; }
     public List<FileInfoJson> Files { get; set; } = new();
 }
 
@@ -73,6 +74,7 @@ public class TrackJson
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Length { get; set; }
 
+    // Preserved for JSON backward-compat: 0 = Normal (song), 1 = Album.
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public TrackType Type { get; set; } = TrackType.Normal;
 
@@ -88,16 +90,28 @@ public class TrackJson
 
     public TrackJson() { }
 
-    public TrackJson(Track track)
+    public TrackJson(SongJob song)
     {
-        Title = string.IsNullOrEmpty(track.Title) ? null : track.Title;
-        Artist = string.IsNullOrEmpty(track.Artist) ? null : track.Artist;
-        Album = string.IsNullOrEmpty(track.Album) ? null : track.Album;
-        Path = string.IsNullOrEmpty(track.DownloadPath) ? null : track.DownloadPath.Replace('\\', '/');
-        Length = track.Length == -1 ? null : (int?)track.Length;
-        Type = track.Type;
-        FailureReason = track.FailureReason == Enums.FailureReason.None ? null : track.FailureReason;
-        State = track.State;
+        Title         = string.IsNullOrEmpty(song.Query.Title)  ? null : song.Query.Title;
+        Artist        = string.IsNullOrEmpty(song.Query.Artist) ? null : song.Query.Artist;
+        Album         = string.IsNullOrEmpty(song.Query.Album)  ? null : song.Query.Album;
+        Path          = string.IsNullOrEmpty(song.DownloadPath) ? null : song.DownloadPath?.Replace('\\', '/');
+        Length        = song.Query.Length == -1 ? null : (int?)song.Query.Length;
+        Type          = TrackType.Normal;
+        FailureReason = song.FailureReason == Enums.FailureReason.None ? null : song.FailureReason;
+        State         = song.State;
+    }
+
+    public TrackJson(IndexEntry entry)
+    {
+        Title         = string.IsNullOrEmpty(entry.Title)        ? null : entry.Title;
+        Artist        = string.IsNullOrEmpty(entry.Artist)       ? null : entry.Artist;
+        Album         = string.IsNullOrEmpty(entry.Album)        ? null : entry.Album;
+        Path          = string.IsNullOrEmpty(entry.DownloadPath) ? null : entry.DownloadPath.Replace('\\', '/');
+        Length        = entry.Length == -1 ? null : (int?)entry.Length;
+        Type          = entry.IsAlbum ? TrackType.Album : TrackType.Normal;
+        FailureReason = entry.FailureReason == Enums.FailureReason.None ? null : entry.FailureReason;
+        State         = entry.State;
     }
 }
 
@@ -126,7 +140,7 @@ public static class JsonPrinter
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public static void PrintTrackResultJson(Track track, IEnumerable<(SearchResponse, Soulseek.File)> results, bool printAll = false)
+    public static void PrintTrackResultJson(SongQuery query, IEnumerable<(SearchResponse, Soulseek.File)> results, bool printAll = false)
     {
         if (results == null || !results.Any())
         {
@@ -141,33 +155,32 @@ public static class JsonPrinter
         });
 
         if (!printAll)
-        {
             trackResults = trackResults.Take(1);
-        }
 
         var json = JsonSerializer.Serialize(trackResults, _options);
         Console.WriteLine(json);
     }
 
-    public static void PrintAggregateJson(List<Track> tracks)
+    public static void PrintAggregateJson(IEnumerable<SongJob> songs)
     {
-        if (tracks.Count == 0)
+        var songList = songs.ToList();
+        if (songList.Count == 0)
         {
             Console.WriteLine("[]");
             return;
         }
 
-        var aggregateTracks = tracks.Select(t => new AggregateTrackJson
+        var aggregateTracks = songList.Select(s => new AggregateTrackJson
         {
-            Artist = t.Artist,
-            Title = t.Title,
-            Album = t.Album,
-            Length = t.Length,
-            Results = t.Downloads?
-                .Select(d => new TrackResultJson
+            Artist  = s.Query.Artist,
+            Title   = s.Query.Title,
+            Album   = s.Query.Album,
+            Length  = s.Query.Length == -1 ? null : (int?)s.Query.Length,
+            Results = s.Candidates?
+                .Select(c => new TrackResultJson
                 {
-                    User = new UserInfoJson(d.Item1),
-                    File = new FileInfoJson(d.Item2)
+                    User = new UserInfoJson(c.Response),
+                    File = new FileInfoJson(c.File)
                 })
                 .ToList() ?? new List<TrackResultJson>()
         }).ToList();
@@ -176,33 +189,30 @@ public static class JsonPrinter
         Console.WriteLine(json);
     }
 
-    public static void PrintAlbumJson(List<List<Track>> albumTracksList, Track sourceTrack)
+    public static void PrintAlbumJson(List<AlbumFolder> folders, AlbumJob job)
     {
-        if (albumTracksList.Count == 0)
+        if (folders.Count == 0)
         {
             Console.WriteLine("[]");
             return;
         }
 
-        var albumResults = albumTracksList
-            .Where(albumTracks => albumTracks.Count > 0)
-            .Select(albumTracks => new AlbumResultJson
+        var albumResults = folders
+            .Where(f => f.Files.Count > 0)
+            .Select(f => new AlbumResultJson
             {
-                User = new UserInfoJson(albumTracks[0].FirstResponse),
-                Files = albumTracks.Select(t => new FileInfoJson(t.Downloads[0].Item2)).ToList()
+                User  = new UserInfoJson(f.Files[0].Candidate.Response),
+                Files = f.Files.Select(af => new FileInfoJson(af.Candidate.File)).ToList()
             });
 
         var json = JsonSerializer.Serialize(albumResults, _options);
         Console.WriteLine(json);
     }
 
-    public static void PrintIndexJson(IEnumerable<Track> tracks)
+    public static void PrintIndexJson(IEnumerable<IndexEntry> entries)
     {
-        var trackJsons = tracks.Select(t => new TrackJson(t));
-        var options = new JsonSerializerOptions(_options)
-        {
-            WriteIndented = true
-        };
+        var trackJsons = entries.Select(e => new TrackJson(e));
+        var options = new JsonSerializerOptions(_options) { WriteIndented = true };
         var json = JsonSerializer.Serialize(trackJsons, options);
         Console.WriteLine(json);
     }

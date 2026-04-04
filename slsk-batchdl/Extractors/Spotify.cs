@@ -1,9 +1,9 @@
-﻿using SpotifyAPI.Web;
+using SpotifyAPI.Web;
 using SpotifyAPI.Web.Auth;
 using Swan;
 
 using Models;
-using Enums;
+using Jobs;
 
 namespace Extractors
 {
@@ -18,50 +18,38 @@ namespace Extractors
             return input == "spotify-likes" || input == "spotify-albums" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var trackLists = new TrackLists();
+            var queue = new JobQueue();
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
             bool needLogin = input == "spotify-likes" || input == "spotify-albums" || config.removeTracksFromSource;
 
             if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
-            {
                 throw new Exception("Credentials are required when downloading liked music or removing from source playlists.");
-            }
 
             spotifyClient = new Spotify(config.spotifyId, config.spotifySecret, config.spotifyToken, config.spotifyRefresh);
             await spotifyClient.Authorize(needLogin, config.removeTracksFromSource);
 
-            TrackListEntry? tle = null;
-
             if (input == "spotify-likes")
             {
                 Logger.Info("Loading Spotify likes..");
-                var tracks = await spotifyClient.GetLikes(max, off);
-                tle = new TrackListEntry(TrackType.Normal);
-                tle.itemName = "Spotify Likes";
-                tle.enablesIndexByDefault = true;
-                tle.list.Add(tracks);
+                var songs = await spotifyClient.GetLikes(max, off);
+                var slj   = new SongListJob { ItemName = "Spotify Likes", EnablesIndexByDefault = true };
+                foreach (var s in songs) slj.Songs.Add(s);
+                queue.Enqueue(slj);
             }
             else if (input == "spotify-albums")
             {
                 Logger.Info("Loading Spotify liked albums..");
-                trackLists = await spotifyClient.GetAlbums(max, off);
+                queue = await spotifyClient.GetAlbums(max, off);
             }
             else if (input.Contains("/album/"))
             {
                 Logger.Info("Loading Spotify album..");
-                (var source, var tracks) = await spotifyClient.GetAlbum(input);
-                tle = new TrackListEntry(TrackType.Album);
-                tle.source = source;
-
-                if (config.setAlbumMinTrackCount)
-                    source.MinAlbumTrackCount = tracks.Count;
-
-                if (config.setAlbumMaxTrackCount)
-                    source.MaxAlbumTrackCount = tracks.Count;
+                var job = await spotifyClient.GetAlbumJob(input, config);
+                queue.Enqueue(job);
             }
             else if (input.Contains("/artist/"))
             {
@@ -69,22 +57,20 @@ namespace Extractors
             }
             else
             {
-                var tracks = new List<Track>();
-                tle = new TrackListEntry(TrackType.Normal);
-
+                var songs = new List<SongJob>();
                 string? playlistName = null;
 
                 try
                 {
                     Logger.Info("Loading Spotify playlist");
-                    (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
+                    (playlistName, playlistUri, songs) = await spotifyClient.GetPlaylist(input, max, off);
                 }
                 catch (SpotifyAPI.Web.APIException)
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
                         await spotifyClient.Authorize(true, config.removeTracksFromSource);
-                        (playlistName, playlistUri, tracks) = await spotifyClient.GetPlaylist(input, max, off);
+                        (playlistName, playlistUri, songs) = await spotifyClient.GetPlaylist(input, max, off);
                     }
                     else if (!needLogin)
                     {
@@ -93,32 +79,48 @@ namespace Extractors
                     else throw;
                 }
 
-                tle.itemName = playlistName;
-                tle.enablesIndexByDefault = true;
-                tle.list.Add(tracks);
-            }
-
-            // `spotify-albums` is a bit special and sets `trackLists` directly.
-            if (tle != null)
-            {
-                trackLists.AddEntry(tle);
+                var slj = new SongListJob { ItemName = playlistName, EnablesIndexByDefault = true };
+                foreach (var s in songs) slj.Songs.Add(s);
+                queue.Enqueue(slj);
             }
 
             if (reverse)
             {
-                trackLists.Reverse();
-                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
+                queue.Reverse();
+                // Apply offset/limit after reversing
+                // For song lists: trim the songs
+                foreach (var job in queue.Jobs)
+                {
+                    if (job is SongListJob slj)
+                    {
+                        if (slj.Songs.Count > offset)
+                            slj.Songs.RemoveRange(0, offset);
+                        else
+                            slj.Songs.Clear();
+
+                        if (slj.Songs.Count > maxTracks)
+                            slj.Songs.RemoveRange(maxTracks, slj.Songs.Count - maxTracks);
+                    }
+                }
+
+                // For album queues: trim the job list
+                if (queue.Jobs.All(j => j is AlbumJob))
+                {
+                    var kept = queue.Jobs.Skip(offset).Take(maxTracks).ToList();
+                    queue.Jobs.Clear();
+                    queue.Jobs.AddRange(kept);
+                }
             }
 
-            return trackLists;
+            return queue;
         }
 
-        public async Task RemoveTrackFromSource(Track track)
+        public async Task RemoveTrackFromSource(SongJob job)
         {
             try
             {
-                if (playlistUri.Length > 0 && track.URI.Length > 0)
-                    await spotifyClient.RemoveTrackFromPlaylist(playlistUri, track.URI);
+                if (playlistUri.Length > 0 && job.Query.URI.Length > 0)
+                    await spotifyClient.RemoveTrackFromPlaylist(playlistUri, job.Query.URI);
             }
             catch (Exception e)
             {
@@ -138,22 +140,21 @@ namespace Extractors
         private SpotifyClient? _client;
         private bool loggedIn = false;
 
-        // default spotify credentials (base64-encoded to keep the bots away)
         public const string encodedSpotifyId = "MWJmNDY5M1bLaH9WJiYjFhNGY0MWJjZWQ5YjJjMWNmZGJiZDI=";
         public const string encodedSpotifySecret = "Y2JlM2QxYTE5MzJkNDQ2MmFiOGUy3shTuf4Y2JhY2M3ZDdjYWU=";
         public bool UsedDefaultCredentials { get; private set; }
 
         public Spotify(string clientId = "", string clientSecret = "", string token = "", string refreshToken = "")
         {
-            _clientId = clientId;
-            _clientSecret = clientSecret;
-            _clientToken = token;
+            _clientId           = clientId;
+            _clientSecret       = clientSecret;
+            _clientToken        = token;
             _clientRefreshToken = refreshToken;
 
             if (_clientToken.Length == 0 && (_clientId.Length == 0 || _clientSecret.Length == 0))
             {
-                _clientId = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId.Replace("1bLaH9", "")));
-                _clientSecret = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret.Replace("3shTuf4", "")));
+                _clientId           = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifyId.Replace("1bLaH9", "")));
+                _clientSecret       = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedSpotifySecret.Replace("3shTuf4", "")));
                 UsedDefaultCredentials = true;
             }
         }
@@ -161,16 +162,13 @@ namespace Extractors
         public async Task Authorize(bool login = false, bool needModify = false)
         {
             _client = null;
-
             Logger.Debug($"Spotify: Authorizing (login={login}, modify={needModify})");
 
             if (!login)
             {
-                var config = SpotifyClientConfig.CreateDefault();
-
-                var request = new ClientCredentialsRequest(_clientId, _clientSecret);
+                var config   = SpotifyClientConfig.CreateDefault();
+                var request  = new ClientCredentialsRequest(_clientId, _clientSecret);
                 var response = await new OAuthClient(config).RequestToken(request);
-
                 _client = new SpotifyClient(config.WithToken(response.AccessToken));
             }
             else
@@ -178,23 +176,22 @@ namespace Extractors
                 Swan.Logging.Logger.NoLogging();
                 _server = new EmbedIOAuthServer(new Uri("http://127.0.0.1:48721/callback"), 48721);
                 await _server.Start();
-
                 Logger.Debug($"Spotify: AuthServer started");
 
                 var existingOk = false;
                 if (_clientToken.Length != 0 || _clientRefreshToken.Length != 0)
                 {
                     existingOk = await this.TryExistingToken();
-                    loggedIn = true;
-                    //new OAuthClient(config).RequestToken()
+                    loggedIn   = true;
                 }
 
                 if (!existingOk)
                 {
                     _server.AuthorizationCodeReceived += OnAuthorizationCodeReceived;
-                    _server.ErrorReceived += OnErrorReceived;
+                    _server.ErrorReceived             += OnErrorReceived;
 
-                    var scope = new List<string> {
+                    var scope = new List<string>
+                    {
                         Scopes.UserLibraryRead, Scopes.PlaylistReadPrivate, Scopes.PlaylistReadCollaborative
                     };
 
@@ -205,15 +202,8 @@ namespace Extractors
                     }
 
                     var request = new LoginRequest(_server.BaseUri, _clientId, LoginRequest.ResponseType.Code) { Scope = scope };
-
-                    try
-                    {
-                        BrowserUtil.Open(request.ToUri());
-                    }
-                    catch (Exception)
-                    {
-                        Logger.Info($"Unable to open URL, manually open: {request.ToUri()}");
-                    }
+                    try { BrowserUtil.Open(request.ToUri()); }
+                    catch (Exception) { Logger.Info($"Unable to open URL, manually open: {request.ToUri()}"); }
                 }
 
                 await IsClientReady();
@@ -238,21 +228,18 @@ namespace Extractors
                     Logger.Info($"Could not make an API call with existing token: {ex.Message}");
                 }
             }
+
             if (_clientRefreshToken.Length != 0)
             {
                 Logger.Info("Trying to renew access with refresh token...");
-                //     var refreshRequest = new TokenSwapRefreshRequest(
-                //     new Uri("http://127.0.0.1:48721/refresh"),
-                //     _clientRefreshToken
-                // );
                 var refreshRequest = new AuthorizationCodeRefreshRequest(_clientId, _clientSecret, _clientRefreshToken);
                 try
                 {
-                    var oauthClient = new OAuthClient();
+                    var oauthClient    = new OAuthClient();
                     var refreshResponse = await oauthClient.RequestToken(refreshRequest);
                     Logger.Debug($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
                     _clientToken = refreshResponse.AccessToken;
-                    _client = new SpotifyClient(_clientToken);
+                    _client      = new SpotifyClient(_clientToken);
                     return true;
                 }
                 catch (Exception ex)
@@ -274,26 +261,20 @@ namespace Extractors
             Logger.Debug($"Spotify: Authorization code received");
             await _server.Stop();
 
-            var config = SpotifyClientConfig.CreateDefault();
-
+            var config        = SpotifyClientConfig.CreateDefault();
             Logger.Debug($"Spotify: Getting token response..");
             var tokenResponse = await new OAuthClient(config).RequestToken(
-                new AuthorizationCodeTokenRequest(
-                    _clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")
-                )
-            );
+                new AuthorizationCodeTokenRequest(_clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")));
 
             Logger.Debug($"Spotify: Got token");
-
             Console.WriteLine("spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
             Console.WriteLine();
             Console.WriteLine("spotify-refresh=" + tokenResponse.RefreshToken);
             Console.WriteLine();
             _clientRefreshToken = tokenResponse.RefreshToken;
-
-            _client = new SpotifyClient(tokenResponse.AccessToken);
-            loggedIn = true;
+            _client             = new SpotifyClient(tokenResponse.AccessToken);
+            loggedIn            = true;
         }
 
         private async Task OnErrorReceived(object sender, string error, string state)
@@ -310,15 +291,15 @@ namespace Extractors
             return true;
         }
 
-        public async Task<List<Track>> GetLikes(int max = int.MaxValue, int offset = 0)
+        public async Task<List<SongJob>> GetLikes(int max = int.MaxValue, int offset = 0)
         {
             if (!loggedIn)
                 throw new Exception("Can't get liked music as user is not logged in");
 
-            List<Track> res = new List<Track>();
+            var songs = new List<SongJob>();
             int limit = Math.Min(max, 50);
+            int num   = offset + 1;
 
-            int num = offset + 1;
             while (true)
             {
                 var tracks = await _client.Library.GetTracks(new LibraryTracksRequest { Limit = limit, Offset = offset });
@@ -326,88 +307,85 @@ namespace Extractors
                 foreach (var track in tracks.Items)
                 {
                     string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
-                    string artist = artists[0];
-                    string name = (string)track.Track.ReadProperty("name");
-                    string album = (string)track.Track.ReadProperty("album").ReadProperty("name");
-                    int duration = (int)track.Track.ReadProperty("durationMs");
-                    res.Add(new Track { Album = album, Artist = artist, Title = name, Length = duration / 1000, ItemNumber = num++ });
+                    string artist   = artists[0];
+                    string name     = (string)track.Track.ReadProperty("name");
+                    string album    = (string)track.Track.ReadProperty("album").ReadProperty("name");
+                    int duration    = (int)track.Track.ReadProperty("durationMs");
+
+                    var query = new SongQuery { Album = album, Artist = artist, Title = name, Length = duration / 1000 };
+                    songs.Add(new SongJob(query) { ItemNumber = num++ });
                 }
 
-                if (tracks.Items.Count < limit || res.Count >= max)
-                    break;
-
+                if (tracks.Items.Count < limit || songs.Count >= max) break;
                 offset += limit;
-                limit = Math.Min(max - res.Count, 50);
+                limit   = Math.Min(max - songs.Count, 50);
             }
 
-            return res;
+            return songs;
         }
 
-        /// Get a list of the user's liked albums.
-        public async Task<TrackLists> GetAlbums(int max = int.MaxValue, int offset = 0)
+        public async Task<JobQueue> GetAlbums(int max = int.MaxValue, int offset = 0)
         {
             if (!loggedIn)
                 throw new Exception("Can't get liked albums as user is not logged in");
 
-            var res = new TrackLists();
+            var queue = new JobQueue();
             int limit = Math.Min(max, 50);
+            int num   = offset + 1;
 
-            int num = offset + 1;
             while (true)
             {
                 var albums = await _client.Library.GetAlbums(new LibraryAlbumsRequest { Limit = limit, Offset = offset });
 
                 foreach (var savedAlbum in albums.Items)
                 {
-                    var album = savedAlbum.Album;
-
-                    string[] artists = album.Artists.Select(artist => artist.Name).ToArray();
+                    var album  = savedAlbum.Album;
+                    string[] artists = album.Artists.Select(a => a.Name).ToArray();
                     string artist = artists[0];
 
-                    var trackListEntry = new TrackListEntry(new Track
+                    var query = new AlbumQuery
                     {
-                        Album = album.Name,
-                        Artist = artist,
-                        MinAlbumTrackCount = album.TotalTracks,
-                        ItemNumber = num++,
-                        Type = TrackType.Album,
-                    });
-                    trackListEntry.itemName = "Spotify Albums";
-                    trackListEntry.enablesIndexByDefault = true;
+                        Album         = album.Name,
+                        Artist        = artist,
+                        MinTrackCount = album.TotalTracks,
+                    };
 
-                    res.AddEntry(trackListEntry);
+                    var job = new AlbumJob(query)
+                    {
+                        ItemNumber            = num++,
+                        ItemName              = "Spotify Albums",
+                        EnablesIndexByDefault = true,
+                    };
+                    queue.Enqueue(job);
                 }
 
-                if (albums.Items.Count < limit || res.Count >= max)
-                    break;
-
+                if (albums.Items.Count < limit || queue.Count >= max) break;
                 offset += limit;
-                limit = Math.Min(max - res.Count, 50);
+                limit   = Math.Min(max - queue.Count, 50);
             }
 
-            Logger.Info($"Found {res.lists.Count} liked albums on Spotify");
-
-            return res;
+            Logger.Info($"Found {queue.Count} liked albums on Spotify");
+            return queue;
         }
 
         public async Task RemoveTrackFromPlaylist(string playlistId, string trackUri)
         {
             var item = new PlaylistRemoveItemsRequest.Item { Uri = trackUri };
-            var pr = new PlaylistRemoveItemsRequest();
+            var pr   = new PlaylistRemoveItemsRequest();
             pr.Tracks = new List<PlaylistRemoveItemsRequest.Item>() { item };
             try { await _client.Playlists.RemoveItems(playlistId, pr); }
             catch { }
         }
 
-        public async Task<(string?, string?, List<Track>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
+        public async Task<(string?, string?, List<SongJob>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
         {
             var playlistId = GetPlaylistIdFromUrl(url);
-            var p = await _client.Playlists.Get(playlistId);
+            var p          = await _client.Playlists.Get(playlistId);
 
-            List<Track> res = new List<Track>();
+            var songs = new List<SongJob>();
             int limit = Math.Min(max, 100);
+            int num   = offset + 1;
 
-            int num = offset + 1;
             while (true)
             {
                 var tracks = await _client.Playlists.GetItems(playlistId, new PlaylistGetItemsRequest { Limit = limit, Offset = offset });
@@ -417,66 +395,68 @@ namespace Extractors
                     try
                     {
                         string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
-                        var t = new Track()
+                        var query = new SongQuery
                         {
                             Artist = artists[0],
-                            Album = (string)track.Track.ReadProperty("album").ReadProperty("name"),
-                            Title = (string)track.Track.ReadProperty("name"),
+                            Album  = (string)track.Track.ReadProperty("album").ReadProperty("name"),
+                            Title  = (string)track.Track.ReadProperty("name"),
                             Length = (int)track.Track.ReadProperty("durationMs") / 1000,
-                            URI = (string)track.Track.ReadProperty("uri"),
-                            ItemNumber = num++,
+                            URI    = (string)track.Track.ReadProperty("uri"),
                         };
-                        res.Add(t);
+                        songs.Add(new SongJob(query) { ItemNumber = num++ });
                     }
-                    catch
-                    {
-                        continue;
-                    }
+                    catch { continue; }
                 }
 
-                if (tracks.Items.Count < limit || res.Count >= max)
-                    break;
-
+                if (tracks.Items.Count < limit || songs.Count >= max) break;
                 offset += limit;
-                limit = Math.Min(max - res.Count, 100);
+                limit   = Math.Min(max - songs.Count, 100);
             }
 
-            return (p.Name, p.Id, res);
+            return (p.Name, p.Id, songs);
         }
 
         private string GetPlaylistIdFromUrl(string url)
         {
-            var uri = new Uri(url);
+            var uri      = new Uri(url);
             var segments = uri.Segments;
             return segments[segments.Length - 1].TrimEnd('/');
         }
 
-        public async Task<(Track, List<Track>)> GetAlbum(string url)
+        public async Task<AlbumJob> GetAlbumJob(string url, Config config)
         {
             var albumId = GetAlbumIdFromUrl(url);
-            var album = await _client.Albums.Get(albumId);
+            var album   = await _client.Albums.Get(albumId);
 
-            List<Track> tracks = new List<Track>();
-
+            var songs = new List<SongJob>();
             foreach (var track in album.Tracks.Items)
             {
-                var t = new Track()
+                var query = new SongQuery
                 {
-                    Album = album.Name,
+                    Album  = album.Name,
                     Artist = track.Artists.First().Name,
-                    Title = track.Name,
+                    Title  = track.Name,
                     Length = track.DurationMs / 1000,
-                    URI = track.Uri,
+                    URI    = track.Uri,
                 };
-                tracks.Add(t);
+                songs.Add(new SongJob(query));
             }
 
-            return (new Track { Album = album.Name, Artist = album.Artists.First().Name, Type = TrackType.Album }, tracks);
+            var albumQuery = new AlbumQuery
+            {
+                Album  = album.Name,
+                Artist = album.Artists.First().Name,
+            };
+
+            if (config.setAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
+            if (config.setAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
+
+            return new AlbumJob(albumQuery);
         }
 
         private string GetAlbumIdFromUrl(string url)
         {
-            var uri = new Uri(url);
+            var uri      = new Uri(url);
             var segments = uri.Segments;
             return segments[^1].TrimEnd('/');
         }

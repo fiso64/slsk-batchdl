@@ -1,4 +1,5 @@
-﻿using Models;
+using Models;
+using Jobs;
 using System.Text.RegularExpressions;
 
 namespace Extractors
@@ -7,7 +8,6 @@ namespace Extractors
     {
         string? csvFilePath = null;
         int csvColumnCount = -1;
-        /// Async-friendly lock.
         private readonly SemaphoreSlim csvLock = new SemaphoreSlim(1, 1);
 
         public static bool InputMatches(string input)
@@ -16,32 +16,63 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var tracks = await ParseCsvIntoTrackInfo(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
+            // Each element is either a SongJob (for songs) or an AlbumJob (for album rows).
+            var rows = await ParseCsvRows(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
                 config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
 
             if (reverse)
-                tracks.Reverse();
+                rows.Reverse();
 
-            var trackLists = TrackLists.FromFlattened(tracks.Skip(offset).Take(maxTracks));
             var csvName = Path.GetFileNameWithoutExtension(csvFilePath);
-
-            foreach (var tle in trackLists.lists)
-            {
-                tle.itemName = csvName;
-                tle.enablesIndexByDefault = true;
-            }
-
-            return trackLists;
+            return BuildQueue(rows.Skip(offset).Take(maxTracks), csvName);
         }
 
-        public async Task RemoveTrackFromSource(Track track)
+        // Builds a JobQueue from a sequence of per-row items (SongJob or AlbumJob).
+        // Consecutive SongJobs are grouped into a single SongListJob.
+        private static JobQueue BuildQueue(IEnumerable<object> rows, string csvName)
+        {
+            var queue = new JobQueue();
+            SongListJob? currentSlj = null;
+
+            foreach (var row in rows)
+            {
+                if (row is AlbumJob albumJob)
+                {
+                    if (currentSlj != null)
+                    {
+                        queue.Enqueue(currentSlj);
+                        currentSlj = null;
+                    }
+                    albumJob.ItemName              = csvName;
+                    albumJob.EnablesIndexByDefault = true;
+                    queue.Enqueue(albumJob);
+                }
+                else if (row is SongJob song)
+                {
+                    if (currentSlj == null)
+                        currentSlj = new SongListJob
+                        {
+                            ItemName              = csvName,
+                            EnablesIndexByDefault = true,
+                        };
+                    currentSlj.Songs.Add(song);
+                }
+            }
+
+            if (currentSlj != null && currentSlj.Songs.Count > 0)
+                queue.Enqueue(currentSlj);
+
+            return queue;
+        }
+
+        public async Task RemoveTrackFromSource(SongJob job)
         {
             await csvLock.WaitAsync();
             try
@@ -51,8 +82,7 @@ namespace Extractors
                     try
                     {
                         string[] lines = await File.ReadAllLinesAsync(csvFilePath, System.Text.Encoding.UTF8);
-                        int idx = track.LineNumber - 1;
-
+                        int idx = job.LineNumber - 1;
                         if (idx > -1 && idx < lines.Length)
                         {
                             lines[idx] = new string(',', Math.Max(0, csvColumnCount - 1));
@@ -65,17 +95,18 @@ namespace Extractors
                     }
                 }
             }
-
             finally
             {
                 csvLock.Release();
             }
         }
 
-        async Task<List<Track>> ParseCsvIntoTrackInfo(string path, string artistCol = "", string trackCol = "",
-            string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string trackCountCol = "", string timeUnit = "s", bool ytParse = false)
+        // Returns a list of rows — either SongJob (song row) or AlbumJob (album row).
+        async Task<List<object>> ParseCsvRows(string path, string artistCol = "", string trackCol = "",
+            string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string trackCountCol = "",
+            string timeUnit = "s", bool ytParse = false)
         {
-            var tracks = new List<Track>();
+            var rows = new List<object>();
             using var sr = new StreamReader(path, System.Text.Encoding.UTF8);
             var parser = new SmallestCSV.SmallestCSVParser(sr);
 
@@ -126,13 +157,13 @@ namespace Extractors
 
             int[] indices = cols.Select(col => col.Length == 0 ? -1 : header.IndexOf(col)).ToArray();
             int artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex, trackCountIndex;
-            (artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex, trackCountIndex) = (indices[0], indices[1], indices[2], indices[3], indices[4], indices[5], indices[6]);
+            (artistIndex, albumIndex, trackIndex, lengthIndex, descIndex, ytIdIndex, trackCountIndex)
+                = (indices[0], indices[1], indices[2], indices[3], indices[4], indices[5], indices[6]);
 
             while (true)
             {
                 index++;
                 List<string>? values = null;
-
                 try
                 {
                     values = parser.ReadNextRow();
@@ -142,72 +173,80 @@ namespace Extractors
                     throw new InvalidDataException($"Error parsing CSV at line {index}: {e.Message}", e);
                 }
 
-                if (values == null)
-                    break;
-                if (!values.Any(t => t.Trim().Length > 0))
-                    continue;
-                while (values.Count < foundCount)
-                    values.Add("");
+                if (values == null) break;
+                if (!values.Any(t => t.Trim().Length > 0)) continue;
+                while (values.Count < foundCount) values.Add("");
 
                 if (csvColumnCount == -1)
                     csvColumnCount = values.Count;
 
-                var desc = "";
-                var track = new Track() { LineNumber = index, ItemNumber = tracks.Count + 1 };
+                string artist = "", title = "", album = "", uri = "", desc = "";
+                int length = -1;
+                int minAlbumTrackCount = -1, maxAlbumTrackCount = -1;
 
-                if (artistIndex >= 0) track.Artist = values[artistIndex];
-                if (trackIndex >= 0) track.Title = values[trackIndex];
-                if (albumIndex >= 0) track.Album = values[albumIndex];
-                if (descIndex >= 0) desc = values[descIndex];
-                if (ytIdIndex >= 0) track.URI = values[ytIdIndex];
+                if (artistIndex     >= 0) artist = values[artistIndex];
+                if (trackIndex      >= 0) title  = values[trackIndex];
+                if (albumIndex      >= 0) album  = values[albumIndex];
+                if (descIndex       >= 0) desc   = values[descIndex];
+                if (ytIdIndex       >= 0) uri    = values[ytIdIndex];
                 if (trackCountIndex >= 0)
                 {
                     string a = values[trackCountIndex].Trim();
                     if (a == "-1")
                     {
-                        track.MinAlbumTrackCount = -1;
-                        track.MaxAlbumTrackCount = -1;
+                        minAlbumTrackCount = -1;
+                        maxAlbumTrackCount = -1;
                     }
                     else if (a.Last() == '-' && int.TryParse(a.AsSpan(0, a.Length - 1), out int n))
-                    {
-                        track.MaxAlbumTrackCount = n;
-                    }
+                        maxAlbumTrackCount = n;
                     else if (a.Last() == '+' && int.TryParse(a.AsSpan(0, a.Length - 1), out n))
-                    {
-                        track.MinAlbumTrackCount = n;
-                    }
+                        minAlbumTrackCount = n;
                     else if (int.TryParse(a, out n))
                     {
-                        track.MinAlbumTrackCount = n;
-                        track.MaxAlbumTrackCount = n;
+                        minAlbumTrackCount = n;
+                        maxAlbumTrackCount = n;
                     }
                 }
                 if (lengthIndex >= 0)
                 {
-                    try
-                    {
-                        track.Length = (int)ParseTrackLength(values[lengthIndex], timeUnit);
-                    }
-                    catch
-                    {
-                        Logger.Warn($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\" for \"{track}\"");
-                    }
+                    try { length = (int)ParseTrackLength(values[lengthIndex], timeUnit); }
+                    catch { Logger.Warn($"Couldn't parse track length \"{values[lengthIndex]}\" with format \"{timeUnit}\""); }
                 }
 
-                if (ytParse)
-                    track = await YouTube.ParseTrackInfo(track.Title, track.Artist, track.URI, track.Length, desc);
+                if (title.Length == 0 && album.Length == 0 && artist.Length == 0)
+                    continue;
 
-                if (track.Title.Length == 0 && track.Album.Length > 0)
-                    track.Type = Enums.TrackType.Album;
-
-                if (track.Title.Length > 0 || track.Artist.Length > 0 || track.Album.Length > 0)
-                    tracks.Add(track);
+                // Album row: no title, has album name
+                if (title.Length == 0 && album.Length > 0)
+                {
+                    var query = new AlbumQuery
+                    {
+                        Artist        = artist,
+                        Album         = album,
+                        URI           = uri,
+                        MinTrackCount = minAlbumTrackCount,
+                        MaxTrackCount = maxAlbumTrackCount,
+                    };
+                    rows.Add(new AlbumJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
+                }
+                else if (ytParse)
+                {
+                    var song = await YouTube.ParseSongInfo(title, artist, uri, length, desc);
+                    song.ItemNumber = rows.Count + 1;
+                    song.LineNumber = index;
+                    rows.Add(song);
+                }
+                else
+                {
+                    var query = new SongQuery { Artist = artist, Title = title, Album = album, URI = uri, Length = length };
+                    rows.Add(new SongJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
+                }
             }
 
             if (ytParse)
                 YouTube.StopService();
 
-            return tracks;
+            return rows;
         }
 
         static double ParseTrackLength(string duration, string format)
@@ -215,30 +254,20 @@ namespace Extractors
             if (string.IsNullOrEmpty(format))
                 throw new ArgumentException("Duration format string empty");
             duration = Regex.Replace(duration, "[a-zA-Z]", "");
-            var formatParts = Regex.Split(format, @"\W+");
+            var formatParts   = Regex.Split(format, @"\W+");
             var durationParts = Regex.Split(duration, @"\W+").Where(s => !string.IsNullOrEmpty(s)).ToArray();
 
             double totalSeconds = 0;
-
             for (int i = 0; i < formatParts.Length; i++)
             {
                 switch (formatParts[i])
                 {
-                    case "h":
-                        totalSeconds += double.Parse(durationParts[i]) * 3600;
-                        break;
-                    case "m":
-                        totalSeconds += double.Parse(durationParts[i]) * 60;
-                        break;
-                    case "s":
-                        totalSeconds += double.Parse(durationParts[i]);
-                        break;
-                    case "ms":
-                        totalSeconds += double.Parse(durationParts[i]) / Math.Pow(10, durationParts[i].Length);
-                        break;
+                    case "h":  totalSeconds += double.Parse(durationParts[i]) * 3600; break;
+                    case "m":  totalSeconds += double.Parse(durationParts[i]) * 60;   break;
+                    case "s":  totalSeconds += double.Parse(durationParts[i]);         break;
+                    case "ms": totalSeconds += double.Parse(durationParts[i]) / Math.Pow(10, durationParts[i].Length); break;
                 }
             }
-
             return totalSeconds;
         }
     }

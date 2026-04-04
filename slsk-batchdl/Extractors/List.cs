@@ -1,7 +1,7 @@
-﻿using System.Text;
+using System.Text;
 
 using Models;
-using Enums;
+using Jobs;
 
 namespace Extractors
 {
@@ -15,7 +15,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandVariables(input);
 
@@ -24,9 +24,9 @@ namespace Extractors
 
             var lines = File.ReadAllLines(listFilePath);
 
-            var trackLists = new TrackLists();
+            var queue = new JobQueue();
 
-            int step = reverse ? -1 : 1;
+            int step  = reverse ? -1 : 1;
             int start = reverse ? lines.Length - 1 : 0;
             int count = 0;
             int added = 0;
@@ -38,72 +38,61 @@ namespace Extractors
                 var line = lines[i].Trim();
 
                 if (line.Length == 0 || line.StartsWith('#')) continue;
-
-                if (count++ < offset)
-                    continue;
-
-                if (added >= maxTracks)
-                    break;
+                if (count++ < offset) continue;
+                if (added >= maxTracks) break;
 
                 bool isAlbum = false;
 
                 if (line.StartsWith("a:"))
                 {
-                    line = line[2..];
+                    line    = line[2..];
                     isAlbum = true;
                 }
 
                 var fields = ParseLine(line);
 
                 if (isAlbum)
-                {
                     fields[0] = "album://" + fields[0];
-                }
 
-                var (type, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
+                var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
+                var subQueue = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
 
-                var tl = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
+                FileConditions? extractorCond     = null;
+                FileConditions? extractorPrefCond = null;
 
-                foreach (var tle in tl.lists)
+                if (fields.Count >= 2)
+                    extractorCond = Config.ParseConditions(fields[1]);
+                if (fields.Count >= 3)
+                    extractorPrefCond = Config.ParseConditions(fields[2]);
+
+                foreach (var job in subQueue.Jobs)
                 {
-                    if (fields.Count >= 2)
-                    {
-                        tle.extractorCond = Config.ParseConditions(fields[1], tle.source);
-                    }
-                    if (fields.Count >= 3)
-                    {
-                        tle.extractorPrefCond = Config.ParseConditions(fields[2]);
-                    }
+                    job.ExtractorCond     = extractorCond;
+                    job.ExtractorPrefCond = extractorPrefCond;
+                    job.ItemName          = foldername;
+                    job.EnablesIndexByDefault = true;
+                    job.LineNumber        = i + 1;
+                    job.ItemNumber        = offset + added + 1;
 
-                    tle.itemName = foldername;
-                    tle.enablesIndexByDefault = true;
-
-                    tle.source.LineNumber = i + 1;
-                    tle.source.ItemNumber = offset + added + 1;
-                }
-
-                if (tl.Count == 1 && tl[0].source.Type == TrackType.Normal && (type == InputType.String || type == InputType.Soulseek))
-                {
-                    if (tl[0].list != null && tl[0].list.SelectMany(x => x).Count() == 1)
+                    // For SongListJob, also set provenance on individual songs
+                    if (job is SongListJob slj && slj.Songs.Count == 1)
                     {
-                        tl[0].list[0][0].LineNumber = i + 1;
-                        tl[0].list[0][0].ItemNumber = offset + added + 1;
+                        slj.Songs[0].LineNumber  = i + 1;
+                        slj.Songs[0].ItemNumber  = offset + added + 1;
                     }
                 }
 
-                trackLists.lists.AddRange(tl.lists);
-
+                queue.Jobs.AddRange(subQueue.Jobs);
                 added++;
             }
 
-            return trackLists;
+            return queue;
         }
 
         static List<string> ParseLine(string input)
         {
             var fields = new List<string>();
-
-            bool inQuotes = false;
+            bool inQuotes    = false;
             var currentField = new StringBuilder();
             input = input.Replace('\t', ' ');
 
@@ -122,11 +111,8 @@ namespace Extractors
                         fields.Add(currentField.ToString());
                         currentField.Clear();
                     }
-
                     while (i < input.Length - 1 && input[i + 1] == ' ')
-                    {
                         i++;
-                    }
                 }
                 else
                 {
@@ -135,14 +121,12 @@ namespace Extractors
             }
 
             if (currentField.Length > 0)
-            {
                 fields.Add(currentField.ToString());
-            }
 
             return fields;
         }
 
-        public async Task RemoveTrackFromSource(Track track)
+        public async Task RemoveTrackFromSource(SongJob job)
         {
             lock (fileLock)
             {
@@ -151,7 +135,7 @@ namespace Extractors
                     try
                     {
                         string[] lines = File.ReadAllLines(listFilePath, Encoding.UTF8);
-                        int idx = track.LineNumber - 1;
+                        int idx = job.LineNumber - 1;
 
                         if (idx > -1 && idx < lines.Length)
                         {

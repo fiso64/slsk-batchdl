@@ -1,7 +1,6 @@
-﻿using Models;
+using Models;
+using Jobs;
 using HtmlAgilityPack;
-
-using Enums;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 
@@ -15,9 +14,9 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<TrackLists> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var trackLists = new TrackLists();
+            var queue = new JobQueue();
             bool isTrack = input.Contains("/track/");
             bool isAlbum = !isTrack && input.Contains("/album/");
             bool isWishlist = !isTrack && !isAlbum && input.Contains("/wishlist");
@@ -46,28 +45,23 @@ namespace Extractors
                     int num = 1;
                     foreach (var item in items)
                     {
-                        var titleNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-title')]");
+                        var titleNode  = item.SelectSingleNode(".//div[contains(@class, 'collection-item-title')]");
                         var artistNode = item.SelectSingleNode(".//div[contains(@class, 'collection-item-artist')]");
 
                         if (titleNode != null && artistNode != null)
                         {
-                            string album = titleNode.InnerText.UnHtmlString().Trim();
+                            string album  = titleNode.InnerText.UnHtmlString().Trim();
                             string artist = artistNode.InnerText.UnHtmlString().Trim();
 
                             if (artist.StartsWith("by ", StringComparison.OrdinalIgnoreCase))
                                 artist = artist.Substring(3).Trim();
 
-                            var track = new Track()
+                            var job = new AlbumJob(new AlbumQuery { Album = album, Artist = artist })
                             {
-                                Album = album,
-                                Artist = artist,
-                                Type = TrackType.Album,
-                                ItemNumber = num++,
+                                ItemNumber            = num++,
+                                EnablesIndexByDefault = true,
                             };
-
-                            var tle = new TrackListEntry(track);
-                            tle.enablesIndexByDefault = true;
-                            trackLists.AddEntry(tle);
+                            queue.Enqueue(job);
                         }
                     }
                 }
@@ -85,10 +79,8 @@ namespace Extractors
                 else
                 {
                     string artistUrl = input.TrimEnd('/');
-
                     if (!artistUrl.EndsWith("/music"))
                         artistUrl += "/music";
-
                     response = await httpClient.GetStringAsync(artistUrl);
                 }
 
@@ -97,30 +89,26 @@ namespace Extractors
                 var id = match.Groups[1].Value;
 
                 var address = $"http://bandcamp.com/api/mobile/24/band_details?band_id={id}";
-
                 var responseString = await httpClient.GetStringAsync(address);
                 var jsonDocument = JsonDocument.Parse(responseString);
                 var root = jsonDocument.RootElement;
 
                 string artistName = root.GetProperty("name").GetString();
 
-                var tralbums = new List<Track>();
-
                 int num = 1;
                 foreach (var item in root.GetProperty("discography").EnumerateArray())
                 {
-                    //ItemType = item.GetProperty("item_type").GetString(),
-                    var track = new Track()
+                    string albumTitle  = item.GetProperty("title").GetString();
+                    string albumArtist = item.GetProperty("artist_name").GetString()
+                                     ?? item.GetProperty("band_name").GetString();
+
+                    var job = new AlbumJob(new AlbumQuery { Album = albumTitle, Artist = albumArtist })
                     {
-                        Album = item.GetProperty("title").GetString(),
-                        Artist = item.GetProperty("artist_name").GetString() ?? item.GetProperty("band_name").GetString(),
-                        Type = TrackType.Album,
-                        ItemNumber = num++,
+                        ItemNumber            = num++,
+                        ItemName              = albumArtist,
+                        EnablesIndexByDefault = true,
                     };
-                    var tle = new TrackListEntry(track);
-                    tle.itemName = track.Artist;
-                    tle.enablesIndexByDefault = true;
-                    trackLists.AddEntry(tle);
+                    queue.Enqueue(job);
                 }
             }
             else
@@ -145,40 +133,41 @@ namespace Extractors
                 if (isAlbum)
                 {
                     var artist = nameSection.SelectSingleNode(".//h3/span/a").InnerText.UnHtmlString().Trim();
-                    var track = new Track() { Artist = artist, Album = name, Type = TrackType.Album };
-                    trackLists.AddEntry(new TrackListEntry(track));
+                    var query  = new AlbumQuery { Artist = artist, Album = name };
 
                     if (config.setAlbumMinTrackCount || config.setAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (config.setAlbumMinTrackCount)
-                            track.MinAlbumTrackCount = n;
-
-                        if (config.setAlbumMaxTrackCount)
-                            track.MaxAlbumTrackCount = n;
+                        if (config.setAlbumMinTrackCount) query.MinTrackCount = n;
+                        if (config.setAlbumMaxTrackCount) query.MaxTrackCount = n;
                     }
+
+                    queue.Enqueue(new AlbumJob(query));
                 }
                 else
                 {
-                    var album = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span/a").InnerText.UnHtmlString().Trim();
+                    var album  = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span/a").InnerText.UnHtmlString().Trim();
                     var artist = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span[last()]/a").InnerText.UnHtmlString().Trim();
-                    //var timeParts = doc.DocumentNode.SelectSingleNode("//span[@class='time_total']").InnerText.Trim().Split(':');
-
-                    var track = new Track() { Artist = artist, Title = name, Album = album };
-                    trackLists.AddEntry(new TrackListEntry(TrackType.Normal));
-                    trackLists.AddTrackToLast(track);
+                    var songQuery = new SongQuery { Artist = artist, Title = name, Album = album };
+                    var slj = new SongListJob();
+                    slj.Songs.Add(new SongJob(songQuery));
+                    queue.Enqueue(slj);
                 }
             }
 
             if (reverse)
-                trackLists.Reverse();
+                queue.Reverse();
 
             if (offset > 0 || maxTracks < int.MaxValue)
-                trackLists = TrackLists.FromFlattened(trackLists.Flattened(true, false).Skip(offset).Take(maxTracks));
+            {
+                var kept = queue.Jobs.Skip(offset).Take(maxTracks).ToList();
+                queue.Jobs.Clear();
+                queue.Jobs.AddRange(kept);
+            }
 
-            return trackLists;
+            return queue;
         }
     }
 }

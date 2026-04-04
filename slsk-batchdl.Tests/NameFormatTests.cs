@@ -1,5 +1,6 @@
-﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using System.Reflection;
 
 namespace Tests.NameFormat
@@ -9,21 +10,38 @@ namespace Tests.NameFormat
     {
         readonly List<TagLib.File> tagLibFiles = new();
 
+        private FileManagerContext MakeCtx(
+            string artist = "SourceArtist",
+            string title = "SourceTitle",
+            string album = "SourceAlbum",
+            Soulseek.File? slFile = null,
+            string? remoteBaseDir = null)
+        {
+            var job = new SongListJob();
+            var query = new SongQuery { Artist = artist, Title = title, Album = album };
+            Soulseek.SearchResponse? response = slFile != null
+                ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })
+                : null;
+            FileCandidate? candidate = slFile != null && response != null
+                ? new FileCandidate(response, slFile)
+                : null;
+            return new FileManagerContext
+            {
+                Job          = job,
+                Query        = query,
+                Candidate    = candidate,
+                RemoteBaseDir = remoteBaseDir != null ? remoteBaseDir.Replace('/', '\\') : null,
+            };
+        }
+
         [TestMethod]
         public void LongExample_Passes()
         {
             var cfg = new Config();
             cfg.nameFormat = "{albumartist(/)album(/)track(. )title|artist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
-            var tle = new TrackListEntry(new Track()) { config = cfg };
-
-            var track = new Track()
-            {
-                Artist = "SourceArtist",
-                Title = "SourceTitle",
-                Album = "SourceAlbum",
-            };
 
             var slFile = new Soulseek.File(0, "music\\test\\testfile.mp3", 1, ".mp3");
+            var ctx = MakeCtx(slFile: slFile, remoteBaseDir: "music\\test");
 
             var method = typeof(FileManager).GetMethod("ApplyNameFormatInternal", BindingFlags.NonPublic | BindingFlags.Static);
 
@@ -35,17 +53,14 @@ namespace Tests.NameFormat
                 track: 1
             );
 
-            var result = (string?)method.Invoke(null, new object[] {
+            var result = (string?)method!.Invoke(null, new object[] {
                 cfg.nameFormat,
                 cfg,
-                tle,
-                () => tagLibFile,
-                slFile,
-                track,
-                "music\\test"
+                ctx,
+                (Func<TagLib.File?>)(() => tagLibFile),
             });
 
-            Assert.AreEqual("AlbumArtist/Album/01. Title", result.Replace('\\', '/'));
+            Assert.AreEqual("AlbumArtist/Album/01. Title", result!.Replace('\\', '/'));
 
             var tagLibFile2 = CreateEmptyMP3(
                 title: "Title",
@@ -57,14 +72,11 @@ namespace Tests.NameFormat
             var result2 = (string?)method.Invoke(null, new object[] {
                 cfg.nameFormat,
                 cfg,
-                tle,
-                () => tagLibFile2,
-                slFile,
-                track,
-                "music\\test"
+                ctx,
+                (Func<TagLib.File?>)(() => tagLibFile2),
             });
 
-            Assert.AreEqual("Artist/Album/01. Title", result2.Replace('\\', '/'));
+            Assert.AreEqual("Artist/Album/01. Title", result2!.Replace('\\', '/'));
 
             var tagLibFile3 = CreateEmptyMP3(
                 artist: "Artist",
@@ -76,14 +88,11 @@ namespace Tests.NameFormat
             var result3 = (string?)method.Invoke(null, new object[] {
                 cfg.nameFormat,
                 cfg,
-                tle,
-                () => tagLibFile3,
-                slFile,
-                track,
-                "music\\test"
+                ctx,
+                (Func<TagLib.File?>)(() => tagLibFile3),
             });
 
-            Assert.AreEqual("missing-tags/test/testfile", result3.Replace('\\', '/'));
+            Assert.AreEqual("missing-tags/test/testfile", result3!.Replace('\\', '/'));
         }
 
         [TestCleanup]

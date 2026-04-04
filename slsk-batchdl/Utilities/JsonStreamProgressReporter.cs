@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Jobs;
 using Models;
 
 namespace Utilities
@@ -27,72 +28,72 @@ namespace Utilities
             };
         }
 
-        public void ReportTrackList(List<Track> tracks, int listIndex = 0)
+        public void ReportTrackList(IEnumerable<SongJob> songs, int listIndex = 0)
         {
+            var list = songs.ToList();
             var data = new
             {
                 listIndex,
-                total = tracks.Count,
-                tracks = tracks.Select((t, i) => new
+                total = list.Count,
+                tracks = list.Select((s, i) => new
                 {
-                    index = i,
-                    artist = t.Artist,
-                    title = t.Title,
-                    album = t.Album,
-                    length = t.Length,
-                    state = t.State.ToString(),
+                    index  = i,
+                    artist = s.Query.Artist,
+                    title  = s.Query.Title,
+                    album  = s.Query.Album,
+                    length = s.Query.Length,
+                    state  = s.State.ToString(),
                 }).ToList(),
             };
             WriteEvent("track_list", data);
         }
 
-        public void ReportSearchStart(Track track)
+        public void ReportSearchStart(SongJob song)
         {
             WriteEvent("search_start", new
             {
-                artist = track.Artist,
-                title = track.Title,
-                album = track.Album,
+                artist = song.Query.Artist,
+                title  = song.Query.Title,
+                album  = song.Query.Album,
             });
         }
 
-        public void ReportSearchResult(Track track, int resultCount, string? chosenUser = null, Soulseek.File? chosenFile = null)
+        public void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null)
         {
             WriteEvent("search_result", new
             {
-                artist = track.Artist,
-                title = track.Title,
+                artist      = song.Query.Artist,
+                title       = song.Query.Title,
                 resultCount,
-                chosenUser,
-                chosenFile = chosenFile != null ? new
+                chosenUser  = chosen?.Username,
+                chosenFile  = chosen != null ? new
                 {
-                    filename = chosenFile.Filename,
-                    size = chosenFile.Size,
-                    bitRate = chosenFile.BitRate,
-                    sampleRate = chosenFile.SampleRate,
-                    bitDepth = chosenFile.BitDepth,
-                    length = chosenFile.Length,
-                    extension = GetExtension(chosenFile.Filename),
+                    filename   = chosen.File.Filename,
+                    size       = chosen.File.Size,
+                    bitRate    = chosen.File.BitRate,
+                    sampleRate = chosen.File.SampleRate,
+                    bitDepth   = chosen.File.BitDepth,
+                    length     = chosen.File.Length,
+                    extension  = GetExtension(chosen.File.Filename),
                 } : null,
             });
         }
 
-        public void ReportDownloadStart(Track track, string username, Soulseek.File file)
+        public void ReportDownloadStart(SongJob song, FileCandidate candidate)
         {
             WriteEvent("download_start", new
             {
-                artist = track.Artist,
-                title = track.Title,
-                username,
-                filename = file.Filename,
-                size = file.Size,
-                extension = GetExtension(file.Filename),
+                artist    = song.Query.Artist,
+                title     = song.Query.Title,
+                username  = candidate.Username,
+                filename  = candidate.Filename,
+                size      = candidate.File.Size,
+                extension = GetExtension(candidate.Filename),
             });
         }
 
-        public void ReportDownloadProgress(Track track, long bytesTransferred, long totalBytes)
+        public void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes)
         {
-            // Throttle download progress events to avoid flooding
             var now = DateTime.UtcNow;
             if (now - _lastDownloadProgressReport < _downloadProgressThrottle)
                 return;
@@ -100,28 +101,28 @@ namespace Utilities
 
             WriteEvent("download_progress", new
             {
-                artist = track.Artist,
-                title = track.Title,
+                artist           = song.Query.Artist,
+                title            = song.Query.Title,
                 bytesTransferred,
                 totalBytes,
                 percent = totalBytes > 0 ? Math.Round((double)bytesTransferred / totalBytes * 100, 1) : 0,
             });
         }
 
-        public void ReportTrackStateChanged(Track track, string? username = null, Soulseek.File? chosenFile = null)
+        public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null)
         {
             WriteEvent("track_state", new
             {
-                artist = track.Artist,
-                title = track.Title,
-                state = track.State.ToString(),
-                failureReason = track.FailureReason != Enums.FailureReason.None ? track.FailureReason.ToString() : null,
-                downloadPath = !string.IsNullOrEmpty(track.DownloadPath) ? track.DownloadPath : null,
-                username,
-                filename = chosenFile?.Filename,
-                size = chosenFile?.Size,
-                bitRate = chosenFile?.BitRate,
-                extension = chosenFile != null ? GetExtension(chosenFile.Filename) : null,
+                artist        = song.Query.Artist,
+                title         = song.Query.Title,
+                state         = song.State.ToString(),
+                failureReason = song.FailureReason != Enums.FailureReason.None ? song.FailureReason.ToString() : null,
+                downloadPath  = !string.IsNullOrEmpty(song.DownloadPath) ? song.DownloadPath : null,
+                username      = chosen?.Username,
+                filename      = chosen?.Filename,
+                size          = chosen?.File.Size,
+                bitRate       = chosen?.File.BitRate,
+                extension     = chosen != null ? GetExtension(chosen.Filename) : null,
             });
         }
 
@@ -138,13 +139,19 @@ namespace Utilities
 
         public void ReportJobComplete(int downloaded, int failed, int total)
         {
-            WriteEvent("job_complete", new
-            {
-                downloaded,
-                failed,
-                total,
-            });
+            WriteEvent("job_complete", new { downloaded, failed, total });
         }
+
+        // Display-only events — no-ops for JSON output.
+        public void ReportJobSearching(DownloadJob job, bool createBar) { }
+        public void ReportJobFolderRetrieving(DownloadJob job) { }
+        public void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles) { }
+        public void ReportSongSearching(SongJob song) { }
+        public void ReportSongNotFound(SongJob song) { }
+        public void ReportSongFailed(SongJob song) { }
+        public void ReportDownloadStateChanged(SongJob song, string stateLabel) { }
+        public void ReportOnCompleteStart(SongJob song) { }
+        public void ReportOnCompleteEnd(SongJob song) { }
 
         private void WriteEvent(string type, object data)
         {

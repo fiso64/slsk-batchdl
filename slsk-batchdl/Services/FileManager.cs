@@ -1,22 +1,74 @@
 using System.Text.RegularExpressions;
 
+using Jobs;
 using Models;
 using Enums;
 
 
+// Context object passed to VarExtractors lambdas and name-format helpers.
+// Constructed from either a SongJob or an AlbumFile, so name format works uniformly.
+public struct FileManagerContext
+{
+    public DownloadJob   Job;
+    public SongQuery     Query;         // artist, title, album, length, uri, artistMaybeWrong
+    public FileCandidate? Candidate;    // slsk-filename, slsk-foldername
+    public string?       DownloadPath;  // path, path-noext, ext
+    public TrackState    State;
+    public FailureReason FailureReason;
+    public bool          IsNotAudio;
+    public int           LineNumber;
+    public int           ItemNumber;
+    public string?       RemoteBaseDir;
+
+    public static FileManagerContext FromSongJob(SongJob song, DownloadJob job, string? remoteBaseDir = null)
+    {
+        return new FileManagerContext
+        {
+            Job           = job,
+            Query         = song.Query,
+            Candidate     = song.ChosenCandidate ?? song.Candidates?.FirstOrDefault(),
+            DownloadPath  = song.DownloadPath,
+            State         = song.State,
+            FailureReason = song.FailureReason,
+            IsNotAudio    = false,
+            LineNumber    = song.LineNumber,
+            ItemNumber    = song.ItemNumber,
+            RemoteBaseDir = remoteBaseDir,
+        };
+    }
+
+    public static FileManagerContext FromAlbumFile(AlbumFile file, DownloadJob job, string? remoteBaseDir = null)
+    {
+        return new FileManagerContext
+        {
+            Job           = job,
+            Query         = file.Info,
+            Candidate     = file.Candidate,
+            DownloadPath  = file.DownloadPath,
+            State         = file.State,
+            FailureReason = file.FailureReason,
+            IsNotAudio    = file.IsNotAudio,
+            LineNumber    = job.LineNumber,
+            ItemNumber    = job.ItemNumber,
+            RemoteBaseDir = remoteBaseDir,
+        };
+    }
+}
+
+
 public class FileManager
 {
-    readonly TrackListEntry tle;
-    readonly HashSet<Track> organized = new();
+    readonly DownloadJob job;
+    readonly HashSet<object> organized = new();
     public string? remoteBaseDir { get; private set; }
     public string? remoteImagesCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }
-    public bool downloadingAdditinalImages = false;
+    public bool downloadingAdditionalImages = false;
     private readonly Config config;
 
-    public FileManager(TrackListEntry tle, Config config)
+    public FileManager(DownloadJob job, Config config)
     {
-        this.tle = tle;
+        this.job    = job;
         this.config = config;
     }
 
@@ -27,176 +79,180 @@ public class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string? rcd = downloadingAdditinalImages ? remoteImagesCommonDir : remoteBaseDir;
-        string parent = config.parentDir;
-        string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
+        string? rcd    = downloadingAdditionalImages ? remoteImagesCommonDir : remoteBaseDir;
+        string  parent = config.parentDir;
+        string  name   = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
-        if (!string.IsNullOrEmpty(tle.DefaultFolderName()))
-        {
-            parent = Path.Join(parent, tle.DefaultFolderName());
-        }
+        if (!string.IsNullOrEmpty(job.DefaultFolderName()))
+            parent = Path.Join(parent, job.DefaultFolderName());
 
-        if (tle.source.Type == TrackType.Album && !string.IsNullOrEmpty(rcd))
+        if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
         {
-            string dirname = defaultFolderName != null ? defaultFolderName : Path.GetFileName(rcd);
+            string dirname   = defaultFolderName ?? Path.GetFileName(rcd);
             string normFname = Utils.NormalizedPath(sourceFname);
-            string relpath = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
+            string relpath   = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
         return Path.Join(parent, name).CleanPath(config.invalidReplaceStr);
     }
 
-    public void SetremoteBaseDir(string? remoteBaseDir)
+    public void SetremoteBaseDir(string? dir)
     {
-        this.remoteBaseDir = remoteBaseDir != null ? Utils.NormalizedPath(remoteBaseDir) : null;
+        this.remoteBaseDir = dir != null ? Utils.NormalizedPath(dir) : null;
     }
 
-    public void SetRemoteCommonImagesDir(string? remoteBaseDir)
+    public void SetRemoteCommonImagesDir(string? dir)
     {
-        this.remoteImagesCommonDir = remoteBaseDir != null ? Utils.NormalizedPath(remoteBaseDir) : null;
+        this.remoteImagesCommonDir = dir != null ? Utils.NormalizedPath(dir) : null;
     }
 
-    public void SetDefaultFolderName(string? defaultFolderName)
+    public void SetDefaultFolderName(string? name)
     {
-        this.defaultFolderName = defaultFolderName != null ? Utils.NormalizedPath(defaultFolderName) : null;
+        this.defaultFolderName = name != null ? Utils.NormalizedPath(name) : null;
     }
 
-    public void OrganizeAlbum(Track source, List<Track> allDownloadedFiles, List<Track>? additionalImages, bool remainingOnly = true)
+    // Organizes all files in a completed album download, then sets the job's DownloadPath to the
+    // greatest common directory of the audio files.
+    public void OrganizeAlbum(AlbumJob albumJob, List<AlbumFile> allFiles, List<AlbumFile>? additionalImages, bool remainingOnly = true)
     {
-        foreach (var track in allDownloadedFiles.Where(t => !t.IsNotAudio))
+        foreach (var file in allFiles.Where(f => !f.IsNotAudio))
         {
-            if (remainingOnly && organized.Contains(track))
+            if (remainingOnly && organized.Contains(file))
                 continue;
-
-            OrganizeAudio(track, track.FirstDownload);
+            OrganizeAlbumFile(file);
         }
 
-        source.DownloadPath = Utils.GreatestCommonDirectory(allDownloadedFiles.Where(t => !t.IsNotAudio).Select(t => t.DownloadPath));
+        albumJob.DownloadPath = Utils.GreatestCommonDirectory(
+            allFiles.Where(f => !f.IsNotAudio).Select(f => f.DownloadPath));
 
-        var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat) ? additionalImages : allDownloadedFiles.Where(t => t.IsNotAudio);
+        var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat)
+            ? additionalImages
+            : (IEnumerable<AlbumFile>)allFiles.Where(f => f.IsNotAudio);
 
         if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
             return;
 
         string parent = Utils.GreatestCommonDirectory(
-            allDownloadedFiles.Where(t => !t.IsNotAudio && t.State == TrackState.Downloaded && t.DownloadPath.Length > 0).Select(t => t.DownloadPath));
+            allFiles
+                .Where(f => !f.IsNotAudio && f.State == TrackState.Downloaded && f.DownloadPath?.Length > 0)
+                .Select(f => f.DownloadPath));
 
-        foreach (var track in nonAudioToOrganize)
+        foreach (var file in nonAudioToOrganize)
         {
-            if (remainingOnly && organized.Contains(track))
+            if (remainingOnly && organized.Contains(file))
                 continue;
-
-            OrganizeNonAudio(track, parent, additionalImages != null && additionalImages.Contains(track));
+            OrganizeNonAudio(file, parent, additionalImages != null && additionalImages.Contains(file));
         }
     }
 
-    public void OrganizeAudio(Track track, Soulseek.File? file)
+    public void OrganizeAlbumFile(AlbumFile file)
     {
-        if (track.DownloadPath.Length == 0 || !Utils.IsMusicFile(track.DownloadPath))
+        if (string.IsNullOrEmpty(file.DownloadPath) || !Utils.IsMusicFile(file.DownloadPath))
             return;
 
         if (config.nameFormat.Length == 0)
         {
-            organized.Add(track);
+            organized.Add(file);
             return;
         }
 
-        string pathPart = ApplyNameFormat(config.nameFormat, track, file);
-        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(track.DownloadPath));
+        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromAlbumFile(file, job, remoteBaseDir));
+        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(file.DownloadPath));
 
-        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(track.DownloadPath))
+        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            try
-            {
-                Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Failed to move: {ex}");
-                return;
-            }
-
+            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, config.parentDir); }
+            catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
         }
 
-        track.DownloadPath = newFilePath;
-
-        organized.Add(track);
+        file.DownloadPath = newFilePath;
+        organized.Add(file);
     }
 
-    private void OrganizeNonAudio(Track track, string parent, bool isAdditionalImage)
+    public void OrganizeSong(SongJob song)
     {
-        if (track.DownloadPath.Length == 0)
+        if (string.IsNullOrEmpty(song.DownloadPath) || !Utils.IsMusicFile(song.DownloadPath))
+            return;
+
+        if (config.nameFormat.Length == 0)
+        {
+            organized.Add(song);
+            return;
+        }
+
+        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir));
+        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(song.DownloadPath));
+
+        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
+        {
+            try { Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, config.parentDir); }
+            catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
+        }
+
+        song.DownloadPath = newFilePath;
+        organized.Add(song);
+    }
+
+    private void OrganizeNonAudio(AlbumFile file, string parent, bool isAdditionalImage)
+    {
+        if (string.IsNullOrEmpty(file.DownloadPath))
             return;
 
         string? part = null;
+        string? rcd  = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
 
-        string? rcd = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
+        if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(file.Candidate.Filename), rcd, true))
+            part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(file.Candidate.Filename));
 
-        if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(track.FirstDownload.Filename), rcd, true))
+        string newFilePath = Path.Join(parent, part, Path.GetFileName(file.DownloadPath));
+
+        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(track.FirstDownload.Filename));
+            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, config.parentDir); }
+            catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
         }
 
-        string newFilePath = Path.Join(parent, part, Path.GetFileName(track.DownloadPath));
-
-        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(track.DownloadPath))
-        {
-            try
-            {
-                Utils.MoveAndDeleteParent(track.DownloadPath, newFilePath, config.parentDir);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Failed to move: {ex}");
-                return;
-            }
-        }
-
-        track.DownloadPath = newFilePath;
-
-        organized.Add(track);
+        file.DownloadPath = newFilePath;
+        organized.Add(file);
     }
 
-    string ApplyNameFormat(string format, Track track, Soulseek.File? slfile)
+    private string ApplyNameFormat(string format, FileManagerContext ctx)
     {
-        TagLib.File? file = null;
-        bool triedGettingFile = false;
+        TagLib.File? tagFile  = null;
+        bool         tried    = false;
         TagLib.File? getTagFile()
         {
-            if (!triedGettingFile && file == null)
+            if (!tried)
             {
-                triedGettingFile = true;
-                try { file = TagLib.File.Create(track.DownloadPath); }
-                catch (Exception ex) { Logger.Trace($"Failed to read tags for '{track.DownloadPath}': {ex.Message}"); }
+                tried = true;
+                try { tagFile = TagLib.File.Create(ctx.DownloadPath); }
+                catch (Exception ex) { Logger.Trace($"Failed to read tags for '{ctx.DownloadPath}': {ex.Message}"); }
             }
-            return file;
+            return tagFile;
         }
-
-        return ApplyNameFormatInternal(format, config, tle, getTagFile, slfile, track, remoteBaseDir);
+        return ApplyNameFormatInternal(format, config, ctx, getTagFile);
     }
 
-    static string ApplyNameFormatInternal(string format, Config config, TrackListEntry tle, Func<TagLib.File?> getTagFile, Soulseek.File? slfile, Track track, string? remoteBaseDir)
+    static string ApplyNameFormatInternal(string format, Config config, FileManagerContext ctx, Func<TagLib.File?> getTagFile)
     {
         string newName = format;
-        var regex = new Regex(@"(\{(?:\{??[^\{]*?\}))");
+        var regex   = new Regex(@"(\{(?:\{??[^\{]*?\}))");
         var matches = regex.Matches(newName);
 
         while (matches.Count > 0)
         {
             foreach (var match in matches.Cast<Match>())
             {
-                string inner = match.Groups[1].Value;
-                inner = inner[1..^1];
-
-                var options = inner.Split('|');
+                string inner = match.Groups[1].Value[1..^1];
+                var options  = inner.Split('|');
                 string? chosenOpt = null;
 
                 foreach (var opt in options)
                 {
-                    string[] parts = Regex.Split(opt, @"\([^\)]*\)");
-                    string[] result = parts.Where(part => !string.IsNullOrWhiteSpace(part)).ToArray();
-                    if (result.All(x => TryGetCleanVarValue(x, tle, getTagFile, slfile, track, remoteBaseDir, config.invalidReplaceStr, out string res) && res.Length > 0))
+                    string[] parts  = Regex.Split(opt, @"\([^\)]*\)");
+                    string[] result = parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+                    if (result.All(x => TryGetCleanVarValue(x, ctx, getTagFile, config.invalidReplaceStr, out string res) && res.Length > 0))
                     {
                         chosenOpt = opt;
                         break;
@@ -204,24 +260,19 @@ public class FileManager
                 }
 
                 if (chosenOpt == null)
-                {
                     chosenOpt = options[^1];
-                }
 
-                chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", match =>
+                chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", m =>
                 {
-                    if (match.Value.StartsWith("(") && match.Value.EndsWith(")"))
-                        return match.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
-                    else
-                    {
-                        TryGetCleanVarValue(match.Value, tle, getTagFile, slfile, track, remoteBaseDir, config.invalidReplaceStr, out string res);
-                        return res;
-                    }
+                    if (m.Value.StartsWith("(") && m.Value.EndsWith(")"))
+                        return m.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
+                    TryGetCleanVarValue(m.Value, ctx, getTagFile, config.invalidReplaceStr, out string res);
+                    return res;
                 });
 
                 string old = match.Groups[1].Value;
-                old = old.StartsWith("{{") ? old[1..] : old;
-                newName = newName.Replace(old, chosenOpt);
+                old        = old.StartsWith("{{") ? old[1..] : old;
+                newName    = newName.Replace(old, chosenOpt);
             }
 
             matches = regex.Matches(newName);
@@ -231,56 +282,66 @@ public class FileManager
         {
             char dirsep = Path.DirectorySeparatorChar;
             newName = newName.Replace('/', dirsep).Replace('\\', dirsep);
-            var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(x => x.ReplaceInvalidChars(config.invalidReplaceStr).Trim(' ', '.')));
+            var x   = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
+            newName = string.Join(dirsep, x.Select(s => s.ReplaceInvalidChars(config.invalidReplaceStr).Trim(' ', '.')));
             return newName;
         }
 
         return format;
     }
 
-    private static readonly Dictionary<string, Func<TrackListEntry, TagLib.File?, Soulseek.File?, Track, string?, string>> VarExtractors = new()
+    // Key: variable name. Value: (ctx, tagFile) → string.
+    private static readonly Dictionary<string, Func<FileManagerContext, TagLib.File?, string>> VarExtractors = new()
     {
-        { "artist", (_, f, _, _, _) => f?.Tag.FirstPerformer ?? "" },
-        { "artists", (_, f, _, _, _) => f != null ? string.Join(" & ", f.Tag.Performers) : "" },
-        { "albumartist", (_, f, _, _, _) => f?.Tag.FirstAlbumArtist ?? "" },
-        { "albumartists", (_, f, _, _, _) => f != null ? string.Join(" & ", f.Tag.AlbumArtists) : "" },
-        { "title", (_, f, _, _, _) => f?.Tag.Title ?? "" },
-        { "album", (_, f, _, _, _) => f?.Tag.Album ?? "" },
-        { "year", (_, f, _, _, _) => f?.Tag.Year.ToString() ?? "" },
-        { "track", (_, f, _, _, _) => f?.Tag.Track.ToString("D2") ?? "" },
-        { "disc", (_, f, _, _, _) => f?.Tag.Disc.ToString() ?? "" },
-        { "length", (_, f, _, _, _) => f?.Tag.Length.ToString() ?? "" },
+        // Tag-based (read from the downloaded file's embedded tags)
+        { "artist",       (_, f) => f?.Tag.FirstPerformer ?? "" },
+        { "artists",      (_, f) => f != null ? string.Join(" & ", f.Tag.Performers) : "" },
+        { "albumartist",  (_, f) => f?.Tag.FirstAlbumArtist ?? "" },
+        { "albumartists", (_, f) => f != null ? string.Join(" & ", f.Tag.AlbumArtists) : "" },
+        { "title",        (_, f) => f?.Tag.Title ?? "" },
+        { "album",        (_, f) => f?.Tag.Album ?? "" },
+        { "year",         (_, f) => f?.Tag.Year.ToString() ?? "" },
+        { "track",        (_, f) => f?.Tag.Track.ToString("D2") ?? "" },
+        { "disc",         (_, f) => f?.Tag.Disc.ToString() ?? "" },
+        { "length",       (_, f) => f?.Tag.Length.ToString() ?? "" },
 
-        { "sartist", (_, _, _, t, _) => t.Artist },
-        { "sartists", (_, _, _, t, _) => t.Artist },
-        { "stitle", (_, _, _, t, _) => t.Title },
-        { "salbum", (_, _, _, t, _) => t.Album },
-        { "slength", (_, _, _, t, _) => t.Length.ToString() },
-        { "uri", (_, _, _, t, _) => t.URI },
-        { "url", (_, _, _, t, _) => t.URI },
-        { "type", (_, _, _, t, _) => t.Type.ToString() },
-        { "state", (_, _, _, t, _) => t.State.ToString() },
-        { "is-audio", (_, _, _, t, _) => (!t.IsNotAudio).ToString().ToLower() },
-        { "failure-reason", (_, _, _, t, _) => t.FailureReason.ToString() },
-        { "artist-maybe-wrong", (_, _, _, t, _) => t.ArtistMaybeWrong.ToString().ToLower() },
-        { "row", (_, _, _, t, _) => t.LineNumber.ToString() },
-        { "line", (_, _, _, t, _) => t.LineNumber.ToString() },
-        { "snum", (_, _, _, t, _) => t.ItemNumber.ToString() },
+        // Search-query fields (from the original query, prefix 's' = "source")
+        { "sartist",  (ctx, _) => ctx.Query.Artist },
+        { "sartists", (ctx, _) => ctx.Query.Artist },
+        { "stitle",   (ctx, _) => ctx.Query.Title },
+        { "salbum",   (ctx, _) => ctx.Query.Album },
+        { "slength",  (ctx, _) => ctx.Query.Length.ToString() },
+        { "uri",      (ctx, _) => ctx.Query.URI },
+        { "url",      (ctx, _) => ctx.Query.URI },
 
-        { "slsk-filename", (_, _, s, _, _) => Utils.GetFileNameWithoutExtSlsk(s?.Filename ?? "") },
-        { "filename", (_, _, s, _, _) => Utils.GetFileNameWithoutExtSlsk(s?.Filename ?? "") },
-        { "slsk-foldername", (_, _, s, _, r) => GetFolderName(s, r) },
-        { "foldername", (_, _, s, _, r) => GetFolderName(s, r) },
-        { "extractor", (t, _, _, _, _) => t.config.inputType.ToString() },
-        { "input", (t, _, _, _, _) => t.config.input },
-        { "item-name", (t, _, _, _, _) => t.ItemNameOrSource() },
-        { "default-folder", (t, _, _, _, _) => t.DefaultFolderName() },
-        { "output-dir", (t, _, _, _, _) => t.config.parentDir },
-        { "path", (_, _, _, t, _) => t.DownloadPath.TrimEnd('/').TrimEnd('\\') },
-        { "path-noext", (_, _, _, t, _) => Path.Combine(Path.GetDirectoryName(t.DownloadPath), Path.GetFileNameWithoutExtension(t.DownloadPath)) },
-        { "ext", (_, _, _, t, _) => Path.GetExtension(t.DownloadPath) },
-        { "bindir", (_, _, _, _, _) => AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\') },
+        // Download state
+        { "type",             (ctx, _) => ctx.Job.GetType().Name.Replace("Job", "") },
+        { "state",            (ctx, _) => ctx.State.ToString() },
+        { "is-audio",         (ctx, _) => (!ctx.IsNotAudio).ToString().ToLower() },
+        { "failure-reason",   (ctx, _) => ctx.FailureReason.ToString() },
+        { "artist-maybe-wrong", (ctx, _) => ctx.Query.ArtistMaybeWrong.ToString().ToLower() },
+        { "row",              (ctx, _) => ctx.LineNumber.ToString() },
+        { "line",             (ctx, _) => ctx.LineNumber.ToString() },
+        { "snum",             (ctx, _) => ctx.ItemNumber.ToString() },
+
+        // Soulseek file path vars (from the remote file)
+        { "slsk-filename", (ctx, _) => Utils.GetFileNameWithoutExtSlsk(ctx.Candidate?.Filename ?? "") },
+        { "filename",      (ctx, _) => Utils.GetFileNameWithoutExtSlsk(ctx.Candidate?.Filename ?? "") },
+        { "slsk-foldername", (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
+        { "foldername",      (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
+
+        // Job / config vars
+        { "extractor",      (ctx, _) => ctx.Job.Config.inputType.ToString() },
+        { "input",          (ctx, _) => ctx.Job.Config.input },
+        { "item-name",      (ctx, _) => ctx.Job.ItemNameOrSource() },
+        { "default-folder", (ctx, _) => ctx.Job.DefaultFolderName() },
+        { "output-dir",     (ctx, _) => ctx.Job.Config.parentDir },
+
+        // Local path vars (from the downloaded file's local path)
+        { "path",      (ctx, _) => (ctx.DownloadPath ?? "").TrimEnd('/').TrimEnd('\\') },
+        { "path-noext",(ctx, _) => ctx.DownloadPath != null ? Path.Combine(Path.GetDirectoryName(ctx.DownloadPath), Path.GetFileNameWithoutExtension(ctx.DownloadPath)) : "" },
+        { "ext",       (ctx, _) => ctx.DownloadPath != null ? Path.GetExtension(ctx.DownloadPath) : "" },
+        { "bindir",    (_, _)   => AppDomain.CurrentDomain.BaseDirectory.TrimEnd('/').TrimEnd('\\') },
     };
 
     private static readonly HashSet<string> PreserveSeparatorVars = new()
@@ -319,18 +380,18 @@ public class FileManager
         }
 
         string normalizedRbd = Utils.NormalizedPath(remoteBaseDir);
-        string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
-        string r = Path.GetFileName(normalizedRbd);
+        string d   = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
+        string r   = Path.GetFileName(normalizedRbd);
         string result = Path.Join(r, Path.GetRelativePath(normalizedRbd, d));
         return result;
     }
 
-    public static bool TryGetCleanVarValue(string x, TrackListEntry tle, Func<TagLib.File?> getFile, Soulseek.File? slfile, Track track, string? remoteBaseDir, string replaceWith, out string res)
+    public static bool TryGetCleanVarValue(string x, FileManagerContext ctx, Func<TagLib.File?> getFile, string replaceWith, out string res)
     {
         if (VarExtractors.TryGetValue(x, out var extractor))
         {
-            var file = TagVars.Contains(x) ? getFile() : null;
-            string value = extractor(tle, file, slfile, track, remoteBaseDir);
+            var tagFile = TagVars.Contains(x) ? getFile() : null;
+            string value = extractor(ctx, tagFile);
             if (NoCleanSeparatorVars.Contains(x))
                 res = value;
             else if (PreserveSeparatorVars.Contains(x))
@@ -349,19 +410,17 @@ public class FileManager
         return VarExtractors.Keys;
     }
 
-    public static string ReplaceVariables(string x, TrackListEntry tle, TagLib.File? file, Soulseek.File? slfile, Track track, string? remoteBaseDir)
+    public static string ReplaceVariables(string x, FileManagerContext ctx, TagLib.File? tagFile)
     {
         foreach (var (key, extractor) in VarExtractors)
         {
             var k = '{' + key + '}';
             if (x.Contains(k))
             {
-                var val = extractor(tle, file, slfile, track, remoteBaseDir);
+                var val = extractor(ctx, tagFile);
                 x = x.Replace(k, val);
             }
         }
-
         return x;
     }
-
 }

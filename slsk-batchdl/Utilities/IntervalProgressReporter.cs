@@ -1,5 +1,5 @@
 using Enums;
-using Models;
+using Jobs;
 
 
 /// Utility class to handle interval-based progress reports.
@@ -17,20 +17,19 @@ public class IntervalProgressReporter
     private readonly int totalCount = 0;
     private readonly object _reportLock = new();
 
-    public IntervalProgressReporter(TimeSpan interval, int countInterval, List<Track> tracks)
+    public IntervalProgressReporter(TimeSpan interval, int countInterval, IEnumerable<SongJob> songs)
     {
-        this.Interval = interval;
+        this.Interval      = interval;
         this.countInterval = countInterval;
 
-        foreach (var track in tracks)
+        foreach (var song in songs)
         {
-            if (track.State == TrackState.Downloaded || track.State == TrackState.AlreadyExists)
+            if (song.State == TrackState.Downloaded || song.State == TrackState.AlreadyExists)
                 downloadedCount++;
-            else if (track.State == TrackState.Failed || track.State == TrackState.NotFoundLastTime)
+            else if (song.State == TrackState.Failed || song.State == TrackState.NotFoundLastTime)
                 failedCount++;
+            totalCount++;
         }
-
-        totalCount = tracks.Count;
     }
 
     public void MaybeReport(TrackState state)
@@ -47,15 +46,15 @@ public class IntervalProgressReporter
             loggedCount++;
 
             var now = DateTime.UtcNow;
-            var timeConditionMet = (now - lastLoggedTime) > Interval;
+            var timeConditionMet  = (now - lastLoggedTime) > Interval;
             var countConditionMet = countInterval <= 0 || (loggedCount >= countInterval);
 
             if (timeConditionMet && countConditionMet)
             {
                 lastLoggedTime = now;
-                loggedCount = 0;
+                loggedCount    = 0;
 
-                var failedStr = failedCount > 0 ? $", Failed {failedCount}" : "";
+                var failedStr       = failedCount > 0 ? $", Failed {failedCount}" : "";
                 var percentComplete = (double)(downloadedCount + failedCount) / totalCount;
                 Logger.Info($"Downloaded {downloadedCount}{failedStr} of Total {totalCount} ({percentComplete:P})", color: ConsoleColor.DarkGray);
             }

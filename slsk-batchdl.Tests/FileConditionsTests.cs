@@ -319,24 +319,24 @@ namespace Tests.FileConditionsTests
         [TestMethod]
         public void TrackHasBracket_ReturnsTrue()
         {
-            var track = TestHelpers.CreateTrack(title: "Song (Remix)");
-            var other = TestHelpers.CreateTrack(title: "Song (Remix)");
+            var track = TestHelpers.CreateQuery(title: "Song (Remix)");
+            var other = TestHelpers.CreateQuery(title: "Song (Remix)");
             Assert.IsTrue(FileConditions.BracketCheck(track, other));
         }
 
         [TestMethod]
         public void OtherHasNoBracket_ReturnsTrue()
         {
-            var track = TestHelpers.CreateTrack(title: "Song");
-            var other = TestHelpers.CreateTrack(title: "Song");
+            var track = TestHelpers.CreateQuery(title: "Song");
+            var other = TestHelpers.CreateQuery(title: "Song");
             Assert.IsTrue(FileConditions.BracketCheck(track, other));
         }
 
         [TestMethod]
         public void OtherHasBracket_TrackDoesNot_ReturnsFalse()
         {
-            var track = TestHelpers.CreateTrack(title: "Song");
-            var other = TestHelpers.CreateTrack(title: "Song (Remix)");
+            var track = TestHelpers.CreateQuery(title: "Song");
+            var other = TestHelpers.CreateQuery(title: "Song (Remix)");
             Assert.IsFalse(FileConditions.BracketCheck(track, other));
         }
     }
@@ -360,7 +360,7 @@ namespace Tests.FileConditionsTests
                 "Music\\Cool Artist\\Album\\01 - My Song.mp3",
                 bitrate: 256,
                 length: 200);
-            var track = TestHelpers.CreateTrack(artist: "Cool Artist", title: "My Song", length: 201);
+            var track = TestHelpers.CreateQuery(artist: "Cool Artist", title: "My Song", length: 201);
 
             Assert.IsTrue(fc.FileSatisfies(file, track, null));
         }
@@ -378,7 +378,7 @@ namespace Tests.FileConditionsTests
                 "Music\\Artist\\Album\\Song.mp3",
                 bitrate: 128,
                 length: 200);
-            var track = TestHelpers.CreateTrack(length: 200);
+            var track = TestHelpers.CreateQuery(length: 200);
 
             Assert.IsFalse(fc.FileSatisfies(file, track, null));
         }

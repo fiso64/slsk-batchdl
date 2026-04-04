@@ -140,7 +140,7 @@ namespace Tests.ResultSorterTests
             var results = new List<(SearchResponse, File)>();
             var config = new Config();
             var counts = new ConcurrentDictionary<string, int>();
-            var track = TestHelpers.CreateTrack(artist: "A", title: "T");
+            var track = TestHelpers.CreateQuery(artist: "A", title: "T");
 
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 
@@ -155,7 +155,7 @@ namespace Tests.ResultSorterTests
             var results = new List<(SearchResponse, File)> { (response, file) };
             var config = new Config();
             var counts = new ConcurrentDictionary<string, int>();
-            var track = TestHelpers.CreateTrack(artist: "Artist", title: "Track");
+            var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 
@@ -178,7 +178,7 @@ namespace Tests.ResultSorterTests
             counts["winner"] = 5;  // Above downrankOn
             // "loser" has 0, which is not > 0
 
-            var track = TestHelpers.CreateTrack(artist: "Artist", title: "Track");
+            var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 
             Assert.AreEqual(2, ordered.Count);
@@ -197,7 +197,7 @@ namespace Tests.ResultSorterTests
             var counts = new ConcurrentDictionary<string, int>();
             // "baduser" has 0 which is not > 0
 
-            var track = TestHelpers.CreateTrack(artist: "Artist", title: "Track");
+            var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 
             Assert.AreEqual(0, ordered.Count);
@@ -214,7 +214,7 @@ namespace Tests.ResultSorterTests
 
             var config = new Config();
             var counts = new ConcurrentDictionary<string, int>();
-            var track = TestHelpers.CreateTrack(artist: "Artist", title: "Track");
+            var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 
@@ -234,7 +234,7 @@ namespace Tests.ResultSorterTests
             var config = new Config();
             config.preferredCond = new FileConditions { Formats = new[] { "flac" } };
             var counts = new ConcurrentDictionary<string, int>();
-            var track = TestHelpers.CreateTrack(artist: "Artist", title: "Track");
+            var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
             var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
 

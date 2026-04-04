@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
+using Jobs;
 using Models;
 using Enums;
 
@@ -6,53 +7,75 @@ public static class OnCompleteExecutor
 {
     private static readonly SemaphoreSlim _lockingSemaphore = new(1, 1);
 
-    // Helper struct to hold parsed flags and the remaining command
     private struct CommandConfig
     {
-        public string Command { get; set; }
-        public bool UseShellExecute { get; set; }
-        public bool CreateNoWindow { get; set; }
-        public bool OnlyTrackOnComplete { get; set; }
-        public bool OnlyAlbumOnComplete { get; set; }
-        public bool ReadOutput { get; set; }
-        public bool UseOutputToUpdateIndex { get; set; }
-        public int? RequiredTrackState { get; set; }
-        public bool UseLocking { get; set; }
+        public string  Command                { get; set; }
+        public bool    UseShellExecute        { get; set; }
+        public bool    CreateNoWindow         { get; set; }
+        public bool    OnlyTrackOnComplete    { get; set; }
+        public bool    OnlyAlbumOnComplete    { get; set; }
+        public bool    ReadOutput             { get; set; }
+        public bool    UseOutputToUpdateIndex { get; set; }
+        public int?    RequiredTrackState     { get; set; }
+        public bool    UseLocking             { get; set; }
     }
 
     private struct ProcessResult
     {
-        public int ExitCode { get; set; }
-        public string? Stdout { get; set; }
-        public string? Stderr { get; set; }
+        public int     ExitCode { get; set; }
+        public string? Stdout   { get; set; }
+        public string? Stderr   { get; set; }
     }
 
-    /// <summary>
-    /// Executes the on-complete actions defined in the TrackListEntry configuration.
-    /// </summary>
-    public static async Task ExecuteAsync(TrackListEntry tle, Track track, M3uEditor? indexEditor, M3uEditor? playlistEditor)
+    // Execute on-complete actions for a job.
+    // song is null when called for an album-level completion (no individual song).
+    public static async Task ExecuteAsync(DownloadJob job, SongJob? song, M3uEditor? indexEditor, M3uEditor? playlistEditor)
     {
-        if (!tle.config.HasOnComplete || tle.config.onComplete == null)
+        if (!job.Config.HasOnComplete || job.Config.onComplete == null)
             return;
 
-        bool isAlbumOnComplete = track.Type == TrackType.Album;
-        bool needUpdateIndex = false;
+        bool isAlbumOnComplete = job is AlbumJob;
 
-        ProcessResult? firstCommandResult = null;
-        ProcessResult? prevCommandResult = null;
-
-        for (int i = 0; i < tle.config.onComplete.Count; i++)
+        // Build a FileManagerContext for variable substitution.
+        FileManagerContext ctx;
+        if (song != null)
+            ctx = FileManagerContext.FromSongJob(song, job);
+        else if (job is AlbumJob albumJob && albumJob.ChosenFolder != null)
         {
-            string rawCommand = tle.config.onComplete[i];
+            // Use the first audio file in the chosen folder as representative context.
+            var rep = albumJob.ChosenFolder.Files.FirstOrDefault(f => !f.IsNotAudio);
+            ctx = rep != null
+                ? FileManagerContext.FromAlbumFile(rep, job)
+                : new FileManagerContext { Job = job, Query = new SongQuery(), DownloadPath = albumJob.DownloadPath };
+        }
+        else
+        {
+            ctx = new FileManagerContext { Job = job, Query = new SongQuery(), DownloadPath = job.DownloadPath };
+        }
+
+        // Derive TrackState for RequiredTrackState matching.
+        TrackState currentState = song != null
+            ? song.State
+            : (job.State == JobState.Done ? TrackState.Downloaded
+             : job.State == JobState.Failed ? TrackState.Failed
+             : TrackState.Initial);
+
+        bool needUpdateIndex    = false;
+        ProcessResult? firstCommandResult = null;
+        ProcessResult? prevCommandResult  = null;
+
+        for (int i = 0; i < job.Config.onComplete.Count; i++)
+        {
+            string rawCommand = job.Config.onComplete[i];
             if (string.IsNullOrWhiteSpace(rawCommand))
                 continue;
 
             CommandConfig config = ParseCommandFlags(rawCommand);
 
-            if (!ShouldExecuteCommand(config, track.State, isAlbumOnComplete))
+            if (!ShouldExecuteCommand(config, currentState, isAlbumOnComplete))
                 continue;
 
-            string preparedCommand = PrepareCommandString(config.Command, tle, track, prevCommandResult, firstCommandResult);
+            string preparedCommand = PrepareCommandString(config.Command, ctx, prevCommandResult, firstCommandResult);
             if (string.IsNullOrWhiteSpace(preparedCommand))
             {
                 Logger.Warn($"Skipping on-complete action {i + 1} because the prepared command is empty after variable replacement.");
@@ -60,7 +83,6 @@ public static class OnCompleteExecutor
             }
 
             (string fileName, string arguments) = ParseFileNameAndArguments(preparedCommand);
-
             ProcessStartInfo startInfo = ConfigureProcessStartInfo(fileName, arguments, config);
 
             ProcessResult? currentResult = null;
@@ -70,22 +92,20 @@ public static class OnCompleteExecutor
             {
                 if (config.UseLocking)
                 {
-                    Logger.Debug($"on-complete [{i + 1}/{tle.config.onComplete.Count}]: Waiting for lock...");
+                    Logger.Debug($"on-complete [{i + 1}/{job.Config.onComplete.Count}]: Waiting for lock...");
                     await _lockingSemaphore.WaitAsync();
                     acquiredLock = true;
                 }
 
-                Logger.Debug($"on-complete [{i + 1}/{tle.config.onComplete.Count}]: Executing: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}', UseShellExecute={startInfo.UseShellExecute}, CreateNoWindow={startInfo.CreateNoWindow}, RedirectOutput={startInfo.RedirectStandardOutput}");
-
+                Logger.Debug($"on-complete [{i + 1}/{job.Config.onComplete.Count}]: Executing: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}', UseShellExecute={startInfo.UseShellExecute}, CreateNoWindow={startInfo.CreateNoWindow}, RedirectOutput={startInfo.RedirectStandardOutput}");
                 currentResult = await ExecuteProcessAsync(startInfo);
             }
             finally
             {
                 if (acquiredLock)
-                {
                     _lockingSemaphore.Release();
-                }
             }
+
             if (currentResult == null)
             {
                 Logger.Error($"Execution failed for command {i + 1}. Stopping further on-complete actions for this item.");
@@ -93,46 +113,38 @@ public static class OnCompleteExecutor
             }
 
             prevCommandResult = currentResult;
-            if (i == 0)
-            {
-                firstCommandResult = currentResult;
-            }
+            if (i == 0) firstCommandResult = currentResult;
 
-            if (ProcessCommandResult(currentResult.Value, config, track))
-            {
+            if (ProcessCommandResult(currentResult.Value, config, song, job))
                 needUpdateIndex = true;
-            }
         }
 
         if (needUpdateIndex)
         {
             indexEditor?.Update();
             playlistEditor?.Update();
-            Logger.Debug($"Index/Playlist updated based on on-complete action output for track: {track}");
+            Logger.Debug($"Index/Playlist updated based on on-complete action output.");
         }
     }
 
-    /// <summary>
-    /// Parses the command prefix flags (e.g., "s:", "t:", "h:").
-    /// </summary>
     private static CommandConfig ParseCommandFlags(string rawCommand)
     {
         var config = new CommandConfig { Command = rawCommand };
 
         while (config.Command.Length > 2 && config.Command[1] == ':')
         {
-            char flag = config.Command[0];
+            char   flag      = config.Command[0];
             string remaining = config.Command[2..];
 
             switch (flag)
             {
-                case 's': config.UseShellExecute = true; config.Command = remaining; break;
-                case 't': config.OnlyTrackOnComplete = true; config.Command = remaining; break;
-                case 'a': config.OnlyAlbumOnComplete = true; config.Command = remaining; break;
-                case 'h': config.CreateNoWindow = true; config.Command = remaining; break;
+                case 's': config.UseShellExecute        = true; config.Command = remaining; break;
+                case 't': config.OnlyTrackOnComplete    = true; config.Command = remaining; break;
+                case 'a': config.OnlyAlbumOnComplete    = true; config.Command = remaining; break;
+                case 'h': config.CreateNoWindow         = true; config.Command = remaining; break;
                 case 'u': config.UseOutputToUpdateIndex = true; config.Command = remaining; break;
-                case 'r': config.ReadOutput = true; config.Command = remaining; break;
-                case 'l': config.UseLocking = true; config.Command = remaining; break;
+                case 'r': config.ReadOutput             = true; config.Command = remaining; break;
+                case 'l': config.UseLocking             = true; config.Command = remaining; break;
                 default:
                     if (char.IsDigit(flag) && int.TryParse(flag.ToString(), out int state))
                     {
@@ -149,54 +161,43 @@ public static class OnCompleteExecutor
         return config;
     }
 
-    /// <summary>
-    /// Checks if the command should be executed based on parsed flags and track state/type.
-    /// </summary>
     private static bool ShouldExecuteCommand(CommandConfig config, TrackState currentState, bool isAlbum)
     {
-        if (config.OnlyTrackOnComplete && isAlbum) return false;
+        if (config.OnlyTrackOnComplete && isAlbum)  return false;
         if (config.OnlyAlbumOnComplete && !isAlbum) return false;
         if (config.RequiredTrackState.HasValue && (int)currentState != config.RequiredTrackState.Value) return false;
-
         return true;
     }
 
-    /// <summary>
-    /// Replaces variables in the command string.
-    /// </summary>
-    private static string PrepareCommandString(string commandTemplate, TrackListEntry tle, Track track, ProcessResult? prevResult, ProcessResult? firstResult)
+    private static string PrepareCommandString(string commandTemplate, FileManagerContext ctx, ProcessResult? prevResult, ProcessResult? firstResult)
     {
         TagLib.File? audio = null;
         if (FileManager.HasTagVariables(commandTemplate))
         {
             try
             {
-                if (!string.IsNullOrEmpty(track.DownloadPath) && System.IO.File.Exists(track.DownloadPath))
-                {
-                    audio = TagLib.File.Create(track.DownloadPath);
-                }
+                if (!string.IsNullOrEmpty(ctx.DownloadPath) && System.IO.File.Exists(ctx.DownloadPath))
+                    audio = TagLib.File.Create(ctx.DownloadPath);
                 else
-                {
-                    Logger.Warn($"Cannot load tags for variable replacement: DownloadPath is null or file does not exist ('{track.DownloadPath}')");
-                }
+                    Logger.Warn($"Cannot load tags for variable replacement: DownloadPath is null or file does not exist ('{ctx.DownloadPath}')");
             }
             catch (Exception ex)
             {
-                Logger.Warn($"Failed to load audio tags for variable replacement from '{track.DownloadPath}': {ex.Message}");
+                Logger.Warn($"Failed to load audio tags for variable replacement from '{ctx.DownloadPath}': {ex.Message}");
             }
         }
 
         try
         {
-            string command = FileManager.ReplaceVariables(commandTemplate, tle, audio, track.FirstDownload, track, null);
+            string command = FileManager.ReplaceVariables(commandTemplate, ctx, audio);
 
             command = command
-                .Replace("{exitcode}", prevResult?.ExitCode.ToString() ?? "-1")
+                .Replace("{exitcode}",       prevResult?.ExitCode.ToString()  ?? "-1")
                 .Replace("{first-exitcode}", firstResult?.ExitCode.ToString() ?? "-1")
-                .Replace("{stdout}", string.IsNullOrWhiteSpace(prevResult?.Stdout) ? "null" : prevResult.Value.Stdout)
-                .Replace("{stderr}", string.IsNullOrWhiteSpace(prevResult?.Stderr) ? "null" : prevResult.Value.Stderr)
-                .Replace("{first-stdout}", string.IsNullOrWhiteSpace(firstResult?.Stdout) ? "null" : firstResult.Value.Stdout)
-                .Replace("{first-stderr}", string.IsNullOrWhiteSpace(firstResult?.Stderr) ? "null" : firstResult.Value.Stderr);
+                .Replace("{stdout}",         string.IsNullOrWhiteSpace(prevResult?.Stdout)  ? "null" : prevResult.Value.Stdout)
+                .Replace("{stderr}",         string.IsNullOrWhiteSpace(prevResult?.Stderr)  ? "null" : prevResult.Value.Stderr)
+                .Replace("{first-stdout}",   string.IsNullOrWhiteSpace(firstResult?.Stdout) ? "null" : firstResult.Value.Stdout)
+                .Replace("{first-stderr}",   string.IsNullOrWhiteSpace(firstResult?.Stderr) ? "null" : firstResult.Value.Stderr);
 
             return command.Trim();
         }
@@ -206,21 +207,13 @@ public static class OnCompleteExecutor
         }
     }
 
-
-    /// <summary>
-    /// Parses the command string into FileName and Arguments, handling quotes.
-    /// </summary>
     private static (string FileName, string Arguments) ParseFileNameAndArguments(string preparedCommand)
     {
+        preparedCommand = preparedCommand.Trim();
+        if (string.IsNullOrEmpty(preparedCommand)) return ("", "");
+
         string fileName;
         string arguments = "";
-
-        preparedCommand = preparedCommand.Trim();
-
-        if (string.IsNullOrEmpty(preparedCommand))
-        {
-            return ("", "");
-        }
 
         if (preparedCommand.StartsWith('"'))
         {
@@ -229,9 +222,7 @@ public static class OnCompleteExecutor
             {
                 fileName = preparedCommand.Substring(1, endQuoteIndex - 1);
                 if (preparedCommand.Length > endQuoteIndex + 1)
-                {
                     arguments = preparedCommand.Substring(endQuoteIndex + 1).TrimStart();
-                }
             }
             else
             {
@@ -243,7 +234,7 @@ public static class OnCompleteExecutor
             int firstSpaceIndex = preparedCommand.IndexOf(' ');
             if (firstSpaceIndex > 0)
             {
-                fileName = preparedCommand.Substring(0, firstSpaceIndex);
+                fileName  = preparedCommand.Substring(0, firstSpaceIndex);
                 arguments = preparedCommand.Substring(firstSpaceIndex + 1).TrimStart();
             }
             else
@@ -255,130 +246,97 @@ public static class OnCompleteExecutor
         return (fileName, arguments);
     }
 
-    /// <summary>
-    /// Configures the ProcessStartInfo based on parsed flags.
-    /// </summary>
     private static ProcessStartInfo ConfigureProcessStartInfo(string fileName, string arguments, CommandConfig config)
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = fileName,
-            Arguments = arguments,
+            FileName        = fileName,
+            Arguments       = arguments,
             UseShellExecute = config.UseShellExecute,
-            CreateNoWindow = config.CreateNoWindow
+            CreateNoWindow  = config.CreateNoWindow,
         };
 
-        // If output needs to be read (for update or just capture), force off ShellExecute and enable redirection.
         if (config.UseOutputToUpdateIndex || config.ReadOutput)
         {
-            startInfo.UseShellExecute = false; // Cannot redirect streams with ShellExecute=true
-            startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError = true;
-            startInfo.StandardOutputEncoding = System.Text.Encoding.UTF8;
-            startInfo.StandardErrorEncoding = System.Text.Encoding.UTF8;
+            startInfo.UseShellExecute          = false;
+            startInfo.RedirectStandardOutput   = true;
+            startInfo.RedirectStandardError    = true;
+            startInfo.StandardOutputEncoding   = System.Text.Encoding.UTF8;
+            startInfo.StandardErrorEncoding    = System.Text.Encoding.UTF8;
         }
 
         return startInfo;
     }
 
-    /// <summary>
-    /// Executes the configured process and captures its results.
-    /// </summary>
-    /// <returns>A ProcessResult containing exit code and output, or null if execution failed.</returns>
     private static async Task<ProcessResult?> ExecuteProcessAsync(ProcessStartInfo startInfo)
     {
-        using (var process = new Process { StartInfo = startInfo })
+        using var process = new Process { StartInfo = startInfo };
+        try
         {
-            try
+            if (!process.Start())
             {
-                if (!process.Start())
-                {
-                    Logger.Error($"Failed to start process: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}'");
-                    return null;
-                }
-
-                Task<string>? readStdoutTask = null;
-                Task<string>? readStderrTask = null;
-                string? stdout = null;
-                string? stderr = null;
-
-                if (startInfo.RedirectStandardOutput)
-                {
-                    readStdoutTask = process.StandardOutput.ReadToEndAsync();
-                }
-                if (startInfo.RedirectStandardError)
-                {
-                    readStderrTask = process.StandardError.ReadToEndAsync();
-                }
-
-                await process.WaitForExitAsync();
-
-                if (readStdoutTask != null)
-                {
-                    stdout = (await readStdoutTask).Trim().Trim('"');
-                }
-                if (readStderrTask != null)
-                {
-                    stderr = (await readStderrTask).Trim().Trim('"');
-                }
-
-                return new ProcessResult
-                {
-                    ExitCode = process.ExitCode,
-                    Stdout = stdout,
-                    Stderr = stderr
-                };
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Error executing process: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}'. Exception: {ex}");
+                Logger.Error($"Failed to start process: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}'");
                 return null;
             }
+
+            Task<string>? readStdoutTask = startInfo.RedirectStandardOutput ? process.StandardOutput.ReadToEndAsync() : null;
+            Task<string>? readStderrTask = startInfo.RedirectStandardError  ? process.StandardError.ReadToEndAsync()  : null;
+
+            await process.WaitForExitAsync();
+
+            string? stdout = readStdoutTask != null ? (await readStdoutTask).Trim().Trim('"') : null;
+            string? stderr = readStderrTask != null ? (await readStderrTask).Trim().Trim('"') : null;
+
+            return new ProcessResult { ExitCode = process.ExitCode, Stdout = stdout, Stderr = stderr };
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Error executing process: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}'. Exception: {ex}");
+            return null;
         }
     }
 
-    /// <summary>
-    /// Processes the result of a command execution, updating track state if configured.
-    /// </summary>
-    /// <returns>True if the index needs updating, false otherwise.</returns>
-    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, Track track)
+    // Returns true if the index needs updating.
+    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, DownloadJob job)
     {
         bool needsUpdate = false;
+
         if (config.UseOutputToUpdateIndex && !string.IsNullOrWhiteSpace(result.Stdout))
         {
             string[] parts = result.Stdout.Split(';', 2);
-            if (int.TryParse(parts[0], out int newState))
+            if (int.TryParse(parts[0], out int newStateInt))
             {
-                var newTrackState = (TrackState)newState;
-                if (track.State != newTrackState)
-                {
-                    Logger.Info($"Updating track {track} state from {track.State} to {newTrackState} based on stdout.");
-                    track.State = newTrackState;
-                    needsUpdate = true;
-                }
+                var newState = (TrackState)newStateInt;
 
-                if (parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]))
+                if (song != null)
                 {
-                    string newPath = parts[1].Trim();
-                    if (track.DownloadPath != newPath)
+                    if (song.State != newState)
                     {
-                        Logger.Info($"Updating track {track} path to '{newPath}' based on stdout.");
-                        track.DownloadPath = newPath;
+                        Logger.Info($"Updating song {song} state from {song.State} to {newState} based on stdout.");
+                        song.State = newState;
                         needsUpdate = true;
+                    }
+
+                    if (parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]))
+                    {
+                        string newPath = parts[1].Trim();
+                        if (song.DownloadPath != newPath)
+                        {
+                            Logger.Info($"Updating song {song} path to '{newPath}' based on stdout.");
+                            song.DownloadPath = newPath;
+                            needsUpdate = true;
+                        }
                     }
                 }
             }
             else
             {
-                Logger.Warn($"Could not parse new state from stdout for track {track}. Stdout: '{result.Stdout}'");
+                Logger.Warn($"Could not parse new state from stdout. Stdout: '{result.Stdout}'");
             }
         }
 
         if (result.ExitCode != 0)
-        {
             Logger.DebugError($"Command finished with non-zero exit code {result.ExitCode}. Stdout: '{result.Stdout ?? "N/A"}', Stderr: '{result.Stderr ?? "N/A"}'");
-        }
-
 
         return needsUpdate;
     }
