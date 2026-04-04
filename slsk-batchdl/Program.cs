@@ -1,4 +1,5 @@
 using Utilities;
+using Services;
 
 internal static partial class Program
 {
@@ -14,22 +15,37 @@ internal static partial class Program
 
         var config = new Config(args);
         Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
+        
+        var cts = new CancellationTokenSource();
+        var clientManager = soulseekClientManager(config);
+
+        if (!config.RequiresInput)
+        {
+            var diagnostic = new DiagnosticService(clientManager);
+            try {
+                await diagnostic.PerformNoInputActions(config, cts.Token);
+            } catch (Exception ex) {
+                Logger.Fatal($"Diagnostic action failed: {ex.Message}");
+            }
+            return;
+        }
 
         IProgressReporter reporter;
-        DownloadEngine app;
-
         if (config.progressJson)
-        {
             reporter = new JsonStreamProgressReporter(Console.Out);
-            app = new DownloadEngine(config, progressReporter: reporter);
-        }
         else
-        {
-            var cliReporter = new CliProgressReporter(config);
-            app = new DownloadEngine(config, progressReporter: cliReporter);
-            cliReporter.OnKeyPressed = key => app.OnKeyPressed(key);
-        }
+            reporter = new CliProgressReporter(config);
 
-        await app.RunAsync();
+        var engine = new DownloadEngine(config, clientManager, progressReporter: reporter);
+        
+        if (reporter is CliProgressReporter cli)
+            cli.OnKeyPressed = key => engine.OnKeyPressed(key);
+
+        await engine.RunAsync(cts.Token);
+    }
+
+    private static SoulseekClientManager soulseekClientManager(Config config)
+    {
+        return new SoulseekClientManager(config);
     }
 }

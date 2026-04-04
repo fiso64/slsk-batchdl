@@ -3,6 +3,7 @@ using Models;
 using Jobs;
 using Soulseek;
 
+// TODO: Move this basic test into SearcherTests.cs and delete this file as it doesn't test anything download-related.
 namespace Tests.SearchDownloadTests
 {
     [TestClass]
@@ -13,9 +14,12 @@ namespace Tests.SearchDownloadTests
         {
             // Arrange
             var index = TestHelpers.CreateTestIndex();
+            var config = new Config();
             var client = new ClientTests.MockSoulseekClient(index);
-            var engine = new DownloadEngine(new Config(), client);
-            var searcher = new Searcher(engine, 999, 1);
+            var clientManager = TestHelpers.CreateMockClientManager(client, config);
+            var registry = TestHelpers.CreateSessionRegistry();
+            var engine = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 999, 1);
             var job = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
 
             // Act

@@ -151,5 +151,15 @@ namespace Tests
             file.Save();
             return file;
         }
+        
+        public static SoulseekClientManager CreateMockClientManager(ISoulseekClient client, Config config)
+        {
+            return new SoulseekClientManager(config, client);
+        }
+
+        public static SessionRegistry CreateSessionRegistry()
+        {
+            return new SessionRegistry();
+        }
     }
 }

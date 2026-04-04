@@ -2,6 +2,7 @@ using Soulseek;
 using Jobs;
 using Models;
 using Enums;
+using Utilities;
 
 using File = System.IO.File;
 using Directory = System.IO.Directory;
@@ -9,20 +10,29 @@ using Directory = System.IO.Directory;
 
 public class Downloader
 {
-    private readonly DownloadEngine engine;
+    private readonly ISoulseekClient client;
+    private readonly SoulseekClientManager clientManager;
+    private readonly IDownloadRegistry downloadRegistry;
+    private readonly IProgressReporter progressReporter;
 
-    public Downloader(DownloadEngine engine)
+    public Downloader(ISoulseekClient client, 
+                      SoulseekClientManager clientManager, 
+                      IDownloadRegistry downloadRegistry,
+                      IProgressReporter progressReporter)
     {
-        this.engine = engine;
+        this.client = client;
+        this.clientManager = clientManager;
+        this.downloadRegistry = downloadRegistry;
+        this.progressReporter = progressReporter;
     }
 
     public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
     {
         string fileKey = candidate.Username + '\\' + candidate.Filename;
 
-        if (engine.downloadedFiles.TryGetValue(fileKey, out var existingSong))
+        if (downloadRegistry.DownloadedFiles.TryGetValue(fileKey, out var existingSong))
         {
-            lock (engine.downloadedFiles)
+            lock (downloadRegistry.DownloadedFiles)
             {
                 var existingPath     = existingSong.DownloadPath;
                 var outputFileInfo   = new FileInfo(outputPath);
@@ -45,12 +55,12 @@ public class Downloader
                 }
                 else
                 {
-                    engine.downloadedFiles.TryRemove(fileKey, out _);
+                    downloadRegistry.DownloadedFiles.TryRemove(fileKey, out _);
                 }
             }
         }
 
-        await engine.EnsureClientReadyAsync(config);
+        await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         string incompleteOutputPath = config.noIncompleteExt ? outputPath : outputPath + ".incomplete";
 
@@ -60,15 +70,15 @@ public class Downloader
             disposeOutputStreamOnCompletion: false,
             stateChanged: (state) =>
             {
-                if (engine.downloads.TryGetValue(candidate.Filename, out var x))
+                if (downloadRegistry.Downloads.TryGetValue(candidate.Filename, out var x))
                     x.Transfer = state.Transfer;
-                engine.ProgressReporter.ReportDownloadStateChanged(song, GetStateLabel(state.Transfer.State));
+                progressReporter.ReportDownloadStateChanged(song, GetStateLabel(state.Transfer.State));
             },
             progressUpdated: (progress) =>
             {
-                if (engine.downloads.TryGetValue(candidate.Filename, out var x))
+                if (downloadRegistry.Downloads.TryGetValue(candidate.Filename, out var x))
                     x.Song.BytesTransferred = progress.PreviousBytesTransferred;
-                engine.ProgressReporter.ReportDownloadProgress(song, progress.PreviousBytesTransferred, candidate.File.Size > 0 ? candidate.File.Size : 0);
+                progressReporter.ReportDownloadProgress(song, progress.PreviousBytesTransferred, candidate.File.Size > 0 ? candidate.File.Size : 0);
             }
         );
 
@@ -82,9 +92,9 @@ public class Downloader
 
             song.FileSize = candidate.File.Size;
             var activeDownload = new ActiveDownload(song, candidate, downloadCts);
-            engine.downloads.TryAdd(candidate.Filename, activeDownload);
+            downloadRegistry.Downloads.TryAdd(candidate.Filename, activeDownload);
 
-            engine.ProgressReporter.ReportDownloadStart(song, candidate);
+            progressReporter.ReportDownloadStart(song, candidate);
 
             int maxRetries = 3;
             int retryCount = 0;
@@ -92,7 +102,7 @@ public class Downloader
             {
                 try
                 {
-                    await engine.Client!.DownloadAsync(candidate.Username, candidate.Filename,
+                    await client.DownloadAsync(candidate.Username, candidate.Filename,
                         () => Task.FromResult((Stream)outputStream),
                         candidate.File.Size == -1 ? null : candidate.File.Size,
                         startOffset: outputStream.Position,
@@ -104,9 +114,9 @@ public class Downloader
                 {
                     retryCount++;
                     Logger.DebugError($"Error while downloading: {e}");
-                    if (retryCount >= maxRetries || engine.IsConnectedAndLoggedIn)
+                    if (retryCount >= maxRetries || clientManager.IsConnectedAndLoggedIn)
                         throw;
-                    await engine.EnsureClientReadyAsync(config);
+                    await clientManager.WaitUntilReadyAsync(downloadCts.Token);
                 }
             }
         }
@@ -114,7 +124,7 @@ public class Downloader
         {
             if (File.Exists(incompleteOutputPath))
                 try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.parentDir); } catch { }
-            engine.downloads.TryRemove(candidate.Filename, out _);
+            downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
             throw;
         }
 
@@ -126,8 +136,8 @@ public class Downloader
             catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }
         }
 
-        engine.downloadedFiles[fileKey] = song;
-        engine.downloads.TryRemove(candidate.Filename, out _);
+        downloadRegistry.DownloadedFiles[fileKey] = song;
+        downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
 
         song.ChosenCandidate = candidate;
         song.DownloadPath    = outputPath;

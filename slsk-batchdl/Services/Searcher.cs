@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Jobs;
 using Models;
 using Enums;
+using Utilities;
 using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
@@ -13,12 +14,22 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 
 public class Searcher
 {
-    private readonly DownloadEngine engine;
+    private readonly ISoulseekClient client;
+    private readonly ISearchRegistry searchRegistry;
+    private readonly IUserStats userStats;
+    private readonly IProgressReporter progressReporter;
     private readonly RateLimitedSemaphore searchSemaphore;
 
-    public Searcher(DownloadEngine engine, int searchesPerTime, int searchRenewTime)
+    public Searcher(ISoulseekClient client, 
+                    ISearchRegistry searchRegistry, 
+                    IUserStats userStats, 
+                    IProgressReporter progressReporter,
+                    int searchesPerTime, int searchRenewTime)
     {
-        this.engine = engine;
+        this.client = client;
+        this.searchRegistry = searchRegistry;
+        this.userStats = userStats;
+        this.progressReporter = progressReporter;
         searchSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
     }
 
@@ -33,7 +44,7 @@ public class Searcher
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
         var results = new SlDictionary();
-        engine.searches.TryAdd(song, new SearchInfo(results, null));
+        searchRegistry.Searches.TryAdd(song, new SearchInfo(results, null));
 
         void responseHandler(SearchResponse r)
         {
@@ -44,7 +55,7 @@ public class Searcher
                 results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
 
             if (onFastSearchCandidate != null && config.fastSearch
-                && engine.userSuccessCounts.GetValueOrDefault(r.Username, 0) > config.downrankOn)
+                && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > config.downrankOn)
             {
                 var f = r.Files.First();
                 var candidate = new FileCandidate(r, f);
@@ -66,13 +77,13 @@ public class Searcher
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
                 fileFilter:     f => nec.FileSatisfies(f, song.Query, null));
 
-        engine.ProgressReporter.ReportSearchStart(song);
+        progressReporter.ReportSearchStart(song);
         await RunSearches(song.Query, results, getOpts, responseHandler, config, ct, onSearch);
 
-        engine.searches.TryRemove(song, out _);
+        searchRegistry.Searches.TryRemove(song, out _);
 
         Logger.Debug($"{results.Count} results found: {song}");
-        engine.ProgressReporter.ReportSearchResult(song, results.Count);
+        progressReporter.ReportSearchResult(song, results.Count);
 
         if (!results.IsEmpty)
         {
@@ -84,7 +95,7 @@ public class Searcher
             .Select(x => x.Item1).Distinct()
             .Sum(r => 0); // already counted per-response above
 
-        var ordered = ResultSorter.OrderedResults(results, song.Query, config, engine.userSuccessCounts, useInfer: true);
+        var ordered = ResultSorter.OrderedResults(results, song.Query, config, userStats.UserSuccessCounts, useInfer: true);
         song.Candidates = ordered.Select(x => new FileCandidate(x.response, x.file)).ToList();
     }
 
@@ -184,7 +195,7 @@ public class Searcher
         await RunSearches(job.Query, results, getOpts, handler, config, cts.Token);
 
         var equivalentFiles = EquivalentFiles(job.Query, results.Select(x => x.Value), config)
-            .Select(x => (x.query, ResultSorter.OrderedResults(x.candidates.Select(c => (c.Response, c.File)), x.query, config, engine.userSuccessCounts, false, false, false)))
+            .Select(x => (x.query, ResultSorter.OrderedResults(x.candidates.Select(c => (c.Response, c.File)), x.query, config, userStats.UserSuccessCounts, false, false, false)))
             .ToList();
 
         if (!config.relax)
@@ -281,7 +292,7 @@ public class Searcher
     {
         var res = new List<(string dir, SlFile file)>();
         folderPrefix = folderPrefix.TrimEnd('\\') + '\\';
-        var userFileList = await engine.Client.BrowseAsync(user, new BrowseOptions(), ct);
+        var userFileList = await client.BrowseAsync(user, new BrowseOptions(), ct);
         foreach (var dir in userFileList.Directories)
         {
             string dirname = dir.Name.TrimEnd('\\') + '\\';
@@ -371,7 +382,7 @@ public class Searcher
             }
             else
             {
-                var orderedResults = ResultSorter.OrderedResults(results, song.Query, config, engine.userSuccessCounts, useInfer: true);
+                var orderedResults = ResultSorter.OrderedResults(results, song.Query, config, userStats.UserSuccessCounts, useInfer: true);
 
                 if (!config.NonVerbosePrint)
                     Console.WriteLine();
@@ -686,7 +697,7 @@ public class Searcher
             search = CleanSearchString(search, !config.noRemoveSpecialChars);
             var q = SearchQuery.FromText(search);
             onSearch?.Invoke();
-            await engine.Client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler);
+            await client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler);
         }
         catch (OperationCanceledException) { }
     }

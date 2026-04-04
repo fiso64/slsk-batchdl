@@ -33,14 +33,8 @@ public class DownloadEngine
     public bool              IsConnectedAndLoggedIn => _clientManager.IsConnectedAndLoggedIn;
     public IProgressReporter ProgressReporter    => _progressReporter;
 
-    // In-flight searches: keyed on the SongJob whose search is active.
-    public readonly ConcurrentDictionary<SongJob,  SearchInfo>     searches        = new();
-    // In-flight downloads: keyed on the remote filename.
-    public readonly ConcurrentDictionary<string,   ActiveDownload> downloads       = new();
-    // Prevents re-downloading the same (user, file) pair across multiple SongJobs.
-    public readonly ConcurrentDictionary<string,   SongJob>        downloadedFiles = new();
-    // Per-user success counters used by ResultSorter for down-ranking.
-    public readonly ConcurrentDictionary<string,   int>            userSuccessCounts = new();
+    // Session state (Decoupled)
+    private readonly SessionRegistry _registry = new();
 
 
     // ── injectable CLI callbacks ──────────────────────────────────────────────
@@ -65,23 +59,18 @@ public class DownloadEngine
 
     // ── construction ─────────────────────────────────────────────────────────
 
-    public DownloadEngine(Config config, ISoulseekClient? client = null, IProgressReporter? progressReporter = null)
+    public DownloadEngine(Config config, SoulseekClientManager clientManager, IProgressReporter? progressReporter = null)
     {
         defaultConfig     = config;
-        _clientManager    = new SoulseekClientManager(defaultConfig, client);
+        _clientManager    = clientManager;
         _progressReporter = progressReporter ?? NullProgressReporter.Instance;
     }
 
 
     // ── top-level entry point ─────────────────────────────────────────────────
 
-    public async Task RunAsync()
+    public async Task RunAsync(CancellationToken ct)
     {
-        if (!defaultConfig.RequiresInput)
-        {
-            PerformNoInputActions(defaultConfig);
-            return;
-        }
 
         (defaultConfig.inputType, extractor) = ExtractorRegistry.GetMatchingExtractor(defaultConfig.input, defaultConfig.inputType);
         if (extractor == null)
@@ -115,9 +104,9 @@ public class DownloadEngine
 
         if (defaultConfig.NeedLogin)
         {
-            await EnsureClientReadyAsync(defaultConfig);
-            searcher   = new Searcher(this, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime);
-            downloader = new Downloader(this);
+            await _clientManager.WaitUntilReadyAsync(ct);
+            searcher   = new Searcher(Client!, _registry, _registry, _progressReporter, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime);
+            downloader = new Downloader(Client!, _clientManager, _registry, _progressReporter);
 
             _ = Task.Run(() => UpdateLoop(appCts.Token), appCts.Token);
             Logger.Debug("Update task started");
@@ -127,35 +116,6 @@ public class DownloadEngine
 
         Logger.Debug("Exiting");
         appCts.Cancel();
-    }
-
-
-    public async Task EnsureClientReadyAsync(Config config)
-    {
-        if (!config.NeedLogin) return;
-        if (_clientManager.IsConnectedAndLoggedIn) return;
-
-        try
-        {
-            await _clientManager.EnsureConnectedAndLoggedInAsync(config, appCts.Token);
-
-            if (searcher == null && _clientManager.Client != null)
-            {
-                searcher   = new Searcher(this, config.searchesPerTime, config.searchRenewTime);
-                downloader = new Downloader(this);
-                Logger.Debug("Searcher/Downloader initialized.");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            Logger.Warn("Client initialization cancelled.");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Logger.Fatal($"Failed to initialize Soulseek client: {ex.Message}");
-            throw;
-        }
     }
 
 
@@ -241,7 +201,7 @@ public class DownloadEngine
 
             if (needSourceSearch)
             {
-                await EnsureClientReadyAsync(config);
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
 
                 async Task<(bool, ResponseData)> sourceSearch()
                 {
@@ -340,7 +300,7 @@ public class DownloadEngine
 
             if (config.PrintResults)
             {
-                await EnsureClientReadyAsync(config);
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await Printing.PrintResults(job, existing, notFound, config, searcher!);
                 continue;
             }
@@ -399,19 +359,19 @@ public class DownloadEngine
                 int skipCount    = (notFound?.Count ?? 0) + (existing?.Count ?? 0);
                 if (skipCount >= initialCount) return;
 
-                await EnsureClientReadyAsync(config);
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await ProcessSongListJob(slj, config);
                 break;
 
             case AlbumJob aj:
-                await EnsureClientReadyAsync(config);
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await ProcessAlbumJob(aj, config);
                 break;
 
             case AggregateJob ag:
                 Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == TrackState.Initial).ToList(),
                     new(), new(), isNormal: false, config);
-                await EnsureClientReadyAsync(config);
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await ProcessAggregateJob(ag, config);
                 break;
         }
@@ -732,7 +692,7 @@ public class DownloadEngine
 
         while (tries > 0)
         {
-            await EnsureClientReadyAsync(config);
+            await _clientManager.WaitUntilReadyAsync(appCts.Token);
             cts.Token.ThrowIfCancellationRequested();
 
             try
@@ -849,7 +809,7 @@ public class DownloadEngine
             {
                 // ReportDownloadStart is called inside DownloadFile (via Downloader).
                 await downloader!.DownloadFile(candidate, outputPath, song, config, appCts.Token, cts);
-                userSuccessCounts.AddOrUpdate(candidate.Username, 1, (_, c) => c + 1);
+                _registry.UserSuccessCounts.AddOrUpdate(candidate.Username, 1, (_, c) => c + 1);
                 return (outputPath, candidate.File);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1259,14 +1219,15 @@ public class DownloadEngine
             {
                 if (_clientManager.IsConnectedAndLoggedIn)
                 {
-                    // Prune completed searches.
-                    foreach (var (key, _) in searches)
-                        searches.TryRemove(key, out _);
+                    // Prune completed searches (or those without a handler task)
+                    foreach (var (song, info) in _registry.Searches)
+                        if (info.Task == null || info.Task.IsCompleted)
+                            _registry.Searches.TryRemove(song, out _);
 
-                    // Check for stale downloads.
-                    foreach (var (key, ad) in downloads)
+                    // Check for stale downloads
+                    foreach (var (filename, ad) in _registry.Downloads)
                     {
-                        if (ad == null) { downloads.TryRemove(key, out _); continue; }
+                        if (ad == null) { _registry.Downloads.TryRemove(filename, out _); continue; }
 
                         var song = ad.Song;
                         int maxStale = ad.Song.FileSize > 0 ? defaultConfig.maxStaleTime : int.MaxValue;
@@ -1276,62 +1237,19 @@ public class DownloadEngine
                             Logger.Debug($"Cancelling stale download: {song}");
                             song.State = TrackState.Failed;
                             try { ad.Cts.Cancel(); } catch { }
-                            downloads.TryRemove(key, out _);
+                            _registry.Downloads.TryRemove(filename, out _);
                         }
                     }
                 }
-                else
-                {
-                    if (Client != null
-                        && !Client.State.HasFlag(SoulseekClientStates.LoggedIn)
-                        && !Client.State.HasFlag(SoulseekClientStates.LoggingIn)
-                        && !Client.State.HasFlag(SoulseekClientStates.Connecting))
-                    {
-                        Logger.Warn("Disconnected, logging in");
-                        try
-                        {
-                            await _clientManager.EnsureConnectedAndLoggedInAsync(defaultConfig, cancellationToken);
-                            Logger.Info(_clientManager.IsConnectedAndLoggedIn ? "Reconnected successfully." : "Reconnect attempt did not succeed immediately.");
-                        }
-                        catch (OperationCanceledException) { Logger.Info("Reconnect cancelled."); break; }
-                        catch (Exception ex)
-                        {
-                            string banMsg = defaultConfig.useRandomLogin ? "" : " (possibly a 30-minute ban)";
-                            Logger.Warn($"Reconnect failed: {ex.Message}{banMsg}");
-                        }
-                    }
-                }
+
+                await Task.Delay(updateInterval, cancellationToken);
             }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                Logger.Error($"{ex.Message}");
+                Logger.Error($"Error in update loop: {ex.Message}");
+                try { await Task.Delay(1000, cancellationToken); } catch { break; }
             }
-
-            await Task.Delay(updateInterval);
-        }
-    }
-
-
-    // ── print-index (no network required) ────────────────────────────────────
-
-    void PerformNoInputActions(Config config)
-    {
-        if (config.printOption.HasFlag(PrintOption.Index))
-        {
-            if (string.IsNullOrEmpty(config.indexFilePath))
-            { Logger.Fatal("Error: No index file path provided"); return; }
-
-            var indexFilePath = Utils.GetFullPath(Utils.ExpandVariables(config.indexFilePath));
-            if (!File.Exists(indexFilePath))
-            { Logger.Fatal($"Error: Index file {indexFilePath} does not exist"); return; }
-
-            var index = new M3uEditor(indexFilePath, new JobQueue(), M3uOption.Index, true);
-            var data  = index.GetPreviousRunData().AsEnumerable();
-
-            if (config.printOption.HasFlag(PrintOption.IndexFailed))
-                data = data.Where(e => e.State == TrackState.Failed);
-
-            JsonPrinter.PrintIndexJson(data);
         }
     }
 }

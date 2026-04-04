@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 
@@ -8,6 +8,7 @@ namespace Models
     {
         public ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results;
         public ProgressBar progress;
+        public Task? Task { get; set; }
 
         public SearchInfo(ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results, ProgressBar progress)
         {

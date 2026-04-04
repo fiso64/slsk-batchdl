@@ -1,12 +1,14 @@
-﻿using Soulseek;
+using Soulseek;
 using System.Net.Sockets;
 
 public class SoulseekClientManager
 {
     private readonly Config _initialConfig;
     private ISoulseekClient? _client;
-    private bool _isInitialized = false; // Tracks if initialization attempt was made
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
+    private TaskCompletionSource _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CancellationTokenSource? _monitorCts;
+    private Task? _monitorTask;
 
     public ISoulseekClient? Client => _client;
 
@@ -15,14 +17,29 @@ public class SoulseekClientManager
         _client.State.HasFlag(SoulseekClientStates.Connected) &&
         _client.State.HasFlag(SoulseekClientStates.LoggedIn);
 
+    public Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsConnectedAndLoggedIn) return Task.CompletedTask;
+        return _readyTcs.Task.WaitAsync(cancellationToken);
+    }
+
     public SoulseekClientManager(Config initialConfig, ISoulseekClient? client = null)
     {
         _initialConfig = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
         if (client != null)
         {
             _client = client;
-            _isInitialized = true;
+            if (IsConnectedAndLoggedIn)
+                _readyTcs.TrySetResult();
+            StartMonitoring();
         }
+    }
+
+    private void StartMonitoring()
+    {
+        if (_monitorTask != null) return;
+        _monitorCts = new CancellationTokenSource();
+        _monitorTask = Task.Run(() => MonitorConnectionLoopAsync(_monitorCts.Token));
     }
 
     /// <summary>
@@ -37,45 +54,74 @@ public class SoulseekClientManager
     {
         if (IsConnectedAndLoggedIn) return;
 
-        // Use semaphore to prevent concurrent initialization attempts
         await _initializationSemaphore.WaitAsync(cancellationToken);
         try
         {
-            // Double-check after acquiring semaphore
             if (IsConnectedAndLoggedIn) return;
             cancellationToken.ThrowIfCancellationRequested();
 
-            // --- Create Client if it doesn't exist ---
             if (_client == null)
             {
                 _client = CreateClientInstance(_initialConfig);
-                _isInitialized = false; // Reset initialized state as we have a new client instance
             }
 
-            // --- Connect and Login ---
-            if (!_isInitialized || !IsConnectedAndLoggedIn)
+            if (!IsConnectedAndLoggedIn)
             {
-                // Validate necessary config for login before attempting
                 if (!loginConfig.useRandomLogin && (string.IsNullOrEmpty(loginConfig.username) || string.IsNullOrEmpty(loginConfig.password)))
                 {
-                    Config.InputError("No soulseek username or password provided for login."); // Or throw specific exception
+                    Config.InputError("No soulseek username or password provided for login.");
                 }
 
                 await LoginInternalAsync(_client, loginConfig, cancellationToken);
-                _isInitialized = true; // Mark that initialization (including login) has been attempted/completed
+                _readyTcs.TrySetResult();
+                StartMonitoring();
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Log the error, reset initialization state if login failed catastrophically?
             Logger.Error($"Failed to ensure Soulseek connection and login: {ex.Message}");
-            _isInitialized = false; // Allow retry on next call
-            // Propagate the exception so the caller knows it failed
             throw new InvalidOperationException($"Soulseek login failed: {ex.Message}", ex);
         }
         finally
         {
             _initializationSemaphore.Release();
+        }
+    }
+
+    private async Task MonitorConnectionLoopAsync(CancellationToken ct)
+    {
+        int retryDelay = 1;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                if (!IsConnectedAndLoggedIn)
+                {
+                    if (_readyTcs.Task.IsCompleted)
+                    {
+                        _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    }
+
+                    Logger.Warn($"Connection lost. Retrying in {retryDelay}s...");
+                    await Task.Delay(retryDelay * 1000, ct);
+                    
+                    await EnsureConnectedAndLoggedInAsync(_initialConfig, ct);
+                    retryDelay = 1; // Reset on success
+                    Logger.Info("Reconnected successfully.");
+                }
+                else
+                {
+                    retryDelay = 1;
+                }
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Logger.DebugError($"Reconnection attempt failed: {ex.Message}");
+                retryDelay = Math.Min(retryDelay * 2, 8);
+            }
+
+            await Task.Delay(1000, ct);
         }
     }
 

@@ -49,8 +49,9 @@ namespace Tests.EndToEnd
             try
             {
                 var config = new Config(testArgs);
-                var app    = new DownloadEngine(config, testClient);
-                await app.RunAsync();
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
+                var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+                await app.RunAsync(CancellationToken.None);
 
                 // Files must land directly in outputDir/TestAlbum/, NOT buried inside a
                 // full mirrored subtree like outputDir/TestAlbum/Main/TestArtist/TestAlbum/
@@ -98,11 +99,12 @@ namespace Tests.EndToEnd
             };
 
             var config = new Config(testArgs);
-            var app = new DownloadEngine(config, testClient);
+            var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
+            var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
 
             try
             {
-                await app.RunAsync();
+                await app.RunAsync(CancellationToken.None);
 
                 // Assertions
                 var downloadedFiles = System.IO.Directory.GetFiles(Path.Combine(outputDir, "(2011) testalbum [MP3]"), "*", SearchOption.AllDirectories);

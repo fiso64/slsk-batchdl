@@ -1,4 +1,4 @@
-﻿using Enums;
+using Enums;
 using Models;
 using Jobs;
 using System.Text;

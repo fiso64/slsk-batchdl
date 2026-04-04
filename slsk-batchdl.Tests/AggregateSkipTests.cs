@@ -50,8 +50,9 @@ namespace Tests.EndToEnd
                 };
 
                 var config = new Config(testArgs);
-                var app    = new DownloadEngine(config, testClient);
-                await app.RunAsync();
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
+                var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+                await app.RunAsync(CancellationToken.None);
 
                 // Check the job queue to see if the track was marked as already existing
                 Assert.IsNotNull(app.Queue, "Queue should not be null");
