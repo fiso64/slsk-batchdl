@@ -15,7 +15,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandVariables(input);
 
@@ -24,7 +24,7 @@ namespace Extractors
 
             var lines = File.ReadAllLines(listFilePath);
 
-            var queue = new JobQueue();
+            var jobs = new List<QueryJob>();
 
             int step  = reverse ? -1 : 1;
             int start = reverse ? lines.Length - 1 : 0;
@@ -55,7 +55,7 @@ namespace Extractors
                     fields[0] = "album://" + fields[0];
 
                 var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
-                var subQueue = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
+                var subJobs = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
 
                 FileConditions? extractorCond     = null;
                 FileConditions? extractorPrefCond = null;
@@ -65,7 +65,7 @@ namespace Extractors
                 if (fields.Count >= 3)
                     extractorPrefCond = Config.ParseConditions(fields[2]);
 
-                foreach (var job in subQueue.Jobs)
+                foreach (var job in subJobs)
                 {
                     job.ExtractorCond     = extractorCond;
                     job.ExtractorPrefCond = extractorPrefCond;
@@ -74,19 +74,19 @@ namespace Extractors
                     job.LineNumber        = i + 1;
                     job.ItemNumber        = offset + added + 1;
 
-                    // For SongListJob, also set provenance on individual songs
-                    if (job is SongListJob slj && slj.Songs.Count == 1)
+                    // For SongListQueryJob, also set provenance on individual songs
+                    if (job is SongListQueryJob slj && slj.Songs.Count == 1)
                     {
                         slj.Songs[0].LineNumber  = i + 1;
                         slj.Songs[0].ItemNumber  = offset + added + 1;
                     }
                 }
 
-                queue.Jobs.AddRange(subQueue.Jobs);
+                jobs.AddRange(subJobs);
                 added++;
             }
 
-            return queue;
+            return jobs;
         }
 
         static List<string> ParseLine(string input)

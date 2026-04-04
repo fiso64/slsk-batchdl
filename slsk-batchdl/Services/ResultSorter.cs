@@ -40,6 +40,7 @@ public static class ResultSorter
             return (new SongQuery(), 0);
         }
 
+        // TODO: Maybe optimize to only compute the fields when they are needed for sorting (worth it?)
         Func<(SearchResponse response, Soulseek.File file), SortingCriteria> getSortingCriteria =
             result => new SortingCriteria
             {

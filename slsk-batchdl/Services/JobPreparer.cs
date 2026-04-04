@@ -5,20 +5,25 @@ namespace Services
 {
     /// <summary>
     /// Sets up per-job Config, M3uEditors, and TrackSkippers for every job in a queue.
-    /// Extracted from DownloaderApplication.PrepareListEntries.
+    /// Returns a JobContext keyed by job ID for each job in the queue.
     /// </summary>
     public static class JobPreparer
     {
-        public static void PrepareJobs(JobQueue queue, Config startConfig)
+        public static Dictionary<Guid, JobContext> PrepareJobs(JobQueue queue, Config startConfig)
         {
+            var contexts = new Dictionary<Guid, JobContext>();
             var editors  = new Dictionary<(string path, M3uOption option), M3uEditor>();
             var skippers = new Dictionary<(string dir, SkipMode mode, bool checkCond), TrackSkipper>();
 
             foreach (var job in queue.Jobs)
             {
+                var ctx = new JobContext();
+
                 job.Config = startConfig.Copy();
                 job.Config = job.Config.UpdateProfiles(job, queue);
                 startConfig = job.Config;
+
+                ctx.EnablesIndexByDefault = job.EnablesIndexByDefault;
 
                 if (job.ExtractorCond != null)
                 {
@@ -31,13 +36,17 @@ namespace Services
                     job.ExtractorPrefCond = null;
                 }
 
-                SetupIndexEditor(job, queue, editors);
-                SetupPlaylistEditor(job, queue, editors);
-                SetupSkippers(job, skippers);
+                SetupIndexEditor(job, ctx, queue, editors);
+                SetupPlaylistEditor(job, ctx, queue, editors);
+                SetupSkippers(job, ctx, skippers);
+
+                contexts[job.Id] = ctx;
             }
+
+            return contexts;
         }
 
-        private static void SetupIndexEditor(DownloadJob job, JobQueue queue,
+        private static void SetupIndexEditor(Job job, JobContext ctx, JobQueue queue,
             Dictionary<(string, M3uOption), M3uEditor> editors)
         {
             var config = job.Config;
@@ -58,16 +67,16 @@ namespace Services
             var key = (indexPath, indexOption);
             if (editors.TryGetValue(key, out var existing))
             {
-                job.IndexEditor = existing;
+                ctx.IndexEditor = existing;
             }
             else
             {
-                job.IndexEditor = new M3uEditor(indexPath, queue, indexOption, true);
-                editors.Add(key, job.IndexEditor);
+                ctx.IndexEditor = new M3uEditor(indexPath, queue, indexOption, true);
+                editors.Add(key, ctx.IndexEditor);
             }
         }
 
-        private static void SetupPlaylistEditor(DownloadJob job, JobQueue queue,
+        private static void SetupPlaylistEditor(Job job, JobContext ctx, JobQueue queue,
             Dictionary<(string, M3uOption), M3uEditor> editors)
         {
             var config = job.Config;
@@ -82,16 +91,16 @@ namespace Services
             var key = (m3uPath, M3uOption.Playlist);
             if (editors.TryGetValue(key, out var existing))
             {
-                job.PlaylistEditor = existing;
+                ctx.PlaylistEditor = existing;
             }
             else
             {
-                job.PlaylistEditor = new M3uEditor(m3uPath, queue, M3uOption.Playlist, false);
-                editors.Add(key, job.PlaylistEditor);
+                ctx.PlaylistEditor = new M3uEditor(m3uPath, queue, M3uOption.Playlist, false);
+                editors.Add(key, ctx.PlaylistEditor);
             }
         }
 
-        private static void SetupSkippers(DownloadJob job,
+        private static void SetupSkippers(Job job, JobContext ctx,
             Dictionary<(string, SkipMode, bool), TrackSkipper> skippers)
         {
             var config = job.Config;
@@ -102,12 +111,12 @@ namespace Services
             var outputKey = (config.parentDir, config.skipMode, checkCond);
             if (skippers.TryGetValue(outputKey, out var outputSkipper))
             {
-                job.OutputDirSkipper = outputSkipper;
+                ctx.OutputDirSkipper = outputSkipper;
             }
             else
             {
-                job.OutputDirSkipper = TrackSkipperRegistry.GetSkipper(config.skipMode, config.parentDir, checkCond);
-                skippers.Add(outputKey, job.OutputDirSkipper);
+                ctx.OutputDirSkipper = TrackSkipperRegistry.GetSkipper(config.skipMode, config.parentDir, checkCond);
+                skippers.Add(outputKey, ctx.OutputDirSkipper);
             }
 
             if (config.skipMusicDir.Length > 0)
@@ -115,12 +124,12 @@ namespace Services
                 var musicKey = (config.skipMusicDir, config.skipModeMusicDir, checkCond);
                 if (skippers.TryGetValue(musicKey, out var musicSkipper))
                 {
-                    job.MusicDirSkipper = musicSkipper;
+                    ctx.MusicDirSkipper = musicSkipper;
                 }
                 else
                 {
-                    job.MusicDirSkipper = TrackSkipperRegistry.GetSkipper(config.skipModeMusicDir, config.skipMusicDir, checkCond);
-                    skippers.Add(musicKey, job.MusicDirSkipper);
+                    ctx.MusicDirSkipper = TrackSkipperRegistry.GetSkipper(config.skipModeMusicDir, config.skipMusicDir, checkCond);
+                    skippers.Add(musicKey, ctx.MusicDirSkipper);
                 }
             }
         }

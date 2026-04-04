@@ -11,10 +11,10 @@ namespace Tests.FileManagerTests
     [TestClass]
     public class GetSavePathTests
     {
-        private static FileManager MakeManager(Config? config = null, DownloadJob? job = null)
+        private static FileManager MakeManager(Config? config = null, Job? job = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            job ??= new SongListJob();
+            job ??= new SongListQueryJob();
             return new FileManager(job, config);
         }
 
@@ -47,7 +47,7 @@ namespace Tests.FileManagerTests
         {
             var config = TestHelpers.CreateDefaultConfig();
             config.parentDir = "/music";
-            var job = new AlbumJob(new AlbumQuery());
+            var job = new AlbumQueryJob(new AlbumQuery());
             var manager = new FileManager(job, config);
 
             manager.SetremoteBaseDir("Music\\Artist\\Album");
@@ -122,7 +122,7 @@ namespace Tests.FileManagerTests
             Config? config = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var query = new SongQuery { Artist = artist, Title = title, Album = album };
             Soulseek.SearchResponse? response = slFile != null
                 ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })
@@ -232,7 +232,7 @@ namespace Tests.FileManagerTests
         public void AlbumJob_DefaultOrganization_UsesRemoteFolderName()
         {
             // Setup
-            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var job = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             var manager = new FileManager(job, config);
             manager.SetremoteBaseDir(@"Artist1\Album1"); // slsk-style path
 
@@ -253,7 +253,7 @@ namespace Tests.FileManagerTests
         public void SongListJob_DefaultOrganization_UsesItemName()
         {
             // Setup
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             job.ItemName = "MyPlaylist";
             var manager = new FileManager(job, config);
 
@@ -274,7 +274,7 @@ namespace Tests.FileManagerTests
         public void AlbumJob_NameFormat_MovesCoverIntelligently()
         {
             // Setup
-            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var job = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             config.nameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
             var manager = new FileManager(job, config);
             manager.SetremoteBaseDir(@"Artist1\Album1");
@@ -326,12 +326,12 @@ namespace Tests.FileManagerTests
         public void AlbumAggregate_ArtistOnly_CreatesSubfoldersForAlbums()
         {
             // main use case for -ag: find all albums by an artist.
-            var aggJob = new AggregateAlbumJob(new AlbumQuery { Artist = "Artist1" });
+            var aggJob = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "Artist1" });
             aggJob.ItemName = "Artist1"; // Set by JobQueue
             
-            // Simulating an AlbumJob spawned from this aggregate (e.g. for 'Album1')
-            var albumJob = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            albumJob.ItemName = aggJob.ItemName; // Inherited from AggregateAlbumJob
+            // Simulating an AlbumQueryJob spawned from this aggregate (e.g. for 'Album1')
+            var albumJob = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            albumJob.ItemName = aggJob.ItemName; // Inherited from AlbumAggregateQueryJob
             
             var manager = new FileManager(albumJob, config);
             manager.SetremoteBaseDir(@"User1\Artist1\Album1"); // Remote path
@@ -349,7 +349,7 @@ namespace Tests.FileManagerTests
         public void SongAggregate_ArtistOnly_GroupsIntoArtistFolder()
         {
             // main use case for -g: find all songs by an artist.
-            var job = new AggregateJob(new SongQuery { Artist = "Artist1" });
+            var job = new AggregateQueryJob(new SongQuery { Artist = "Artist1" });
             job.ItemName = "Artist1"; // Set by JobQueue
             
             var manager = new FileManager(job, config);

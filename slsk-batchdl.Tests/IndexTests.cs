@@ -23,9 +23,9 @@ namespace Tests.Index
                 File.Delete(testM3uPath);
         }
 
-        private static (JobQueue queue, SongListJob slj, List<SongJob> songs) MakeSongQueue(IEnumerable<SongJob> initialSongs)
+        private static (JobQueue queue, SongListQueryJob slj, List<SongJob> songs) MakeSongQueue(IEnumerable<SongJob> initialSongs)
         {
-            var slj = new SongListJob();
+            var slj = new SongListQueryJob();
             foreach (var s in initialSongs)
                 slj.AddSong(s);
             var queue = new JobQueue();
@@ -116,11 +116,11 @@ namespace Tests.Index
         [TestMethod]
         public void Index_WithAlbumJobs_RoundTripsCorrectly()
         {
-            var albumJobs = new List<AlbumJob>
+            var albumJobs = new List<AlbumQueryJob>
             {
-                new AlbumJob(new AlbumQuery { Artist = "ArtistA", Album = "AlbumA" }),
-                new AlbumJob(new AlbumQuery { Artist = "ArtistB", Album = "AlbumB" }),
-                new AlbumJob(new AlbumQuery { Artist = "ArtistC", Album = "AlbumC" }),
+                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistA", Album = "AlbumA" }),
+                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistB", Album = "AlbumB" }),
+                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistC", Album = "AlbumC" }),
             };
 
             var queue = new JobQueue();
@@ -140,7 +140,7 @@ namespace Tests.Index
             editor.Update();
 
             // Read back with new editor using fresh AlbumJobs
-            var lookupJobs = albumJobs.Select(j => new AlbumJob(new AlbumQuery { Artist = j.Query.Artist, Album = j.Query.Album })).ToList();
+            var lookupJobs = albumJobs.Select(j => new AlbumQueryJob(new AlbumQuery { Artist = j.Query.Artist, Album = j.Query.Album })).ToList();
             var queue2 = new JobQueue();
             foreach (var j in lookupJobs)
                 queue2.Enqueue(j);

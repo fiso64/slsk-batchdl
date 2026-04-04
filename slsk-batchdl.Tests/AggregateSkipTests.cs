@@ -56,8 +56,8 @@ namespace Tests.EndToEnd
 
                 // Check the job queue to see if the track was marked as already existing
                 Assert.IsNotNull(app.Queue, "Queue should not be null");
-                var aggregateJob = app.Queue.Jobs.OfType<AggregateJob>().FirstOrDefault();
-                Assert.IsNotNull(aggregateJob, "Should have found an AggregateJob");
+                var aggregateJob = app.Queue.Jobs.OfType<AggregateQueryJob>().FirstOrDefault();
+                Assert.IsNotNull(aggregateJob, "Should have found an AggregateQueryJob");
                 
 
                 var song = aggregateJob.Songs.FirstOrDefault(s => s.Query.ToString(true).Contains("Artist1"));

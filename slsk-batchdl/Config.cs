@@ -389,7 +389,7 @@ public class Config
     }
 
 
-    public bool NeedUpdateProfiles(DownloadJob job)
+    public bool NeedUpdateProfiles(Job job)
     {
         if (DoNotDownload)
             return false;
@@ -414,7 +414,7 @@ public class Config
     }
 
 
-    public bool NeedUpdateProfiles(DownloadJob job, out List<(string name, List<string> args)>? toApply)
+    public bool NeedUpdateProfiles(Job job, out List<(string name, List<string> args)>? toApply)
     {
         toApply = null;
 
@@ -447,7 +447,7 @@ public class Config
     }
 
 
-    public Config UpdateProfiles(DownloadJob job, JobQueue queue)
+    public Config UpdateProfiles(Job job, JobQueue queue)
     {
         if (!NeedUpdateProfiles(job, out var toApply))
             return this;
@@ -507,7 +507,7 @@ public class Config
     }
 
 
-    object GetVarValue(string var, DownloadJob? job = null)
+    object GetVarValue(string var, Job? job = null)
     {
         static string toKebab(string input)
         {
@@ -516,7 +516,7 @@ public class Config
         }
 
         string downloadMode = job != null
-            ? toKebab(job.GetType().Name.Replace("Job", ""))
+            ? toKebab(job.GetType().Name.Replace("QueryJob", "").Replace("DownloadJob", "").Replace("Job", ""))
             : album && aggregate ? "album-aggregate" : album ? "album" : aggregate ? "aggregate" : "normal";
 
         return var switch
@@ -531,7 +531,7 @@ public class Config
     }
 
 
-    public bool ProfileConditionSatisfied(string cond, DownloadJob? job = null)
+    public bool ProfileConditionSatisfied(string cond, Job? job = null)
     {
         var tokens = new Queue<string>(Regex.Split(cond, @"(\s+|\(|\)|&&|\|\||==|!=|!|\"".*?\"")").Where(t => !string.IsNullOrWhiteSpace(t)));
 

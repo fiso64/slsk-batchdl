@@ -27,6 +27,10 @@ public class DownloadEngine
 
     public JobQueue? Queue { get; private set; } = null;
 
+    private Dictionary<Guid, JobContext> _contexts = new();
+
+    private JobContext Ctx(Job job) => _contexts[job.Id];
+
     // ── public state (read by Searcher / Downloader) ─────────────────────────
 
     public ISoulseekClient?  Client              => _clientManager.Client;
@@ -39,7 +43,7 @@ public class DownloadEngine
 
     // ── injectable CLI callbacks ──────────────────────────────────────────────
 
-    public Func<AlbumJob, List<AlbumFolder>, Task<AlbumFolder?>>? OnAlbumVersionRequired { get; set; }
+    public Func<AlbumQueryJob, Task<AlbumDownloadJob?>>? SelectAlbumVersion { get; set; }
 
     // ── cancellation ─────────────────────────────────────────────────────────
 
@@ -81,12 +85,14 @@ public class DownloadEngine
 
         Logger.Info($"Input ({defaultConfig.inputType}): {defaultConfig.input}");
 
-        Queue = await extractor.GetTracks(defaultConfig.input, defaultConfig.maxTracks, defaultConfig.offset, defaultConfig.reverse, defaultConfig);
-        if (Queue == null)
+        var jobList = await extractor.GetTracks(defaultConfig.input, defaultConfig.maxTracks, defaultConfig.offset, defaultConfig.reverse, defaultConfig);
+        if (jobList == null || jobList.Count == 0)
         {
             Logger.Fatal($"Extractor failed to get tracks for input {defaultConfig.input}");
             return;
         }
+        Queue = new JobQueue();
+        foreach (var j in jobList) Queue.Enqueue(j);
 
         Logger.Debug("Got tracks");
 
@@ -100,7 +106,7 @@ public class DownloadEngine
         Queue.UpgradeToAlbumMode(defaultConfig.album, defaultConfig.aggregate);
         Queue.SetAggregateItemNames();
 
-        JobPreparer.PrepareJobs(Queue, defaultConfig);
+        _contexts = JobPreparer.PrepareJobs(Queue, defaultConfig);
 
         if (defaultConfig.NeedLogin)
         {
@@ -128,9 +134,9 @@ public class DownloadEngine
         var cfg0 = Queue[0].Config;
         bool enableParallelSearch = cfg0.parallelAlbumSearch
             && !cfg0.PrintResults && !cfg0.PrintTracks
-            && Queue.Jobs.Any(j => j is AlbumJob or AggregateAlbumJob);
+            && Queue.Jobs.Any(j => j is AlbumQueryJob or AlbumAggregateQueryJob);
 
-        var parallelSearches  = new List<(DownloadJob job, Task<(bool, ResponseData)> task)>();
+        var parallelSearches  = new List<(Job job, Task<(bool, ResponseData)> task)>();
         var parallelSemaphore = new SemaphoreSlim(cfg0.parallelAlbumSearchProcesses);
 
         Queue[0].PrintLines();
@@ -140,12 +146,13 @@ public class DownloadEngine
             if (!enableParallelSearch && i > 0) Console.WriteLine();
 
             var job    = Queue[i];
+            var ctx    = Ctx(job);
             var config = job.Config;
 
             Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
 
-            if (job.PreprocessTracks)
-                Preprocessor.PreprocessJob(job);
+            if (ctx.PreprocessTracks)
+                Preprocessor.PreprocessJob(job, config);
 
             if (!enableParallelSearch)
                 job.PrintLines();
@@ -155,10 +162,10 @@ public class DownloadEngine
 
             // ── skip checks ──────────────────────────────────────────────────
 
-            if (config.skipNotFound && !config.PrintResults && job is SongListJob sljSkipNF)
+            if (config.skipNotFound && !config.PrintResults && job is SongListQueryJob sljSkipNF)
             {
                 foreach (var song in sljSkipNF.Songs)
-                    if (TrySetNotFoundLastTime(song, job.IndexEditor))
+                    if (TrySetNotFoundLastTime(song, ctx.IndexEditor))
                         notFound.Add(song);
             }
             else if (config.skipNotFound && !config.PrintResults && job.CanBeSkipped)
@@ -172,24 +179,24 @@ public class DownloadEngine
 
             if (config.skipExisting && !config.PrintResults)
             {
-                if (job is SongListJob sljSkipEx)
+                if (job is SongListQueryJob sljSkipEx)
                 {
                     foreach (var song in sljSkipEx.Songs.Where(s => s.State == TrackState.Initial))
-                        if (TrySetAlreadyExists(job, song, TrackSkipperContext.FromJob(job)))
+                        if (TrySetAlreadyExists(job, song, TrackSkipperContext.From(ctx, config)))
                             existing.Add(song);
                 }
-                else if (job.CanBeSkipped && TrySetJobAlreadyExists(job))
+                else if (job.CanBeSkipped && TrySetJobAlreadyExists(job, ctx))
                 {
-                    Logger.Info($"Download '{job.ToString(true)}' already exists at {job.DownloadPath}, skipping");
-                    job.IndexEditor?.Update();
-                    job.PlaylistEditor?.Update();
+                    Logger.Info($"Download '{job.ToString(true)}' already exists at {(job as DownloadJob)?.DownloadPath}, skipping");
+                    ctx.IndexEditor?.Update();
+                    ctx.PlaylistEditor?.Update();
                     continue;
                 }
             }
 
             if (config.PrintTracks)
             {
-                if (job is SongListJob sljPt)
+                if (job is SongListQueryJob sljPt)
                     Printing.PrintTracksTbd(sljPt.Songs.Where(s => s.State == TrackState.Initial).ToList(), existing, notFound, isNormal: true, config);
                 job.PrintLines();
                 continue;
@@ -197,7 +204,7 @@ public class DownloadEngine
 
             // ── jobs that need source search first ───────────────────────────
 
-            bool needSourceSearch = job is AlbumJob or AggregateJob or AggregateAlbumJob;
+            bool needSourceSearch = job is AlbumQueryJob or AggregateQueryJob or AlbumAggregateQueryJob;
 
             if (needSourceSearch)
             {
@@ -207,12 +214,12 @@ public class DownloadEngine
                 {
                     await parallelSemaphore.WaitAsync();
 
-                    _progressReporter.ReportJobSearching(job, enableParallelSearch);
+                    _progressReporter.ReportJobStarted(job, enableParallelSearch);
 
                     bool         foundSomething = false;
                     ResponseData responseData   = new ResponseData();
 
-                    if (job is AlbumJob albumJob)
+                    if (job is AlbumQueryJob albumJob)
                     {
                         if (!albumJob.Query.IsDirectLink)
                             await searcher!.SearchAlbum(albumJob, config, responseData, appCts.Token);
@@ -230,20 +237,25 @@ public class DownloadEngine
                         }
                         foundSomething = albumJob.FoundFolders.Count > 0;
                     }
-                    else if (job is AggregateJob aggJob)
+                    else if (job is AggregateQueryJob aggJob)
                     {
                         await searcher!.SearchAggregate(aggJob, config, responseData, appCts.Token);
                         foundSomething = aggJob.Songs.Count > 0;
                     }
-                    else if (job is AggregateAlbumJob aabJob)
+                    else if (job is AlbumAggregateQueryJob aabJob)
                     {
                         var newAlbumJobs = await searcher!.SearchAggregateAlbum(aabJob, config, responseData, appCts.Token);
                         foreach (var aj in newAlbumJobs)
                         {
-                            aj.PreprocessTracks = false;
-                            aj.IndexEditor      = job.IndexEditor;
-                            aj.PlaylistEditor   = job.PlaylistEditor;
-                            aj.ItemName         = job.ItemName;
+                            aj.ItemName = job.ItemName;
+                            aj.Config   = job.Config;
+                            var childCtx = new JobContext
+                            {
+                                IndexEditor      = ctx.IndexEditor,
+                                PlaylistEditor   = ctx.PlaylistEditor,
+                                PreprocessTracks = false,
+                            };
+                            _contexts[aj.Id] = childCtx;
                             Queue.Enqueue(aj);
                         }
                         // Mark this job done; it only spawns AlbumJobs.
@@ -251,44 +263,42 @@ public class DownloadEngine
                         foundSomething = newAlbumJobs.Count > 0;
                     }
 
-                    _progressReporter.ReportJobSearchResult(job, foundSomething, responseData.lockedFilesCount);
+                    _progressReporter.ReportJobCompleted(job, foundSomething, responseData.lockedFilesCount);
 
                     if (!foundSomething)
                     {
                         job.State         = JobState.Failed;
                         job.FailureReason = FailureReason.NoSuitableFileFound;
 
-                        if (job is AlbumJob aj)
-                            await OnCompleteExecutor.ExecuteAsync(aj, null, aj.IndexEditor, aj.PlaylistEditor);
+                        if (job is AlbumQueryJob aj)
+                            await OnCompleteExecutor.ExecuteAsync(aj, null, Ctx(aj));
                     }
 
                     parallelSemaphore.Release();
                     return (foundSomething, responseData);
                 }
 
-                if (!enableParallelSearch || job is not (AlbumJob or AggregateAlbumJob))
+                if (!enableParallelSearch || job is not (AlbumQueryJob or AlbumAggregateQueryJob))
                 {
                     (bool found, ResponseData _) = await sourceSearch();
 
                     if (!found)
                     {
                         if (!config.PrintResults)
-                            job.IndexEditor?.Update();
+                            ctx.IndexEditor?.Update();
 
-                        // AggregateAlbumJob marks itself Done after spawning children; no further action needed.
+                        // AlbumAggregateQueryJob marks itself Done after spawning children; no further action needed.
                         if (job.State == JobState.Done) continue;
                         continue;
                     }
 
-                    if (job.State == JobState.Done) continue; // AggregateAlbumJob converted to children
+                    if (job.State == JobState.Done) continue; // AlbumAggregateQueryJob converted to children
 
-                    if (config.skipExisting && job is AggregateJob foundAggJob)
+                    if (config.skipExisting && job is AggregateQueryJob foundAggJob)
                     {
-                        var ctx = TrackSkipperContext.FromJob(foundAggJob);
+                        var skipCtx = TrackSkipperContext.From(ctx, job.Config);
                         foreach (var song in foundAggJob.Songs)
-                        {
-                            TrySetAlreadyExists(foundAggJob, song, ctx);
-                        }
+                            TrySetAlreadyExists(foundAggJob, song, skipCtx);
                     }
                 }
                 else
@@ -305,11 +315,11 @@ public class DownloadEngine
                 continue;
             }
 
-            if (parallelSearches.Count > 0 && !(job is AlbumJob or AggregateAlbumJob))
+            if (parallelSearches.Count > 0 && !(job is AlbumQueryJob or AlbumAggregateQueryJob))
                 await FlushParallelSearches(parallelSearches);
 
-            if (!enableParallelSearch || !(job is AlbumJob or AggregateAlbumJob))
-                await DispatchDownload(job, config, notFound, existing);
+            if (!enableParallelSearch || !(job is AlbumQueryJob or AlbumAggregateQueryJob))
+                await DispatchDownload(job, ctx, notFound, existing);
         }
 
         if (parallelSearches.Count > 0)
@@ -320,23 +330,24 @@ public class DownloadEngine
     }
 
 
-    async Task FlushParallelSearches(List<(DownloadJob job, Task<(bool, ResponseData)> task)> parallelSearches)
+    async Task FlushParallelSearches(List<(Job job, Task<(bool, ResponseData)> task)> parallelSearches)
     {
         await Task.WhenAll(parallelSearches.Select(x => x.task));
 
         foreach (var (job, task) in parallelSearches)
         {
             (bool found, _) = task.Result;
+            var jobCtx = Ctx(job);
             if (found)
             {
                 Logger.Info($"Downloading: {job}");
-                await DispatchDownload(job, job.Config, null, null);
+                await DispatchDownload(job, jobCtx, null, null);
             }
             else if (!job.Config.PrintResults)
             {
                 job.State         = JobState.Failed;
                 job.FailureReason = FailureReason.NoSuitableFileFound;
-                job.IndexEditor?.Update();
+                jobCtx.IndexEditor?.Update();
             }
         }
 
@@ -344,14 +355,25 @@ public class DownloadEngine
     }
 
 
-    async Task DispatchDownload(DownloadJob job, Config config, List<SongJob>? notFound, List<SongJob>? existing)
+    async Task DispatchDownload(Job job, JobContext ctx, List<SongJob>? notFound, List<SongJob>? existing)
     {
-        job.IndexEditor?.Update();
-        job.PlaylistEditor?.Update();
+        var config = job.Config;
+        ctx.IndexEditor?.Update();
+        ctx.PlaylistEditor?.Update();
 
         switch (job)
         {
-            case SongListJob slj:
+            case SongDownloadJob sdj:
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
+                await ProcessSongDownloadJob(sdj, ctx);
+                break;
+
+            case AlbumListJob alj:
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
+                await ProcessAlbumListJob(alj, ctx);
+                break;
+
+            case SongListQueryJob slj:
                 Printing.PrintTracksTbd(slj.Songs.Where(s => s.State == TrackState.Initial).ToList(),
                     existing ?? new(), notFound ?? new(), isNormal: true, config);
 
@@ -360,19 +382,19 @@ public class DownloadEngine
                 if (skipCount >= initialCount) return;
 
                 await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessSongListJob(slj, config);
+                await ProcessSongListJob(slj, ctx);
                 break;
 
-            case AlbumJob aj:
+            case AlbumQueryJob aj:
                 await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessAlbumJob(aj, config);
+                await ProcessAlbumJob(aj, Ctx(aj));
                 break;
 
-            case AggregateJob ag:
+            case AggregateQueryJob ag:
                 Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == TrackState.Initial).ToList(),
                     new(), new(), isNormal: false, config);
                 await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessAggregateJob(ag, config);
+                await ProcessAggregateJob(ag, ctx);
                 break;
         }
     }
@@ -380,8 +402,108 @@ public class DownloadEngine
 
     // ── per-job-type handlers ─────────────────────────────────────────────────
 
-    async Task ProcessSongListJob(SongListJob job, Config config)
+    async Task ProcessAlbumListJob(AlbumListJob job, JobContext ctx)
     {
+        var config = job.Config;
+        int failed = 0;
+
+        foreach (var albumJob in job.Albums)
+        {
+            albumJob.Config ??= job.Config;
+
+            var childCtx = new JobContext
+            {
+                IndexEditor      = ctx.IndexEditor,
+                PlaylistEditor   = ctx.PlaylistEditor,
+                PreprocessTracks = false,  // preprocessed with parent AlbumListJob
+            };
+            _contexts[albumJob.Id] = childCtx;
+
+            // Skip check
+            if (config.skipExisting && albumJob.CanBeSkipped && TrySetJobAlreadyExists(albumJob, childCtx))
+            {
+                Logger.Info($"Download '{albumJob.ToString(true)}' already exists, skipping");
+                childCtx.IndexEditor?.Update();
+                continue;
+            }
+
+            // Source search
+            Console.WriteLine();
+            _progressReporter.ReportJobStarted(albumJob, parallel: false);
+
+            var responseData = new ResponseData();
+            bool found = false;
+
+            if (!albumJob.Query.IsDirectLink)
+                await searcher!.SearchAlbum(albumJob, config, responseData, appCts.Token);
+            else
+            {
+                try
+                {
+                    _progressReporter.ReportJobFolderRetrieving(albumJob);
+                    await searcher!.SearchDirectLinkAlbum(albumJob, appCts.Token);
+                }
+                catch (UserOfflineException e)
+                {
+                    Logger.Error("Error: " + e.Message);
+                }
+            }
+
+            found = albumJob.FoundFolders.Count > 0;
+            _progressReporter.ReportJobCompleted(albumJob, found, responseData.lockedFilesCount);
+
+            if (!found)
+            {
+                albumJob.State         = JobState.Failed;
+                albumJob.FailureReason = FailureReason.NoSuitableFileFound;
+                await OnCompleteExecutor.ExecuteAsync(albumJob, null, childCtx);
+                failed++;
+                childCtx.IndexEditor?.Update();
+                continue;
+            }
+
+            // Download
+            await ProcessAlbumJob(albumJob, childCtx);
+
+            if (albumJob.State != JobState.Done) failed++;
+        }
+
+        job.State = (failed == job.Albums.Count && job.Albums.Count > 0) ? JobState.Failed : JobState.Done;
+        ctx.IndexEditor?.Update();
+        ctx.PlaylistEditor?.Update();
+    }
+
+
+    async Task ProcessSongDownloadJob(SongDownloadJob job, JobContext ctx)
+    {
+        var config    = job.Config;
+        var organizer = new FileManager(job, config);
+        var semaphore = new SemaphoreSlim(1);
+
+        // Wrap the pre-resolved target in a SongJob with Candidates pre-populated
+        // so SearchAndDownloadSong skips the search phase.
+        var song = new SongJob(job.Origin)
+        {
+            Candidates = new List<FileCandidate> { job.Target },
+            ItemNumber = job.ItemNumber,
+            LineNumber = job.LineNumber,
+        };
+
+        using var cts = new CancellationTokenSource();
+        await DownloadSong(song, job, config, organizer, semaphore, cts,
+            cancelOnFail: false, removeFromSource: false, organize: true);
+
+        job.State        = song.State == TrackState.Downloaded ? JobState.Done : JobState.Failed;
+        job.DownloadPath = song.DownloadPath;
+
+        ctx.IndexEditor?.Update();
+        ctx.PlaylistEditor?.Update();
+    }
+
+
+    async Task ProcessSongListJob(SongListQueryJob job, JobContext ctx)
+    {
+        var config = job.Config;
         var songs = job.Songs;
         var progressReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, songs);
         var semaphore = new SemaphoreSlim(config.concurrentProcesses);
@@ -395,8 +517,8 @@ public class DownloadEngine
             await DownloadSong(song, job, config, organizer, semaphore, cts, cancelOnFail: false,
                 removeFromSource: true, organize: true);
 
-            job.IndexEditor?.Update();
-            job.PlaylistEditor?.Update();
+            ctx.IndexEditor?.Update();
+            ctx.PlaylistEditor?.Update();
 
             if (wasInitial)
             {
@@ -418,8 +540,9 @@ public class DownloadEngine
     }
 
 
-    async Task ProcessAggregateJob(AggregateJob job, Config config)
+    async Task ProcessAggregateJob(AggregateQueryJob job, JobContext ctx)
     {
+        var config    = job.Config;
         var songs     = job.Songs;
         var semaphore = new SemaphoreSlim(config.concurrentProcesses);
         var organizer = new FileManager(job, config);
@@ -429,18 +552,20 @@ public class DownloadEngine
             using var cts = new CancellationTokenSource();
             await DownloadSong(song, job, config, organizer, semaphore, cts, cancelOnFail: false,
                 removeFromSource: false, organize: true);
-            job.IndexEditor?.Update();
-            job.PlaylistEditor?.Update();
+            ctx.IndexEditor?.Update();
+            ctx.PlaylistEditor?.Update();
         });
 
         await Task.WhenAll(downloadTasks);
     }
 
 
-    async Task ProcessAlbumJob(AlbumJob job, Config config)
+    async Task ProcessAlbumJob(AlbumQueryJob job, JobContext ctx)
     {
+        var config = job.Config;
         var organizer = new FileManager(job, config);
         List<AlbumFile>? chosenFiles = null;
+        AlbumDownloadJob? downloadJob = null;
         var retrievedFolders = new HashSet<string>();
         bool succeeded = false;
         string? filterStr = null;
@@ -453,21 +578,31 @@ public class DownloadEngine
             {
                 if (af.State != TrackState.Initial) return;
                 var song = AlbumFileToSongJob(af, job);
-                await DownloadAlbumFile(af, song, job, config, organizer, semaphore, cts, cancelOnFail: true);
+                await DownloadAlbumFile(af, song, config, organizer, semaphore, cts, cancelOnFail: true);
             });
             await Task.WhenAll(tasks);
         }
 
         while (job.FoundFolders.Count > 0 && !config.albumArtOnly)
         {
-            bool wasInteractive = config.interactiveMode;
+            bool wasInteractive = false;
             bool retrieveCurrent = true;
             index = 0;
 
             AlbumFolder chosenFolder;
 
-            if (config.interactiveMode)
+            if (SelectAlbumVersion != null)
             {
+                downloadJob = await SelectAlbumVersion(job);
+                if (downloadJob == null) { index = -1; break; }  // skip or quit
+                config = job.Config;  // callback may have mutated job.Config (e.g. exit interactive mode)
+                chosenFolder = downloadJob.Target;
+                retrieveCurrent = true;
+                index = job.FoundFolders.Contains(chosenFolder) ? job.FoundFolders.IndexOf(chosenFolder) : 0;
+            }
+            else if (config.interactiveMode)
+            {
+                wasInteractive = true;
                 var interactive = new InteractiveModeManager(job, Queue!, job.FoundFolders, true,
                     retrievedFolders,
                     async (f) => await RetrieveFullFolderCancellableAsync(f, config),
@@ -533,7 +668,7 @@ public class DownloadEngine
 
             organizer.SetremoteBaseDir(chosenFolder.FolderPath);
 
-            if (!config.interactiveMode && !wasInteractive)
+            if (SelectAlbumVersion == null && !config.interactiveMode && !wasInteractive)
             {
                 Console.WriteLine();
                 Printing.PrintAlbum(chosenFolder);
@@ -553,7 +688,7 @@ public class DownloadEngine
 
             try
             {
-                job.ChosenFolder = chosenFolder;
+                downloadJob ??= new AlbumDownloadJob(chosenFolder, job.Query);
                 await RunAlbumDownloads(chosenFolder, semaphore, cts);
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
@@ -575,6 +710,7 @@ public class DownloadEngine
                     }
                 }
 
+                job.CompletedDownload = downloadJob;
                 succeeded    = true;
                 chosenFiles  = chosenFolder.Files;
                 break;
@@ -597,7 +733,7 @@ public class DownloadEngine
                             HandleAlbumFail(chosenFolder, config.DeleteAlbumOnFail, config);
                     }
 
-                    if (!config.interactiveMode)
+                    if (SelectAlbumVersion == null && !config.interactiveMode)
                     {
                         Logger.Info("Entering interactive mode");
                         config.interactiveMode = true;
@@ -621,7 +757,6 @@ public class DownloadEngine
             {
                 organizer.SetremoteBaseDir(null);
                 job.FoundFolders.RemoveAt(index);
-                job.ChosenFolder = null;
             }
         }
 
@@ -634,7 +769,8 @@ public class DownloadEngine
 
             if (downloadedAudio.Any())
             {
-                job.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(af => af.DownloadPath!));
+                downloadJob!.DownloadPath = Utils.GreatestCommonDirectory(downloadedAudio.Select(af => af.DownloadPath!));
+                ctx.IndexEditor?.NotifyJobDownloadPath(job.Id, downloadJob.DownloadPath);
                 if (config.removeTracksFromSource)
                     await extractor!.RemoveTrackFromSource(new SongJob(job.QueryTrack));
             }
@@ -650,7 +786,7 @@ public class DownloadEngine
         if (config.albumArtOnly || (succeeded && config.albumArtOption != AlbumArtOption.Default))
         {
             Logger.Info("Downloading additional images:");
-            additionalImages = await DownloadImages(job, config, organizer);
+            additionalImages = await DownloadImages(job, ctx, organizer, downloadJob);
 
             if (chosenFiles != null && additionalImages?.Any() == true)
             {
@@ -667,19 +803,19 @@ public class DownloadEngine
             }
         }
 
-        if (chosenFiles != null && !string.IsNullOrEmpty(job.DownloadPath))
+        if (chosenFiles != null && downloadJob != null && !string.IsNullOrEmpty(downloadJob.DownloadPath))
             organizer.OrganizeAlbum(job, chosenFiles, additionalImages);
 
-        job.IndexEditor?.Update();
-        job.PlaylistEditor?.Update();
+        ctx.IndexEditor?.Update();
+        ctx.PlaylistEditor?.Update();
 
-        await OnCompleteExecutor.ExecuteAsync(job, null, job.IndexEditor, job.PlaylistEditor);
+        await OnCompleteExecutor.ExecuteAsync(job, null, ctx);
     }
 
 
     // ── single-song download ──────────────────────────────────────────────────
 
-    async Task DownloadSong(SongJob song, DownloadJob job, Config config, FileManager organizer,
+    async Task DownloadSong(SongJob song, Job job, Config config, FileManager organizer,
         SemaphoreSlim semaphore, CancellationTokenSource cts, bool cancelOnFail,
         bool removeFromSource, bool organize)
     {
@@ -764,10 +900,11 @@ public class DownloadEngine
         if (song.State == TrackState.Downloaded && organize)
             organizer.OrganizeSong(song);
 
+        var jobCtx2 = Ctx(job);
         if (job.Config.HasOnComplete)
         {
             _progressReporter.ReportOnCompleteStart(song);
-            await OnCompleteExecutor.ExecuteAsync(job, song, job.IndexEditor, job.PlaylistEditor);
+            await OnCompleteExecutor.ExecuteAsync(job, song, jobCtx2);
             _progressReporter.ReportOnCompleteEnd(song);
         }
 
@@ -780,7 +917,7 @@ public class DownloadEngine
     /// Returns (savedFilePath, chosenFile).
     /// Throws <see cref="SearchAndDownloadException"/> on unrecoverable search/download failures.
     /// </summary>
-    async Task<(string, SlFile?)> SearchAndDownloadSong(SongJob song, DownloadJob job, Config config,
+    async Task<(string, SlFile?)> SearchAndDownloadSong(SongJob song, Job job, Config config,
         FileManager organizer, CancellationTokenSource cts)
     {
         var responseData = new ResponseData();
@@ -830,7 +967,7 @@ public class DownloadEngine
     /// <summary>
     /// Downloads a single AlbumFile. Creates a synthetic SongJob for the Downloader.
     /// </summary>
-    async Task DownloadAlbumFile(AlbumFile af, SongJob song, AlbumJob job, Config config,
+    async Task DownloadAlbumFile(AlbumFile af, SongJob song, Config config,
         FileManager organizer, SemaphoreSlim semaphore, CancellationTokenSource cts, bool cancelOnFail)
     {
         if (af.State != TrackState.Initial) return;
@@ -873,30 +1010,31 @@ public class DownloadEngine
     }
 
     // Creates a temporary SongJob to pass to Downloader for album file downloads.
-    static SongJob AlbumFileToSongJob(AlbumFile af, AlbumJob job)
+    static SongJob AlbumFileToSongJob(AlbumFile af, Job job)
         => new SongJob(af.Info) { ItemNumber = job.ItemNumber, LineNumber = job.LineNumber };
 
 
     // ── skip helpers ──────────────────────────────────────────────────────────
 
-    bool TrySetAlreadyExists(DownloadJob job, SongJob song, TrackSkipperContext ctx)
+    bool TrySetAlreadyExists(Job job, SongJob song, TrackSkipperContext skipCtx)
     {
         string? path = null;
+        var jobCtx = Ctx(job);
 
-        if (job.OutputDirSkipper != null)
+        if (jobCtx.OutputDirSkipper != null)
         {
-            if (!job.OutputDirSkipper.IndexIsBuilt) job.OutputDirSkipper.BuildIndex();
-            job.OutputDirSkipper.SongExists(song, ctx, out path);
+            if (!jobCtx.OutputDirSkipper.IndexIsBuilt) jobCtx.OutputDirSkipper.BuildIndex();
+            jobCtx.OutputDirSkipper.SongExists(song, skipCtx, out path);
         }
 
-        if (path == null && job.MusicDirSkipper != null)
+        if (path == null && jobCtx.MusicDirSkipper != null)
         {
-            if (!job.MusicDirSkipper.IndexIsBuilt)
+            if (!jobCtx.MusicDirSkipper.IndexIsBuilt)
             {
                 Logger.Info("Building music directory index..");
-                job.MusicDirSkipper.BuildIndex();
+                jobCtx.MusicDirSkipper.BuildIndex();
             }
-            job.MusicDirSkipper.SongExists(song, ctx, out path);
+            jobCtx.MusicDirSkipper.SongExists(song, skipCtx, out path);
         }
 
         if (path != null)
@@ -908,33 +1046,33 @@ public class DownloadEngine
         return path != null;
     }
 
-    bool TrySetJobAlreadyExists(DownloadJob job)
+    bool TrySetJobAlreadyExists(Job job, JobContext ctx)
     {
-        if (job is not AlbumJob aj) return false;
+        if (job is not AlbumQueryJob aj) return false;
 
-        var ctx = TrackSkipperContext.FromJob(job);
+        var skipCtx = TrackSkipperContext.From(ctx, job.Config);
         string? path = null;
 
-        if (job.OutputDirSkipper != null)
+        if (ctx.OutputDirSkipper != null)
         {
-            if (!job.OutputDirSkipper.IndexIsBuilt) job.OutputDirSkipper.BuildIndex();
-            job.OutputDirSkipper.AlbumExists(aj, ctx, out path);
+            if (!ctx.OutputDirSkipper.IndexIsBuilt) ctx.OutputDirSkipper.BuildIndex();
+            ctx.OutputDirSkipper.AlbumExists(aj, skipCtx, out path);
         }
 
-        if (path == null && job.MusicDirSkipper != null)
+        if (path == null && ctx.MusicDirSkipper != null)
         {
-            if (!job.MusicDirSkipper.IndexIsBuilt)
+            if (!ctx.MusicDirSkipper.IndexIsBuilt)
             {
                 Logger.Info("Building music directory index..");
-                job.MusicDirSkipper.BuildIndex();
+                ctx.MusicDirSkipper.BuildIndex();
             }
-            job.MusicDirSkipper.AlbumExists(aj, ctx, out path);
+            ctx.MusicDirSkipper.AlbumExists(aj, skipCtx, out path);
         }
 
         if (path != null)
         {
-            job.State        = JobState.Skipped;
-            job.DownloadPath = path;
+            job.State = JobState.Skipped;
+            ctx.IndexEditor?.NotifyJobDownloadPath(job.Id, path);
         }
 
         return path != null;
@@ -953,13 +1091,14 @@ public class DownloadEngine
         return false;
     }
 
-    bool TrySetNotFoundLastTimeForJob(DownloadJob job)
+    bool TrySetNotFoundLastTimeForJob(Job job)
     {
-        if (job.IndexEditor == null) return false;
+        var jobCtx = Ctx(job);
+        if (jobCtx.IndexEditor == null) return false;
         IndexEntry? prev = null;
 
-        if (job is AlbumJob aj)
-            prev = job.IndexEditor.PreviousRunResult(aj);
+        if (job is AlbumQueryJob aj)
+            prev = jobCtx.IndexEditor.PreviousRunResult(aj);
 
         if (prev == null) return false;
         if (prev.FailureReason == FailureReason.NoSuitableFileFound || prev.State == TrackState.NotFoundLastTime)
@@ -1039,28 +1178,30 @@ public class DownloadEngine
 
     // ── album art download ────────────────────────────────────────────────────
 
-    async Task<List<AlbumFile>> DownloadImages(AlbumJob job, Config config, FileManager fileManager)
+    async Task<List<AlbumFile>> DownloadImages(AlbumQueryJob job, JobContext ctx, FileManager fileManager, AlbumDownloadJob? downloadJob)
     {
         var result = new List<AlbumFile>();
+        var config = job.Config;
         long mSize = 0;
         int  mCount = 0;
         var option = config.albumArtOption;
+        var chosenFolder = downloadJob?.Target;
 
-        if (job.ChosenFolder != null)
+        if (chosenFolder != null)
         {
-            string dir = job.ChosenFolder.FolderPath;
+            string dir = chosenFolder.FolderPath;
             fileManager.SetDefaultFolderName(Path.GetFileName(Utils.NormalizedPath(dir)));
         }
 
         if (option == AlbumArtOption.Default) return result;
 
         int[]? sortedLengths = null;
-        if (job.ChosenFolder?.Files.Any(af => !af.IsNotAudio) == true)
-            sortedLengths = job.ChosenFolder.Files.Where(af => !af.IsNotAudio)
+        if (chosenFolder?.Files.Any(af => !af.IsNotAudio) == true)
+            sortedLengths = chosenFolder.Files.Where(af => !af.IsNotAudio)
                 .Select(af => af.Info.Length).OrderBy(x => x).ToArray();
 
         var imageFolders = job.FoundFolders
-            .Where(f => job.ChosenFolder == null || Searcher.AlbumsAreSimilar(job.ChosenFolder, f, sortedLengths))
+            .Where(f => chosenFolder == null || Searcher.AlbumsAreSimilar(chosenFolder, f, sortedLengths))
             .Select(f => f.Files.Where(af => Utils.IsImageFile(af.Candidate.Filename)).ToList())
             .Where(ls => ls.Count > 0)
             .ToList();
@@ -1079,8 +1220,8 @@ public class DownloadEngine
                 .ThenByDescending(ls => ls.Sum(af => af.Candidate.File.Size) / 1024 / 100)
                 .ToList();
 
-            if (job.ChosenFolder != null)
-                mSize = job.ChosenFolder.Files
+            if (chosenFolder != null)
+                mSize = chosenFolder.Files
                     .Where(af => af.State == TrackState.Downloaded && Utils.IsImageFile(af.DownloadPath ?? ""))
                     .Select(af => af.Candidate.File.Size)
                     .DefaultIfEmpty(0).Max();
@@ -1093,8 +1234,8 @@ public class DownloadEngine
                 .ThenByDescending(ls => ls.Sum(af => af.Candidate.File.Size) / 1024 / 100)
                 .ToList();
 
-            if (job.ChosenFolder != null)
-                mCount = job.ChosenFolder.Files.Count(af => af.State == TrackState.Downloaded && Utils.IsImageFile(af.DownloadPath ?? ""));
+            if (chosenFolder != null)
+                mCount = chosenFolder.Files.Count(af => af.State == TrackState.Downloaded && Utils.IsImageFile(af.DownloadPath ?? ""));
         }
 
         bool needsDownload(List<AlbumFile> ls) => option == AlbumArtOption.Most
@@ -1109,7 +1250,7 @@ public class DownloadEngine
             bool   wasInteractive = config.interactiveMode;
             List<AlbumFile> imgs;
 
-            if (config.interactiveMode && OnAlbumVersionRequired != null)
+            if (config.interactiveMode && SelectAlbumVersion != null)
             {
                 // Wrap image folders as synthetic AlbumFolders for interactive picker.
                 var syntheticFolders = imageFolders.Select((ls, idx) => new AlbumFolder(
@@ -1117,10 +1258,11 @@ public class DownloadEngine
                     Utils.GreatestCommonDirectorySlsk(ls.Select(af => af.Candidate.Filename)),
                     ls)).ToList();
 
-                var syntheticJob = new AlbumJob(job.Query) { FoundFolders = syntheticFolders, Config = config };
-                var picked = await OnAlbumVersionRequired(syntheticJob, syntheticFolders);
-                if (picked == null) break;
-                imgIdx = syntheticFolders.IndexOf(picked);
+                var syntheticJob = new AlbumQueryJob(job.Query) { FoundFolders = syntheticFolders, Config = config };
+                _contexts[syntheticJob.Id] = new JobContext();
+                var pickedDownload = await SelectAlbumVersion(syntheticJob);
+                if (pickedDownload == null) break;
+                imgIdx = syntheticFolders.IndexOf(pickedDownload.Target);
                 if (imgIdx == -1) break;
                 imgs = imageFolders[imgIdx];
             }
@@ -1166,7 +1308,7 @@ public class DownloadEngine
                 foreach (var af in imgs)
                 {
                     var song = AlbumFileToSongJob(af, job);
-                    await DownloadAlbumFile(af, song, job, config, fileManager, semaphore, cts, cancelOnFail: false);
+                    await DownloadAlbumFile(af, song, config, fileManager, semaphore, cts, cancelOnFail: false);
                     if (af.State == TrackState.Downloaded)
                         result.Add(af);
                     else

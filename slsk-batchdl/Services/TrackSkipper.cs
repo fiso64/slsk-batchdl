@@ -24,18 +24,18 @@ namespace Services
         public M3uEditor?      indexEditor;
         public bool            checkFileExists;
 
-        public static TrackSkipperContext FromJob(DownloadJob job)
+        public static TrackSkipperContext From(JobContext ctx, Config config)
         {
             FileConditions? cond = null;
-            if (job.Config.skipCheckPrefCond)
-                cond = job.Config.necessaryCond.With(job.Config.preferredCond);
-            else if (job.Config.skipCheckCond)
-                cond = job.Config.necessaryCond;
+            if (config.skipCheckPrefCond)
+                cond = config.necessaryCond.With(config.preferredCond);
+            else if (config.skipCheckCond)
+                cond = config.necessaryCond;
 
             return new TrackSkipperContext
             {
                 checkFileExists = cond != null,
-                indexEditor     = job.IndexEditor,
+                indexEditor     = ctx.IndexEditor,
                 conditions      = cond,
             };
         }
@@ -47,7 +47,7 @@ namespace Services
         public abstract bool SongExists(SongJob song, TrackSkipperContext context, out string? foundPath);
 
         // Returns true if the given album job already exists. foundPath is the directory.
-        public virtual bool AlbumExists(AlbumJob job, TrackSkipperContext context, out string? foundPath)
+        public virtual bool AlbumExists(AlbumQueryJob job, TrackSkipperContext context, out string? foundPath)
         {
             foundPath = null;
             return false;
@@ -62,7 +62,7 @@ namespace Services
         protected abstract IEnumerable<(string path, T item)> Index { get; }
         protected abstract string Preprocess(string s, bool removeSlash, bool isQuery);
         protected abstract bool FileMatchesSong(string path, string artist, string title, T item, TrackSkipperContext context, SongJob? song);
-        protected abstract bool DirectoryMatchesAlbum(string directory, string? albumArtist, string album, T item, TrackSkipperContext context, AlbumJob job);
+        protected abstract bool DirectoryMatchesAlbum(string directory, string? albumArtist, string album, T item, TrackSkipperContext context, AlbumQueryJob job);
 
         public override bool SongExists(SongJob song, TrackSkipperContext context, out string? foundPath)
         {
@@ -81,7 +81,7 @@ namespace Services
             return false;
         }
 
-        public override bool AlbumExists(AlbumJob job, TrackSkipperContext context, out string? foundPath)
+        public override bool AlbumExists(AlbumQueryJob job, TrackSkipperContext context, out string? foundPath)
         {
             foundPath = null;
             string? albumArtist = job.Query.Album.Length > 0 ? null : job.Query.Artist;
@@ -158,7 +158,7 @@ namespace Services
         protected override bool FileMatchesSong(string path, string artist, string title, (string ppath, string pname) item, TrackSkipperContext c, SongJob? song)
             => item.pname.ContainsWithBoundary(title) && item.ppath.ContainsWithBoundary(artist);
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname) item, TrackSkipperContext c, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname) item, TrackSkipperContext c, AlbumQueryJob job)
             => item.ppath.ContainsWithBoundary(album) && item.ppath.ContainsWithBoundary(albumArtist);
     }
 
@@ -210,7 +210,7 @@ namespace Services
             && item.ppath.ContainsWithBoundary(artist)
             && (context.conditions == null || context.conditions.FileSatisfies(item.file, song?.Query));
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname, SimpleFile file) item, TrackSkipperContext context, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname, SimpleFile file) item, TrackSkipperContext context, AlbumQueryJob job)
         {
             if (!item.ppath.ContainsWithBoundary(album) || !item.ppath.ContainsWithBoundary(albumArtist))
                 return false;
@@ -265,7 +265,7 @@ namespace Services
         protected override bool FileMatchesSong(string path, string artist, string title, (string partist, string ptitle, string palbum, string palbumArtist) item, TrackSkipperContext c, SongJob? song)
             => title == item.ptitle && item.partist.Contains(artist);
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist) item, TrackSkipperContext c, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist) item, TrackSkipperContext c, AlbumQueryJob job)
             => album == item.palbum && (albumArtist == null || item.palbumArtist.Contains(albumArtist));
     }
 
@@ -312,7 +312,7 @@ namespace Services
         protected override bool FileMatchesSong(string path, string artist, string title, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item, TrackSkipperContext c, SongJob? song)
             => title == item.ptitle && item.partist.Contains(artist);
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item, TrackSkipperContext c, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item, TrackSkipperContext c, AlbumQueryJob job)
         {
             if (album != item.palbum) return false;
             if (albumArtist != null && !item.palbumArtist.Contains(albumArtist)) return false;
@@ -349,7 +349,7 @@ namespace Services
             return true;
         }
 
-        public override bool AlbumExists(AlbumJob job, TrackSkipperContext context, out string? foundPath)
+        public override bool AlbumExists(AlbumQueryJob job, TrackSkipperContext context, out string? foundPath)
         {
             foundPath = null;
             var t = context.indexEditor?.PreviousRunResult(job);
@@ -395,7 +395,7 @@ namespace Services
             }
         }
 
-        public override bool AlbumExists(AlbumJob job, TrackSkipperContext context, out string? foundPath)
+        public override bool AlbumExists(AlbumQueryJob job, TrackSkipperContext context, out string? foundPath)
         {
             foundPath = null;
             var t = context.indexEditor?.PreviousRunResult(job);

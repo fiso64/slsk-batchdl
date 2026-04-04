@@ -41,7 +41,7 @@ namespace Tests.ExtractorTests2
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", 100, 0, false, config);
 
             Assert.AreEqual(1, result.Jobs.Count);
-            var slj = (SongListJob)result.Jobs[0];
+            var slj = (SongListQueryJob)result.Jobs[0];
             Assert.AreEqual(1, slj.Songs.Count);
             Assert.IsTrue(slj.Songs[0].Query.IsDirectLink);
         }
@@ -54,7 +54,7 @@ namespace Tests.ExtractorTests2
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", 100, 0, false, config);
 
             Assert.AreEqual(1, result.Jobs.Count);
-            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumJob));
+            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumQueryJob));
         }
 
         [TestMethod]
@@ -65,7 +65,7 @@ namespace Tests.ExtractorTests2
             config.album = true;
             var result = await extractor.GetTracks("slsk://someuser/Music/Song.mp3", 100, 0, false, config);
 
-            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumJob));
+            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumQueryJob));
         }
 
         [TestMethod]
@@ -75,7 +75,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
             var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", 100, 0, false, config);
 
-            var song = ((SongListJob)result.Jobs[0]).Songs[0];
+            var song = ((SongListQueryJob)result.Jobs[0]).Songs[0];
             Assert.IsNotNull(song.Candidates);
             Assert.IsTrue(song.Candidates.Count > 0);
             Assert.AreEqual("myuser", song.Candidates[0].Response.Username);
@@ -162,7 +162,7 @@ namespace Tests.ExtractorTests2
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
 
-            Assert.IsTrue(result.Jobs.Any(j => j is AlbumJob || j is AggregateAlbumJob));
+            Assert.IsTrue(result.Jobs.Any(j => j is AlbumQueryJob || j is AlbumAggregateQueryJob));
         }
 
         [TestMethod]

@@ -74,7 +74,7 @@ namespace Tests.Unit
             var searcher = CreateSearcher(client, config);
             
             // Search for "ELO Time" specifically
-            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+            var job = new AlbumQueryJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
             var responseData = new ResponseData();
 
             await searcher.SearchAlbum(job, config, responseData, CancellationToken.None);
@@ -102,7 +102,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateAlbumJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
@@ -130,7 +130,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateAlbumJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
@@ -164,7 +164,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -198,7 +198,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -229,7 +229,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -262,7 +262,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateAlbumJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);

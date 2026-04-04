@@ -48,7 +48,7 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.aggregate = false;
             config.maxStaleTime = 50000;
-            var job = new AlbumJob(new AlbumQuery());
+            var job = new AlbumQueryJob(new AlbumQuery());
             var queue = new JobQueue();
             queue.Enqueue(job);
             config = config.UpdateProfiles(job, queue);
@@ -76,7 +76,7 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
-            var job = new AlbumJob(new AlbumQuery());
+            var job = new AlbumQueryJob(new AlbumQuery());
             var queue = new JobQueue();
             queue.Enqueue(job);
             config = config.UpdateProfiles(job, queue);
@@ -103,7 +103,7 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
             config.useYtdlp = false;
             config.maxStaleTime = 50000;
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(job);
             config = config.UpdateProfiles(job, queue);
@@ -135,7 +135,7 @@ namespace Tests.ConfigTests
             Assert.AreEqual("action_default", config.onComplete[0]);
             Assert.AreEqual("action_cli", config.onComplete[1]);
 
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(job);
 
@@ -175,9 +175,9 @@ namespace Tests.ConfigTests
             return new Config(args);
         }
 
-        private (Config config, DownloadJob job, JobQueue queue) SetupUpdateCall(Config config)
+        private (Config config, Job job, JobQueue queue) SetupUpdateCall(Config config)
         {
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(job);
             return (config, job, queue);
@@ -336,7 +336,7 @@ namespace Tests.ConfigTests
         private Config DoUpdate(Config config, bool interactiveMode)
         {
             config.interactiveMode = interactiveMode;
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(job);
             return config.UpdateProfiles(job, queue);
@@ -514,7 +514,7 @@ namespace Tests.ConfigTests
         private Config DoUpdate(Config config, bool interactiveMode = false)
         {
             config.interactiveMode = interactiveMode;
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(job);
             return config.UpdateProfiles(job, queue);
@@ -528,7 +528,7 @@ namespace Tests.ConfigTests
                 "[default]\nprofile-cond = interactive\nmax-stale-time = 99");
             config.interactiveMode = true;
 
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 
@@ -551,7 +551,7 @@ namespace Tests.ConfigTests
             config.interactiveMode = true;
 
             Assert.IsFalse(config.HasAutoProfiles);
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 
@@ -561,7 +561,7 @@ namespace Tests.ConfigTests
             var config = MakeConfig("max-stale-time = 5");
 
             Assert.IsFalse(config.HasAutoProfiles);
-            var job = new SongListJob();
+            var job = new SongListQueryJob();
             Assert.IsFalse(config.NeedUpdateProfiles(job));
         }
 

@@ -79,7 +79,7 @@ namespace Services
         /// No-op when job.Query.IsDirectLink is true.
         /// Also applies minAlbumTrackCount / maxAlbumTrackCount from config.
         /// </summary>
-        public static void PreprocessAlbum(AlbumJob job, Config config)
+        public static void PreprocessAlbum(AlbumQueryJob job, Config config)
         {
             if (job.Query.IsDirectLink) return;
 
@@ -125,32 +125,34 @@ namespace Services
         /// Preprocesses all songs/albums in a job according to its Config.
         /// Called per-job during the main loop, just before download begins.
         /// </summary>
-        public static void PreprocessJob(DownloadJob job)
+        public static void PreprocessJob(Job job, Config config)
         {
-            if (!job.PreprocessTracks) return;
-
-            var config = job.Config;
 
             switch (job)
             {
-                case SongListJob slj:
+                case SongListQueryJob slj:
                     foreach (var song in slj.Songs)
                         PreprocessSong(song, config);
                     break;
 
-                case AlbumJob aj:
+                case AlbumQueryJob aj:
                     PreprocessAlbum(aj, config);
                     break;
 
-                case AggregateJob ag:
+                case AggregateQueryJob ag:
                     foreach (var song in ag.Songs)
                         PreprocessSong(song, config);
                     break;
 
-                case AggregateAlbumJob aaj:
-                    // AggregateAlbumJob only has an AlbumQuery, preprocess artist/album.
-                    // Synthesise a temporary AlbumJob to reuse PreprocessAlbum.
-                    var tempAlbum = new AlbumJob(aaj.Query) { Config = config };
+                case AlbumListJob alj:
+                    foreach (var aj in alj.Albums)
+                        PreprocessAlbum(aj, config);
+                    break;
+
+                case AlbumAggregateQueryJob aaj:
+                    // AlbumAggregateQueryJob only has an AlbumQuery, preprocess artist/album.
+                    // Synthesise a temporary AlbumQueryJob to reuse PreprocessAlbum.
+                    var tempAlbum = new AlbumQueryJob(aaj.Query);
                     PreprocessAlbum(tempAlbum, config);
                     aaj.Query = tempAlbum.Query;
                     break;

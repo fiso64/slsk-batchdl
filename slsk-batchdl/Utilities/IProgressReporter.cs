@@ -27,10 +27,10 @@ namespace Utilities
         void ReportJobComplete(int downloaded, int failed, int total);
 
         // ── display events (terminal rendering) ─────────────────────────────
-        // Job-level (album / aggregate source searches)
-        void ReportJobSearching(DownloadJob job, bool createBar);
-        void ReportJobFolderRetrieving(DownloadJob job);
-        void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles);
+        // Job-level
+        void ReportJobStarted(Job job, bool parallel);
+        void ReportJobFolderRetrieving(Job job);
+        void ReportJobCompleted(Job job, bool found, int lockedFiles);
 
         // Song-level
         void ReportSongSearching(SongJob song);              // each search attempt (first + retries)
@@ -57,9 +57,9 @@ namespace Utilities
         public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null) { }
         public void ReportOverallProgress(int downloaded, int failed, int total) { }
         public void ReportJobComplete(int downloaded, int failed, int total) { }
-        public void ReportJobSearching(DownloadJob job, bool createBar) { }
-        public void ReportJobFolderRetrieving(DownloadJob job) { }
-        public void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles) { }
+        public void ReportJobStarted(Job job, bool parallel) { }
+        public void ReportJobFolderRetrieving(Job job) { }
+        public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }
         public void ReportSongSearching(SongJob song) { }
         public void ReportSongNotFound(SongJob song) { }
         public void ReportSongFailed(SongJob song) { }

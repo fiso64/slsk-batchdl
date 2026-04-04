@@ -16,14 +16,14 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            // Each element is either a SongJob (for songs) or an AlbumJob (for album rows).
+            // Each element is either a SongJob (for songs) or an AlbumQueryJob (for album rows).
             var rows = await ParseCsvRows(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
                 config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
 
@@ -31,33 +31,33 @@ namespace Extractors
                 rows.Reverse();
 
             var csvName = Path.GetFileNameWithoutExtension(csvFilePath);
-            return BuildQueue(rows.Skip(offset).Take(maxTracks), csvName);
+            return BuildJobList(rows.Skip(offset).Take(maxTracks), csvName);
         }
 
-        // Builds a JobQueue from a sequence of per-row items (SongJob or AlbumJob).
-        // Consecutive SongJobs are grouped into a single SongListJob.
-        private static JobQueue BuildQueue(IEnumerable<object> rows, string csvName)
+        // Builds a List<QueryJob> from a sequence of per-row items (SongJob or AlbumQueryJob).
+        // Consecutive SongJobs are grouped into a single SongListQueryJob.
+        private static List<QueryJob> BuildJobList(IEnumerable<object> rows, string csvName)
         {
-            var queue = new JobQueue();
-            SongListJob? currentSlj = null;
+            var jobs = new List<QueryJob>();
+            SongListQueryJob? currentSlj = null;
 
             foreach (var row in rows)
             {
-                if (row is AlbumJob albumJob)
+                if (row is AlbumQueryJob albumJob)
                 {
                     if (currentSlj != null)
                     {
-                        queue.Enqueue(currentSlj);
+                        jobs.Add(currentSlj);
                         currentSlj = null;
                     }
                     albumJob.ItemName              = csvName;
                     albumJob.EnablesIndexByDefault = true;
-                    queue.Enqueue(albumJob);
+                    jobs.Add(albumJob);
                 }
                 else if (row is SongJob song)
                 {
                     if (currentSlj == null)
-                        currentSlj = new SongListJob
+                        currentSlj = new SongListQueryJob
                         {
                             ItemName              = csvName,
                             EnablesIndexByDefault = true,
@@ -67,9 +67,9 @@ namespace Extractors
             }
 
             if (currentSlj != null && currentSlj.Songs.Count > 0)
-                queue.Enqueue(currentSlj);
+                jobs.Add(currentSlj);
 
-            return queue;
+            return jobs;
         }
 
         public async Task RemoveTrackFromSource(SongJob job)
@@ -101,7 +101,7 @@ namespace Extractors
             }
         }
 
-        // Returns a list of rows — either SongJob (song row) or AlbumJob (album row).
+        // Returns a list of rows — either SongJob (song row) or AlbumQueryJob (album row).
         async Task<List<object>> ParseCsvRows(string path, string artistCol = "", string trackCol = "",
             string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string trackCountCol = "",
             string timeUnit = "s", bool ytParse = false)
@@ -227,7 +227,7 @@ namespace Extractors
                         MinTrackCount = minAlbumTrackCount,
                         MaxTrackCount = maxAlbumTrackCount,
                     };
-                    rows.Add(new AlbumJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
+                    rows.Add(new AlbumQueryJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
                 }
                 else if (ytParse)
                 {

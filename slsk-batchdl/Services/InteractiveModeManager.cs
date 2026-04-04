@@ -4,8 +4,8 @@ using System.Text;
 
 public class InteractiveModeManager
 {
-    private readonly DownloadJob job;
-    private readonly JobQueue    queue;
+    private readonly Job      job;
+    private readonly JobQueue queue;
     private readonly Func<AlbumFolder, Task<(bool wasCancelled, int newFiles)>> retrieveFolderCallback;
 
     private readonly List<(AlbumFolder Folder, int Index)> original;
@@ -30,7 +30,7 @@ public class InteractiveModeManager
         string?      FilterStr);
 
     public InteractiveModeManager(
-        DownloadJob job,
+        Job job,
         JobQueue    queue,
         List<AlbumFolder> folders,
         bool            canRetrieve,

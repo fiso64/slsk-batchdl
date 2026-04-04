@@ -103,7 +103,7 @@ public class Searcher
     // ── album search ─────────────────────────────────────────────────────────
 
     // Populates job.FoundFolders with candidate AlbumFolders found on the network.
-    public async Task SearchAlbum(AlbumJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task SearchAlbum(AlbumQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
         var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         // For folder-matching (Album), use only the album name. For the network search keyword
@@ -141,7 +141,7 @@ public class Searcher
     }
 
     // Populates job.FoundFolders from a direct slsk:// link (no network search).
-    public async Task SearchDirectLinkAlbum(AlbumJob job, CancellationToken ct)
+    public async Task SearchDirectLinkAlbum(AlbumQueryJob job, CancellationToken ct)
     {
         var parts    = job.Query.URI["slsk://".Length..].Split('/', 2);
         var username  = parts[0];
@@ -170,7 +170,7 @@ public class Searcher
     // ── aggregate search ─────────────────────────────────────────────────────
 
     // Populates job.Songs: one SongJob per distinct inferred track version found.
-    public async Task SearchAggregate(AggregateJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task SearchAggregate(AggregateQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
         var results = new SlDictionary();
 
@@ -217,9 +217,9 @@ public class Searcher
     }
 
     // Returns new AlbumJobs (one per distinct album version found on the network).
-    public async Task<List<AlbumJob>> SearchAggregateAlbum(AggregateAlbumJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task<List<AlbumQueryJob>> SearchAggregateAlbum(AlbumAggregateQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
-        var tempJob = new AlbumJob(job.Query);
+        var tempJob = new AlbumQueryJob(job.Query);
         await SearchAlbum(tempJob, config, responseData, ct);
         var albums = tempJob.FoundFolders;
 
@@ -278,7 +278,7 @@ public class Searcher
             .OrderByDescending(x => x.users.Count)
             .Select(x =>
             {
-                var newJob = new AlbumJob(job.Query);
+                var newJob = new AlbumQueryJob(job.Query);
                 newJob.FoundFolders = x.versions;
                 return newJob;
             })

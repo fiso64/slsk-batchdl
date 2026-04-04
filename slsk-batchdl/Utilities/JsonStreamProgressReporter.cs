@@ -143,9 +143,9 @@ namespace Utilities
         }
 
         // Display-only events — no-ops for JSON output.
-        public void ReportJobSearching(DownloadJob job, bool createBar) { }
-        public void ReportJobFolderRetrieving(DownloadJob job) { }
-        public void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles) { }
+        public void ReportJobStarted(Job job, bool parallel) { }
+        public void ReportJobFolderRetrieving(Job job) { }
+        public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }
         public void ReportSongSearching(SongJob song) { }
         public void ReportSongNotFound(SongJob song) { }
         public void ReportSongFailed(SongJob song) { }

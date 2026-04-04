@@ -10,7 +10,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             bool isAlbum = config.album;
 
@@ -20,7 +20,7 @@ namespace Extractors
                 input = input[8..];
             }
 
-            var queue = new JobQueue();
+            var jobs = new List<QueryJob>();
 
             // ParseArgs builds into mutable holders; then we build typed queries.
             ParseArgs(input, isAlbum,
@@ -43,7 +43,7 @@ namespace Extractors
                     MinTrackCount   = minAlbumTrackCount,
                     MaxTrackCount   = maxAlbumTrackCount,
                 };
-                queue.Enqueue(new AlbumJob(query));
+                jobs.Add(new AlbumQueryJob(query));
             }
             else
             {
@@ -57,12 +57,12 @@ namespace Extractors
                     ArtistMaybeWrong = artistMaybeWrong,
                     IsDirectLink    = isDirectLink,
                 };
-                var slj = new SongListJob();
+                var slj = new SongListQueryJob();
                 slj.Songs.Add(new SongJob(query));
-                queue.Enqueue(slj);
+                jobs.Add(slj);
             }
 
-            return Task.FromResult(queue);
+            return Task.FromResult(jobs);
         }
 
         // Parses a "Artist - Title/Album, key=value, ..." string.

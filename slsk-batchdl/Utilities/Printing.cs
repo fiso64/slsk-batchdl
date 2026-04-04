@@ -126,13 +126,13 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(DownloadJob job, List<SongJob> existing, List<SongJob> notFound, Config config, Searcher searchService)
+    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound, Config config, Searcher searchService)
     {
-        if (job is SongListJob slj)
+        if (job is SongListQueryJob slj)
         {
             await searchService.SearchAndPrintResults(slj.Songs, config);
         }
-        else if (job is AggregateJob ag)
+        else if (job is AggregateQueryJob ag)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
@@ -150,7 +150,7 @@ public static class Printing
                 PrintTracksTbd(ag.Songs.Where(s => s.State == TrackState.Initial).ToList(), existing, notFound, false, config);
             }
         }
-        else if (job is AlbumJob albumJob)
+        else if (job is AlbumQueryJob albumJob)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
@@ -199,8 +199,8 @@ public static class Printing
         {
             IEnumerable<SongJob> songs = job switch
             {
-                SongListJob slj => slj.Songs,
-                AggregateJob ag => ag.Songs,
+                SongListQueryJob slj => slj.Songs,
+                AggregateQueryJob ag => ag.Songs,
                 _               => Enumerable.Empty<SongJob>(),
             };
             foreach (var s in songs)
@@ -208,9 +208,9 @@ public static class Printing
                 if (s.State == TrackState.Downloaded) successes++;
                 else if (s.State == TrackState.Failed)   fails++;
             }
-            if (job is AlbumJob albumJob && albumJob.ChosenFolder != null)
+            if (job is AlbumQueryJob albumJob && albumJob.CompletedDownload != null)
             {
-                foreach (var f in albumJob.ChosenFolder.Files.Where(f => !f.IsNotAudio))
+                foreach (var f in albumJob.CompletedDownload.Target.Files.Where(f => !f.IsNotAudio))
                 {
                     if (f.State == TrackState.Downloaded) successes++;
                     else if (f.State == TrackState.Failed)   fails++;

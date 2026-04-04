@@ -14,14 +14,14 @@ namespace Extractors
             return input.IsInternetUrl() && input.ToLower().Contains("musicbrainz.org");
         }
 
-        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             var musicBrainzClient = new MusicBrainzClient();
 
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            var queue = new JobQueue();
+            JobQueue queue;
 
             var match = Regex.Match(input, @"musicbrainz\.org/([a-z\-]+)/([0-9a-f\-]{36})");
             if (!match.Success)
@@ -47,15 +47,15 @@ namespace Extractors
                     throw new ArgumentException($"Unsupported MusicBrainz entity type: {entityType}");
             }
 
+            var jobs = queue.Jobs.Cast<QueryJob>().ToList();
+
             if (reverse)
             {
-                queue.Reverse();
-                var kept = queue.Jobs.Skip(offset).Take(maxTracks).ToList();
-                queue.Jobs.Clear();
-                queue.Jobs.AddRange(kept);
+                JobQueue.ReverseJobList(jobs);
+                jobs = jobs.Skip(offset).Take(maxTracks).ToList();
             }
 
-            return queue;
+            return jobs;
         }
     }
 
@@ -102,7 +102,7 @@ namespace Extractors
                 MaxTrackCount = (!fromReleaseGroup || config.setAlbumMaxTrackCount) ? totalTracks : -1,
             };
 
-            queue.Enqueue(new AlbumJob(query));
+            queue.Enqueue(new AlbumQueryJob(query));
             return queue;
         }
 
@@ -171,7 +171,7 @@ namespace Extractors
                         MaxTrackCount = trackCount,
                     };
 
-                    var job = new AlbumJob(query)
+                    var job = new AlbumQueryJob(query)
                     {
                         ItemNumber            = offset + count + 1,
                         ItemName              = collectionName,

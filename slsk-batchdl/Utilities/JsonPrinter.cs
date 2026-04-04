@@ -189,7 +189,7 @@ public static class JsonPrinter
         Console.WriteLine(json);
     }
 
-    public static void PrintAlbumJson(List<AlbumFolder> folders, AlbumJob job)
+    public static void PrintAlbumJson(List<AlbumFolder> folders, AlbumQueryJob job)
     {
         if (folders.Count == 0)
         {

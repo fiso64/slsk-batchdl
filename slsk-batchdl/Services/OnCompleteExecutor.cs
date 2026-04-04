@@ -29,28 +29,29 @@ public static class OnCompleteExecutor
 
     // Execute on-complete actions for a job.
     // song is null when called for an album-level completion (no individual song).
-    public static async Task ExecuteAsync(DownloadJob job, SongJob? song, M3uEditor? indexEditor, M3uEditor? playlistEditor)
+    public static async Task ExecuteAsync(Job job, SongJob? song, JobContext ctx)
     {
         if (!job.Config.HasOnComplete || job.Config.onComplete == null)
             return;
 
-        bool isAlbumOnComplete = job is AlbumJob;
+        bool isAlbumOnComplete = job is AlbumQueryJob;
 
         // Build a FileManagerContext for variable substitution.
-        FileManagerContext ctx;
+        FileManagerContext fmCtx;
         if (song != null)
-            ctx = FileManagerContext.FromSongJob(song, job);
-        else if (job is AlbumJob albumJob && albumJob.ChosenFolder != null)
+            fmCtx = FileManagerContext.FromSongJob(song, job) with { Config = job.Config };
+        else if (job is AlbumQueryJob albumJob && albumJob.CompletedDownload != null)
         {
             // Use the first audio file in the chosen folder as representative context.
-            var rep = albumJob.ChosenFolder.Files.FirstOrDefault(f => !f.IsNotAudio);
-            ctx = rep != null
-                ? FileManagerContext.FromAlbumFile(rep, job)
-                : new FileManagerContext { Job = job, Query = new SongQuery(), DownloadPath = albumJob.DownloadPath };
+            var rep = albumJob.CompletedDownload.Target.Files.FirstOrDefault(f => !f.IsNotAudio);
+            fmCtx = rep != null
+                ? FileManagerContext.FromAlbumFile(rep, job) with { Config = job.Config }
+                : new FileManagerContext { Job = job, Config = job.Config, Query = new SongQuery(), DownloadPath = albumJob.CompletedDownload.DownloadPath };
         }
         else
         {
-            ctx = new FileManagerContext { Job = job, Query = new SongQuery(), DownloadPath = job.DownloadPath };
+            string? dp = (job as DownloadJob)?.DownloadPath;
+            fmCtx = new FileManagerContext { Job = job, Config = job.Config, Query = new SongQuery(), DownloadPath = dp };
         }
 
         // Derive TrackState for RequiredTrackState matching.
@@ -75,7 +76,7 @@ public static class OnCompleteExecutor
             if (!ShouldExecuteCommand(config, currentState, isAlbumOnComplete))
                 continue;
 
-            string preparedCommand = PrepareCommandString(config.Command, ctx, prevCommandResult, firstCommandResult);
+            string preparedCommand = PrepareCommandString(config.Command, fmCtx, prevCommandResult, firstCommandResult);
             if (string.IsNullOrWhiteSpace(preparedCommand))
             {
                 Logger.Warn($"Skipping on-complete action {i + 1} because the prepared command is empty after variable replacement.");
@@ -121,8 +122,8 @@ public static class OnCompleteExecutor
 
         if (needUpdateIndex)
         {
-            indexEditor?.Update();
-            playlistEditor?.Update();
+            ctx.IndexEditor?.Update();
+            ctx.PlaylistEditor?.Update();
             Logger.Debug($"Index/Playlist updated based on on-complete action output.");
         }
     }
@@ -297,7 +298,7 @@ public static class OnCompleteExecutor
     }
 
     // Returns true if the index needs updating.
-    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, DownloadJob job)
+    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job)
     {
         bool needsUpdate = false;
 

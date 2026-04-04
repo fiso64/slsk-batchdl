@@ -71,7 +71,7 @@ namespace Tests.TrackSkipperTests
 
         private M3uEditor CreateEditorWithSong(SongJob song)
         {
-            var slj = new SongListJob();
+            var slj = new SongListQueryJob();
             slj.AddSong(song);
             var queue = new JobQueue();
             queue.Enqueue(slj);
@@ -80,7 +80,7 @@ namespace Tests.TrackSkipperTests
             editor.Update();
 
             // Load back via fresh editor so previousRunData is populated
-            var slj2 = new SongListJob();
+            var slj2 = new SongListQueryJob();
             slj2.AddSong(new SongJob(new SongQuery { Artist = song.Query.Artist, Title = song.Query.Title }));
             var queue2 = new JobQueue();
             queue2.Enqueue(slj2);
@@ -129,7 +129,7 @@ namespace Tests.TrackSkipperTests
         [TestMethod]
         public void IndexSkipper_UnknownTrack_ReturnsFalse()
         {
-            var slj = new SongListJob();
+            var slj = new SongListQueryJob();
             var queue = new JobQueue();
             queue.Enqueue(slj);
             File.WriteAllText(_tempPath, "");

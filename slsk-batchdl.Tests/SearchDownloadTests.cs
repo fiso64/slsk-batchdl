@@ -20,7 +20,7 @@ namespace Tests.SearchDownloadTests
             var registry = TestHelpers.CreateSessionRegistry();
             var engine = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 999, 1);
-            var job = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
+            var job = new AlbumQueryJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
 
             // Act
             await searcher.SearchAlbum(job, new Config(), new ResponseData(), CancellationToken.None);

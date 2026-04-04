@@ -9,7 +9,8 @@ using Enums;
 // Constructed from either a SongJob or an AlbumFile, so name format works uniformly.
 public struct FileManagerContext
 {
-    public DownloadJob   Job;
+    public Job           Job;
+    public Config?       Config;        // inputType, input, parentDir
     public SongQuery     Query;         // artist, title, album, length, uri, artistMaybeWrong
     public FileCandidate? Candidate;    // slsk-filename, slsk-foldername
     public string?       DownloadPath;  // path, path-noext, ext
@@ -20,7 +21,7 @@ public struct FileManagerContext
     public int           ItemNumber;
     public string?       RemoteBaseDir;
 
-    public static FileManagerContext FromSongJob(SongJob song, DownloadJob job, string? remoteBaseDir = null)
+    public static FileManagerContext FromSongJob(SongJob song, Job job, string? remoteBaseDir = null)
     {
         return new FileManagerContext
         {
@@ -37,7 +38,7 @@ public struct FileManagerContext
         };
     }
 
-    public static FileManagerContext FromAlbumFile(AlbumFile file, DownloadJob job, string? remoteBaseDir = null)
+    public static FileManagerContext FromAlbumFile(AlbumFile file, Job job, string? remoteBaseDir = null)
     {
         return new FileManagerContext
         {
@@ -58,7 +59,7 @@ public struct FileManagerContext
 
 public class FileManager
 {
-    readonly DownloadJob job;
+    readonly Job job;
     readonly HashSet<object> organized = new();
     public string? remoteBaseDir { get; private set; }
     public string? remoteImagesCommonDir { get; private set; }
@@ -66,7 +67,7 @@ public class FileManager
     public bool downloadingAdditionalImages = false;
     private readonly Config config;
 
-    public FileManager(DownloadJob job, Config config)
+    public FileManager(Job job, Config config)
     {
         this.job    = job;
         this.config = config;
@@ -86,7 +87,7 @@ public class FileManager
         if (!string.IsNullOrEmpty(job.DefaultFolderName()))
             parent = Path.Join(parent, job.DefaultFolderName());
 
-        if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
+        if (job is AlbumQueryJob && !string.IsNullOrEmpty(rcd))
         {
             string dirname   = defaultFolderName ?? Path.GetFileName(rcd);
             string normFname = Utils.NormalizedPath(sourceFname);
@@ -112,9 +113,8 @@ public class FileManager
         this.defaultFolderName = name != null ? Utils.NormalizedPath(name) : null;
     }
 
-    // Organizes all files in a completed album download, then sets the job's DownloadPath to the
-    // greatest common directory of the audio files.
-    public void OrganizeAlbum(AlbumJob albumJob, List<AlbumFile> allFiles, List<AlbumFile>? additionalImages, bool remainingOnly = true)
+    // Organizes all files in a completed album download.
+    public void OrganizeAlbum(Job albumJob, List<AlbumFile> allFiles, List<AlbumFile>? additionalImages, bool remainingOnly = true)
     {
         foreach (var file in allFiles.Where(f => !f.IsNotAudio))
         {
@@ -123,8 +123,7 @@ public class FileManager
             OrganizeAlbumFile(file);
         }
 
-        albumJob.DownloadPath = Utils.GreatestCommonDirectory(
-            allFiles.Where(f => !f.IsNotAudio).Select(f => f.DownloadPath));
+        // DownloadPath is set by the caller on the AlbumDownloadJob.
 
         var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat)
             ? additionalImages
@@ -157,7 +156,7 @@ public class FileManager
             return;
         }
 
-        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromAlbumFile(file, job, remoteBaseDir));
+        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromAlbumFile(file, job, remoteBaseDir) with { Config = config });
         string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(file.DownloadPath));
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
@@ -181,7 +180,7 @@ public class FileManager
             return;
         }
 
-        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir));
+        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir) with { Config = config });
         string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(song.DownloadPath));
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
@@ -331,11 +330,11 @@ public class FileManager
         { "foldername",      (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
 
         // Job / config vars
-        { "extractor",      (ctx, _) => ctx.Job.Config.inputType.ToString() },
-        { "input",          (ctx, _) => ctx.Job.Config.input },
+        { "extractor",      (ctx, _) => ctx.Config?.inputType.ToString() ?? "" },
+        { "input",          (ctx, _) => ctx.Config?.input ?? "" },
         { "item-name",      (ctx, _) => ctx.Job.ItemNameOrSource() },
         { "default-folder", (ctx, _) => ctx.Job.DefaultFolderName() },
-        { "output-dir",     (ctx, _) => ctx.Job.Config.parentDir },
+        { "output-dir",     (ctx, _) => ctx.Config?.parentDir ?? "" },
 
         // Local path vars (from the downloaded file's local path)
         { "path",      (ctx, _) => (ctx.DownloadPath ?? "").TrimEnd('/').TrimEnd('\\') },

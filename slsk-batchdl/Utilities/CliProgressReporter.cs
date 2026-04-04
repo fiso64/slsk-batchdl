@@ -28,7 +28,7 @@ namespace Utilities
         private readonly ConcurrentDictionary<SongJob, BarData> _bars = new();
 
         // Per-job bar for parallel album/aggregate source searches.
-        private readonly ConcurrentDictionary<DownloadJob, ProgressBar?> _jobBars = new();
+        private readonly ConcurrentDictionary<Job, ProgressBar?> _jobBars = new();
 
         // Saved bar text/pos for restoring after OnComplete execution.
         private readonly ConcurrentDictionary<SongJob, (string text, int pos)> _savedState = new();
@@ -152,21 +152,21 @@ namespace Utilities
 
         // ── display events ───────────────────────────────────────────────────
 
-        public void ReportJobSearching(DownloadJob job, bool createBar)
+        public void ReportJobStarted(Job job, bool parallel)
         {
-            var bar = createBar ? Printing.GetProgressBar(_config) : null;
+            var bar = parallel ? Printing.GetProgressBar(_config) : null;
             _jobBars[job] = bar;
             string prefix = bar != null ? "  " : "";
             Printing.RefreshOrPrint(bar, 0, $"{prefix}{job.GetType().Name}: {job.ToString(true)}, searching..", print: true);
         }
 
-        public void ReportJobFolderRetrieving(DownloadJob job)
+        public void ReportJobFolderRetrieving(Job job)
         {
             _jobBars.TryGetValue(job, out var bar);
             Printing.RefreshOrPrint(bar, 0, "Getting files in folder..", print: true);
         }
 
-        public void ReportJobSearchResult(DownloadJob job, bool found, int lockedFiles)
+        public void ReportJobCompleted(Job job, bool found, int lockedFiles)
         {
             _jobBars.TryGetValue(job, out var bar);
             if (!found)

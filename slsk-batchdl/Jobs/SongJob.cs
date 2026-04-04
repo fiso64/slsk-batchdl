@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 namespace Jobs
 {
     // Per-song download state: query + search results + download progress.
-    // Lives inside SongListJob.Songs or AggregateJob.Songs.
+    // Lives inside SongListQueryJob.Songs or AggregateQueryJob.Songs.
     public class SongJob : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -19,7 +19,7 @@ namespace Jobs
         // YouTube-specific display metadata (title + uploader JSON). Not a search hint.
         public string? Other { get; set; }
 
-        // Source provenance (position in the input file). Mirrors DownloadJob.ItemNumber/LineNumber.
+        // Source provenance (position in the input file). Mirrors Job.ItemNumber/LineNumber.
         public int ItemNumber { get; set; } = 1;
         public int LineNumber { get; set; } = 1;
 

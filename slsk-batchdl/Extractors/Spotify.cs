@@ -18,9 +18,9 @@ namespace Extractors
             return input == "spotify-likes" || input == "spotify-albums" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<JobQueue> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var queue = new JobQueue();
+            var jobs = new List<QueryJob>();
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
@@ -36,20 +36,24 @@ namespace Extractors
             {
                 Logger.Info("Loading Spotify likes..");
                 var songs = await spotifyClient.GetLikes(max, off);
-                var slj   = new SongListJob { ItemName = "Spotify Likes", EnablesIndexByDefault = true };
+                var slj   = new SongListQueryJob { ItemName = "Spotify Likes", EnablesIndexByDefault = true };
                 foreach (var s in songs) slj.Songs.Add(s);
-                queue.Enqueue(slj);
+                jobs.Add(slj);
             }
             else if (input == "spotify-albums")
             {
                 Logger.Info("Loading Spotify liked albums..");
-                queue = await spotifyClient.GetAlbums(max, off);
+                var albumQueue = await spotifyClient.GetAlbums(max, off);
+                var albumList  = new AlbumListJob { ItemName = "Spotify Liked Albums", EnablesIndexByDefault = true };
+                foreach (var j in albumQueue.Jobs.Cast<AlbumQueryJob>())
+                    albumList.Albums.Add(j);
+                jobs.Add(albumList);
             }
             else if (input.Contains("/album/"))
             {
                 Logger.Info("Loading Spotify album..");
                 var job = await spotifyClient.GetAlbumJob(input, config);
-                queue.Enqueue(job);
+                jobs.Add(job);
             }
             else if (input.Contains("/artist/"))
             {
@@ -79,19 +83,18 @@ namespace Extractors
                     else throw;
                 }
 
-                var slj = new SongListJob { ItemName = playlistName, EnablesIndexByDefault = true };
+                var slj = new SongListQueryJob { ItemName = playlistName, EnablesIndexByDefault = true };
                 foreach (var s in songs) slj.Songs.Add(s);
-                queue.Enqueue(slj);
+                jobs.Add(slj);
             }
 
             if (reverse)
             {
-                queue.Reverse();
+                JobQueue.ReverseJobList(jobs);
                 // Apply offset/limit after reversing
-                // For song lists: trim the songs
-                foreach (var job in queue.Jobs)
+                foreach (var job in jobs)
                 {
-                    if (job is SongListJob slj)
+                    if (job is SongListQueryJob slj)
                     {
                         if (slj.Songs.Count > offset)
                             slj.Songs.RemoveRange(0, offset);
@@ -101,18 +104,24 @@ namespace Extractors
                         if (slj.Songs.Count > maxTracks)
                             slj.Songs.RemoveRange(maxTracks, slj.Songs.Count - maxTracks);
                     }
+                    else if (job is AlbumListJob alj)
+                    {
+                        if (alj.Albums.Count > offset)
+                            alj.Albums.RemoveRange(0, offset);
+                        else
+                            alj.Albums.Clear();
+
+                        if (alj.Albums.Count > maxTracks)
+                            alj.Albums.RemoveRange(maxTracks, alj.Albums.Count - maxTracks);
+                    }
                 }
 
-                // For album queues: trim the job list
-                if (queue.Jobs.All(j => j is AlbumJob))
-                {
-                    var kept = queue.Jobs.Skip(offset).Take(maxTracks).ToList();
-                    queue.Jobs.Clear();
-                    queue.Jobs.AddRange(kept);
-                }
+                // For flat album job lists (e.g. from MusicBrainz): trim the job list itself
+                if (jobs.All(j => j is AlbumQueryJob))
+                    jobs = jobs.Skip(offset).Take(maxTracks).ToList();
             }
 
-            return queue;
+            return jobs;
         }
 
         public async Task RemoveTrackFromSource(SongJob job)
@@ -350,7 +359,7 @@ namespace Extractors
                         MinTrackCount = album.TotalTracks,
                     };
 
-                    var job = new AlbumJob(query)
+                    var job = new AlbumQueryJob(query)
                     {
                         ItemNumber            = num++,
                         ItemName              = "Spotify Albums",
@@ -423,7 +432,7 @@ namespace Extractors
             return segments[segments.Length - 1].TrimEnd('/');
         }
 
-        public async Task<AlbumJob> GetAlbumJob(string url, Config config)
+        public async Task<AlbumQueryJob> GetAlbumJob(string url, Config config)
         {
             var albumId = GetAlbumIdFromUrl(url);
             var album   = await _client.Albums.Get(albumId);
@@ -451,7 +460,7 @@ namespace Extractors
             if (config.setAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
             if (config.setAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
 
-            return new AlbumJob(albumQuery);
+            return new AlbumQueryJob(albumQuery);
         }
 
         private string GetAlbumIdFromUrl(string url)

@@ -34,6 +34,12 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     readonly Dictionary<string, IndexEntry> previousRunData = new(); // key → IndexEntry
 
     private readonly object locker = new();
+    private readonly Dictionary<Guid, string?> jobDownloadPaths = new();
+
+    public void NotifyJobDownloadPath(Guid jobId, string? path)
+    {
+        lock (locker) jobDownloadPaths[jobId] = path;
+    }
 
     private M3uEditor(JobQueue queue, M3uOption option, int offset = 0)
     {
@@ -150,7 +156,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 previousRunData[entry.ToKey()] = entry;
 
                 // When an entry has both album and title set, also register it under the album-only key
-                // so AlbumJob lookups (which use empty title) can find it.
+                // so AlbumQueryJob lookups (which use empty title) can find it.
                 if (entry.Title.Length > 0 && entry.Album.Length > 0)
                 {
                     var albumKey = new IndexEntry
@@ -233,20 +239,21 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
             foreach (var job in queue.Jobs)
             {
-                // Job-level entry (for AlbumJob and non-Normal jobs that have their own index row)
-                if (job is AlbumJob albumJob && albumJob.State != JobState.Pending)
+                // Job-level entry (for AlbumQueryJob and non-Normal jobs that have their own index row)
+                if (job is AlbumQueryJob albumJob && albumJob.State != JobState.Pending)
                 {
                     var (state, reason) = JobStateToTrackState(albumJob);
                     string key = MakeAlbumKey(albumJob.Query.Artist, albumJob.Query.Album);
-                    updateEntryIfNeeded(key, albumJob.DownloadPath ?? "",
+                    jobDownloadPaths.TryGetValue(albumJob.Id, out var downloadPath);
+                    updateEntryIfNeeded(key, downloadPath ?? "",
                         albumJob.Query.Artist, albumJob.Query.Album, "", -1, state, reason, isAlbum: true);
                 }
 
                 // Per-song entries
                 IEnumerable<SongJob> songs = job switch
                 {
-                    SongListJob slj => slj.Songs,
-                    AggregateJob ag => ag.Songs,
+                    SongListQueryJob slj => slj.Songs,
+                    AggregateQueryJob ag => ag.Songs,
                     _               => Enumerable.Empty<SongJob>(),
                 };
 
@@ -389,8 +396,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         return t;
     }
 
-    // Looks up the persisted state for an AlbumJob from a prior run.
-    public IndexEntry? PreviousRunResult(AlbumJob job)
+    // Looks up the persisted state for an AlbumQueryJob from a prior run.
+    public IndexEntry? PreviousRunResult(AlbumQueryJob job)
     {
         previousRunData.TryGetValue(MakeAlbumKey(job.Query.Artist, job.Query.Album), out var t);
         return t;
@@ -435,7 +442,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     }
 
     // Maps JobState → TrackState for writing album entries to the index.
-    private static (TrackState state, FailureReason reason) JobStateToTrackState(DownloadJob job)
+    private static (TrackState state, FailureReason reason) JobStateToTrackState(Job job)
     {
         return job.State switch
         {

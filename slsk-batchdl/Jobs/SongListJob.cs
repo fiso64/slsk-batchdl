@@ -5,7 +5,7 @@ namespace Jobs
     // Schedulable job for a batch of individual songs that share config/editors
     // (e.g. all songs from a Spotify playlist or a CSV file).
     // Replaces TrackListEntry with source.Type == TrackType.Normal.
-    public class SongListJob : DownloadJob
+    public class SongListQueryJob : QueryJob
     {
         public override bool OutputsDirectory      => false;
         protected override bool DefaultCanBeSkipped => false;
@@ -15,7 +15,7 @@ namespace Jobs
 
         public List<SongJob> Songs { get; } = new();
 
-        public SongListJob(SongQuery? sourceQuery = null)
+        public SongListQueryJob(SongQuery? sourceQuery = null)
         {
             QueryTrack = sourceQuery ?? new SongQuery();
         }

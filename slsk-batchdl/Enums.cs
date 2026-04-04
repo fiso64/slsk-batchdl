@@ -1,6 +1,16 @@
 
 namespace Enums
 {
+    public enum JobState
+    {
+        Pending     = 0,
+        Searching   = 1,
+        Downloading = 2,
+        Done        = 3,
+        Failed      = 4,
+        Skipped     = 5,
+    }
+
     public enum FailureReason
     {
         None = 0,
