@@ -62,10 +62,10 @@ namespace Tests.OnCompleteExecutorTests
         }
 
         [TestMethod]
-        public void ParseCommandFlags_StateFlag_SetsRequiredTrackState()
+        public void ParseCommandFlags_StateFlag_SetsRequiredJobState()
         {
             var result = InvokeParseCommandFlags("1:mycommand");
-            var state = (int?)obj_get(result, "RequiredTrackState");
+            var state = (int?)obj_get(result, "RequiredState");
             Assert.AreEqual(1, state);
             Assert.AreEqual("mycommand", Get<string>(result, "Command"));
         }
@@ -99,7 +99,7 @@ namespace Tests.OnCompleteExecutorTests
     [TestClass]
     public class ShouldExecuteCommandTests
     {
-        private static bool InvokeShouldExecute(bool onlyTrack, bool onlyAlbum, int? requiredState, TrackState currentState, bool isAlbum)
+        private static bool InvokeShouldExecute(bool onlyTrack, bool onlyAlbum, int? requiredState, JobState currentState, bool isAlbum)
         {
             var method = typeof(OnCompleteExecutor).GetMethod("ShouldExecuteCommand", BindingFlags.NonPublic | BindingFlags.Static)!;
 
@@ -108,7 +108,7 @@ namespace Tests.OnCompleteExecutorTests
             var config = Activator.CreateInstance(configType)!;
             configType.GetProperty("OnlyTrackOnComplete")!.SetValue(config, onlyTrack);
             configType.GetProperty("OnlyAlbumOnComplete")!.SetValue(config, onlyAlbum);
-            configType.GetProperty("RequiredTrackState")!.SetValue(config, requiredState);
+            configType.GetProperty("RequiredState")!.SetValue(config, requiredState);
 
             return (bool)method.Invoke(null, new object[] { config, currentState, isAlbum })!;
         }
@@ -116,44 +116,44 @@ namespace Tests.OnCompleteExecutorTests
         [TestMethod]
         public void ShouldExecute_NoFlags_AlwaysTrue()
         {
-            Assert.IsTrue(InvokeShouldExecute(false, false, null, TrackState.Downloaded, false));
-            Assert.IsTrue(InvokeShouldExecute(false, false, null, TrackState.Downloaded, true));
+            Assert.IsTrue(InvokeShouldExecute(false, false, null, JobState.Done, false));
+            Assert.IsTrue(InvokeShouldExecute(false, false, null, JobState.Done, true));
         }
 
         [TestMethod]
         public void ShouldExecute_TrackOnly_OnAlbum_ReturnsFalse()
         {
-            Assert.IsFalse(InvokeShouldExecute(true, false, null, TrackState.Downloaded, true));
+            Assert.IsFalse(InvokeShouldExecute(true, false, null, JobState.Done, true));
         }
 
         [TestMethod]
         public void ShouldExecute_TrackOnly_OnTrack_ReturnsTrue()
         {
-            Assert.IsTrue(InvokeShouldExecute(true, false, null, TrackState.Downloaded, false));
+            Assert.IsTrue(InvokeShouldExecute(true, false, null, JobState.Done, false));
         }
 
         [TestMethod]
         public void ShouldExecute_AlbumOnly_OnTrack_ReturnsFalse()
         {
-            Assert.IsFalse(InvokeShouldExecute(false, true, null, TrackState.Downloaded, false));
+            Assert.IsFalse(InvokeShouldExecute(false, true, null, JobState.Done, false));
         }
 
         [TestMethod]
         public void ShouldExecute_AlbumOnly_OnAlbum_ReturnsTrue()
         {
-            Assert.IsTrue(InvokeShouldExecute(false, true, null, TrackState.Downloaded, true));
+            Assert.IsTrue(InvokeShouldExecute(false, true, null, JobState.Done, true));
         }
 
         [TestMethod]
         public void ShouldExecute_RequiredState_Matches_ReturnsTrue()
         {
-            Assert.IsTrue(InvokeShouldExecute(false, false, (int)TrackState.Downloaded, TrackState.Downloaded, false));
+            Assert.IsTrue(InvokeShouldExecute(false, false, (int)JobState.Done, JobState.Done, false));
         }
 
         [TestMethod]
         public void ShouldExecute_RequiredState_Mismatch_ReturnsFalse()
         {
-            Assert.IsFalse(InvokeShouldExecute(false, false, (int)TrackState.Downloaded, TrackState.Failed, false));
+            Assert.IsFalse(InvokeShouldExecute(false, false, (int)JobState.Done, JobState.Failed, false));
         }
     }
 

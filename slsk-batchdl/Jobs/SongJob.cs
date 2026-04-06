@@ -1,46 +1,45 @@
 using Enums;
 using Models;
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
 
 namespace Jobs
 {
-    // Per-song download state: query + search results + download progress.
-    // Lives inside SongListQueryJob.Songs or AggregateQueryJob.Songs.
-    public class SongJob : INotifyPropertyChanged
+    // Unified song job. Used for both search+download and pre-resolved downloads.
+    // If ResolvedTarget is non-null the engine skips the search phase.
+    // Also used as the per-file unit inside AlbumFolder.Files.
+    public class SongJob : Job
     {
-        public event PropertyChangedEventHandler? PropertyChanged;
-
-        private void OnPropertyChanged([CallerMemberName] string? name = null)
-            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-
         public SongQuery Query { get; set; }
 
         // YouTube-specific display metadata (title + uploader JSON). Not a search hint.
         public string? Other { get; set; }
 
-        // Source provenance (position in the input file). Mirrors Job.ItemNumber/LineNumber.
-        public int ItemNumber { get; set; } = 1;
-        public int LineNumber { get; set; } = 1;
+        public override SongQuery QueryTrack => Query;
+        public override bool      OutputsDirectory    => false;
+        protected override bool   DefaultCanBeSkipped => true;
+
+        // True for non-audio files inside album folders (cover art, .txt, etc.).
+        // Computed from the candidate filename.
+        public bool IsNotAudio => ResolvedTarget != null
+            ? !Utils.IsMusicFile(ResolvedTarget.Filename)
+            : false;
 
         // Populated after search; ordered best-first. Null = not yet searched.
         public List<FileCandidate>? Candidates { get; set; }
 
-        // The candidate actually downloaded. Set by Downloader after a successful transfer.
-        public FileCandidate? ChosenCandidate { get; set; }
-
-        private TrackState _state = TrackState.Initial;
-        public TrackState State
+        // Pre-set download target. When non-null the search phase is skipped.
+        // After download this holds the chosen candidate.
+        private FileCandidate? _resolvedTarget;
+        public FileCandidate? ResolvedTarget
         {
-            get => _state;
-            set { if (_state != value) { _state = value; OnPropertyChanged(); } }
+            get => _resolvedTarget;
+            set { if (_resolvedTarget != value) { _resolvedTarget = value; OnPropertyChanged(); OnPropertyChanged(nameof(ChosenCandidate)); } }
         }
 
-        private FailureReason _failureReason = FailureReason.None;
-        public FailureReason FailureReason
+        // Alias kept for consumer compat — same backing field as ResolvedTarget.
+        public FileCandidate? ChosenCandidate
         {
-            get => _failureReason;
-            set { if (_failureReason != value) { _failureReason = value; OnPropertyChanged(); } }
+            get => _resolvedTarget;
+            set => ResolvedTarget = value;
         }
 
         private string? _downloadPath;
@@ -59,7 +58,7 @@ namespace Jobs
                 if (_bytesTransferred != value)
                 {
                     _bytesTransferred = value;
-                    LastActivityTime = DateTime.Now;
+                    LastActivityTime  = DateTime.Now;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(Progress));
                 }
@@ -75,7 +74,7 @@ namespace Jobs
 
         public double Progress => FileSize > 0 ? (double)BytesTransferred / FileSize : 0;
 
-        // Updated when bytes change; used for stale detection.
+        // Updated whenever bytes change; used for stale-detection.
         public DateTime? LastActivityTime { get; set; }
 
         public SongJob(SongQuery query)
@@ -83,6 +82,7 @@ namespace Jobs
             Query = query;
         }
 
-        public override string ToString() => Query.ToString();
+        public override string ToString(bool noInfo) => Query.ToString(noInfo);
+        public override string ToString()             => Query.ToString();
     }
 }

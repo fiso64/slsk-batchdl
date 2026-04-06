@@ -26,7 +26,7 @@ public class Downloader
         this.progressReporter = progressReporter;
     }
 
-    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, Config config, CancellationToken? ct = null, CancellationTokenSource? searchCts = null)
+    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, Config config, CancellationToken? ct = null)
     {
         string fileKey = candidate.Username + '\\' + candidate.Filename;
 
@@ -50,7 +50,7 @@ public class Downloader
                     }
 
                     song.DownloadPath = outputPath;
-                    song.State        = TrackState.Downloaded;
+                    song.State        = JobState.Done;
                     return;
                 }
                 else
@@ -128,7 +128,6 @@ public class Downloader
             throw;
         }
 
-        try { searchCts?.Cancel(); } catch { }
 
         if (!config.noIncompleteExt)
         {
@@ -141,7 +140,7 @@ public class Downloader
 
         song.ChosenCandidate = candidate;
         song.DownloadPath    = outputPath;
-        song.State           = TrackState.Downloaded;
+        song.State           = JobState.Done;
     }
 
     static string GetStateLabel(TransferStates s)

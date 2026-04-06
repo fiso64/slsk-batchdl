@@ -16,7 +16,7 @@ public static class OnCompleteExecutor
         public bool    OnlyAlbumOnComplete    { get; set; }
         public bool    ReadOutput             { get; set; }
         public bool    UseOutputToUpdateIndex { get; set; }
-        public int?    RequiredTrackState     { get; set; }
+        public int?    RequiredState     { get; set; }
         public bool    UseLocking             { get; set; }
     }
 
@@ -34,32 +34,30 @@ public static class OnCompleteExecutor
         if (!job.Config.HasOnComplete || job.Config.onComplete == null)
             return;
 
-        bool isAlbumOnComplete = job is AlbumQueryJob;
+        bool isAlbumOnComplete = job is AlbumJob;
 
         // Build a FileManagerContext for variable substitution.
         FileManagerContext fmCtx;
         if (song != null)
             fmCtx = FileManagerContext.FromSongJob(song, job) with { Config = job.Config };
-        else if (job is AlbumQueryJob albumJob && albumJob.CompletedDownload != null)
+        else if (job is AlbumJob albumJob && albumJob.ResolvedTarget != null)
         {
             // Use the first audio file in the chosen folder as representative context.
-            var rep = albumJob.CompletedDownload.Target.Files.FirstOrDefault(f => !f.IsNotAudio);
+            var rep = albumJob.ResolvedTarget.Files.FirstOrDefault(f => !f.IsNotAudio);
             fmCtx = rep != null
-                ? FileManagerContext.FromAlbumFile(rep, job) with { Config = job.Config }
-                : new FileManagerContext { Job = job, Config = job.Config, Query = new SongQuery(), DownloadPath = albumJob.CompletedDownload.DownloadPath };
+                ? FileManagerContext.FromSongJob(rep, job) with { Config = job.Config }
+                : new FileManagerContext { Job = job, Config = job.Config, Query = new SongQuery(), DownloadPath = albumJob.DownloadPath };
         }
         else
         {
-            string? dp = (job as DownloadJob)?.DownloadPath;
+            string? dp = (job as AlbumJob)?.DownloadPath;
             fmCtx = new FileManagerContext { Job = job, Config = job.Config, Query = new SongQuery(), DownloadPath = dp };
         }
 
-        // Derive TrackState for RequiredTrackState matching.
-        TrackState currentState = song != null
+        // Derive JobState for RequiredState matching.
+        JobState currentState = song != null
             ? song.State
-            : (job.State == JobState.Done ? TrackState.Downloaded
-             : job.State == JobState.Failed ? TrackState.Failed
-             : TrackState.Initial);
+            : job.State;
 
         bool needUpdateIndex    = false;
         ProcessResult? firstCommandResult = null;
@@ -149,7 +147,7 @@ public static class OnCompleteExecutor
                 default:
                     if (char.IsDigit(flag) && int.TryParse(flag.ToString(), out int state))
                     {
-                        config.RequiredTrackState = state;
+                        config.RequiredState = state;
                         config.Command = remaining;
                     }
                     else
@@ -162,11 +160,11 @@ public static class OnCompleteExecutor
         return config;
     }
 
-    private static bool ShouldExecuteCommand(CommandConfig config, TrackState currentState, bool isAlbum)
+    private static bool ShouldExecuteCommand(CommandConfig config, JobState currentState, bool isAlbum)
     {
         if (config.OnlyTrackOnComplete && isAlbum)  return false;
         if (config.OnlyAlbumOnComplete && !isAlbum) return false;
-        if (config.RequiredTrackState.HasValue && (int)currentState != config.RequiredTrackState.Value) return false;
+        if (config.RequiredState.HasValue && (int)currentState != config.RequiredState.Value) return false;
         return true;
     }
 
@@ -307,7 +305,7 @@ public static class OnCompleteExecutor
             string[] parts = result.Stdout.Split(';', 2);
             if (int.TryParse(parts[0], out int newStateInt))
             {
-                var newState = (TrackState)newStateInt;
+                var newState = (JobState)newStateInt;
 
                 if (song != null)
                 {

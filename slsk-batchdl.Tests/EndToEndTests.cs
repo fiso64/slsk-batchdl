@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Text;
+using Jobs;
 
 namespace Tests.EndToEnd
 {
@@ -107,6 +108,15 @@ namespace Tests.EndToEnd
                 await app.RunAsync(CancellationToken.None);
 
                 // Assertions
+                Console.WriteLine($"[Trace] outputDir contents: {string.Join(", ", System.IO.Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Select(f => f.Replace(outputDir, "")))}");
+                Console.WriteLine($"[Trace] Queue jobs: {app.Queue.Jobs.Count}, states: {string.Join(", ", app.Queue.Jobs.Select(j => $"{j.GetType().Name}:{j.State}"))}");
+                var albumJob2 = app.Queue.Jobs.OfType<AlbumJob>().FirstOrDefault();
+                if (albumJob2 != null)
+                {
+                    Console.WriteLine($"[Trace] AlbumJob state={albumJob2.State} failureReason={albumJob2.FailureReason} resolvedTarget={albumJob2.ResolvedTarget?.FolderPath} results={albumJob2.Results.Count}");
+                    foreach (var f in albumJob2.Results.SelectMany(r => r.Files))
+                        Console.WriteLine($"[Trace]   file: {f.Query.Title} state={f.State} dp={f.DownloadPath} candidates={f.Candidates?.Count} rt={f.ResolvedTarget?.Filename}");
+                }
                 var downloadedFiles = System.IO.Directory.GetFiles(Path.Combine(outputDir, "(2011) testalbum [MP3]"), "*", SearchOption.AllDirectories);
                 Assert.AreEqual(4, downloadedFiles.Length, "Should download 4 files for the album.");
                 Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("0101. testartist - testsong.mp3")));

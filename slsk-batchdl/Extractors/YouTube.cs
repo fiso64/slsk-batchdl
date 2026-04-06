@@ -21,7 +21,7 @@ namespace Extractors
             return input.IsInternetUrl() && (input.Contains("youtu.be") || input.Contains("youtube.com"));
         }
 
-        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
@@ -60,19 +60,19 @@ namespace Extractors
 
             YouTube.StopService();
 
-            var slj = new SongListQueryJob { ItemName = name, EnablesIndexByDefault = true };
+            var slj = new JobList { ItemName = name, EnablesIndexByDefault = true };
             foreach (var s in songs)
-                slj.Songs.Add(s);
+                slj.Jobs.Add(s);
 
             if (reverse)
             {
-                slj.Songs.Reverse();
-                slj.Songs.RemoveRange(0, Math.Min(offset, slj.Songs.Count));
-                if (slj.Songs.Count > maxTracks)
-                    slj.Songs.RemoveRange(maxTracks, slj.Songs.Count - maxTracks);
+                slj.Jobs.Reverse();
+                slj.Jobs.RemoveRange(0, Math.Min(offset, slj.Jobs.Count));
+                if (slj.Jobs.Count > maxTracks)
+                    slj.Jobs.RemoveRange(maxTracks, slj.Jobs.Count - maxTracks);
             }
 
-            return new List<QueryJob> { slj };
+            return slj;
         }
     }
 

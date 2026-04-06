@@ -24,21 +24,21 @@ public class IntervalProgressReporter
 
         foreach (var song in songs)
         {
-            if (song.State == TrackState.Downloaded || song.State == TrackState.AlreadyExists)
+            if (song.State == JobState.Done || song.State == JobState.AlreadyExists)
                 downloadedCount++;
-            else if (song.State == TrackState.Failed || song.State == TrackState.NotFoundLastTime)
+            else if (song.State == JobState.Failed || song.State == JobState.NotFoundLastTime)
                 failedCount++;
             totalCount++;
         }
     }
 
-    public void MaybeReport(TrackState state)
+    public void MaybeReport(JobState state)
     {
         lock (_reportLock)
         {
-            if (state == TrackState.Downloaded)
+            if (state == JobState.Done)
                 downloadedCount++;
-            else if (state == TrackState.Failed)
+            else if (state == JobState.Failed)
                 failedCount++;
             else
                 return;

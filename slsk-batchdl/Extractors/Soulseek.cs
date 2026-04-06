@@ -12,17 +12,15 @@ namespace Extractors
             return input.StartsWith("slsk://", StringComparison.OrdinalIgnoreCase);
         }
 
-        public Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var jobs = new List<QueryJob>();
             var uri = HttpUtility.UrlDecode(input);
 
             if (input.EndsWith('/') || config.album)
             {
                 // Direct-link album: the URI is the folder path
                 var query = new AlbumQuery { URI = uri, IsDirectLink = true };
-                var job = new AlbumQueryJob(query) { CanBeSkippedOverride = false };
-                jobs.Add(job);
+                return Task.FromResult<Job>(new AlbumJob(query) { CanBeSkippedOverride = false });
             }
             else
             {
@@ -37,13 +35,8 @@ namespace Extractors
 
                 var query = new SongQuery { URI = uri, IsDirectLink = true };
                 var song = new SongJob(query) { Candidates = new List<FileCandidate> { candidate } };
-
-                var slj = new SongListQueryJob();
-                slj.Songs.Add(song);
-                jobs.Add(slj);
+                return Task.FromResult<Job>(song);
             }
-
-            return Task.FromResult(jobs);
         }
     }
 }

@@ -6,7 +6,7 @@ using Enums;
 
 
 // Context object passed to VarExtractors lambdas and name-format helpers.
-// Constructed from either a SongJob or an AlbumFile, so name format works uniformly.
+// Constructed from a SongJob so name format works uniformly across single songs and album files.
 public struct FileManagerContext
 {
     public Job           Job;
@@ -14,7 +14,7 @@ public struct FileManagerContext
     public SongQuery     Query;         // artist, title, album, length, uri, artistMaybeWrong
     public FileCandidate? Candidate;    // slsk-filename, slsk-foldername
     public string?       DownloadPath;  // path, path-noext, ext
-    public TrackState    State;
+    public JobState      State;
     public FailureReason FailureReason;
     public bool          IsNotAudio;
     public int           LineNumber;
@@ -38,22 +38,6 @@ public struct FileManagerContext
         };
     }
 
-    public static FileManagerContext FromAlbumFile(AlbumFile file, Job job, string? remoteBaseDir = null)
-    {
-        return new FileManagerContext
-        {
-            Job           = job,
-            Query         = file.Info,
-            Candidate     = file.Candidate,
-            DownloadPath  = file.DownloadPath,
-            State         = file.State,
-            FailureReason = file.FailureReason,
-            IsNotAudio    = file.IsNotAudio,
-            LineNumber    = job.LineNumber,
-            ItemNumber    = job.ItemNumber,
-            RemoteBaseDir = remoteBaseDir,
-        };
-    }
 }
 
 
@@ -87,7 +71,7 @@ public class FileManager
         if (!string.IsNullOrEmpty(job.DefaultFolderName()))
             parent = Path.Join(parent, job.DefaultFolderName());
 
-        if (job is AlbumQueryJob && !string.IsNullOrEmpty(rcd))
+        if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
         {
             string dirname   = defaultFolderName ?? Path.GetFileName(rcd);
             string normFname = Utils.NormalizedPath(sourceFname);
@@ -114,27 +98,25 @@ public class FileManager
     }
 
     // Organizes all files in a completed album download.
-    public void OrganizeAlbum(Job albumJob, List<AlbumFile> allFiles, List<AlbumFile>? additionalImages, bool remainingOnly = true)
+    public void OrganizeAlbum(Job albumJob, List<SongJob> allFiles, List<SongJob>? additionalImages, bool remainingOnly = true)
     {
         foreach (var file in allFiles.Where(f => !f.IsNotAudio))
         {
             if (remainingOnly && organized.Contains(file))
                 continue;
-            OrganizeAlbumFile(file);
+            OrganizeSong(file);
         }
-
-        // DownloadPath is set by the caller on the AlbumDownloadJob.
 
         var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat)
             ? additionalImages
-            : (IEnumerable<AlbumFile>)allFiles.Where(f => f.IsNotAudio);
+            : (IEnumerable<SongJob>)allFiles.Where(f => f.IsNotAudio);
 
         if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
             return;
 
         string parent = Utils.GreatestCommonDirectory(
             allFiles
-                .Where(f => !f.IsNotAudio && f.State == TrackState.Downloaded && f.DownloadPath?.Length > 0)
+                .Where(f => !f.IsNotAudio && f.State == JobState.Done && f.DownloadPath?.Length > 0)
                 .Select(f => f.DownloadPath));
 
         foreach (var file in nonAudioToOrganize)
@@ -143,30 +125,6 @@ public class FileManager
                 continue;
             OrganizeNonAudio(file, parent, additionalImages != null && additionalImages.Contains(file));
         }
-    }
-
-    public void OrganizeAlbumFile(AlbumFile file)
-    {
-        if (string.IsNullOrEmpty(file.DownloadPath) || !Utils.IsMusicFile(file.DownloadPath))
-            return;
-
-        if (config.nameFormat.Length == 0)
-        {
-            organized.Add(file);
-            return;
-        }
-
-        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromAlbumFile(file, job, remoteBaseDir) with { Config = config });
-        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(file.DownloadPath));
-
-        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
-        {
-            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, config.parentDir); }
-            catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
-        }
-
-        file.DownloadPath = newFilePath;
-        organized.Add(file);
     }
 
     public void OrganizeSong(SongJob song)
@@ -193,16 +151,17 @@ public class FileManager
         organized.Add(song);
     }
 
-    private void OrganizeNonAudio(AlbumFile file, string parent, bool isAdditionalImage)
+    private void OrganizeNonAudio(SongJob file, string parent, bool isAdditionalImage)
     {
         if (string.IsNullOrEmpty(file.DownloadPath))
             return;
 
         string? part = null;
         string? rcd  = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
+        string  filename = file.ResolvedTarget?.Filename ?? file.DownloadPath;
 
-        if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(file.Candidate.Filename), rcd, true))
-            part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(file.Candidate.Filename));
+        if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(filename), rcd, true))
+            part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(filename));
 
         string newFilePath = Path.Join(parent, part, Path.GetFileName(file.DownloadPath));
 

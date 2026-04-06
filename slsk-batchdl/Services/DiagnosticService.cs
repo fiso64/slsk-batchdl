@@ -27,11 +27,11 @@ namespace Services
                 if (!System.IO.File.Exists(indexFilePath))
                 { Logger.Fatal($"Error: Index file {indexFilePath} does not exist"); return; }
 
-                var index = new M3uEditor(indexFilePath, new JobQueue(), M3uOption.Index, true);
+                var index = new M3uEditor(indexFilePath, new JobList(), M3uOption.Index, true);
                 var data = index.GetPreviousRunData();
 
                 if (config.printOption.HasFlag(PrintOption.IndexFailed))
-                    data = data.Where(e => e.State == TrackState.Failed).ToList();
+                    data = data.Where(e => e.State == JobState.Failed).ToList();
 
                 JsonPrinter.PrintIndexJson(data);
             }

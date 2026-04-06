@@ -40,10 +40,8 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", 100, 0, false, config);
 
-            Assert.AreEqual(1, result.Jobs.Count);
-            var slj = (SongListQueryJob)result.Jobs[0];
-            Assert.AreEqual(1, slj.Songs.Count);
-            Assert.IsTrue(slj.Songs[0].Query.IsDirectLink);
+            var slj = (SongJob)result;
+            Assert.IsTrue(slj.Query.IsDirectLink);
         }
 
         [TestMethod]
@@ -53,8 +51,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", 100, 0, false, config);
 
-            Assert.AreEqual(1, result.Jobs.Count);
-            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumQueryJob));
+            Assert.IsInstanceOfType(result, typeof(AlbumJob));
         }
 
         [TestMethod]
@@ -65,7 +62,7 @@ namespace Tests.ExtractorTests2
             config.album = true;
             var result = await extractor.GetTracks("slsk://someuser/Music/Song.mp3", 100, 0, false, config);
 
-            Assert.IsInstanceOfType(result.Jobs[0], typeof(AlbumQueryJob));
+            Assert.IsInstanceOfType(result, typeof(AlbumJob));
         }
 
         [TestMethod]
@@ -75,7 +72,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
             var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", 100, 0, false, config);
 
-            var song = ((SongListQueryJob)result.Jobs[0]).Songs[0];
+            var song = (SongJob)result;
             Assert.IsNotNull(song.Candidates);
             Assert.IsTrue(song.Candidates.Count > 0);
             Assert.AreEqual("myuser", song.Candidates[0].Response.Username);
@@ -131,7 +128,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
             Assert.AreEqual("Artist1", songs[0].Query.Artist);
@@ -148,7 +145,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual("TheAlbum", songs[0].Query.Album);
         }
@@ -162,7 +159,7 @@ namespace Tests.ExtractorTests2
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
 
-            Assert.IsTrue(result.Jobs.Any(j => j is AlbumQueryJob || j is AlbumAggregateQueryJob));
+            Assert.IsTrue(result is AlbumJob || result is AlbumAggregateJob);
         }
 
         [TestMethod]
@@ -173,7 +170,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
 
             var result = await extractor.GetTracks(_tempCsv, 100, 1, false, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
             Assert.AreEqual("Artist2", songs[0].Query.Artist);
@@ -187,7 +184,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, true, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual("Artist2", songs[0].Query.Artist);
             Assert.AreEqual("Artist1", songs[1].Query.Artist);
@@ -201,7 +198,7 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultConfig();
 
             var result = await extractor.GetTracks(_tempCsv, 2, 0, false, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
         }
@@ -215,7 +212,7 @@ namespace Tests.ExtractorTests2
             config.timeUnit = "s";
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
-            var songs = result.AllSongs().ToList();
+            var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(200, songs[0].Query.Length);
         }

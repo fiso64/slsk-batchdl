@@ -5,7 +5,7 @@ namespace Extractors
 {
     public interface IExtractor
     {
-        Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config);
+        Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config);
         Task RemoveTrackFromSource(SongJob job) => Task.CompletedTask;
     }
 

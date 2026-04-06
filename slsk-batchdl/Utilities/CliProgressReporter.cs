@@ -114,7 +114,7 @@ namespace Utilities
         public void ReportSearchStart(SongJob song) { }
         public void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null) { }
         public void ReportOverallProgress(int downloaded, int failed, int total) { }
-        public void ReportJobComplete(int downloaded, int failed, int total) { }
+        public void ReportListProgress(JobList list, int downloaded, int failed, int total) { }
 
 
         // ── structured events — with rendering ──────────────────────────────
@@ -136,11 +136,11 @@ namespace Utilities
             // No Refresh here — the tick loop renders at 100ms intervals.
         }
 
-        public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null)
+        public void ReportStateChanged(SongJob song, FileCandidate? chosen = null)
         {
             if (_bars.TryGetValue(song, out var d) && d.Bar != null)
             {
-                bool succeeded = chosen != null || song.State == TrackState.Downloaded;
+                bool succeeded = chosen != null || song.State == JobState.Done;
                 d.StateLabel = succeeded ? "Succeeded" : "Failed";
                 if (succeeded) d.Pct = 100;
                 Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);

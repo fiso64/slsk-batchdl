@@ -2,10 +2,9 @@ using Models;
 
 namespace Jobs
 {
-    // Finds multiple all distinct albums given a query (e.g. by an artist); converts each to an AlbumJob added to the queue.
+    // Finds all distinct albums matching a query (e.g. by an artist); converts each to an AlbumJob added to the queue.
     // Has no download state of its own after conversion.
-    // Replaces TrackListEntry with source.Type == TrackType.AlbumAggregate.
-    public class AlbumAggregateQueryJob : QueryJob
+    public class AlbumAggregateJob : Job
     {
         public AlbumQuery Query { get; set; }
 
@@ -16,7 +15,7 @@ namespace Jobs
         public override bool OutputsDirectory      => false;
         protected override bool DefaultCanBeSkipped => false;
 
-        public AlbumAggregateQueryJob(AlbumQuery query)
+        public AlbumAggregateJob(AlbumQuery query)
         {
             Query = query;
         }

@@ -128,15 +128,15 @@ public static class Printing
 
     public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound, Config config, Searcher searchService)
     {
-        if (job is SongListQueryJob slj)
+        if (job is JobList slj)
         {
-            await searchService.SearchAndPrintResults(slj.Songs, config);
+            await searchService.SearchAndPrintResults(slj.Jobs.OfType<SongJob>().ToList(), config);
         }
-        else if (job is AggregateQueryJob ag)
+        else if (job is AggregateJob ag)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
-                JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == TrackState.Initial));
+                JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == JobState.Pending));
             }
             else if (config.printOption.HasFlag(PrintOption.Link))
             {
@@ -147,36 +147,36 @@ public static class Printing
             else
             {
                 Console.WriteLine($"Results for aggregate {job.ToString(true)}:");
-                PrintTracksTbd(ag.Songs.Where(s => s.State == TrackState.Initial).ToList(), existing, notFound, false, config);
+                PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, false, config);
             }
         }
-        else if (job is AlbumQueryJob albumJob)
+        else if (job is AlbumJob albumJob)
         {
             if (config.printOption.HasFlag(PrintOption.Json))
             {
                 var foldersToPrint = config.printOption.HasFlag(PrintOption.Full)
-                    ? albumJob.FoundFolders
-                    : albumJob.FoundFolders.Take(1).ToList();
+                    ? albumJob.Results
+                    : albumJob.Results.Take(1).ToList();
                 JsonPrinter.PrintAlbumJson(foldersToPrint, albumJob);
             }
             else if (config.printOption.HasFlag(PrintOption.Link))
             {
-                if (albumJob.FoundFolders.Count > 0)
-                    PrintAlbumLink(albumJob.FoundFolders[0]);
+                if (albumJob.Results.Count > 0)
+                    PrintAlbumLink(albumJob.Results[0]);
             }
             else
             {
                 if (!config.printOption.HasFlag(PrintOption.Full))
-                    Console.WriteLine($"Result 1 of {albumJob.FoundFolders.Count} for album {job.ToString(true)}:");
+                    Console.WriteLine($"Result 1 of {albumJob.Results.Count} for album {job.ToString(true)}:");
                 else
-                    Console.WriteLine($"Results ({albumJob.FoundFolders.Count}) for album {job.ToString(true)}:");
+                    Console.WriteLine($"Results ({albumJob.Results.Count}) for album {job.ToString(true)}:");
 
-                if (albumJob.FoundFolders.Count > 0)
+                if (albumJob.Results.Count > 0)
                 {
                     if (!config.noBrowseFolder)
                         Console.WriteLine("[Skipping full folder retrieval]");
 
-                    foreach (var folder in albumJob.FoundFolders)
+                    foreach (var folder in albumJob.Results)
                     {
                         PrintAlbum(folder);
                         if (!config.printOption.HasFlag(PrintOption.Full))
@@ -192,28 +192,28 @@ public static class Printing
     }
 
 
-    public static void PrintComplete(JobQueue queue)
+    public static void PrintComplete(JobList queue)
     {
         int successes = 0, fails = 0;
         foreach (var job in queue.Jobs)
         {
             IEnumerable<SongJob> songs = job switch
             {
-                SongListQueryJob slj => slj.Songs,
-                AggregateQueryJob ag => ag.Songs,
+                JobList jl      => jl.Jobs.OfType<SongJob>(),
+                AggregateJob ag => ag.Songs,
                 _               => Enumerable.Empty<SongJob>(),
             };
             foreach (var s in songs)
             {
-                if (s.State == TrackState.Downloaded) successes++;
-                else if (s.State == TrackState.Failed)   fails++;
+                if (s.State == JobState.Done) successes++;
+                else if (s.State == JobState.Failed) fails++;
             }
-            if (job is AlbumQueryJob albumJob && albumJob.CompletedDownload != null)
+            if (job is AlbumJob albumJob && albumJob.ResolvedTarget != null)
             {
-                foreach (var f in albumJob.CompletedDownload.Target.Files.Where(f => !f.IsNotAudio))
+                foreach (var f in albumJob.ResolvedTarget.Files.Where(f => !f.IsNotAudio))
                 {
-                    if (f.State == TrackState.Downloaded) successes++;
-                    else if (f.State == TrackState.Failed)   fails++;
+                    if (f.State == JobState.Done)   successes++;
+                    else if (f.State == JobState.Failed) fails++;
                 }
             }
         }
@@ -291,7 +291,7 @@ public static class Printing
     public static void PrintAlbumLink(AlbumFolder folder)
     {
         if (folder.Files.Count == 0) return;
-        string directory = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.Candidate.Filename));
+        string directory = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.ResolvedTarget!.Filename));
         var link = $"slsk://{folder.Username}/{directory.Replace('\\', '/').TrimEnd('/')}/";
         Console.WriteLine(link);
     }
@@ -301,10 +301,10 @@ public static class Printing
     {
         if (folder.Files.Count == 0) return 0;
 
-        var firstResponse = folder.Files[0].Candidate.Response;
+        var firstResponse = folder.Files[0].ResolvedTarget!.Response;
         string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
         string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
-        var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.Candidate.File));
+        var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.ResolvedTarget!.File));
 
         string format     = propsList.FirstOrDefault() ?? "";
         string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
@@ -317,7 +317,7 @@ public static class Printing
         Console.WriteLine(otherProps + "]");
         Console.ResetColor();
 
-        string ancestor = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.Candidate.Filename));
+        string ancestor = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.ResolvedTarget!.Filename));
         int i = 0;
         foreach (var af in folder.Files)
         {
@@ -327,8 +327,8 @@ public static class Printing
                 Console.Write($" [{i + 1:D2}]");
                 Console.ResetColor();
             }
-            string customPath = ancestor.Length > 0 ? af.Candidate.File.Filename.Replace(ancestor, "").TrimStart('\\') : "";
-            Console.WriteLine("    " + DisplayString(af.Info, af.Candidate.File, af.Candidate.Response, customPath: customPath, showUser: false));
+            string customPath = ancestor.Length > 0 ? af.ResolvedTarget!.File.Filename.Replace(ancestor, "").TrimStart('\\') : "";
+            Console.WriteLine("    " + DisplayString(af.Query, af.ResolvedTarget!.File, af.ResolvedTarget!.Response, customPath: customPath, showUser: false));
             i++;
         }
 

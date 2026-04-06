@@ -13,21 +13,23 @@ lifecycle model.
 
 ```
 Job (abstract)
-├── ExtractJob         { string Input; InputType? Type }
-├── JobList            { List<Job> Jobs; string? Name }
+├── ExtractJob         { string Input; InputType? InputType; Job? Result }
+├── JobList            { List<Job> Jobs }          ← ItemName inherited from Job
 ├── SongJob            { SongQuery Query; FileCandidate? ResolvedTarget; ... }
 ├── AlbumJob           { AlbumQuery Query; AlbumFolder? ResolvedTarget; ... }
-├── AggregateJob       { SongQuery Query; List<SongJob>? Results }
+├── AggregateJob       { SongQuery Query; List<SongJob> Songs }
 └── AlbumAggregateJob  { AlbumQuery Query }
 ```
 
-**`ExtractJob`** is a new type. It holds an input string (URL, file path, soulseek URI, etc.) and
-an optional `InputType`. The engine runs the appropriate extractor on it and replaces it in the
-queue with a `JobList` of the extracted jobs.
+**`ExtractJob`** holds an input string (URL, file path, soulseek URI, etc.) and an optional
+`InputType`. The engine runs the appropriate extractor on it, sets `Result` to whatever the
+extractor returned, then processes `Result` as a child. The `ExtractJob` itself remains in the
+tree (state `Done`/`Failed`) as a historical record of what was extracted and from where.
 
-**`JobList`** is the universal grouping container. It holds any mix of `Job` subtypes. It has a
-`Name` (playlist name, artist name, filename, etc.) and accumulates completion state from its
-children. The old `SongListQueryJob`, `AlbumListJob`, `JobQueue` all collapse into this.
+**`JobList`** is the universal grouping container. It holds any mix of `Job` subtypes. `ItemName`
+(inherited from `Job`) carries the playlist name, artist name, filename, etc. The old
+`SongListQueryJob`, `AlbumListJob`, and `JobQueue` all collapse into this. The engine's root
+`Queue` is a persistent `JobList` initialized at construction.
 
 **`SongJob`** is the unified song type. No more separate `SongQueryJob`/`SongDownloadJob`/internal
 `SongJob`. If `ResolvedTarget` is null, the engine searches; if set, it skips to download. The
@@ -64,33 +66,29 @@ For a `JobList`, `State` is derived: `Done` when all children are done, `Failed`
 
 ## 3. `ExtractJob` and the extraction pipeline
 
+`IExtractor.GetTracks` returns a single `Job`. The extractor is the authority on shape:
+- Playlist extractor → `JobList` of `SongJob`s
+- Album extractor → `AlbumJob` directly (no wrapping)
+- list.txt extractor → `JobList` of `ExtractJob`s (one per line, no double-wrapping)
+- Soulseek URI extractor → `SongJob` with `ResolvedTarget` pre-set
+- String extractor → `AlbumJob` or `JobList([SongJob])`
+
+The CLI always submits an `ExtractJob` into `Queue`. The engine has one generic rule: when it
+encounters an `ExtractJob`, it runs the extractor, sets `Result`, and processes `Result` as a
+child. This recurses naturally — a list.txt produces a `JobList` of `ExtractJob`s, each of which
+the engine then resolves in turn:
+
 ```
-User submits: ExtractJob("list.txt")
-
-Engine:
-  → runs ListExtractor on "list.txt"
-  → produces JobList [
-        ExtractJob("https://open.spotify.com/playlist/..."),
-        ExtractJob("album://Pink Floyd - The Wall"),
-        ExtractJob("slsk://user/Music/song.mp3"),
-    ]
-
-  → runs SpotifyExtractor on first ExtractJob
-  → produces JobList("My Playlist") [SongJob, SongJob, ...]
-
-  → runs StringExtractor on second
-  → produces AlbumJob(query)
-
-  → runs SoulseekExtractor on third
-  → produces SongJob(resolved)   ← ResolvedTarget pre-set, no search needed
+Queue → [
+  ExtractJob("list.txt") → Result = JobList [
+    ExtractJob("https://open.spotify.com/playlist/...") → Result = JobList("My Playlist") [SongJob, ...]
+    ExtractJob("album://Pink Floyd - The Wall")          → Result = AlbumJob(query)
+    ExtractJob("slsk://user/Music/song.mp3")             → Result = SongJob(resolved)
+  ]
+]
 ```
 
-The engine processes `ExtractJob`s concurrently (within a `JobList`) — while Spotify is fetching,
-Bandcamp can fetch in parallel. This is the main concurrency improvement this design enables.
-
-`IExtractor.GetTracks` returns `List<Job>` (was `List<QueryJob>`). Extractors can return any mix —
-`SongJob`, `AlbumJob`, `JobList`, even nested `ExtractJob`s. The engine wraps the result in a
-`JobList` and attaches it to the parent.
+`ExtractJob` nodes stay in the tree with `Result` set — they are never removed or replaced.
 
 `RemoveTrackFromSource` stays on `IExtractor`. The engine calls it after a `SongJob` completes
 inside a `JobList` that was produced by that extractor.
@@ -99,26 +97,34 @@ inside a `JobList` that was produced by that extractor.
 
 ## 4. `album` / `aggregate` flags
 
-Extractors are faithful mappers — they return whatever they found, typed correctly. They do not
-interpret `album`/`aggregate`. The upgrade is a user-level semantic decision, not an extraction
-concern.
+Most extractors are faithful mappers and do not interpret `album`/`aggregate` — the upgrade is a
+user-level semantic decision applied after extraction. Exception: the String extractor reads
+`config.album` at extraction time and returns `AlbumJob` directly when set, since it is building
+a query from scratch and can choose the right type immediately.
 
-`UpgradeToAlbumMode` moves into the engine as a post-extraction transform applied to the `JobList`
-result of each `ExtractJob`, before its children are processed:
+For all other extractors, `UpgradeToAlbumMode` is an engine-level transform. It is a standalone
+function `UpgradeToAlbumMode(Job job, bool album, bool aggregate) → Job` that handles any shape:
 
-```
-ExtractJob resolved → JobList [SongJob, SongJob, ...] → engine upgrades → JobList [AlbumJob, AlbumJob, ...]
-```
+- `JobList` → upgrades each child in-place (e.g. Spotify/YouTube playlist `SongJob`s → `AlbumJob`s)
+- bare `SongJob` → returns `AlbumJob` / `AggregateJob` / `AlbumAggregateJob` as appropriate
+- bare `AlbumJob` → returns `AlbumAggregateJob` if aggregate, otherwise unchanged
+- anything else → returned as-is
 
-One place, no extractor coupling. Extractors that already return albums (Bandcamp, MusicBrainz)
-are unaffected — upgrading `AlbumJob → AlbumJob` is a no-op.
+In practice `UpgradeToAlbumMode` is only ever called on `JobList` results (playlist extractors).
+The generic signature handles edge cases cleanly without special-casing.
 
 ---
 
 ## 5. `JobList` as the queue
 
-`JobQueue` is removed. The engine holds a single root `JobList`. `JobPreparer` walks the tree to
-set up `Config`, `JobContext`, editors, and skippers per job — the tree walk replaces the flat loop.
+`JobQueue` is removed. The engine holds a persistent root `JobList` initialized at construction:
+
+```csharp
+public JobList Queue { get; } = new();
+```
+
+`JobPreparer` walks the tree to set up `Config`, `JobContext`, editors, and skippers per job — the
+tree walk replaces the flat loop.
 
 For `JobList`s, config and editors are shared across children (same as the current `SongListQueryJob`
 model). Each `ExtractJob` gets its own config slice (profiles may change per source).
@@ -190,7 +196,7 @@ fires early candidates at the searcher — no public API change needed.
 
 ## 9. `AggregateJob` processing
 
-`AggregateJob` searches and populates `Results: List<SongJob>`. Each `SongJob` in `Results` has
+`AggregateJob` searches and populates `Songs: List<SongJob>`. Each `SongJob` in `Songs` has
 `ResolvedTarget` pre-set (aggregate results are already resolved files). The engine processes them
 as a batch download without a second search round — same as today, just cleaner typing.
 
@@ -203,19 +209,21 @@ as a batch download without a second search round — same as today, just cleane
 ```csharp
 public enum JobState
 {
-    Pending     = 0,
-    Extracting  = 1,   // new — ExtractJob running
-    Searching   = 2,
-    Downloading = 3,
-    Done        = 4,
-    Failed      = 5,
-    Skipped     = 6,
-    AlreadyExists = 7, // was TrackState.AlreadyExists
-    NotFoundLastTime = 8,  // was TrackState.NotFoundLastTime
+    Pending          = 0,
+    Done             = 1,   // aligned with TrackState.Downloaded    = 1
+    Failed           = 2,   // aligned with TrackState.Failed        = 2
+    AlreadyExists    = 3,   // aligned with TrackState.AlreadyExists = 3
+    NotFoundLastTime = 4,   // aligned with TrackState.NotFoundLastTime = 4
+    Skipped          = 5,   // new
+    Extracting       = 6,   // new — ExtractJob running
+    Searching        = 7,   // new — explicit search phase
+    Downloading      = 8,   // new — explicit download phase
 }
 ```
 
-`AlbumFile` is removed — its state is carried by `SongJob.State` directly.
+Values 0–4 are intentionally preserved from the current `JobState`/`TrackState` alignment so that
+existing index files remain readable without migration. Values 5–8 are new and only used at runtime
+(never written to index files).
 
 ---
 
@@ -226,7 +234,7 @@ The structured events become the primary API (machine-readable, sufficient for b
 ```csharp
 // Extraction
 void ReportExtractionStarted(ExtractJob job);
-void ReportExtractionCompleted(ExtractJob job, JobList result);
+void ReportExtractionCompleted(ExtractJob job, Job result);
 
 // Job-level (album / aggregate searches)
 void ReportJobStarted(Job job, bool parallel);
@@ -250,7 +258,7 @@ void ReportOverallProgress(int downloaded, int failed, int total);
 ## 12. `JobContext` and `JobPreparer`
 
 `JobContext` stays engine-internal (editors, skippers). `JobPreparer` changes from a flat loop over
-`JobQueue.Jobs` to a tree walk, with config flowing top-down:
+`Queue.Jobs` to a tree walk, with config flowing top-down:
 
 **Config inheritance:**
 - Root config starts from CLI args / config file
@@ -275,15 +283,70 @@ deliberately removed.
 
 ---
 
+## Concurrency
+
+The engine's main loop becomes a recursive tree-walker:
+
+```
+ProcessJob(Job job):
+    ExtractJob ej  →  ej.Result = extractor.GetTracks(ej.Input)
+                      ProcessJob(ej.Result)               // recurses — uniform, no special-casing
+
+    JobList jl     →  foreach job in jl.Jobs: ProcessJob(job)   // fan-out point
+
+    AlbumJob aj    →  SearchAlbum(aj) → DownloadAlbum(aj)
+
+    SongJob sj     →  SearchAndDownload(sj)
+```
+
+Concurrency applies **uniformly** at every `ProcessJob` call — there is no distinction between
+the root `JobList`, a nested `JobList` inside an `ExtractJob.Result`, or any other level. The
+`JobList` branch is the fan-out point regardless of how deep in the tree it sits. An
+`ExtractJob.Result` that is a `JobList` gets the same concurrent fan-out as the root.
+
+When concurrency is enabled, the `JobList` branch becomes `await Task.WhenAll(...)` over its
+children, limited by semaphores. Three independent semaphores are envisioned:
+- **Extractor concurrency** — limits simultaneous `ExtractJob` runs (network API calls)
+- **Album job concurrency** — limits simultaneous album search+download cycles
+- **Song job concurrency** — limits simultaneous song search+download cycles (already exists as `concurrentProcesses`)
+
+These semaphores count across the entire tree, not per-list, so the total resource usage is bounded
+globally. For now the loop remains sequential (step 11 adds the fan-out).
+
+**CLI rendering:** The existing `CliProgressReporter` already handles concurrent song downloads
+(progress bars per `SongJob`, updated in-place via Konsole) and concurrent album searches
+(`_jobBars` per job). The infrastructure is largely there. However, rendering multiple
+simultaneously active albums (each with its own block of per-song progress bars) will likely
+have issues: bars from different albums may interleave unexpectedly, and many active bars can
+break when they overflow the visible terminal area. Fixing this is a separate concern from the
+structural refactor and is deferred to a later step alongside step 11.
+
+The current `parallelAlbumSearch` feature (search-only parallelism) is removed (see breaking
+changes) — it is superseded by the full parallel search+download the new architecture enables.
+
+---
+
+## Breaking changes
+
+| Change | Notes |
+|--------|-------|
+| `{state}` name-format / on-complete variable for songs: `"Downloaded"` → `"Done"` | `JobState` replaces `TrackState` on `SongJob` |
+| `--parallel-album-search` / `parallelAlbumSearch` removed | Superseded by full parallel search+download (step 11); CLI rendering deferred |
+
+Index file format is **unchanged** — `JobState` values 0–4 are aligned with the old `TrackState`
+values so existing index files remain readable.
+
+---
+
 ## Current code status
 
-The codebase currently has a partial refactor in place:
-- `QueryJob`/`DownloadJob` split exists but is being replaced
-- `AlbumQueryJob`, `AlbumDownloadJob`, `SongListQueryJob`, `SongQueryJob`, `SongDownloadJob`,
-  `AlbumListJob`, `AggregateQueryJob`, `AlbumAggregateQueryJob` all exist but will be removed
-- `SongJob` exists as a non-`Job` class — needs to become a `Job` subclass
-- `JobQueue` exists — will be replaced by `JobList` as the root container
-- `IExtractor.GetTracks` returns `List<QueryJob>` — will change to `List<Job>`
+Steps 1–10 are complete with the following caveats:
+- `ExtractJob` class exists but lacks the `Result: Job?` field and the engine does not yet process
+  `ExtractJob` nodes recursively — it still calls `extractor.GetTracks` directly and adds results
+  to `Queue`. The full `ExtractJob`-based pipeline (CLI submits `ExtractJob`, engine recurses) is
+  part of step 11.
+- `ListExtractor` still eagerly resolves each line by calling sub-extractors directly, rather than
+  returning a `JobList` of `ExtractJob`s. This is intentional — deferred to step 11.
 
 ---
 
@@ -291,20 +354,17 @@ The codebase currently has a partial refactor in place:
 
 | Step | Description |
 |------|-------------|
-| 1 | Introduce `ExtractJob` and `JobList`. Keep old types alongside. Update engine to handle them. |
-| 2 | Collapse `SongJob` into `Job` hierarchy. Remove `SongQueryJob`, `SongDownloadJob`. |
-| 3 | Collapse `AlbumQueryJob` + `AlbumDownloadJob` → `AlbumJob` with `ResolvedTarget`. |
-| 4 | Collapse `AggregateQueryJob` → `AggregateJob`, `AlbumAggregateQueryJob` → `AlbumAggregateJob`. |
-| 5 | Collapse `SongListQueryJob` + `AlbumListJob` → `JobList`. Remove `JobQueue`. |
-| 6 | Update `IExtractor.GetTracks` → `List<Job>`. Update all extractors. |
-| 7 | Update `JobPreparer` to tree-walk instead of flat loop. |
-| 8 | Remove `TrackState`. Extend `JobState`. |
-| 9 | Update `IProgressReporter` signatures. |
-| 10 | Update `Preprocessor`, `TrackSkipper`, `FileManager`, `OnCompleteExecutor` for new types. |
-| 11 | Enable concurrent `ExtractJob` processing within a `JobList`. |
-
-Steps 1–5 are the structural core and should be done together in one pass. Steps 6–10 are
-cleanup. Step 11 is the concurrency payoff and can be a separate commit.
+| 1 | ✓ Introduce `ExtractJob` and `JobList` types. |
+| 2 | ✓ Collapse `SongJob` into `Job` hierarchy. Remove `SongQueryJob`, `SongDownloadJob`. |
+| 3 | ✓ Collapse `AlbumQueryJob` + `AlbumDownloadJob` → `AlbumJob` with `ResolvedTarget`. Remove `AlbumFile`. |
+| 4 | ✓ Rename `AggregateQueryJob` → `AggregateJob`, `AlbumAggregateQueryJob` → `AlbumAggregateJob`. Remove `QueryJob`, `DownloadJob`. |
+| 5 | ✓ Collapse `SongListQueryJob` + `AlbumListJob` → `JobList`. Remove `JobQueue`. |
+| 6 | ✓ `IExtractor.GetTracks` → `Job` (singular). Engine: `Queue.Jobs.Add(result)`. Remove `parallelAlbumSearch`. |
+| 7 | ✓ Update `JobPreparer` to tree-walk instead of flat loop. |
+| 8 | ✓ Remove `TrackState`. Extend `JobState` with `Skipped`, `Extracting`, `Searching`, `Downloading`. |
+| 9 | ✓ Update `IProgressReporter` signatures. |
+| 10 | ✓ Update `Preprocessor`, `TrackSkipper`, `FileManager`, `OnCompleteExecutor` for new types. |
+| 11 | Add `ExtractJob.Result`, recursive engine processing, and concurrency. | <-- Stop and discuss first!
 
 ---
 
@@ -314,18 +374,34 @@ cleanup. Step 11 is the concurrency payoff and can be a separate commit.
   engine-internal.
 - **`ResolvedTarget` replaces the query/download split** — same object throughout, phase determined
   by whether `ResolvedTarget` is set.
-- **`UpgradeToAlbumMode` stays, moves to engine** — applied as a post-extraction transform on the
-  `JobList` result of each `ExtractJob`. Extractors are faithful mappers and do not interpret
+- **`UpgradeToAlbumMode` is a method on `JobList`, called by the engine** — applied after the
+  extractor result is added to `Queue`. Extractors are faithful mappers and do not interpret
   `album`/`aggregate` flags.
-- **`JobQueue` is replaced by `JobList`** — the root `JobList` is the engine's queue.
+- **`DownloadEngine.Queue` is a persistent `JobList`** — initialized at construction, never
+  replaced. Extractors return `Job` (singular), the engine adds it with `Queue.Jobs.Add(result)`.
+  This enables the persistent-service use case (enqueue new downloads at any time) and gives the
+  concurrency tree-walker a stable root fan-out point.
 - **Profile resolution is per-leaf, siblings are independent** — profiles are re-evaluated at each
   leaf job using `input-type` from the ancestor `ExtractJob` and `download-mode` from the leaf
   type. The current sequential accumulation across jobs is accidental and removed.
-- **`ExtractJob` enables concurrent extraction** — the engine can run multiple extractors in
-  parallel when they are siblings in a `JobList`.
+- **`ExtractJob.Result` preserves history** — the engine sets `Result` after extraction and recurses
+  into it; the `ExtractJob` itself stays in the tree as a historical record. No queue replacement.
+- **`IExtractor.GetTracks` returns `Job`** — the extractor decides the shape (single `AlbumJob`,
+  `JobList` of `SongJob`s, `JobList` of `ExtractJob`s, etc.). The engine does not wrap the result.
+- **Concurrency is tree-wide, not list-local** — three semaphores (extractor / album / song) count
+  across the whole tree. `JobList` is the fan-out point; semaphores are acquired inside the leaf
+  processors (`ProcessAlbumJob`, `ProcessSongJob`), not held by the list itself.
+- **CLI interactive mode is compatible with album concurrency** — album search runs concurrently;
+  interactive selection is a sequential gate (FIFO queue of completed searches awaiting user input);
+  download resumes concurrently after selection. The user works through prompts one at a time while
+  searching and downloading proceed in parallel around them.
+- **`parallelAlbumSearch` is removed** — superseded by full parallel search+download (step 11).
+  CLI rendering of concurrent albums is deferred; the existing bar-per-job infrastructure handles
+  it partially but bar interleaving and overflow need separate work.
 - **`SelectAlbumVersion`** callback: `Func<AlbumJob, Task<AlbumFolder?>>` — `JobContext` not
   exposed to the consumer.
-- **`TrackState` is removed** — merged into `JobState` on the job itself.
+- **`TrackState` is removed** — merged into `JobState` on the job itself. Index file format
+  unchanged (values 0–4 preserved).
 - **`AlbumFile` is removed** — `AlbumFolder.Files` becomes `List<SongJob>`; `IsNotAudio` is a
   computed property on `SongJob` based on the file extension of `ResolvedTarget?.Filename`.
   `DownloadAlbumFile` merges with `DownloadSong`.

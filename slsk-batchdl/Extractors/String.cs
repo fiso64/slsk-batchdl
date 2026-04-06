@@ -10,7 +10,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             bool isAlbum = config.album;
 
@@ -19,8 +19,6 @@ namespace Extractors
                 isAlbum = true;
                 input = input[8..];
             }
-
-            var jobs = new List<QueryJob>();
 
             // ParseArgs builds into mutable holders; then we build typed queries.
             ParseArgs(input, isAlbum,
@@ -35,15 +33,15 @@ namespace Extractors
                 var query = new AlbumQuery
                 {
                     Artist          = artist,
-                    Album           = album,        // empty = no folder-name constraint
-                    SearchHint      = title,        // song-title hint for network search when Album is empty
+                    Album           = album,
+                    SearchHint      = title,
                     URI             = uri,
                     ArtistMaybeWrong = artistMaybeWrong,
                     IsDirectLink    = isDirectLink,
                     MinTrackCount   = minAlbumTrackCount,
                     MaxTrackCount   = maxAlbumTrackCount,
                 };
-                jobs.Add(new AlbumQueryJob(query));
+                return Task.FromResult<Job>(new AlbumJob(query));
             }
             else
             {
@@ -57,12 +55,8 @@ namespace Extractors
                     ArtistMaybeWrong = artistMaybeWrong,
                     IsDirectLink    = isDirectLink,
                 };
-                var slj = new SongListQueryJob();
-                slj.Songs.Add(new SongJob(query));
-                jobs.Add(slj);
+                return Task.FromResult<Job>(new SongJob(query));
             }
-
-            return Task.FromResult(jobs);
         }
 
         // Parses a "Artist - Title/Album, key=value, ..." string.

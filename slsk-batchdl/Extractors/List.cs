@@ -15,7 +15,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandVariables(input);
 
@@ -24,14 +24,12 @@ namespace Extractors
 
             var lines = File.ReadAllLines(listFilePath);
 
-            var jobs = new List<QueryJob>();
+            var result = new JobList { ItemName = Path.GetFileNameWithoutExtension(listFilePath), EnablesIndexByDefault = true };
 
             int step  = reverse ? -1 : 1;
             int start = reverse ? lines.Length - 1 : 0;
             int count = 0;
             int added = 0;
-
-            string foldername = Path.GetFileNameWithoutExtension(listFilePath);
 
             for (int i = start; i < lines.Length && i >= 0; i += step)
             {
@@ -55,7 +53,7 @@ namespace Extractors
                     fields[0] = "album://" + fields[0];
 
                 var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
-                var subJobs = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
+                var job = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
 
                 FileConditions? extractorCond     = null;
                 FileConditions? extractorPrefCond = null;
@@ -65,28 +63,24 @@ namespace Extractors
                 if (fields.Count >= 3)
                     extractorPrefCond = Config.ParseConditions(fields[2]);
 
-                foreach (var job in subJobs)
-                {
-                    job.ExtractorCond     = extractorCond;
-                    job.ExtractorPrefCond = extractorPrefCond;
-                    job.ItemName          = foldername;
-                    job.EnablesIndexByDefault = true;
-                    job.LineNumber        = i + 1;
-                    job.ItemNumber        = offset + added + 1;
+                job.ExtractorCond         = extractorCond;
+                job.ExtractorPrefCond     = extractorPrefCond;
+                job.EnablesIndexByDefault = true;
+                job.LineNumber            = i + 1;
+                job.ItemNumber            = offset + added + 1;
 
-                    // For SongListQueryJob, also set provenance on individual songs
-                    if (job is SongListQueryJob slj && slj.Songs.Count == 1)
-                    {
-                        slj.Songs[0].LineNumber  = i + 1;
-                        slj.Songs[0].ItemNumber  = offset + added + 1;
-                    }
+                // For a single-song JobList, also set provenance on the song itself
+                if (job is JobList jl && jl.Jobs.Count == 1 && jl.Jobs[0] is SongJob slSong)
+                {
+                    slSong.LineNumber = i + 1;
+                    slSong.ItemNumber = offset + added + 1;
                 }
 
-                jobs.AddRange(subJobs);
+                result.Jobs.Add(job);
                 added++;
             }
 
-            return jobs;
+            return result;
         }
 
         static List<string> ParseLine(string input)

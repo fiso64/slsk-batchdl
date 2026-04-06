@@ -92,7 +92,6 @@ public class Config
     public bool writePlaylist = false;
     public bool skipExisting = true;
     public bool writeIndex = true;
-    public bool parallelAlbumSearch = false;
     public bool mockFilesReadTags = true;
     public bool mockFilesSlow = false;
     public bool extractArtist = false;
@@ -115,7 +114,6 @@ public class Config
     public int searchesPerTime = 34;
     public int searchRenewTime = 220;
     public int aggregateLengthTol = 3;
-    public int parallelAlbumSearchProcesses = 5;
     public int connectTimeout = 20000;
     public int sharedFiles = 0;
     public int sharedFolders = 0;
@@ -288,7 +286,7 @@ public class Config
     }
 
 
-    public void PostProcessArgs(JobQueue queue) // must be run after extracting job queue
+    public void PostProcessArgs(JobList queue) // must be run after extracting job list
     {
         if (DoNotDownload)
             concurrentProcesses = 1;
@@ -320,7 +318,7 @@ public class Config
     }
 
 
-    public bool WillWriteIndex(JobQueue? queue = null)
+    public bool WillWriteIndex(JobList? queue = null)
     {
         if (DoNotDownload)
         {
@@ -447,7 +445,7 @@ public class Config
     }
 
 
-    public Config UpdateProfiles(Job job, JobQueue queue)
+    public Config UpdateProfiles(Job job, JobList queue)
     {
         if (!NeedUpdateProfiles(job, out var toApply))
             return this;
@@ -516,7 +514,7 @@ public class Config
         }
 
         string downloadMode = job != null
-            ? toKebab(job.GetType().Name.Replace("QueryJob", "").Replace("DownloadJob", "").Replace("Job", ""))
+            ? toKebab(job.GetType().Name.Replace("Job", ""))
             : album && aggregate ? "album-aggregate" : album ? "album" : aggregate ? "aggregate" : "normal";
 
         return var switch
@@ -1466,14 +1464,6 @@ public class Config
                     case "--alt":
                     case "--aggregate-length-tol":
                         aggregateLengthTol = getIntParameter(ref i);
-                        break;
-                    case "--aps":
-                    case "--album-parallel-search":
-                        setFlag(ref parallelAlbumSearch, ref i);
-                        break;
-                    case "--apsc":
-                    case "--album-parallel-search-count":
-                        parallelAlbumSearchProcesses = getIntParameter(ref i);
                         break;
                     case "--mock-files-dir":
                         mockFilesDir = GetParameter(ref i);

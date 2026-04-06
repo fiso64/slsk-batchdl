@@ -71,19 +71,19 @@ namespace Tests.TrackSkipperTests
 
         private M3uEditor CreateEditorWithSong(SongJob song)
         {
-            var slj = new SongListQueryJob();
-            slj.AddSong(song);
-            var queue = new JobQueue();
-            queue.Enqueue(slj);
+            var slj = new JobList();
+            slj.Jobs.Add(song);
+            var queue = new JobList();
+            queue.Jobs.Add(slj);
             File.WriteAllText(_tempPath, "");
             var editor = new M3uEditor(_tempPath, queue, M3uOption.Index, true);
             editor.Update();
 
             // Load back via fresh editor so previousRunData is populated
-            var slj2 = new SongListQueryJob();
-            slj2.AddSong(new SongJob(new SongQuery { Artist = song.Query.Artist, Title = song.Query.Title }));
-            var queue2 = new JobQueue();
-            queue2.Enqueue(slj2);
+            var slj2 = new JobList();
+            slj2.Jobs.Add(new SongJob(new SongQuery { Artist = song.Query.Artist, Title = song.Query.Title }));
+            var queue2 = new JobList();
+            queue2.Jobs.Add(slj2);
             return new M3uEditor(_tempPath, queue2, M3uOption.Index, true);
         }
 
@@ -98,7 +98,7 @@ namespace Tests.TrackSkipperTests
         public void IndexSkipper_DownloadedTrack_ReturnsTrue()
         {
             var original = new SongJob(new SongQuery { Artist = "Artist1", Title = "Title1" });
-            original.State = TrackState.Downloaded;
+            original.State = JobState.Done;
             original.DownloadPath = "fake/path/file.mp3";
             var editor = CreateEditorWithSong(original);
 
@@ -114,7 +114,7 @@ namespace Tests.TrackSkipperTests
         public void IndexSkipper_FailedTrack_ReturnsFalse()
         {
             var original = new SongJob(new SongQuery { Artist = "Artist2", Title = "Title2" });
-            original.State = TrackState.Failed;
+            original.State = JobState.Failed;
             original.FailureReason = FailureReason.NoSuitableFileFound;
             var editor = CreateEditorWithSong(original);
 
@@ -129,9 +129,9 @@ namespace Tests.TrackSkipperTests
         [TestMethod]
         public void IndexSkipper_UnknownTrack_ReturnsFalse()
         {
-            var slj = new SongListQueryJob();
-            var queue = new JobQueue();
-            queue.Enqueue(slj);
+            var slj = new JobList();
+            var queue = new JobList();
+            queue.Jobs.Add(slj);
             File.WriteAllText(_tempPath, "");
             var editor = new M3uEditor(_tempPath, queue, M3uOption.Index, true);
 

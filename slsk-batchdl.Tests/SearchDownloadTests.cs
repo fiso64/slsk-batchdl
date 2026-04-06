@@ -20,17 +20,17 @@ namespace Tests.SearchDownloadTests
             var registry = TestHelpers.CreateSessionRegistry();
             var engine = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 999, 1);
-            var job = new AlbumQueryJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
+            var job = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
 
             // Act
             await searcher.SearchAlbum(job, new Config(), new ResponseData(), CancellationToken.None);
 
             // Assert: the testuser folder (4 files) should be found
-            var testUserFolder = job.FoundFolders.First(f => f.Username == "testuser");
+            var testUserFolder = job.Results.First(f => f.Username == "testuser");
             Assert.AreEqual(4, testUserFolder.Files.Count);
             CollectionAssert.AreEqual(
                 index.First(x => x.Username == "testuser").Files.Select(x => x.Filename).ToList(),
-                testUserFolder.Files.Select(x => x.Candidate.File.Filename).ToList());
+                testUserFolder.Files.Select(x => x.ResolvedTarget!.File.Filename).ToList());
         }
     }
 }

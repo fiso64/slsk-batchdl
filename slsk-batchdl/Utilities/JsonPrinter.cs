@@ -83,7 +83,7 @@ public class TrackJson
     public FailureReason? FailureReason { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
-    public TrackState State { get; set; } = TrackState.Initial;
+    public JobState State { get; set; } = JobState.Pending;
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Path { get; set; }
@@ -189,7 +189,7 @@ public static class JsonPrinter
         Console.WriteLine(json);
     }
 
-    public static void PrintAlbumJson(List<AlbumFolder> folders, AlbumQueryJob job)
+    public static void PrintAlbumJson(List<AlbumFolder> folders, AlbumJob job)
     {
         if (folders.Count == 0)
         {
@@ -201,8 +201,8 @@ public static class JsonPrinter
             .Where(f => f.Files.Count > 0)
             .Select(f => new AlbumResultJson
             {
-                User  = new UserInfoJson(f.Files[0].Candidate.Response),
-                Files = f.Files.Select(af => new FileInfoJson(af.Candidate.File)).ToList()
+                User  = new UserInfoJson(f.Files[0].ResolvedTarget!.Response),
+                Files = f.Files.Select(af => new FileInfoJson(af.ResolvedTarget!.File)).ToList()
             });
 
         var json = JsonSerializer.Serialize(albumResults, _options);

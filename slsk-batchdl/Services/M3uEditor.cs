@@ -12,7 +12,7 @@ public class IndexEntry
     public string       Album         { get; set; } = "";
     public string       Title         { get; set; } = "";
     public int          Length        { get; set; } = -1;
-    public TrackState   State         { get; set; } = TrackState.Initial;
+    public JobState     State         { get; set; } = JobState.Pending;
     public FailureReason FailureReason { get; set; } = FailureReason.None;
     // True when a Normal-type entry was promoted to also be keyed as an Album entry.
     public bool         IsAlbum       { get; set; }
@@ -30,7 +30,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     List<string> lines;
     bool needFirstUpdate = false;
     int offset = 0;
-    readonly JobQueue queue;
+    readonly JobList queue;
     readonly Dictionary<string, IndexEntry> previousRunData = new(); // key → IndexEntry
 
     private readonly object locker = new();
@@ -41,7 +41,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         lock (locker) jobDownloadPaths[jobId] = path;
     }
 
-    private M3uEditor(JobQueue queue, M3uOption option, int offset = 0)
+    private M3uEditor(JobList queue, M3uOption option, int offset = 0)
     {
         this.queue  = queue;
         this.option = option;
@@ -49,7 +49,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         this.needFirstUpdate = option == M3uOption.All || option == M3uOption.Playlist;
     }
 
-    public M3uEditor(string path, JobQueue queue, M3uOption option, bool loadPreviousResults) : this(queue, option)
+    public M3uEditor(string path, JobList queue, M3uOption option, bool loadPreviousResults) : this(queue, option)
     {
         SetPathAndLoad(path, loadPreviousResults);
     }
@@ -129,7 +129,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                         else if (field == 3) entry.Title  = x;
                         else if (field == 4) entry.Length = int.Parse(x);
                         else if (field == 5) { /* tracktype — ignored, determined by Title/Album */ }
-                        else if (field == 6) entry.State  = (TrackState)int.Parse(x);
+                        else if (field == 6) entry.State  = (JobState)int.Parse(x);
 
                         currentItem.Clear();
                         field++;
@@ -156,7 +156,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 previousRunData[entry.ToKey()] = entry;
 
                 // When an entry has both album and title set, also register it under the album-only key
-                // so AlbumQueryJob lookups (which use empty title) can find it.
+                // so AlbumJob lookups (which use empty title) can find it.
                 if (entry.Title.Length > 0 && entry.Album.Length > 0)
                 {
                     var albumKey = new IndexEntry
@@ -193,7 +193,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 return changed;
             }
 
-            bool entryChanged(IndexEntry? prev, string downloadPath, TrackState state, FailureReason reason)
+            bool entryChanged(IndexEntry? prev, string downloadPath, JobState state, FailureReason reason)
             {
                 return prev == null
                     || prev.State != state
@@ -202,7 +202,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             }
 
             void updateEntryIfNeeded(string key, string downloadPath, string artist, string album,
-                string title, int length, TrackState state, FailureReason reason, bool isAlbum = false)
+                string title, int length, JobState state, FailureReason reason, bool isAlbum = false)
             {
                 if (option == M3uOption.Playlist)
                     return;
@@ -239,10 +239,10 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 
             foreach (var job in queue.Jobs)
             {
-                // Job-level entry (for AlbumQueryJob and non-Normal jobs that have their own index row)
-                if (job is AlbumQueryJob albumJob && albumJob.State != JobState.Pending)
+                // Job-level entry (for AlbumJob and non-Normal jobs that have their own index row)
+                if (job is AlbumJob albumJob && albumJob.State != JobState.Pending)
                 {
-                    var (state, reason) = JobStateToTrackState(albumJob);
+                    var (state, reason) = JobToIndexState(albumJob);
                     string key = MakeAlbumKey(albumJob.Query.Artist, albumJob.Query.Album);
                     jobDownloadPaths.TryGetValue(albumJob.Id, out var downloadPath);
                     updateEntryIfNeeded(key, downloadPath ?? "",
@@ -252,14 +252,14 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
                 // Per-song entries
                 IEnumerable<SongJob> songs = job switch
                 {
-                    SongListQueryJob slj => slj.Songs,
-                    AggregateQueryJob ag => ag.Songs,
+                    JobList jl      => jl.Jobs.OfType<SongJob>(),
+                    AggregateJob ag => ag.Songs,
                     _               => Enumerable.Empty<SongJob>(),
                 };
 
                 foreach (var song in songs)
                 {
-                    if (song.State == TrackState.Initial)
+                    if (song.State == JobState.Pending)
                     {
                         index++;
                         continue;
@@ -372,7 +372,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     private string SongToLine(SongJob song)
     {
         string? failureReason = song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null;
-        if (failureReason == null && song.State == TrackState.NotFoundLastTime)
+        if (failureReason == null && song.State == JobState.NotFoundLastTime)
             failureReason = nameof(FailureReason.NoSuitableFileFound);
 
         if (failureReason != null)
@@ -396,8 +396,8 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         return t;
     }
 
-    // Looks up the persisted state for an AlbumQueryJob from a prior run.
-    public IndexEntry? PreviousRunResult(AlbumQueryJob job)
+    // Looks up the persisted state for an AlbumJob from a prior run.
+    public IndexEntry? PreviousRunResult(AlbumJob job)
     {
         previousRunData.TryGetValue(MakeAlbumKey(job.Query.Artist, job.Query.Album), out var t);
         return t;
@@ -413,7 +413,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     {
         reason = FailureReason.None;
         var t = PreviousRunResult(song);
-        if (t != null && t.State == TrackState.Failed)
+        if (t != null && t.State == JobState.Failed)
         {
             reason = t.FailureReason;
             return true;
@@ -441,17 +441,17 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
         return new IndexEntry { Artist = artist, Album = album, Title = "", Length = -1 }.ToKey();
     }
 
-    // Maps JobState → TrackState for writing album entries to the index.
-    private static (TrackState state, FailureReason reason) JobStateToTrackState(Job job)
+    // Maps JobState to the index-file state + failure reason for a job.
+    private static (JobState state, FailureReason reason) JobToIndexState(Job job)
     {
         return job.State switch
         {
-            JobState.Done    => (TrackState.Downloaded,    job.FailureReason),
-            JobState.Failed  => (TrackState.Failed,        job.FailureReason),
+            JobState.Done    => (JobState.Done,             job.FailureReason),
+            JobState.Failed  => (JobState.Failed,           job.FailureReason),
             JobState.Skipped => job.FailureReason != FailureReason.None
-                                    ? (TrackState.NotFoundLastTime, job.FailureReason)
-                                    : (TrackState.AlreadyExists,    FailureReason.None),
-            _                => (TrackState.Initial,       FailureReason.None),
+                                    ? (JobState.NotFoundLastTime, job.FailureReason)
+                                    : (JobState.AlreadyExists,    FailureReason.None),
+            _                => (JobState.Pending,          FailureReason.None),
         };
     }
 

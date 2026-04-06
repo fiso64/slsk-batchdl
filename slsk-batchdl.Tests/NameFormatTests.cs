@@ -17,7 +17,7 @@ namespace Tests.NameFormat
             Soulseek.File? slFile = null,
             string? remoteBaseDir = null)
         {
-            var job = new SongListQueryJob();
+            var job = new JobList();
             var query = new SongQuery { Artist = artist, Title = title, Album = album };
             Soulseek.SearchResponse? response = slFile != null
                 ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })

@@ -109,7 +109,7 @@ namespace Utilities
             });
         }
 
-        public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null)
+        public void ReportStateChanged(SongJob song, FileCandidate? chosen = null)
         {
             WriteEvent("track_state", new
             {
@@ -137,9 +137,9 @@ namespace Utilities
             });
         }
 
-        public void ReportJobComplete(int downloaded, int failed, int total)
+        public void ReportListProgress(JobList list, int downloaded, int failed, int total)
         {
-            WriteEvent("job_complete", new { downloaded, failed, total });
+            WriteEvent("list_progress", new { name = list.ItemName, downloaded, failed, total });
         }
 
         // Display-only events — no-ops for JSON output.

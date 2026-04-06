@@ -5,7 +5,7 @@ using System.Text;
 public class InteractiveModeManager
 {
     private readonly Job      job;
-    private readonly JobQueue queue;
+    private readonly JobList queue;
     private readonly Func<AlbumFolder, Task<(bool wasCancelled, int newFiles)>> retrieveFolderCallback;
 
     private readonly List<(AlbumFolder Folder, int Index)> original;
@@ -31,7 +31,7 @@ public class InteractiveModeManager
 
     public InteractiveModeManager(
         Job job,
-        JobQueue    queue,
+        JobList     queue,
         List<AlbumFolder> folders,
         bool            canRetrieve,
         HashSet<string> retrievedFolders,
@@ -50,7 +50,7 @@ public class InteractiveModeManager
 
         if (filterStr != null)
         {
-            filterList = original.Where(e => e.Folder.Files.Any(af => af.Candidate.Filename.ContainsIgnoreCase(filterStr))).ToList();
+            filterList = original.Where(e => e.Folder.Files.Any(af => af.ResolvedTarget!.Filename.ContainsIgnoreCase(filterStr))).ToList();
             if (filterList.Count == 0)
             {
                 Console.WriteLine($"No matches for query: {filterStr}");
@@ -154,7 +154,7 @@ public class InteractiveModeManager
                     else
                     {
                         var subdir     = currentFolder + '\\' + options;
-                        var hasMatches = folder.Files.Any(af => af.Candidate.Filename.StartsWith(subdir, StringComparison.OrdinalIgnoreCase));
+                        var hasMatches = folder.Files.Any(af => af.ResolvedTarget!.Filename.StartsWith(subdir, StringComparison.OrdinalIgnoreCase));
 
                         if (!hasMatches)
                         {
@@ -163,7 +163,7 @@ public class InteractiveModeManager
                         }
 
                         subfolder = subdir;
-                        folder.Files.RemoveAll(af => !af.Candidate.Filename.StartsWith(subdir, StringComparison.OrdinalIgnoreCase));
+                        folder.Files.RemoveAll(af => !af.ResolvedTarget!.Filename.StartsWith(subdir, StringComparison.OrdinalIgnoreCase));
 
                         string folderKey = username + '\\' + currentFolder;
                         if (retrievedFolders.Contains(folderKey))
@@ -246,7 +246,7 @@ public class InteractiveModeManager
                     }
                     else
                     {
-                        var filtered = original.Where(e => e.Folder.Files.Any(af => af.Candidate.Filename.ContainsIgnoreCase(options))).ToList();
+                        var filtered = original.Where(e => e.Folder.Files.Any(af => af.ResolvedTarget!.Filename.ContainsIgnoreCase(options))).ToList();
                         if (filtered.Count == 0)
                         {
                             Console.WriteLine($"No matches for query: {options}");

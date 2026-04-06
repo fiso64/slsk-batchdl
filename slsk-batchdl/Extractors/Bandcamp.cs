@@ -14,9 +14,9 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
-            var jobs = new List<QueryJob>();
+            var jobs = new List<Job>();  // temporary; always ends up with exactly one item
             bool isTrack = input.Contains("/track/");
             bool isAlbum = !isTrack && input.Contains("/album/");
             bool isWishlist = !isTrack && !isAlbum && input.Contains("/wishlist");
@@ -42,7 +42,7 @@ namespace Extractors
 
                 if (items != null)
                 {
-                    var albumList = new AlbumListJob { ItemName = "Bandcamp Wishlist", EnablesIndexByDefault = true };
+                    var albumList = new JobList { ItemName = "Bandcamp Wishlist", EnablesIndexByDefault = true };
                     int num = 1;
                     foreach (var item in items)
                     {
@@ -57,7 +57,7 @@ namespace Extractors
                             if (artist.StartsWith("by ", StringComparison.OrdinalIgnoreCase))
                                 artist = artist.Substring(3).Trim();
 
-                            albumList.Albums.Add(new AlbumQueryJob(new AlbumQuery { Album = album, Artist = artist })
+                            albumList.Jobs.Add(new AlbumJob(new AlbumQuery { Album = album, Artist = artist })
                             {
                                 ItemNumber = num++,
                             });
@@ -95,7 +95,7 @@ namespace Extractors
 
                 string artistName = root.GetProperty("name").GetString();
 
-                var albumList = new AlbumListJob { ItemName = artistName, EnablesIndexByDefault = true };
+                var albumList = new JobList { ItemName = artistName, EnablesIndexByDefault = true };
                 int num = 1;
                 foreach (var item in root.GetProperty("discography").EnumerateArray())
                 {
@@ -103,7 +103,7 @@ namespace Extractors
                     string albumArtist = item.GetProperty("artist_name").GetString()
                                      ?? item.GetProperty("band_name").GetString();
 
-                    albumList.Albums.Add(new AlbumQueryJob(new AlbumQuery { Album = albumTitle, Artist = albumArtist })
+                    albumList.Jobs.Add(new AlbumJob(new AlbumQuery { Album = albumTitle, Artist = albumArtist })
                     {
                         ItemNumber = num++,
                     });
@@ -143,26 +143,30 @@ namespace Extractors
                         if (config.setAlbumMaxTrackCount) query.MaxTrackCount = n;
                     }
 
-                    jobs.Add(new AlbumQueryJob(query));
+                    jobs.Add(new AlbumJob(query));
                 }
                 else
                 {
                     var album  = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span/a").InnerText.UnHtmlString().Trim();
                     var artist = nameSection.SelectSingleNode(".//h3[contains(@class, 'albumTitle')]/span[last()]/a").InnerText.UnHtmlString().Trim();
                     var songQuery = new SongQuery { Artist = artist, Title = name, Album = album };
-                    var slj = new SongListQueryJob();
-                    slj.Songs.Add(new SongJob(songQuery));
+                    var slj = new JobList();
+                    slj.Jobs.Add(new SongJob(songQuery));
                     jobs.Add(slj);
                 }
             }
 
-            if (reverse)
-                JobQueue.ReverseJobList(jobs);
+            var result = jobs[0];
 
-            if (offset > 0 || maxTracks < int.MaxValue)
-                jobs = jobs.Skip(offset).Take(maxTracks).ToList();
+            if (reverse && result is JobList jl)
+            {
+                jl.Jobs.Reverse();
+                if (jl.Jobs.Count > offset) jl.Jobs.RemoveRange(0, offset);
+                else jl.Jobs.Clear();
+                if (jl.Jobs.Count > maxTracks) jl.Jobs.RemoveRange(maxTracks, jl.Jobs.Count - maxTracks);
+            }
 
-            return jobs;
+            return result;
         }
     }
 }

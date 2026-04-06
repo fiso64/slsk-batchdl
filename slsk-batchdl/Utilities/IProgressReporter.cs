@@ -22,9 +22,9 @@ namespace Utilities
         void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null);
         void ReportDownloadStart(SongJob song, FileCandidate candidate);
         void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes);
-        void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null);
+        void ReportStateChanged(SongJob song, FileCandidate? chosen = null);
         void ReportOverallProgress(int downloaded, int failed, int total);
-        void ReportJobComplete(int downloaded, int failed, int total);
+        void ReportListProgress(JobList list, int downloaded, int failed, int total);
 
         // ── display events (terminal rendering) ─────────────────────────────
         // Job-level
@@ -54,9 +54,9 @@ namespace Utilities
         public void ReportSearchResult(SongJob song, int resultCount, FileCandidate? chosen = null) { }
         public void ReportDownloadStart(SongJob song, FileCandidate candidate) { }
         public void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes) { }
-        public void ReportTrackStateChanged(SongJob song, FileCandidate? chosen = null) { }
+        public void ReportStateChanged(SongJob song, FileCandidate? chosen = null) { }
         public void ReportOverallProgress(int downloaded, int failed, int total) { }
-        public void ReportJobComplete(int downloaded, int failed, int total) { }
+        public void ReportListProgress(JobList list, int downloaded, int failed, int total) { }
         public void ReportJobStarted(Job job, bool parallel) { }
         public void ReportJobFolderRetrieving(Job job) { }
         public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }

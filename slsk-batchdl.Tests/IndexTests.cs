@@ -23,14 +23,14 @@ namespace Tests.Index
                 File.Delete(testM3uPath);
         }
 
-        private static (JobQueue queue, SongListQueryJob slj, List<SongJob> songs) MakeSongQueue(IEnumerable<SongJob> initialSongs)
+        private static (JobList queue, JobList slj, List<SongJob> songs) MakeSongQueue(IEnumerable<SongJob> initialSongs)
         {
-            var slj = new SongListQueryJob();
+            var slj = new JobList();
             foreach (var s in initialSongs)
-                slj.AddSong(s);
-            var queue = new JobQueue();
-            queue.Enqueue(slj);
-            return (queue, slj, slj.Songs);
+                slj.Jobs.Add(s);
+            var queue = new JobList();
+            queue.Jobs.Add(slj);
+            return (queue, slj, slj.Jobs.OfType<SongJob>().ToList());
         }
 
         [TestMethod]
@@ -56,18 +56,18 @@ namespace Tests.Index
             // Verify downloaded track
             editor.TryGetPreviousRunResult(songs[0], out var prev1);
             Assert.IsNotNull(prev1);
-            Assert.AreEqual(TrackState.Downloaded, prev1.State);
+            Assert.AreEqual(JobState.Done, prev1.State);
             Assert.AreEqual("path/to/file1", prev1.DownloadPath);
 
             // Verify already-exists track
             editor.TryGetPreviousRunResult(songs[1], out var prev2);
             Assert.IsNotNull(prev2);
-            Assert.AreEqual(TrackState.AlreadyExists, prev2.State);
+            Assert.AreEqual(JobState.AlreadyExists, prev2.State);
 
             // Verify failed track
             editor.TryGetPreviousRunResult(songs[2], out var prev3);
             Assert.IsNotNull(prev3);
-            Assert.AreEqual(TrackState.Failed, prev3.State);
+            Assert.AreEqual(JobState.Failed, prev3.State);
             Assert.AreEqual(FailureReason.NoSuitableFileFound, prev3.FailureReason);
         }
 
@@ -80,11 +80,11 @@ namespace Tests.Index
                 new SongJob(new SongQuery { Artist = "Artist2", Title = "Title2" }),
                 new SongJob(new SongQuery { Artist = "Artist3", Title = "Title3" }),
             };
-            songs[0].State = TrackState.Downloaded;
+            songs[0].State = JobState.Done;
             songs[0].DownloadPath = "path/to/file1";
-            songs[1].State = TrackState.Failed;
+            songs[1].State = JobState.Failed;
             songs[1].FailureReason = FailureReason.NoSuitableFileFound;
-            // songs[2] stays Initial
+            // songs[2] stays Pending
 
             var (queue, _, _) = MakeSongQueue(songs);
             File.WriteAllText(testM3uPath, "");
@@ -99,16 +99,16 @@ namespace Tests.Index
             // Verify downloaded track round-tripped
             editor2.TryGetPreviousRunResult(lookupSongs[0], out var prev1);
             Assert.IsNotNull(prev1);
-            Assert.AreEqual(TrackState.Downloaded, prev1.State);
+            Assert.AreEqual(JobState.Done, prev1.State);
             Assert.AreEqual("path/to/file1", prev1.DownloadPath);
 
             // Verify failed track round-tripped
             editor2.TryGetPreviousRunResult(lookupSongs[1], out var prev2);
             Assert.IsNotNull(prev2);
-            Assert.AreEqual(TrackState.Failed, prev2.State);
+            Assert.AreEqual(JobState.Failed, prev2.State);
             Assert.AreEqual(FailureReason.NoSuitableFileFound, prev2.FailureReason);
 
-            // Initial track should not be in previous run data (state is Initial, it was skipped)
+            // Pending track should not be in previous run data (state is Pending, it was skipped)
             editor2.TryGetPreviousRunResult(lookupSongs[2], out var prev3);
             Assert.IsNull(prev3);
         }
@@ -116,16 +116,16 @@ namespace Tests.Index
         [TestMethod]
         public void Index_WithAlbumJobs_RoundTripsCorrectly()
         {
-            var albumJobs = new List<AlbumQueryJob>
+            var albumJobs = new List<AlbumJob>
             {
-                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistA", Album = "AlbumA" }),
-                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistB", Album = "AlbumB" }),
-                new AlbumQueryJob(new AlbumQuery { Artist = "ArtistC", Album = "AlbumC" }),
+                new AlbumJob(new AlbumQuery { Artist = "ArtistA", Album = "AlbumA" }),
+                new AlbumJob(new AlbumQuery { Artist = "ArtistB", Album = "AlbumB" }),
+                new AlbumJob(new AlbumQuery { Artist = "ArtistC", Album = "AlbumC" }),
             };
 
-            var queue = new JobQueue();
+            var queue = new JobList();
             foreach (var j in albumJobs)
-                queue.Enqueue(j);
+                queue.Jobs.Add(j);
 
             File.WriteAllText(testM3uPath, "");
             var editor = new M3uEditor(testM3uPath, queue, M3uOption.Index, true);
@@ -140,15 +140,15 @@ namespace Tests.Index
             editor.Update();
 
             // Read back with new editor using fresh AlbumJobs
-            var lookupJobs = albumJobs.Select(j => new AlbumQueryJob(new AlbumQuery { Artist = j.Query.Artist, Album = j.Query.Album })).ToList();
-            var queue2 = new JobQueue();
+            var lookupJobs = albumJobs.Select(j => new AlbumJob(new AlbumQuery { Artist = j.Query.Artist, Album = j.Query.Album })).ToList();
+            var queue2 = new JobList();
             foreach (var j in lookupJobs)
-                queue2.Enqueue(j);
+                queue2.Jobs.Add(j);
             var editor2 = new M3uEditor(testM3uPath, queue2, M3uOption.Index, true);
 
             for (int i = 0; i < albumJobs.Count; i++)
             {
-                var prev = editor2.PreviousRunResult(lookupJobs[i]);
+                var prev = editor2.PreviousRunResult((AlbumJob)lookupJobs[i]);
                 Assert.IsNotNull(prev, $"Previous run result not found for {lookupJobs[i].Query.Artist} - {lookupJobs[i].Query.Album}");
                 Assert.AreEqual(albumJobs[i].Query.Artist, prev.Artist);
                 Assert.AreEqual(albumJobs[i].Query.Album, prev.Album);
@@ -169,9 +169,9 @@ namespace Tests.Index
                 new SongJob(new SongQuery { Artist = "Artist, with commas", Title = "Title \"with\" quotes" }),
                 new SongJob(new SongQuery { Artist = "Artist; semi", Title = "Title; semi" }),
             };
-            songs[0].State = TrackState.Downloaded;
+            songs[0].State = JobState.Done;
             songs[0].DownloadPath = "path/file.mp3";
-            songs[1].State = TrackState.Failed;
+            songs[1].State = JobState.Failed;
             songs[1].FailureReason = FailureReason.AllDownloadsFailed;
 
             var (queue, _, _) = MakeSongQueue(songs);
@@ -203,9 +203,9 @@ namespace Tests.Index
                 new SongJob(new SongQuery { Artist = "A1", Title = "T1" }),
                 new SongJob(new SongQuery { Artist = "A2", Title = "T2" }),
             };
-            songs[0].State = TrackState.Failed;
+            songs[0].State = JobState.Failed;
             songs[0].FailureReason = FailureReason.NoSuitableFileFound;
-            songs[1].State = TrackState.Downloaded;
+            songs[1].State = JobState.Done;
             songs[1].DownloadPath = "p";
 
             var (queue, _, _) = MakeSongQueue(songs);

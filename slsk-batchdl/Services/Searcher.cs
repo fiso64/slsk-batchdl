@@ -102,8 +102,8 @@ public class Searcher
 
     // ── album search ─────────────────────────────────────────────────────────
 
-    // Populates job.FoundFolders with candidate AlbumFolders found on the network.
-    public async Task SearchAlbum(AlbumQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
+    // Populates job.Results with candidate AlbumFolders found on the network.
+    public async Task SearchAlbum(AlbumJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
         var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         // For folder-matching (Album), use only the album name. For the network search keyword
@@ -137,11 +137,11 @@ public class Searcher
         using var cts = new CancellationTokenSource();
         await RunSearches(query, results, getOpts, handler, config, cts.Token);
 
-        job.FoundFolders = BuildAlbumFolders(results, job.Query, config);
+        job.Results = BuildAlbumFolders(results, job.Query, config);  // was job.FoundFolders
     }
 
-    // Populates job.FoundFolders from a direct slsk:// link (no network search).
-    public async Task SearchDirectLinkAlbum(AlbumQueryJob job, CancellationToken ct)
+    // Populates job.Results from a direct slsk:// link (no network search).
+    public async Task SearchDirectLinkAlbum(AlbumJob job, CancellationToken ct)
     {
         var parts    = job.Query.URI["slsk://".Length..].Split('/', 2);
         var username  = parts[0];
@@ -150,27 +150,27 @@ public class Searcher
         var rawFiles = await GetAllFilesInFolder(username, directory, ct);
         var response = new SearchResponse(username, -1, false, -1, -1, null);
 
-        var files = new List<AlbumFile>();
+        var files = new List<SongJob>();
         foreach (var (dir, file) in rawFiles)
         {
             var fullPath  = dir.TrimEnd('\\') + '\\' + file.Filename;
             var slFile    = new Soulseek.File(file.Code, fullPath, file.Size, file.Extension);
             var candidate = new FileCandidate(response, slFile);
             var info      = InferSongQuery(file.Filename, new SongQuery { Artist = job.Query.Artist, Album = job.Query.Album });
-            files.Add(new AlbumFile(info, candidate, isNotAudio: !Utils.IsMusicFile(file.Filename)));
+            files.Add(new SongJob(info) { ResolvedTarget = candidate });
         }
 
         if (files.Count > 0)
-            job.FoundFolders = new List<AlbumFolder> { new AlbumFolder(username, directory, files) };
+            job.Results = new List<AlbumFolder> { new AlbumFolder(username, directory, files) };
         else
-            job.FoundFolders = new List<AlbumFolder>();
+            job.Results = new List<AlbumFolder>();
     }
 
 
     // ── aggregate search ─────────────────────────────────────────────────────
 
     // Populates job.Songs: one SongJob per distinct inferred track version found.
-    public async Task SearchAggregate(AggregateQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task SearchAggregate(AggregateJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
         var results = new SlDictionary();
 
@@ -217,11 +217,11 @@ public class Searcher
     }
 
     // Returns new AlbumJobs (one per distinct album version found on the network).
-    public async Task<List<AlbumQueryJob>> SearchAggregateAlbum(AlbumAggregateQueryJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task<List<AlbumJob>> SearchAggregateAlbum(AlbumAggregateJob job, Config config, ResponseData responseData, CancellationToken ct)
     {
-        var tempJob = new AlbumQueryJob(job.Query);
+        var tempJob = new AlbumJob(job.Query);
         await SearchAlbum(tempJob, config, responseData, ct);
-        var albums = tempJob.FoundFolders;
+        var albums = tempJob.Results;
 
         int maxDiff = config.aggregateLengthTol;
 
@@ -241,7 +241,7 @@ public class Searcher
             if (folder.Files.Count == 0) continue;
             var sortedLengths = folder.Files
                 .Where(f => !f.IsNotAudio)
-                .Select(f => f.Candidate.File.Length ?? -1)
+                .Select(f => f.ResolvedTarget!.File.Length ?? -1)
                 .OrderBy(x => x).ToArray();
 
             bool matched = false;
@@ -255,8 +255,8 @@ public class Searcher
                     var rep2 = folder.Files.FirstOrDefault(f => !f.IsNotAudio);
                     if (rep1 != null && rep2 != null)
                     {
-                        var q1 = InferSongQuery(rep1.Candidate.Filename, new SongQuery());
-                        var q2 = InferSongQuery(rep2.Candidate.Filename, new SongQuery());
+                        var q1 = InferSongQuery(rep1.ResolvedTarget!.Filename, new SongQuery());
+                        var q2 = InferSongQuery(rep2.ResolvedTarget!.Filename, new SongQuery());
                         if (!(q2.Artist.ContainsIgnoreCase(q1.Artist) || q1.Artist.ContainsIgnoreCase(q2.Artist))
                             || !(q2.Title.ContainsIgnoreCase(q1.Title) || q1.Title.ContainsIgnoreCase(q2.Title)))
                             continue;
@@ -278,8 +278,8 @@ public class Searcher
             .OrderByDescending(x => x.users.Count)
             .Select(x =>
             {
-                var newJob = new AlbumQueryJob(job.Query);
-                newJob.FoundFolders = x.versions;
+                var newJob = new AlbumJob(job.Query);
+                newJob.Results = x.versions;
                 return newJob;
             })
             .ToList();
@@ -317,9 +317,9 @@ public class Searcher
             catch (OperationCanceledException) { return 0; }
             catch (Exception e) { Logger.Error($"Error getting all files in '{folder.FolderPath}': {e}"); return 0; }
 
-            var existing = folder.Files.Select(f => f.Candidate.Filename).ToHashSet();
-            var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Info ?? new SongQuery();
-            var firstResp = folder.Files.FirstOrDefault()?.Candidate.Response
+            var existing  = folder.Files.Select(f => f.ResolvedTarget!.Filename).ToHashSet();
+            var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Query ?? new SongQuery();
+            var firstResp = folder.Files.FirstOrDefault()?.ResolvedTarget?.Response
                             ?? new SearchResponse(folder.Username, -1, false, -1, -1, null);
 
             foreach (var (dir, file) in allFiles)
@@ -332,7 +332,7 @@ public class Searcher
                 var slFile    = new SlFile(file.Code, file.Filename, file.Size, file.Extension, file.Attributes);
                 var candidate = new FileCandidate(firstResp, slFile);
                 var info      = InferSongQuery(file.Filename, new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
-                folder.Files.Add(new AlbumFile(info, candidate, isNotAudio: !Utils.IsMusicFile(file.Filename)));
+                folder.Files.Add(new SongJob(info) { ResolvedTarget = candidate });
             }
         }
         catch (Exception ex)
@@ -593,8 +593,8 @@ public class Searcher
         var audio2 = f2.Files.Where(f => !f.IsNotAudio).ToList();
         if (audio1.Count != audio2.Count) return false;
 
-        f1SortedLengths ??= audio1.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
-        var s2 = audio2.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
+        f1SortedLengths ??= audio1.Select(f => f.ResolvedTarget!.File.Length ?? -1).OrderBy(x => x).ToArray();
+        var s2 = audio2.Select(f => f.ResolvedTarget!.File.Length ?? -1).OrderBy(x => x).ToArray();
 
         for (int i = 0; i < f1SortedLengths.Length; i++)
             if (Math.Abs(f1SortedLengths[i] - s2[i]) > tolerance) return false;
@@ -826,7 +826,7 @@ public class Searcher
                 .Select(x =>
                 {
                     var info = InferSongQuery(x.f.Filename, new SongQuery { Artist = query.Artist, Album = query.Album });
-                    return new AlbumFile(info, new FileCandidate(x.r, x.f), isNotAudio: !Utils.IsMusicFile(x.f.Filename));
+                    return new SongJob(info) { ResolvedTarget = new FileCandidate(x.r, x.f) };
                 })
                 .ToList();
 

@@ -16,14 +16,13 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            // Each element is either a SongJob (for songs) or an AlbumQueryJob (for album rows).
             var rows = await ParseCsvRows(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
                 config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
 
@@ -31,19 +30,26 @@ namespace Extractors
                 rows.Reverse();
 
             var csvName = Path.GetFileNameWithoutExtension(csvFilePath);
-            return BuildJobList(rows.Skip(offset).Take(maxTracks), csvName);
+            var jobs = BuildJobList(rows.Skip(offset).Take(maxTracks), csvName);
+
+            if (jobs.Count == 1)
+                return jobs[0];
+
+            var list = new JobList { ItemName = csvName, EnablesIndexByDefault = true };
+            list.Jobs.AddRange(jobs);
+            return list;
         }
 
-        // Builds a List<QueryJob> from a sequence of per-row items (SongJob or AlbumQueryJob).
-        // Consecutive SongJobs are grouped into a single SongListQueryJob.
-        private static List<QueryJob> BuildJobList(IEnumerable<object> rows, string csvName)
+        // Builds a List<Job> from a sequence of per-row items (SongJob or AlbumJob).
+        // Consecutive SongJobs are grouped into a single JobList.
+        private static List<Job> BuildJobList(IEnumerable<object> rows, string csvName)
         {
-            var jobs = new List<QueryJob>();
-            SongListQueryJob? currentSlj = null;
+            var jobs = new List<Job>();
+            JobList? currentSlj = null;
 
             foreach (var row in rows)
             {
-                if (row is AlbumQueryJob albumJob)
+                if (row is AlbumJob albumJob)
                 {
                     if (currentSlj != null)
                     {
@@ -57,16 +63,16 @@ namespace Extractors
                 else if (row is SongJob song)
                 {
                     if (currentSlj == null)
-                        currentSlj = new SongListQueryJob
+                        currentSlj = new JobList
                         {
                             ItemName              = csvName,
                             EnablesIndexByDefault = true,
                         };
-                    currentSlj.Songs.Add(song);
+                    currentSlj.Jobs.Add(song);
                 }
             }
 
-            if (currentSlj != null && currentSlj.Songs.Count > 0)
+            if (currentSlj != null && currentSlj.Jobs.Count > 0)
                 jobs.Add(currentSlj);
 
             return jobs;
@@ -101,7 +107,7 @@ namespace Extractors
             }
         }
 
-        // Returns a list of rows — either SongJob (song row) or AlbumQueryJob (album row).
+        // Returns a list of rows — either SongJob (song row) or AlbumJob (album row).
         async Task<List<object>> ParseCsvRows(string path, string artistCol = "", string trackCol = "",
             string lengthCol = "", string albumCol = "", string descCol = "", string ytIdCol = "", string trackCountCol = "",
             string timeUnit = "s", bool ytParse = false)
@@ -227,7 +233,7 @@ namespace Extractors
                         MinTrackCount = minAlbumTrackCount,
                         MaxTrackCount = maxAlbumTrackCount,
                     };
-                    rows.Add(new AlbumQueryJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
+                    rows.Add(new AlbumJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
                 }
                 else if (ytParse)
                 {

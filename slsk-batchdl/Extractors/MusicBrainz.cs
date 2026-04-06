@@ -14,14 +14,12 @@ namespace Extractors
             return input.IsInternetUrl() && input.ToLower().Contains("musicbrainz.org");
         }
 
-        public async Task<List<QueryJob>> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             var musicBrainzClient = new MusicBrainzClient();
 
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
-
-            JobQueue queue;
 
             var match = Regex.Match(input, @"musicbrainz\.org/([a-z\-]+)/([0-9a-f\-]{36})");
             if (!match.Success)
@@ -33,29 +31,32 @@ namespace Extractors
             switch (entityType)
             {
                 case "release":
-                    queue = await musicBrainzClient.GetReleaseAsAlbum(mbid, max, off, config);
-                    break;
+                {
+                    var queue = await musicBrainzClient.GetReleaseAsAlbum(mbid, max, off, config);
+                    return queue.Jobs.Count == 1 ? queue.Jobs[0] : queue;
+                }
                 case "release-group":
-                    queue = await musicBrainzClient.GetReleaseGroupAsAlbum(mbid, max, off, config);
-                    break;
+                {
+                    var queue = await musicBrainzClient.GetReleaseGroupAsAlbum(mbid, max, off, config);
+                    return queue.Jobs.Count == 1 ? queue.Jobs[0] : queue;
+                }
                 case "collection":
-                    queue = await musicBrainzClient.GetCollectionReleases(mbid, max, off);
-                    break;
+                {
+                    var queue = await musicBrainzClient.GetCollectionReleases(mbid, max, off);
+                    if (reverse)
+                    {
+                        queue.Jobs.Reverse();
+                        queue.Jobs.RemoveRange(0, Math.Min(offset, queue.Jobs.Count));
+                        if (queue.Jobs.Count > maxTracks)
+                            queue.Jobs.RemoveRange(maxTracks, queue.Jobs.Count - maxTracks);
+                    }
+                    return queue;
+                }
                 case "artist":
                     throw new Exception("MusicBrainz artist download currently not supported.");
                 default:
                     throw new ArgumentException($"Unsupported MusicBrainz entity type: {entityType}");
             }
-
-            var jobs = queue.Jobs.Cast<QueryJob>().ToList();
-
-            if (reverse)
-            {
-                JobQueue.ReverseJobList(jobs);
-                jobs = jobs.Skip(offset).Take(maxTracks).ToList();
-            }
-
-            return jobs;
         }
     }
 
@@ -70,9 +71,9 @@ namespace Extractors
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         }
 
-        public async Task<JobQueue> GetReleaseAsAlbum(string mbid, int max, int offset, Config config, bool fromReleaseGroup = false)
+        public async Task<JobList> GetReleaseAsAlbum(string mbid, int max, int offset, Config config, bool fromReleaseGroup = false)
         {
-            var queue = new JobQueue();
+            var queue = new JobList();
             if (offset > 0 || max == 0)
                 return queue;
 
@@ -102,11 +103,11 @@ namespace Extractors
                 MaxTrackCount = (!fromReleaseGroup || config.setAlbumMaxTrackCount) ? totalTracks : -1,
             };
 
-            queue.Enqueue(new AlbumQueryJob(query));
+            queue.Jobs.Add(new AlbumJob(query));
             return queue;
         }
 
-        public async Task<JobQueue> GetReleaseGroupAsAlbum(string mbid, int max, int offset, Config config)
+        public async Task<JobList> GetReleaseGroupAsAlbum(string mbid, int max, int offset, Config config)
         {
             Logger.Info("Loading MusicBrainz release group...");
             var url          = $"https://musicbrainz.org/ws/2/release-group/{mbid}?inc=releases&fmt=json";
@@ -117,7 +118,7 @@ namespace Extractors
             if (!releases.Any())
             {
                 Logger.Info("Release group contains no releases.");
-                return new JobQueue();
+                return new JobList();
             }
 
             var bestRelease = releases.FirstOrDefault(r => r.TryGetProperty("status", out var s) && s.GetString() == "Official");
@@ -131,7 +132,7 @@ namespace Extractors
             return await GetReleaseAsAlbum(releaseMbid, max, offset, config, true);
         }
 
-        public async Task<JobQueue> GetCollectionReleases(string mbid, int max, int offset)
+        public async Task<JobList> GetCollectionReleases(string mbid, int max, int offset)
         {
             var collectionInfoUrl      = $"https://musicbrainz.org/ws/2/collection/{mbid}?fmt=json";
             var collectionInfoResponse = await _httpClient.GetStringAsync(collectionInfoUrl);
@@ -139,7 +140,7 @@ namespace Extractors
             var collectionName         = collectionInfo.GetProperty("name").GetString();
             Logger.Info($"Loading releases from MusicBrainz collection '{collectionName}'...");
 
-            var queue  = new JobQueue();
+            var queue  = new JobList();
             int limit  = Math.Min(max, 100);
             int currentOffset = offset;
             int count  = 0;
@@ -171,13 +172,13 @@ namespace Extractors
                         MaxTrackCount = trackCount,
                     };
 
-                    var job = new AlbumQueryJob(query)
+                    var job = new AlbumJob(query)
                     {
                         ItemNumber            = offset + count + 1,
                         ItemName              = collectionName,
                         EnablesIndexByDefault = true,
                     };
-                    queue.Enqueue(job);
+                    queue.Jobs.Add(job);
                     count++;
                 }
 
@@ -185,7 +186,7 @@ namespace Extractors
                 currentOffset += limit;
             }
 
-            Logger.Info($"Found {queue.Count} releases in MusicBrainz collection '{collectionName}'");
+            Logger.Info($"Found {queue.Jobs.Count} releases in MusicBrainz collection '{collectionName}'");
             return queue;
         }
     }

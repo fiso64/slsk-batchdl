@@ -14,7 +14,7 @@ namespace Tests.FileManagerTests
         private static FileManager MakeManager(Config? config = null, Job? job = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            job ??= new SongListQueryJob();
+            job ??= new JobList();
             return new FileManager(job, config);
         }
 
@@ -47,7 +47,7 @@ namespace Tests.FileManagerTests
         {
             var config = TestHelpers.CreateDefaultConfig();
             config.parentDir = "/music";
-            var job = new AlbumQueryJob(new AlbumQuery());
+            var job = new AlbumJob(new AlbumQuery());
             var manager = new FileManager(job, config);
 
             manager.SetremoteBaseDir("Music\\Artist\\Album");
@@ -122,7 +122,7 @@ namespace Tests.FileManagerTests
             Config? config = null)
         {
             config ??= TestHelpers.CreateDefaultConfig();
-            var job = new SongListQueryJob();
+            var job = new JobList();
             var query = new SongQuery { Artist = artist, Title = title, Album = album };
             Soulseek.SearchResponse? response = slFile != null
                 ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })
@@ -232,7 +232,7 @@ namespace Tests.FileManagerTests
         public void AlbumJob_DefaultOrganization_UsesRemoteFolderName()
         {
             // Setup
-            var job = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             var manager = new FileManager(job, config);
             manager.SetremoteBaseDir(@"Artist1\Album1"); // slsk-style path
 
@@ -253,7 +253,7 @@ namespace Tests.FileManagerTests
         public void SongListJob_DefaultOrganization_UsesItemName()
         {
             // Setup
-            var job = new SongListQueryJob();
+            var job = new JobList();
             job.ItemName = "MyPlaylist";
             var manager = new FileManager(job, config);
 
@@ -274,7 +274,7 @@ namespace Tests.FileManagerTests
         public void AlbumJob_NameFormat_MovesCoverIntelligently()
         {
             // Setup
-            var job = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             config.nameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
             var manager = new FileManager(job, config);
             manager.SetremoteBaseDir(@"Artist1\Album1");
@@ -287,25 +287,31 @@ namespace Tests.FileManagerTests
             File.WriteAllText(audio2Base, "audio2");
             File.WriteAllText(coverBase, "jpg");
 
-            var file1 = new AlbumFile(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track1" }, 
-                                     new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
-                                                       new Soulseek.File(0, @"Artist1\Album1\01. Track1.mp3", 0, "mp3")), false);
-            file1.DownloadPath = audio1Base;
-            file1.State = TrackState.Downloaded;
+            var file1 = new SongJob(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track1" })
+            {
+                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                                                   new Soulseek.File(0, @"Artist1\Album1\01. Track1.mp3", 0, "mp3")),
+                DownloadPath = audio1Base,
+                State = JobState.Done,
+            };
 
-            var file2 = new AlbumFile(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track2" }, 
-                                     new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
-                                                       new Soulseek.File(0, @"Artist1\Album1\02. Track2.mp3", 0, "mp3")), false);
-            file2.DownloadPath = audio2Base;
-            file2.State = TrackState.Downloaded;
+            var file2 = new SongJob(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track2" })
+            {
+                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                                                   new Soulseek.File(0, @"Artist1\Album1\02. Track2.mp3", 0, "mp3")),
+                DownloadPath = audio2Base,
+                State = JobState.Done,
+            };
 
-            var coverFile = new AlbumFile(new SongQuery(), 
-                                         new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null), 
-                                                           new Soulseek.File(0, @"Artist1\Album1\Cover.jpg", 0, "jpg")), true);
-            coverFile.State = TrackState.Downloaded;
-            coverFile.DownloadPath = coverBase;
+            var coverFile = new SongJob(new SongQuery())
+            {
+                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                                                   new Soulseek.File(0, @"Artist1\Album1\Cover.jpg", 0, "jpg")),
+                DownloadPath = coverBase,
+                State = JobState.Done,
+            };
 
-            var allFiles = new List<AlbumFile> { file1, file2, coverFile };
+            var allFiles = new List<SongJob> { file1, file2, coverFile };
 
             // Execute
             manager.OrganizeAlbum(job, allFiles, null, remainingOnly: false);
@@ -326,12 +332,12 @@ namespace Tests.FileManagerTests
         public void AlbumAggregate_ArtistOnly_CreatesSubfoldersForAlbums()
         {
             // main use case for -ag: find all albums by an artist.
-            var aggJob = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "Artist1" });
-            aggJob.ItemName = "Artist1"; // Set by JobQueue
+            var aggJob = new AlbumAggregateJob(new AlbumQuery { Artist = "Artist1" });
+            aggJob.ItemName = "Artist1"; // Set by JobList
             
-            // Simulating an AlbumQueryJob spawned from this aggregate (e.g. for 'Album1')
-            var albumJob = new AlbumQueryJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            albumJob.ItemName = aggJob.ItemName; // Inherited from AlbumAggregateQueryJob
+            // Simulating an AlbumJob spawned from this aggregate (e.g. for 'Album1')
+            var albumJob = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            albumJob.ItemName = aggJob.ItemName; // Inherited from AlbumAggregateJob
             
             var manager = new FileManager(albumJob, config);
             manager.SetremoteBaseDir(@"User1\Artist1\Album1"); // Remote path
@@ -349,8 +355,8 @@ namespace Tests.FileManagerTests
         public void SongAggregate_ArtistOnly_GroupsIntoArtistFolder()
         {
             // main use case for -g: find all songs by an artist.
-            var job = new AggregateQueryJob(new SongQuery { Artist = "Artist1" });
-            job.ItemName = "Artist1"; // Set by JobQueue
+            var job = new AggregateJob(new SongQuery { Artist = "Artist1" });
+            job.ItemName = "Artist1"; // Set by JobList
             
             var manager = new FileManager(job, config);
             

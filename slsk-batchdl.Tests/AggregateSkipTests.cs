@@ -56,8 +56,8 @@ namespace Tests.EndToEnd
 
                 // Check the job queue to see if the track was marked as already existing
                 Assert.IsNotNull(app.Queue, "Queue should not be null");
-                var aggregateJob = app.Queue.Jobs.OfType<AggregateQueryJob>().FirstOrDefault();
-                Assert.IsNotNull(aggregateJob, "Should have found an AggregateQueryJob");
+                var aggregateJob = app.Queue.Jobs.OfType<AggregateJob>().FirstOrDefault();
+                Assert.IsNotNull(aggregateJob, "Should have found an AggregateJob");
                 
 
                 var song = aggregateJob.Songs.FirstOrDefault(s => s.Query.ToString(true).Contains("Artist1"));
@@ -67,7 +67,7 @@ namespace Tests.EndToEnd
                 // It will be 'Downloaded' instead of 'AlreadyExists' because it wasn't skipped.
                 // (Or it might fail during download if it tries to overwrite or something, 
                 // but the goal is to see it skipped before it even tries to download).
-                Assert.AreEqual(TrackState.AlreadyExists, song.State, 
+                Assert.AreEqual(JobState.AlreadyExists, song.State, 
                     $"Song should have been skipped. Current state: {song.State}. Failure reason: {song.FailureReason}");
             }
             finally

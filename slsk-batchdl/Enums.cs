@@ -1,14 +1,19 @@
 
 namespace Enums
 {
+    // Values 0-4 are written to index files — do not reorder, existing files must remain readable.
+    // Values 5+ are runtime-only and never persisted.
     public enum JobState
     {
-        Pending     = 0,
-        Searching   = 1,
-        Downloading = 2,
-        Done        = 3,
-        Failed      = 4,
-        Skipped     = 5,
+        Pending          = 0,
+        Done             = 1,
+        Failed           = 2,
+        AlreadyExists    = 3,
+        NotFoundLastTime = 4,
+        Skipped          = 5,
+        Searching        = 6,
+        Downloading      = 7,
+        Extracting       = 8,
     }
 
     public enum FailureReason
@@ -19,15 +24,6 @@ namespace Enums
         NoSuitableFileFound = 3,
         AllDownloadsFailed = 4,
         Other = 5,
-    }
-
-    public enum TrackState
-    {
-        Initial = 0,
-        Downloaded = 1,
-        Failed = 2,
-        AlreadyExists = 3,
-        NotFoundLastTime = 4
     }
 
     public enum SkipMode

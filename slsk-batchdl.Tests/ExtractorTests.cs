@@ -76,7 +76,7 @@ namespace Tests.Extractors
             {
                 config.input = testStrings[i];
                 var result = await extractor.GetTracks(config.input, 0, 0, false, config);
-                var song = ((SongListQueryJob)result.Jobs[0]).Songs[0];
+                var song = (SongJob)result;
                 var q = song.Query;
 
                 Assert.IsTrue(StringExtractor.InputMatches(config.input));
@@ -96,7 +96,7 @@ namespace Tests.Extractors
             {
                 config.input = testStrings[i];
                 var result = await extractor.GetTracks(config.input, 0, 0, false, config);
-                var q = ((AlbumQueryJob)result.Jobs[0]).Query;
+                var q = ((AlbumJob)result).Query;
 
                 Assert.IsTrue(StringExtractor.InputMatches(config.input));
                 Assert.AreEqual(expectedAlbums[i].album,  q.Album,  $"Case {i}: Album mismatch");

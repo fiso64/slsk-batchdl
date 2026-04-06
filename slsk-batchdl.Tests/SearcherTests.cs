@@ -74,7 +74,7 @@ namespace Tests.Unit
             var searcher = CreateSearcher(client, config);
             
             // Search for "ELO Time" specifically
-            var job = new AlbumQueryJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
             var responseData = new ResponseData();
 
             await searcher.SearchAlbum(job, config, responseData, CancellationToken.None);
@@ -87,9 +87,9 @@ namespace Tests.Unit
             // 6. User6: Shared\ELO\Time (10 tracks)
             // (User4: Discovery - should NOT be returned by MockSoulseekClient because query terms include "Time")
             
-            Assert.AreEqual(5, job.FoundFolders.Count, "Should find folders matching album name search terms.");
-            Assert.IsTrue(job.FoundFolders.Any(f => f.Username == "User1"), "User1 folder missing.");
-            Assert.IsTrue(job.FoundFolders.All(f => !f.Files.Any(fi => fi.Candidate.Filename.Contains("Dancing Queen"))), "Noise file not filtered!");
+            Assert.AreEqual(5, job.Results.Count, "Should find folders matching album name search terms.");
+            Assert.IsTrue(job.Results.Any(f => f.Username == "User1"), "User1 folder missing.");
+            Assert.IsTrue(job.Results.All(f => !f.Files.Any(fi => fi.ResolvedTarget!.Filename.Contains("Dancing Queen"))), "Noise file not filtered!");
         }
 
         [TestMethod]
@@ -102,7 +102,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
@@ -115,9 +115,9 @@ namespace Tests.Unit
             // 5. Time BadVersion (10 tracks, length 60 - User5)
             Assert.AreEqual(5, results.Count, "Should identify 5 distinct album/version groups.");
             
-            var multiShare = results.FirstOrDefault(r => r.FoundFolders.Count == 2);
+            var multiShare = results.FirstOrDefault(r => r.Results.Count == 2);
             Assert.IsNotNull(multiShare, "Standard Multi-Share version missing.");
-            Assert.AreEqual(10, multiShare.FoundFolders[0].Files.Count(f => !f.IsNotAudio));
+            Assert.AreEqual(10, multiShare.Results[0].Files.Count(f => !f.IsNotAudio));
         }
 
         [TestMethod]
@@ -130,14 +130,14 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
 
             // Only the "Standard Time" version (shared by User1 and User6) meets the threshold.
             Assert.AreEqual(1, results.Count, "High entropy filter (minShares=2) failed.");
-            Assert.AreEqual(2, results[0].FoundFolders.Count);
+            Assert.AreEqual(2, results[0].Results.Count);
         }
 
         [TestMethod]
@@ -164,7 +164,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -198,7 +198,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -229,7 +229,7 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AggregateQueryJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
             await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
@@ -262,15 +262,15 @@ namespace Tests.Unit
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
-            var job = new AlbumAggregateQueryJob(new AlbumQuery { Artist = "ELO" });
+            var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
             var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
 
             // First result should be the one with 2 shares.
             Assert.AreEqual(2, results.Count);
-            Assert.AreEqual(2, results[0].FoundFolders.Count);
-            Assert.AreEqual(1, results[1].FoundFolders.Count);
+            Assert.AreEqual(2, results[0].Results.Count);
+            Assert.AreEqual(1, results[1].Results.Count);
         }
     }
 }
