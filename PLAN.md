@@ -181,7 +181,7 @@ extension of `ResolvedTarget?.Filename`.
 
 ## 8. Interactive mode and fast-search
 
-Both become engine callbacks, no longer baked into the engine logic:
+`SelectAlbumVersion` becomes an engine callback, no longer baked into the engine logic:
 
 ```csharp
 // Called after album search completes. Return chosen folder or null to skip.
@@ -189,8 +189,28 @@ public Func<AlbumJob, Task<AlbumFolder?>>? SelectAlbumVersion { get; set; }
 ```
 
 The `interactiveMode` config flag is consumed by the CLI which wires in `InteractiveModeManager`
-as the `SelectAlbumVersion` implementation. Fast-search is an engine-internal optimization that
-fires early candidates at the searcher — no public API change needed.
+as the `SelectAlbumVersion` implementation.
+
+**Fast-search** is a song-level optimization: when a highly-ranked candidate arrives during a
+song search (free slot, sufficient upload speed, preferred conditions met), the engine starts a
+provisional download immediately without waiting for the full search to complete. The search
+continues concurrently in the background so that if the fast download fails, the full candidate
+list is available as fallback. Fast-search is entirely within `SearchAndDownloadSong` and has no
+interaction with album-level logic or the `SelectAlbumVersion` callback.
+
+The implementation lives in `SearchAndDownloadSong`. The search is started as a `Task` (not
+awaited immediately) with an `onFastSearchCandidate` callback. When the callback fires, the engine
+launches a provisional download `Task`. Both tasks run concurrently. The coordinator awaits
+whichever finishes first:
+
+- Fast download wins → cancel the search via `searchCts`, return the result.
+- Search finishes first → sort all candidates, try them in order as today.
+- Fast download fails while search still running → wait for search to finish, try remaining candidates.
+
+`searchCts` is a `CancellationTokenSource` created inside `SearchAndDownloadSong`, linked to
+`job.Cts` (see §Cancellation below). It is cancelled by the coordinator when the fast download
+succeeds. `Downloader.DownloadFile` has no knowledge of `searchCts` — cancellation of the search
+is the coordinator's responsibility, not the downloader's.
 
 ---
 
@@ -283,7 +303,45 @@ deliberately removed.
 
 ---
 
-## Concurrency
+## Cancellation
+
+Every job gets a `CancellationTokenSource` set by the engine when it starts processing that job,
+linked to `appCts` so that engine-wide cancellation propagates automatically:
+
+```csharp
+public class Job
+{
+    // Set by the engine immediately before processing begins.
+    // Linked to appCts — cancelling it only affects this job and its children.
+    public CancellationTokenSource? Cts { get; internal set; }
+    public void Cancel() => Cts?.Cancel()
+}
+```
+
+The CTS hierarchy is:
+
+```
+appCts                            (engine-wide — engine.Cancel())
+  └── job.Cts                     (per job — job.Cancel(), set by engine at processing time)
+        └── searchCts             (per search cycle — cancelled on fast-search win, linked to job.Cts)
+```
+
+Cancelling a `JobList` propagates to all its children by cancelling each child's CTS (which are
+all linked to the list's CTS, which is itself linked to `appCts`).
+
+The `cancelOnFail` pattern in album downloads (cancel remaining file downloads when one fails) is
+implemented by calling `albumJob.Cancel()` — no closure-captured local CTS needed.
+
+**'c' keypress — stripped for now, to be re-implemented properly later:**
+The current 'c' handler is baked into `ProcessAlbumJob` inside the engine and only works because
+album downloads are sequential. With concurrent album downloads it becomes ambiguous (which album
+does 'c' cancel?), and the clean fix is non-trivial. The feature is removed from the engine now;
+a TODO comment is left at the removal site.
+
+The correct future implementation (deferred): the CLI owns keyboard input and, on 'c', presents
+a numbered list of all currently running jobs (name + state) and lets the user select which one
+to cancel. The engine just exposes `job.Cancel()` and `engine.Cancel()`; the CLI wires them.
+This is consistent with the `SelectAlbumVersion` pattern — all user interaction is a CLI concern.
 
 The engine's main loop becomes a recursive tree-walker:
 
@@ -407,3 +465,15 @@ Steps 1–10 are complete with the following caveats:
   `DownloadAlbumFile` merges with `DownloadSong`.
 - **`InteractiveModeManager`** is wired in by the CLI as the `SelectAlbumVersion` implementation.
   The engine has no direct dependency on it.
+- **Per-job cancellation via `job.Cts`** — the engine sets a `CancellationTokenSource` on each job
+  before processing, linked to `appCts`. Consumers call `job.Cancel()` to cancel a specific job.
+  The CTS hierarchy is `appCts → job.Cts → searchCts`. `Downloader.DownloadFile` takes a plain
+  `CancellationToken`; it never owns or cancels a search CTS.
+- **'c' keypress removed for now** — the existing handler is engine-internal and only works for
+  sequential downloads. Removed with a TODO comment. Future implementation: CLI presents a
+  numbered list of running jobs and calls `job.Cancel()` on the chosen one. The engine exposes
+  `job.Cancel()` and `engine.Cancel()`; it does not listen for console keys. (Note for future: 
+  SongJobs that are part of an AlbumJob should not be listed individually for the CLI cancel prompt).
+- **Fast-search is engine-internal, coordinator-owned** — `SearchAndDownloadSong` runs search and
+  provisional download concurrently. `searchCts` is created and cancelled inside this function.
+  `Downloader.DownloadFile` has no knowledge of `searchCts`.

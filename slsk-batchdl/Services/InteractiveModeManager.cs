@@ -6,7 +6,7 @@ public class InteractiveModeManager
 {
     private readonly Job      job;
     private readonly JobList queue;
-    private readonly Func<AlbumFolder, Task<(bool wasCancelled, int newFiles)>> retrieveFolderCallback;
+    private readonly Func<AlbumFolder, Task<int>> retrieveFolderCallback;
 
     private readonly List<(AlbumFolder Folder, int Index)> original;
     private List<(AlbumFolder Folder, int Index)> filterList;
@@ -35,7 +35,7 @@ public class InteractiveModeManager
         List<AlbumFolder> folders,
         bool            canRetrieve,
         HashSet<string> retrievedFolders,
-        Func<AlbumFolder, Task<(bool, int)>> retrieveFolderCallback,
+        Func<AlbumFolder, Task<int>> retrieveFolderCallback,
         string? filterStr = null)
     {
         this.job                    = job;
@@ -181,9 +181,7 @@ public class InteractiveModeManager
                         string folderKey = username + '\\' + subfolder;
                         if (!retrievedFolders.Contains(folderKey))
                         {
-                            (bool wasCancelled, int newFiles) = await retrieveFolderCallback(folder);
-                            if (wasCancelled) goto Loop;
-
+                            int newFiles = await retrieveFolderCallback(folder);
                             retrievedFolders.Add(folderKey);
                             if (newFiles == 0)
                             {

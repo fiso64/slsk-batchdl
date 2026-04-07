@@ -13,11 +13,17 @@ namespace Tests.ClientTests
 
         private List<Soulseek.SearchResponse> index;
         private readonly bool slowMode;
+        private readonly int searchDelayMs;
+        private readonly HashSet<string> failingUsers;
 
-        public MockSoulseekClient(List<Soulseek.SearchResponse> index, bool slowMode = false)
+        public int SearchesCancelledMidDelay { get; private set; }
+
+        public MockSoulseekClient(List<Soulseek.SearchResponse> index, bool slowMode = false, int searchDelayMs = 0, IEnumerable<string>? failingUsers = null)
         {
-            this.index    = index;
-            this.slowMode = slowMode;
+            this.index         = index;
+            this.slowMode      = slowMode;
+            this.searchDelayMs = searchDelayMs;
+            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         }
 
         public static MockSoulseekClient FromLocalPaths(bool useTags, bool slowMode, params string[] localPaths)
@@ -142,16 +148,20 @@ namespace Tests.ClientTests
             return SearchAsyncInternal(query, responseHandler, scope, token, options, cancellationToken).ContinueWith(t => t.Result.Search);
         }
 
-        private Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsyncInternal(SearchQuery query, Action<SearchResponse>? responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
+        private async Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsyncInternal(SearchQuery query, Action<SearchResponse>? responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
         {
             options ??= new SearchOptions();
             var searchToken = token ?? Random.Shared.Next();
             var responses = new List<SearchResponse>();
             var totalFileCount = 0;
             var totalLockedFileCount = 0;
+            var ct = cancellationToken ?? CancellationToken.None;
+            bool firstResponse = true;
 
             foreach (var user in index)
             {
+                ct.ThrowIfCancellationRequested();
+
                 var matchingFiles = new List<Soulseek.File>();
 
                 foreach (var file in user.Files)
@@ -187,6 +197,19 @@ namespace Tests.ClientTests
                         totalLockedFileCount += response.LockedFileCount;
                         options.ResponseReceived?.Invoke((null, response));
                         responseHandler?.Invoke(response);
+
+                        // After firing the first response, simulate the search still running.
+                        // This lets fast-search tests race the provisional download against the delay.
+                        if (firstResponse && searchDelayMs > 0)
+                        {
+                            firstResponse = false;
+                            try { await Task.Delay(searchDelayMs, ct); }
+                            catch (OperationCanceledException)
+                            {
+                                SearchesCancelledMidDelay++;
+                                break;
+                            }
+                        }
                     }
 
                     if (responses.Count >= options.ResponseLimit)
@@ -204,7 +227,7 @@ namespace Tests.ClientTests
                 scope: new SearchScope(SearchScopeType.Network)
             );
 
-            return Task.FromResult((search, (IReadOnlyCollection<SearchResponse>)responses));
+            return (search, (IReadOnlyCollection<SearchResponse>)responses);
         }
 
         // One semaphore per username — each peer allows only one concurrent download,
@@ -234,6 +257,9 @@ namespace Tests.ClientTests
 
         private async Task<Transfer> DownloadAsyncInternal(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions options = null, CancellationToken? cancellationToken = null)
         {
+            if (failingUsers.Contains(username))
+                throw new SoulseekClientException($"Simulated download failure for user {username}");
+
             var transferToken = token ?? Random.Shared.Next();
             long fileSize;
             string sourceFilePath = null;

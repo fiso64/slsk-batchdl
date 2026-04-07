@@ -38,8 +38,8 @@ internal static partial class Program
 
         var engine = new DownloadEngine(config, clientManager, progressReporter: reporter);
         
-        if (reporter is CliProgressReporter cli)
-            cli.OnKeyPressed = key => engine.OnKeyPressed(key);
+        // TODO: wire up per-job cancellation here — see PLAN.md §Cancellation.
+        // cli.OnKeyPressed = key => { ... present numbered list of running jobs ... }
 
         await engine.RunAsync(cts.Token);
     }

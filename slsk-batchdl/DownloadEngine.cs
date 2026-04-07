@@ -50,16 +50,10 @@ public class DownloadEngine
     private readonly CancellationTokenSource appCts = new();
     public void Cancel() => appCts.Cancel();
 
-    // ── key interception (CLI-side) ───────────────────────────────────────────
+    // TODO: per-job cancellation via job.Cancel() — expose Cts on Job, let the CLI wire 'c' to
+    // a numbered list of running jobs so the user can pick which one to cancel. The engine should
+    // not listen for console keys. See PLAN.md §Cancellation.
 
-    private bool interceptKeys = false;
-    private event EventHandler<ConsoleKey>? keyPressed;
-
-    public void OnKeyPressed(ConsoleKey key)
-    {
-        if (interceptKeys)
-            keyPressed?.Invoke(null, key);
-    }
 
     // ── construction ─────────────────────────────────────────────────────────
 
@@ -528,7 +522,7 @@ public class DownloadEngine
                 wasInteractive = true;
                 var interactive = new InteractiveModeManager(job, Queue!, job.Results, true,
                     retrievedFolders,
-                    async (f) => await RetrieveFullFolderCancellableAsync(f, config),
+                    async (f) => await RetrieveFullFolderAsync(f, config),
                     filterStr);
                 var result = await interactive.Run();
 
@@ -559,10 +553,9 @@ public class DownloadEngine
                 {
                     if (!retrievedFolders.Contains(chosenFolder.FolderPath))
                     {
-                        (var wasCancelled, _) = await RetrieveFullFolderCancellableAsync(chosenFolder, config,
-                            "Verifying album track count.\n    Retrieving full folder contents... (Press 'c' to cancel)");
-                        if (!wasCancelled)
-                            retrievedFolders.Add(chosenFolder.FolderPath);
+                        await RetrieveFullFolderAsync(chosenFolder, config,
+                            "Verifying album track count.\n    Retrieving full folder contents...");
+                        retrievedFolders.Add(chosenFolder.FolderPath);
                     }
                     int newCount = chosenFolder.Files.Count(af => !af.IsNotAudio);
                     bool trackCountFailed = false;
@@ -598,16 +591,7 @@ public class DownloadEngine
             }
 
             using var semaphore = new SemaphoreSlim(999); // SemaphoreSlim uncapped — see §8 stale-detection fix note
-            using var cts       = new CancellationTokenSource();
-
-            bool userCancelled = false;
-            void onKey(object? s, ConsoleKey k)
-            {
-                if (k == ConsoleKey.C && !userCancelled)
-                { userCancelled = true; cts.Cancel(); }
-            }
-            interceptKeys = true;
-            keyPressed   += onKey;
+            using var cts       = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
 
             try
             {
@@ -616,19 +600,16 @@ public class DownloadEngine
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
                 {
                     Console.WriteLine();
-                    (var wasCancelled, var newFilesFound) = await RetrieveFullFolderCancellableAsync(chosenFolder, config);
-                    if (!wasCancelled)
+                    var newFilesFound = await RetrieveFullFolderAsync(chosenFolder, config);
+                    retrievedFolders.Add(chosenFolder.FolderPath);
+                    if (newFilesFound > 0)
                     {
-                        retrievedFolders.Add(chosenFolder.FolderPath);
-                        if (newFilesFound > 0)
-                        {
-                            Logger.Info($"Found {newFilesFound} more files, downloading:");
-                            await RunAlbumDownloads(chosenFolder, semaphore, cts);
-                        }
-                        else
-                        {
-                            Logger.Info("No more files found.");
-                        }
+                        Logger.Info($"Found {newFilesFound} more files, downloading:");
+                        await RunAlbumDownloads(chosenFolder, semaphore, cts);
+                    }
+                    else
+                    {
+                        Logger.Info("No more files found.");
                     }
                 }
 
@@ -639,40 +620,8 @@ public class DownloadEngine
             }
             catch (OperationCanceledException)
             {
-                if (userCancelled)
-                {
-                    Console.WriteLine();
-                    Logger.Info("Download cancelled.");
-
-                    if (chosenFolder.Files.Any(af => af.State == JobState.Done && !string.IsNullOrEmpty(af.DownloadPath)))
-                    {
-                        string defaultAction = config.DeleteAlbumOnFail ? "Yes" : config.IgnoreAlbumFail ? "No" : $"Move to {config.failedAlbumPath}";
-                        Console.Write($"Delete files? [Y/n] (default: {defaultAction}): ");
-                        var res = Console.IsInputRedirected ? "" : (Console.ReadLine() ?? "").Trim().ToLower();
-                        if (res == "y")
-                            HandleAlbumFail(chosenFolder, deleteDownloaded: true, config);
-                        else if (res == "" && !config.IgnoreAlbumFail)
-                            HandleAlbumFail(chosenFolder, config.DeleteAlbumOnFail, config);
-                    }
-
-                    if (SelectAlbumVersion == null && !config.interactiveMode)
-                    {
-                        Logger.Info("Entering interactive mode");
-                        config.interactiveMode = true;
-                        job.Config = job.Config.UpdateProfiles(job, Queue!);
-                        job.PrintLines();
-                    }
-                }
-                else
-                {
-                    if (!config.IgnoreAlbumFail)
-                        HandleAlbumFail(chosenFolder, config.DeleteAlbumOnFail, config);
-                }
-            }
-            finally
-            {
-                interceptKeys  = false;
-                keyPressed    -= onKey;
+                if (!config.IgnoreAlbumFail)
+                    HandleAlbumFail(chosenFolder, config.DeleteAlbumOnFail, config);
             }
 
             if (!succeeded)
@@ -849,8 +798,60 @@ public class DownloadEngine
         {
             _progressReporter.ReportSongSearching(song);
 
-            await searcher!.SearchSong(song, config, responseData, appCts.Token,
-                onSearch: () => _progressReporter.ReportSongSearching(song));
+            if (!config.fastSearch)
+            {
+                await searcher!.SearchSong(song, config, responseData, appCts.Token,
+                    onSearch: () => _progressReporter.ReportSongSearching(song));
+            }
+            else
+            {
+                // Fast-search: start the search as a background task and race it against a
+                // provisional download of the first qualifying candidate.
+                using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
+
+                Task<(string path, FileCandidate? candidate)>? fastDownloadTask = null;
+
+                var searchTask = searcher!.SearchSong(song, config, responseData, searchCts.Token,
+                    onSearch: () => _progressReporter.ReportSongSearching(song),
+                    onFastSearchCandidate: fc =>
+                    {
+                        if (fastDownloadTask == null)
+                        {
+                            Logger.Debug($"Fast-search: starting provisional download from {fc.Username}");
+                            string outputPath = organizer.GetSavePath(fc.Filename);
+                            fastDownloadTask = downloader!
+                                .DownloadFile(fc, outputPath, song, config, searchCts.Token)
+                                .ContinueWith(t =>
+                                {
+                                    if (t.IsCompletedSuccessfully)
+                                        return (outputPath, (FileCandidate?)fc);
+                                    return ("", (FileCandidate?)null);
+                                }, TaskScheduler.Default);
+                        }
+                    });
+
+                // Wait for whichever finishes first.
+                var neverComplete = new TaskCompletionSource<(string, FileCandidate?)>();
+                await Task.WhenAny(fastDownloadTask ?? neverComplete.Task, searchTask);
+
+                if (fastDownloadTask?.IsCompletedSuccessfully == true)
+                {
+                    var (fastPath, fastCandidate) = fastDownloadTask.Result;
+                    if (fastPath.Length > 0 && fastCandidate != null)
+                    {
+                        // Fast download won — cancel the remaining search.
+                        searchCts.Cancel();
+                        try { await searchTask; } catch (OperationCanceledException) { }
+                        _registry.UserSuccessCounts.AddOrUpdate(fastCandidate.Username, 1, (_, c) => c + 1);
+                        Logger.Debug("Fast-search: provisional download succeeded");
+                        return (fastPath, fastCandidate.File);
+                    }
+                    // Fast download failed — fall through, wait for full search results.
+                    Logger.Debug("Fast-search: provisional download failed, waiting for full search");
+                }
+
+                await searchTask;
+            }
         }
 
         var candidates = song.Candidates;
@@ -1025,32 +1026,13 @@ public class DownloadEngine
 
     // ── folder retrieval ──────────────────────────────────────────────────────
 
-    public async Task<(bool WasCancelled, int FileCount)> RetrieveFullFolderCancellableAsync(
+    public async Task<int> RetrieveFullFolderAsync(
         AlbumFolder folder, Config config, string? customMessage = null)
     {
-        customMessage ??= "Getting all files in folder... (Press 'c' to cancel)";
+        customMessage ??= "Getting all files in folder...";
         Logger.Info(customMessage);
 
-        using var cts = new CancellationTokenSource();
-        var task      = searcher!.CompleteFolder(folder, cts.Token);
-
-        while (!task.IsCompleted)
-        {
-            if (Console.KeyAvailable && !Console.IsInputRedirected)
-            {
-                if (Console.ReadKey(true).Key == ConsoleKey.C)
-                {
-                    cts.Cancel();
-                    try { await task; } catch (OperationCanceledException) { }
-                    Logger.Info("Folder retrieval cancelled by user.");
-                    return (true, 0);
-                }
-            }
-            await Task.Delay(100);
-        }
-
-        int fileCount = await task;
-        return (false, fileCount);
+        return await searcher!.CompleteFolder(folder, appCts.Token);
     }
 
 
@@ -1173,54 +1155,18 @@ public class DownloadEngine
 
             bool allSucceeded = true;
             using var semaphore = new SemaphoreSlim(1);
-            using var cts       = new CancellationTokenSource();
+            using var cts       = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
 
-            bool userCancelled = false;
-            void onKey(object? s, ConsoleKey k) { if (k == ConsoleKey.C) { userCancelled = true; cts.Cancel(); } }
-            interceptKeys = true;
-            keyPressed   += onKey;
-
-            try
+            foreach (var af in imgs)
             {
-                foreach (var af in imgs)
-                {
-                    if (af.ResolvedTarget != null && af.Candidates == null)
-                        af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-                    await DownloadSong(af, job, config, fileManager, semaphore, cts, cancelOnFail: false,
-                        removeFromSource: false, organize: true);
-                    if (af.State == JobState.Done)
-                        result.Add(af);
-                    else
-                        allSucceeded = false;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                if (userCancelled)
-                {
-                    Console.WriteLine();
-                    Logger.Info("Download cancelled.");
-                    if (imgs.Any(af => af.State == JobState.Done && !string.IsNullOrEmpty(af.DownloadPath)))
-                    {
-                        Console.Write("Delete files? [Y/n] (default: Yes): ");
-                        var res = Console.IsInputRedirected ? "" : (Console.ReadLine() ?? "").Trim().ToLower();
-                        if (res == "y" || res == "")
-                        {
-                            var imgFolder = new AlbumFolder(imgs[0].ResolvedTarget!.Response.Username,
-                                Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)), imgs);
-                            HandleAlbumFail(imgFolder, true, config);
-                        }
-                    }
-                    if (!config.interactiveMode)
-                    { Logger.Info("Entering interactive mode"); config.interactiveMode = true; }
-                    continue;
-                }
-                throw;
-            }
-            finally
-            {
-                interceptKeys  = false;
-                keyPressed    -= onKey;
+                if (af.ResolvedTarget != null && af.Candidates == null)
+                    af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
+                await DownloadSong(af, job, config, fileManager, semaphore, cts, cancelOnFail: false,
+                    removeFromSource: false, organize: true);
+                if (af.State == JobState.Done)
+                    result.Add(af);
+                else
+                    allSucceeded = false;
             }
 
             if (allSucceeded) break;
