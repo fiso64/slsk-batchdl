@@ -363,13 +363,31 @@ the root `JobList`, a nested `JobList` inside an `ExtractJob.Result`, or any oth
 `ExtractJob.Result` that is a `JobList` gets the same concurrent fan-out as the root.
 
 When concurrency is enabled, the `JobList` branch becomes `await Task.WhenAll(...)` over its
-children, limited by semaphores. Three independent semaphores are envisioned:
-- **Extractor concurrency** — limits simultaneous `ExtractJob` runs (network API calls)
-- **Album job concurrency** — limits simultaneous album search+download cycles
-- **Song job concurrency** — limits simultaneous song search+download cycles (already exists as `concurrentProcesses`)
+children, limited by semaphores. All semaphores are tree-wide (not per-list).
 
-These semaphores count across the entire tree, not per-list, so the total resource usage is bounded
-globally. For now the loop remains sequential (step 11 adds the fan-out).
+**Search concurrency** is the primary resource constraint — issuing too many simultaneous
+searches pummels the network. Two independent limiters compose in series on every search:
+
+1. **`RateLimitedSemaphore` (existing)** — inside `Searcher.RunSearches`. Limits *rate*:
+   N searches issued per time window (e.g. 5 per 5s). Config: `--searches-per-time` /
+   `--search-renew-time`.
+2. **`SemaphoreSlim concurrentSearches` (new, engine-level)** — limits *concurrency*: at most
+   N searches in-flight simultaneously across the whole tree. Acquired around the full duration
+   of each search (including the fast-search background task). Default: 2.
+   Config: `--concurrent-searches`.
+
+`SearchDirectLinkAlbum` (browse request to a single known peer, not a network keyword search)
+does **not** consume a search concurrency slot.
+
+**Extractor concurrency** — limits simultaneous `ExtractJob` runs to avoid API rate limits
+(Spotify, YouTube, etc.). Default: 2. Config: `--concurrent-extractors`.
+
+**Download/album concurrency** — downloads are p2p and each peer serialises uploads anyway,
+so there is no meaningful reason to cap simultaneous downloads at the engine level. Album and
+song job concurrency limits default to unlimited (effectively ∞). Config flags can be added
+later if needed.
+
+For now the loop remains sequential (step 11 adds the fan-out).
 
 **CLI rendering:** The existing `CliProgressReporter` already handles concurrent song downloads
 (progress bars per `SongJob`, updated in-place via Konsole) and concurrent album searches
@@ -477,3 +495,8 @@ Steps 1–10 are complete with the following caveats:
 - **Fast-search is engine-internal, coordinator-owned** — `SearchAndDownloadSong` runs search and
   provisional download concurrently. `searchCts` is created and cancelled inside this function.
   `Downloader.DownloadFile` has no knowledge of `searchCts`.
+- **Search concurrency uses two composing limiters** — `RateLimitedSemaphore` (existing, inside
+  `Searcher`) limits rate; a new engine-level `SemaphoreSlim` limits simultaneous in-flight
+  searches tree-wide (default 2, config `--concurrent-searches`). `SearchDirectLinkAlbum` is
+  exempt (peer browse, not a network keyword search). Download concurrency is unlimited.
+  Extractor concurrency is limited separately (default 2, config `--concurrent-extractors`).

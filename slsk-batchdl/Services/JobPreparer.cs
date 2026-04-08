@@ -23,6 +23,21 @@ namespace Services
             return contexts;
         }
 
+        // Prepares a single subtree rooted at `root`, using `parentConfig` as the starting config.
+        // Returns only the newly created contexts (caller merges them into the main dict).
+        public static Dictionary<Guid, JobContext> PrepareSubtree(Job root, Config parentConfig)
+        {
+            var newContexts = new Dictionary<Guid, JobContext>();
+            var editors     = new Dictionary<(string path, M3uOption option), M3uEditor>();
+            var skippers    = new Dictionary<(string dir, SkipMode mode, bool checkCond), TrackSkipper>();
+
+            // Use a synthetic owner list so index/playlist paths are scoped correctly when
+            // root is a bare leaf job (not a JobList).
+            var ownerList = root as JobList ?? new JobList();
+            PrepareJob(root, ownerList, parentConfig, newContexts, editors, skippers);
+            return newContexts;
+        }
+
         private static void PrepareJob(
             Job job,
             JobList ownerList,

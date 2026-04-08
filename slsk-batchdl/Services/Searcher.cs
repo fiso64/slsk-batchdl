@@ -18,19 +18,21 @@ public class Searcher
     private readonly ISearchRegistry searchRegistry;
     private readonly IUserStats userStats;
     private readonly IProgressReporter progressReporter;
-    private readonly RateLimitedSemaphore searchSemaphore;
+    private readonly RateLimitedSemaphore rateSemaphore;
+    private readonly SemaphoreSlim concurrencySemaphore;
 
-    public Searcher(ISoulseekClient client, 
-                    ISearchRegistry searchRegistry, 
-                    IUserStats userStats, 
+    public Searcher(ISoulseekClient client,
+                    ISearchRegistry searchRegistry,
+                    IUserStats userStats,
                     IProgressReporter progressReporter,
-                    int searchesPerTime, int searchRenewTime)
+                    int searchesPerTime, int searchRenewTime, int concurrentSearches = 2)
     {
         this.client = client;
         this.searchRegistry = searchRegistry;
         this.userStats = userStats;
         this.progressReporter = progressReporter;
-        searchSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
+        rateSemaphore        = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
+        concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
 
 
@@ -78,7 +80,9 @@ public class Searcher
                 fileFilter:     f => nec.FileSatisfies(f, song.Query, null));
 
         progressReporter.ReportSearchStart(song);
-        await RunSearches(song.Query, results, getOpts, responseHandler, config, ct, onSearch);
+        await concurrencySemaphore.WaitAsync(ct);
+        try   { await RunSearches(song.Query, results, getOpts, responseHandler, config, ct, onSearch); }
+        finally { concurrencySemaphore.Release(); }
 
         searchRegistry.Searches.TryRemove(song, out _);
 
@@ -135,7 +139,9 @@ public class Searcher
         }
 
         using var cts = new CancellationTokenSource();
-        await RunSearches(query, results, getOpts, handler, config, cts.Token);
+        await concurrencySemaphore.WaitAsync(cts.Token);
+        try   { await RunSearches(query, results, getOpts, handler, config, cts.Token); }
+        finally { concurrencySemaphore.Release(); }
 
         job.Results = BuildAlbumFolders(results, job.Query, config);  // was job.FoundFolders
     }
@@ -192,7 +198,9 @@ public class Searcher
         }
 
         using var cts = new CancellationTokenSource();
-        await RunSearches(job.Query, results, getOpts, handler, config, cts.Token);
+        await concurrencySemaphore.WaitAsync(cts.Token);
+        try   { await RunSearches(job.Query, results, getOpts, handler, config, cts.Token); }
+        finally { concurrencySemaphore.Release(); }
 
         var equivalentFiles = EquivalentFiles(job.Query, results.Select(x => x.Value), config)
             .Select(x => (x.query, ResultSorter.OrderedResults(x.candidates.Select(c => (c.Response, c.File)), x.query, config, userStats.UserSuccessCounts, false, false, false)))
@@ -691,7 +699,7 @@ public class Searcher
     private async Task DoSearch(string search, SearchOptions opts, Action<SearchResponse> rHandler,
         Config config, CancellationToken? ct = null, Action? onSearch = null)
     {
-        await searchSemaphore.WaitAsync();
+        await rateSemaphore.WaitAsync();
         try
         {
             search = CleanSearchString(search, !config.noRemoveSpecialChars);

@@ -15,7 +15,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
         {
             listFilePath = Utils.ExpandVariables(input);
 
@@ -52,9 +52,6 @@ namespace Extractors
                 if (isAlbum)
                     fields[0] = "album://" + fields[0];
 
-                var (_, ex) = ExtractorRegistry.GetMatchingExtractor(fields[0]);
-                var job = await ex.GetTracks(fields[0], int.MaxValue, 0, false, config);
-
                 FileConditions? extractorCond     = null;
                 FileConditions? extractorPrefCond = null;
 
@@ -63,24 +60,20 @@ namespace Extractors
                 if (fields.Count >= 3)
                     extractorPrefCond = Config.ParseConditions(fields[2]);
 
-                job.ExtractorCond         = extractorCond;
-                job.ExtractorPrefCond     = extractorPrefCond;
-                job.EnablesIndexByDefault = true;
-                job.LineNumber            = i + 1;
-                job.ItemNumber            = offset + added + 1;
-
-                // For a single-song JobList, also set provenance on the song itself
-                if (job is JobList jl && jl.Jobs.Count == 1 && jl.Jobs[0] is SongJob slSong)
+                var ej = new ExtractJob(fields[0])
                 {
-                    slSong.LineNumber = i + 1;
-                    slSong.ItemNumber = offset + added + 1;
-                }
+                    ExtractorCond         = extractorCond,
+                    ExtractorPrefCond     = extractorPrefCond,
+                    EnablesIndexByDefault = true,
+                    LineNumber            = i + 1,
+                    ItemNumber            = offset + added + 1,
+                };
 
-                result.Jobs.Add(job);
+                result.Jobs.Add(ej);
                 added++;
             }
 
-            return result;
+            return Task.FromResult<Job>(result);
         }
 
         static List<string> ParseLine(string input)

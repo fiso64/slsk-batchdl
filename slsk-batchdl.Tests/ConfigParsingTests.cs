@@ -49,13 +49,6 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
-        public void Defaults_ConcurrentProcesses_IsPositive()
-        {
-            var config = TestHelpers.CreateDefaultConfig();
-            Assert.IsTrue(config.concurrentProcesses > 0);
-        }
-
-        [TestMethod]
         public void Defaults_DoNotDownload_FalseByDefault()
         {
             var config = TestHelpers.CreateDefaultConfig();
@@ -92,13 +85,6 @@ namespace Tests.ConfigParsingTests
         {
             var config = new Config(new[] { "--config", "none", "--max-stale-time", "60000", "some input" });
             Assert.AreEqual(60000, config.maxStaleTime);
-        }
-
-        [TestMethod]
-        public void ConcurrentProcesses_SetsValue()
-        {
-            var config = new Config(new[] { "--config", "none", "--concurrent-processes", "5", "some input" });
-            Assert.AreEqual(5, config.concurrentProcesses);
         }
 
         [TestMethod]

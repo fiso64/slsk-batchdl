@@ -37,16 +37,29 @@ namespace Jobs
             }
         }
 
-        // Yields all SongJobs in this list (not recursing further than one level).
-        public IEnumerable<SongJob> AllSongs()
+        // Yields all SongJobs reachable from this list, traversing ExtractJob.Result nodes.
+        public IEnumerable<SongJob> AllSongs() => AllJobs().OfType<SongJob>();
+
+        // Yields every Job reachable from this list (depth-first), following ExtractJob.Result.
+        public IEnumerable<Job> AllJobs()
         {
             foreach (var job in Jobs)
-            {
-                if (job is JobList jl)
-                    foreach (var s in jl.Jobs.OfType<SongJob>()) yield return s;
-                else if (job is SongJob sj)
-                    yield return sj;
-            }
+                foreach (var j in WalkJob(job))
+                    yield return j;
+        }
+
+        private static IEnumerable<Job> WalkJob(Job job)
+        {
+            yield return job;
+
+            if (job is ExtractJob ej && ej.Result != null)
+                foreach (var j in WalkJob(ej.Result))
+                    yield return j;
+
+            if (job is JobList jl)
+                foreach (var child in jl.Jobs)
+                    foreach (var j in WalkJob(child))
+                        yield return j;
         }
 
         // Reverses a list of jobs and the children inside any JobList containers.

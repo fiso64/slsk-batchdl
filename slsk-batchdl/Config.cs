@@ -107,7 +107,8 @@ public class Config
     public int offset = 0;
     public int maxStaleTime = 30000;
     public int searchTimeout = 6000;
-    public int concurrentProcesses = 2;
+    public int concurrentSearches   = 2;
+    public int concurrentExtractors = 2;
     public int unknownErrorRetries = 2;
     public int maxRetriesPerTrack = 30;
     public int? listenPort = 49998;
@@ -288,9 +289,6 @@ public class Config
 
     public void PostProcessArgs(JobList queue) // must be run after extracting job list
     {
-        if (DoNotDownload)
-            concurrentProcesses = 1;
-
         ignoreOn = Math.Min(ignoreOn, downrankOn);
 
         writeIndex = WillWriteIndex(queue);
@@ -1112,11 +1110,11 @@ public class Config
                         maxStaleTime = getIntParameter(ref i);
                         break;
                     case "--cp":
-                    case "--cd":
-                    case "--processes":
-                    case "--concurrent-processes":
-                    case "--concurrent-downloads":
-                        concurrentProcesses = getIntParameter(ref i);
+                    case "--concurrent-searches":
+                        concurrentSearches = getIntParameter(ref i);
+                        break;
+                    case "--concurrent-extractors":
+                        concurrentExtractors = getIntParameter(ref i);
                         break;
                     case "--spt":
                     case "--searches-per-time":

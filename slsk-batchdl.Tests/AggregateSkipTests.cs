@@ -56,7 +56,7 @@ namespace Tests.EndToEnd
 
                 // Check the job queue to see if the track was marked as already existing
                 Assert.IsNotNull(app.Queue, "Queue should not be null");
-                var aggregateJob = app.Queue.Jobs.OfType<AggregateJob>().FirstOrDefault();
+                var aggregateJob = app.Queue.AllJobs().OfType<AggregateJob>().FirstOrDefault();
                 Assert.IsNotNull(aggregateJob, "Should have found an AggregateJob");
                 
 

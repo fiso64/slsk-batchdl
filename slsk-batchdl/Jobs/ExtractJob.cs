@@ -4,12 +4,15 @@ using Models;
 namespace Jobs
 {
     // Holds a single input string to be resolved by an extractor.
-    // The engine runs the appropriate extractor on it and replaces it in
-    // the tree with a JobList containing the extracted jobs.
+    // The engine runs the appropriate extractor, sets Result, then processes Result as a child.
+    // The ExtractJob itself stays in the tree as a historical record of what was extracted.
     public class ExtractJob : Job
     {
         public string     Input     { get; }
         public InputType? InputType { get; set; }
+
+        // Set by the engine after extraction. Null until the engine processes this job.
+        public Job? Result { get; set; }
 
         public override bool     OutputsDirectory      => false;
         protected override bool  DefaultCanBeSkipped   => false;
