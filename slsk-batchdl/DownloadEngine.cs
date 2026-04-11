@@ -185,10 +185,100 @@ public class DownloadEngine
             return;
         }
 
-        // ── JobList: fan-out, all children run concurrently ─────────────────
+        // ── JobList: list-level setup, fan-out, list-level cleanup ──────────
         if (job is JobList jl)
         {
-            await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child)));
+            var ctx    = _contexts.TryGetValue(jl.Id, out var c) ? c : null;
+            var config = jl.Config ?? defaultConfig;
+
+            Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
+
+            if (ctx?.PreprocessTracks == true)
+                Preprocessor.PreprocessJob(jl, config);
+
+            jl.PrintLines();
+
+            // ── skip checks for direct SongJob children ──────────────────────
+            var directSongs = jl.Jobs.OfType<SongJob>().ToList();
+            var existing    = new List<SongJob>();
+            var notFound    = new List<SongJob>();
+
+            if (directSongs.Count > 0 && !config.PrintResults)
+            {
+                if (ctx != null && config.skipNotFound)
+                    foreach (var song in directSongs)
+                        if (TrySetNotFoundLastTime(song, ctx.IndexEditor))
+                            notFound.Add(song);
+
+                if (ctx != null && config.skipExisting)
+                    foreach (var song in directSongs.Where(s => s.State == JobState.Pending))
+                        if (TrySetAlreadyExists(jl, song, TrackSkipperContext.From(ctx, config)))
+                            existing.Add(song);
+
+                Printing.PrintTracksTbd(directSongs.Where(s => s.State == JobState.Pending).ToList(),
+                    existing, notFound, isNormal: true, config);
+            }
+
+            if (config.PrintTracks)
+            {
+                jl.PrintLines();
+                return;
+            }
+
+            if (config.PrintResults && directSongs.Count > 0)
+            {
+                await _clientManager.WaitUntilReadyAsync(appCts.Token);
+                await Printing.PrintResults(jl, existing, notFound, config, searcher!);
+                return;
+            }
+
+            ctx?.IndexEditor?.Update();
+            ctx?.PlaylistEditor?.Update();
+
+            // ── fan-out ───────────────────────────────────────────────────────
+            if (directSongs.Count > 0)
+            {
+                var intervalReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, directSongs);
+
+                await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
+                {
+                    bool wasInitial = child is SongJob s && s.State == JobState.Pending;
+                    await ProcessJob(child);
+
+                    if (wasInitial && child is SongJob song)
+                    {
+                        ctx?.IndexEditor?.Update();
+                        ctx?.PlaylistEditor?.Update();
+                        intervalReporter.MaybeReport(song.State);
+                        int dl = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
+                        int fl = directSongs.Count(s => s.State == JobState.Failed);
+                        _progressReporter.ReportOverallProgress(dl, fl, directSongs.Count);
+
+                        if (config.removeTracksFromSource && song.State == JobState.Done)
+                        {
+                            try { await extractor!.RemoveTrackFromSource(song); }
+                            catch (Exception ex) { Logger.Error($"Error removing track from source: {ex.Message}"); }
+                        }
+                    }
+                }));
+
+                int dlFinal = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
+                int flFinal = directSongs.Count(s => s.State == JobState.Failed);
+                _progressReporter.ReportListProgress(jl, dlFinal, flFinal, directSongs.Count);
+
+                // If all succeeded and the extractor supports whole-list removal (e.g. list.txt
+                // removes the entire source file), call it at the list level too.
+                if (config.removeTracksFromSource && directSongs.All(s => s.State == JobState.Done || s.State == JobState.AlreadyExists))
+                {
+                    try { await extractor!.RemoveTrackFromSource(new SongJob(jl.QueryTrack)); }
+                    catch { /* list-level removal is best-effort */ }
+                }
+            }
+            else
+            {
+                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child)));
+            }
+
             return;
         }
 
@@ -208,18 +298,9 @@ public class DownloadEngine
 
         job.PrintLines();
 
-        var existing = new List<SongJob>();
-        var notFound = new List<SongJob>();
-
         // ── skip checks ──────────────────────────────────────────────────────
 
-        if (config.skipNotFound && !config.PrintResults && job is JobList sljSkipNF)
-        {
-            foreach (var song in sljSkipNF.Jobs.OfType<SongJob>())
-                if (TrySetNotFoundLastTime(song, ctx.IndexEditor))
-                    notFound.Add(song);
-        }
-        else if (config.skipNotFound && !config.PrintResults && job.CanBeSkipped)
+        if (config.skipNotFound && !config.PrintResults && job.CanBeSkipped)
         {
             if (TrySetNotFoundLastTimeForJob(job))
             {
@@ -228,36 +309,23 @@ public class DownloadEngine
             }
         }
 
-        if (config.skipExisting && !config.PrintResults)
+        if (config.skipExisting && !config.PrintResults && job.CanBeSkipped && TrySetJobAlreadyExists(job, ctx))
         {
-            if (job is JobList sljSkipEx)
-            {
-                foreach (var song in sljSkipEx.Jobs.OfType<SongJob>().Where(s => s.State == JobState.Pending))
-                    if (TrySetAlreadyExists(job, song, TrackSkipperContext.From(ctx, config)))
-                        existing.Add(song);
-            }
-            else if (job.CanBeSkipped && TrySetJobAlreadyExists(job, ctx))
-            {
-                Logger.Info($"Download '{job.ToString(true)}' already exists at {(job as AlbumJob)?.DownloadPath}, skipping");
-                ctx.IndexEditor?.Update();
-                ctx.PlaylistEditor?.Update();
-                return;
-            }
+            Logger.Info($"Download '{job.ToString(true)}' already exists at {(job as AlbumJob)?.DownloadPath}, skipping");
+            ctx.IndexEditor?.Update();
+            ctx.PlaylistEditor?.Update();
+            return;
         }
 
         if (config.PrintTracks)
         {
-            if (job is JobList sljPt)
-                Printing.PrintTracksTbd(sljPt.Jobs.OfType<SongJob>().Where(s => s.State == JobState.Pending).ToList(), existing, notFound, isNormal: true, config);
             job.PrintLines();
             return;
         }
 
-        // ── jobs that need source search first ───────────────────────────────
+        // ── source search ─────────────────────────────────────────────────────
 
-        bool needSourceSearch = job is AlbumJob or AggregateJob or AlbumAggregateJob;
-
-        if (needSourceSearch)
+        if (job is AlbumJob or AggregateJob or AlbumAggregateJob)
         {
             await _clientManager.WaitUntilReadyAsync(appCts.Token);
 
@@ -341,57 +409,30 @@ public class DownloadEngine
         if (config.PrintResults)
         {
             await _clientManager.WaitUntilReadyAsync(appCts.Token);
-            await Printing.PrintResults(job, existing, notFound, config, searcher!);
+            await Printing.PrintResults(job, new(), new(), config, searcher!);
             return;
         }
 
-        await DispatchDownload(job, ctx, notFound, existing);
-    }
+        // ── download ─────────────────────────────────────────────────────────
 
-
-
-    async Task DispatchDownload(Job job, JobContext ctx, List<SongJob>? notFound, List<SongJob>? existing)
-    {
-        var config = job.Config;
         ctx.IndexEditor?.Update();
         ctx.PlaylistEditor?.Update();
+
+        await _clientManager.WaitUntilReadyAsync(appCts.Token);
 
         switch (job)
         {
             case SongJob sj:
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await ProcessSongJob(sj, ctx);
                 break;
 
-            case JobList jl when jl.Jobs.Count > 0 && jl.Jobs[0] is AlbumJob:
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessJobList(jl, ctx);
-                break;
-
-            case JobList jl:
-            {
-                var songs = jl.Jobs.OfType<SongJob>().ToList();
-                Printing.PrintTracksTbd(songs.Where(s => s.State == JobState.Pending).ToList(),
-                    existing ?? new(), notFound ?? new(), isNormal: true, config);
-
-                int initialCount = songs.Count;
-                int skipCount    = (notFound?.Count ?? 0) + (existing?.Count ?? 0);
-                if (skipCount >= initialCount) return;
-
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessSongListJob(jl, ctx);
-                break;
-            }
-
             case AlbumJob aj:
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
-                await ProcessAlbumJob(aj, Ctx(aj));
+                await ProcessAlbumJob(aj, ctx);
                 break;
 
             case AggregateJob ag:
                 Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
                     new(), new(), isNormal: false, config);
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
                 await ProcessAggregateJob(ag, ctx);
                 break;
         }
@@ -399,71 +440,6 @@ public class DownloadEngine
 
 
     // ── per-job-type handlers ─────────────────────────────────────────────────
-
-    async Task ProcessJobList(JobList job, JobContext ctx)
-    {
-        var config = job.Config;
-        int failed = 0;
-
-        foreach (var albumJob in job.Jobs.OfType<AlbumJob>())
-        {
-            albumJob.Config ??= job.Config;
-            var childCtx = Ctx(albumJob);
-
-            // Skip check
-            if (config.skipExisting && albumJob.CanBeSkipped && TrySetJobAlreadyExists(albumJob, childCtx))
-            {
-                Logger.Info($"Download '{albumJob.ToString(true)}' already exists, skipping");
-                childCtx.IndexEditor?.Update();
-                continue;
-            }
-
-            // Source search
-            Console.WriteLine();
-            _progressReporter.ReportJobStarted(albumJob, parallel: false);
-
-            var responseData = new ResponseData();
-            bool found = false;
-
-            if (!albumJob.Query.IsDirectLink)
-                await searcher!.SearchAlbum(albumJob, config, responseData, appCts.Token);
-            else
-            {
-                try
-                {
-                    _progressReporter.ReportJobFolderRetrieving(albumJob);
-                    await searcher!.SearchDirectLinkAlbum(albumJob, appCts.Token);
-                }
-                catch (UserOfflineException e)
-                {
-                    Logger.Error("Error: " + e.Message);
-                }
-            }
-
-            found = albumJob.Results.Count > 0;
-            _progressReporter.ReportJobCompleted(albumJob, found, responseData.lockedFilesCount);
-
-            if (!found)
-            {
-                albumJob.State         = JobState.Failed;
-                albumJob.FailureReason = FailureReason.NoSuitableFileFound;
-                await OnCompleteExecutor.ExecuteAsync(albumJob, null, childCtx);
-                failed++;
-                childCtx.IndexEditor?.Update();
-                continue;
-            }
-
-            // Download
-            await ProcessAlbumJob(albumJob, childCtx);
-
-            if (albumJob.State != JobState.Done) failed++;
-        }
-
-        job.State = (failed == job.Jobs.Count && job.Jobs.Count > 0) ? JobState.Failed : JobState.Done;
-        ctx.IndexEditor?.Update();
-        ctx.PlaylistEditor?.Update();
-    }
-
 
     async Task ProcessSongJob(SongJob job, JobContext ctx)
     {
@@ -480,44 +456,6 @@ public class DownloadEngine
 
         ctx.IndexEditor?.Update();
         ctx.PlaylistEditor?.Update();
-    }
-
-
-    async Task ProcessSongListJob(JobList job, JobContext ctx)
-    {
-        var config = job.Config;
-        var songs = job.Jobs.OfType<SongJob>().ToList();
-        var progressReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, songs);
-        var organizer = new FileManager(job, config);
-
-        var downloadTasks = songs.Select(async (song, _) =>
-        {
-            using var cts   = new CancellationTokenSource();
-            bool wasInitial = song.State == JobState.Pending;
-
-            await DownloadSong(song, job, config, organizer, cts, cancelOnFail: false,
-                removeFromSource: true, organize: true);
-
-            ctx.IndexEditor?.Update();
-            ctx.PlaylistEditor?.Update();
-
-            if (wasInitial)
-            {
-                progressReporter.MaybeReport(song.State);
-                int downloaded = songs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
-                int failed     = songs.Count(s => s.State == JobState.Failed);
-                _progressReporter.ReportOverallProgress(downloaded, failed, songs.Count);
-            }
-        });
-
-        await Task.WhenAll(downloadTasks);
-
-        int dl = songs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
-        int fl = songs.Count(s => s.State == JobState.Failed);
-        _progressReporter.ReportListProgress(job, dl, fl, songs.Count);
-
-        if (config.removeTracksFromSource && songs.All(s => s.State == JobState.Done || s.State == JobState.AlreadyExists))
-            await extractor!.RemoveTrackFromSource(new SongJob(job.QueryTrack));
     }
 
 
