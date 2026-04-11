@@ -106,7 +106,7 @@ public class DownloadEngine
 
     // ── recursive job processor ───────────────────────────────────────────────
 
-    async Task ProcessJob(Job job, IExtractor? extractor = null)
+    async Task ProcessJob(Job job, IExtractor? extractor = null, bool parallel = false)
     {
         // ── ExtractJob: run extractor, set Result, recurse ───────────────────
         if (job is ExtractJob ej)
@@ -116,6 +116,7 @@ public class DownloadEngine
 
             Logger.Info($"Input ({inputType}): {ej.Input}");
             ej.State = JobState.Extracting;
+            _progressReporter.ReportExtractionStarted(ej);
 
             Job extracted;
             await _extractorSemaphore.WaitAsync(appCts.Token);
@@ -136,6 +137,7 @@ public class DownloadEngine
 
             ej.Result = extracted;
             ej.State  = JobState.Done;
+            _progressReporter.ReportExtractionCompleted(ej, extracted);
 
             Logger.Debug("Got tracks");
 
@@ -239,10 +241,11 @@ public class DownloadEngine
             {
                 var intervalReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, directSongs);
 
+                bool songParallel = jl.Jobs.Count > 1;
                 await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
                 {
                     bool wasInitial = child is SongJob s && s.State == JobState.Pending;
-                    await ProcessJob(child, extractor);
+                    await ProcessJob(child, extractor, parallel: songParallel);
 
                     if (wasInitial && child is SongJob song)
                     {
@@ -275,17 +278,18 @@ public class DownloadEngine
             }
             else
             {
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor)));
+                bool childParallel = jl.Jobs.Count > 1;
+                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, parallel: childParallel)));
             }
 
             return;
         }
 
         // ── Leaf jobs: skip checks, search, download ─────────────────────────
-        await ProcessLeafJob(job);
+        await ProcessLeafJob(job, parallel);
     }
 
-    async Task ProcessLeafJob(Job job)
+    async Task ProcessLeafJob(Job job, bool parallel = false)
     {
         var ctx    = Ctx(job);
         var config = job.Config;
@@ -328,7 +332,7 @@ public class DownloadEngine
         {
             await _clientManager.WaitUntilReadyAsync(appCts.Token);
 
-            _progressReporter.ReportJobStarted(job, parallel: false);
+            _progressReporter.ReportJobStarted(job, parallel);
 
             bool         foundSomething = false;
             ResponseData responseData   = new ResponseData();
@@ -772,6 +776,7 @@ public class DownloadEngine
         // Skip search if candidates are pre-set (ResolvedTarget / direct download).
         if (song.Candidates == null)
         {
+            song.State = JobState.Searching;
             _progressReporter.ReportSongSearching(song);
 
             if (!config.fastSearch)
@@ -850,6 +855,7 @@ public class DownloadEngine
 
             try
             {
+                song.State = JobState.Downloading;
                 // ReportDownloadStart is called inside DownloadFile (via Downloader).
                 await downloader!.DownloadFile(candidate, outputPath, song, config, appCts.Token);
                 _registry.UserSuccessCounts.AddOrUpdate(candidate.Username, 1, (_, c) => c + 1);

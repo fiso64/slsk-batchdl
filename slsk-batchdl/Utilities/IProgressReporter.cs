@@ -27,6 +27,10 @@ namespace Utilities
         void ReportListProgress(JobList list, int downloaded, int failed, int total);
 
         // ── display events (terminal rendering) ─────────────────────────────
+        // Extraction-level
+        void ReportExtractionStarted(ExtractJob job);
+        void ReportExtractionCompleted(ExtractJob job, Job result);
+
         // Job-level
         void ReportJobStarted(Job job, bool parallel);
         void ReportJobFolderRetrieving(Job job);
@@ -57,6 +61,8 @@ namespace Utilities
         public void ReportStateChanged(SongJob song, FileCandidate? chosen = null) { }
         public void ReportOverallProgress(int downloaded, int failed, int total) { }
         public void ReportListProgress(JobList list, int downloaded, int failed, int total) { }
+        public void ReportExtractionStarted(ExtractJob job) { }
+        public void ReportExtractionCompleted(ExtractJob job, Job result) { }
         public void ReportJobStarted(Job job, bool parallel) { }
         public void ReportJobFolderRetrieving(Job job) { }
         public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }

@@ -43,6 +43,15 @@ with `Results` populated and sets `job.ResolvedTarget`. `AlbumFolder.Files` is `
 
 **`AggregateJob`** and **`AlbumAggregateJob`** stay conceptually unchanged.
 
+**`Job` base class** carries only fields that are genuinely universal:
+- `Id`, `State`, `Config`, `FailureReason` — lifecycle fields present on every job
+- `ItemName`, `ItemNumber`, `LineNumber` — identity/provenance, used by all job types
+- `CanBeSkipped` / `CanBeSkippedOverride` — skip-check policy, defaulted by subclass
+- `ExtractorCond`, `ExtractorPrefCond`, `EnablesIndexByDefault` — extractor hints consumed and
+  cleared by `JobPreparer`; kept on the base because any job type can be produced by an extractor
+- `QueryTrack: SongQuery?` — virtual, returns `null` on the base; overridden by leaf types that
+  have a meaningful query (`SongJob`, `AlbumJob`, etc.); `ExtractJob` and `JobList` do not override
+
 ---
 
 ## 2. Lifecycle model
@@ -91,7 +100,9 @@ Queue → [
 `ExtractJob` nodes stay in the tree with `Result` set — they are never removed or replaced.
 
 `RemoveTrackFromSource` stays on `IExtractor`. The engine calls it after a `SongJob` completes
-inside a `JobList` that was produced by that extractor.
+inside a `JobList` that was produced by that extractor. The extractor reference is threaded as a
+parameter through `ProcessJob` — it is not stored as an engine field (which would be a data race
+under concurrent fan-out).
 
 ---
 
@@ -102,16 +113,10 @@ user-level semantic decision applied after extraction. Exception: the String ext
 `config.album` at extraction time and returns `AlbumJob` directly when set, since it is building
 a query from scratch and can choose the right type immediately.
 
-For all other extractors, `UpgradeToAlbumMode` is an engine-level transform. It is a standalone
-function `UpgradeToAlbumMode(Job job, bool album, bool aggregate) → Job` that handles any shape:
-
-- `JobList` → upgrades each child in-place (e.g. Spotify/YouTube playlist `SongJob`s → `AlbumJob`s)
-- bare `SongJob` → returns `AlbumJob` / `AggregateJob` / `AlbumAggregateJob` as appropriate
-- bare `AlbumJob` → returns `AlbumAggregateJob` if aggregate, otherwise unchanged
-- anything else → returned as-is
-
-In practice `UpgradeToAlbumMode` is only ever called on `JobList` results (playlist extractors).
-The generic signature handles edge cases cleanly without special-casing.
+For all other extractors, `UpgradeToAlbumMode` is a method on `JobList`, called by the engine
+after extraction. It upgrades each child in-place (e.g. Spotify/YouTube playlist `SongJob`s →
+`AlbumJob`s). For bare (non-list) results, the engine wraps in a temporary `JobList`, upgrades,
+then unwraps.
 
 ---
 
@@ -133,11 +138,9 @@ model). Each `ExtractJob` gets its own config slice (profiles may change per sou
 
 ## 6. `SongJob` as a unified type
 
-`SongJob` currently lives outside the `Job` hierarchy (it's `INotifyPropertyChanged` but not `Job`).
-It becomes a full `Job` subclass. This means:
+`SongJob` becomes a full `Job` subclass:
 
-- `ItemNumber`, `LineNumber`, `FailureReason`, `Config` all move onto the base `Job` — no more
-  separate mirroring on `SongJob`
+- `ItemNumber`, `LineNumber`, `FailureReason`, `Config` all live on the base `Job`
 - `SongJob.Other` (YouTube display metadata) stays as-is
 - `SongJob.Candidates` (search results) stays; `ResolvedTarget` = `ChosenCandidate` after selection
 
@@ -181,15 +184,17 @@ extension of `ResolvedTarget?.Filename`.
 
 ## 8. Interactive mode and fast-search
 
-`SelectAlbumVersion` becomes an engine callback, no longer baked into the engine logic:
+`SelectAlbumVersion` is an engine callback:
 
 ```csharp
 // Called after album search completes. Return chosen folder or null to skip.
 public Func<AlbumJob, Task<AlbumFolder?>>? SelectAlbumVersion { get; set; }
 ```
 
-The `interactiveMode` config flag is consumed by the CLI which wires in `InteractiveModeManager`
-as the `SelectAlbumVersion` implementation.
+The `interactiveMode` config flag is consumed by the CLI. When set, the CLI wires in
+`InteractiveModeManager` as the `SelectAlbumVersion` implementation — the engine has no direct
+dependency on `InteractiveModeManager`. Filter state (`filterStr`) and retrieved-folder tracking
+live in the CLI-side closure, not in the engine.
 
 **Fast-search** is a song-level optimization: when a highly-ranked candidate arrives during a
 song search (free slot, sufficient upload speed, preferred conditions met), the engine starts a
@@ -208,9 +213,9 @@ whichever finishes first:
 - Fast download fails while search still running → wait for search to finish, try remaining candidates.
 
 `searchCts` is a `CancellationTokenSource` created inside `SearchAndDownloadSong`, linked to
-`job.Cts` (see §Cancellation below). It is cancelled by the coordinator when the fast download
-succeeds. `Downloader.DownloadFile` has no knowledge of `searchCts` — cancellation of the search
-is the coordinator's responsibility, not the downloader's.
+`appCts`. It is cancelled by the coordinator when the fast download succeeds. `Downloader.DownloadFile`
+has no knowledge of `searchCts` — cancellation of the search is the coordinator's responsibility,
+not the downloader's.
 
 ---
 
@@ -293,13 +298,54 @@ Profile conditions are evaluated independently per leaf job at processing time, 
   `AlbumJob` → `"album"`, etc.)
 
 This means siblings are independent — a profile applied to one leaf does not affect its siblings.
-The current behaviour where profiles accumulate sequentially across jobs is accidental and is
-deliberately removed.
 
 **Editors and skippers:**
-`JobList`-level editors and skippers are shared across all children in the list (same as current
-`SongListQueryJob` model). Each `ExtractJob` may get its own editor if it has a distinct
-`indexFilePath` after profile resolution.
+`JobList`-level editors and skippers are shared across all children in the list. Each `ExtractJob`
+may get its own editor if it has a distinct `indexFilePath` after profile resolution.
+
+---
+
+## Concurrency
+
+The engine's main loop is a recursive tree-walker:
+
+```
+ProcessJob(Job job, IExtractor? extractor):
+    ExtractJob ej  →  ex = resolve extractor
+                      ej.Result = ex.GetTracks(ej.Input)
+                      ProcessJob(ej.Result, ex)          // recurses — uniform, no special-casing
+
+    JobList jl     →  Task.WhenAll(jl.Jobs.Select(child => ProcessJob(child, extractor)))
+
+    leaf job       →  skip checks → source search → download
+```
+
+`JobList` is the fan-out point. Concurrency applies uniformly at every level — root list, nested
+list inside an `ExtractJob.Result`, or any other depth. All semaphores are tree-wide (not
+per-list). The extractor reference is threaded as a parameter so concurrent `ExtractJob` runs
+don't race on a shared field.
+
+**Search concurrency** — two independent limiters compose in series on every search:
+
+1. **`RateLimitedSemaphore`** (inside `Searcher`) — limits *rate*: N searches per time window.
+   Config: `--searches-per-time` / `--search-renew-time`.
+2. **`SemaphoreSlim concurrencySemaphore`** (inside `Searcher`) — limits *concurrency*: at most
+   N searches in-flight simultaneously across the whole tree. Acquired around the full duration
+   of each search. Default: 2. Config: `--concurrent-searches`.
+
+`SearchDirectLinkAlbum` (peer browse, not a keyword search) does not consume a concurrency slot.
+
+**Extractor concurrency** — `SemaphoreSlim` inside the engine limits simultaneous `ExtractJob`
+runs to avoid API rate limits. Default: 2. Config: `--concurrent-extractors`.
+
+**Download concurrency** — unlimited. Downloads are p2p and each peer serialises uploads anyway;
+there is no meaningful reason to cap simultaneous downloads at the engine level. The old
+`--concurrent-processes` / `--concurrent-downloads` flag is removed.
+
+**CLI rendering** — the existing `CliProgressReporter` handles concurrent song downloads and
+concurrent album searches. However, rendering multiple simultaneously active albums (each with its
+own block of per-song progress bars) will likely have interleaving and overflow issues. Fixing
+this is deferred (see §Next steps).
 
 ---
 
@@ -314,7 +360,7 @@ public class Job
     // Set by the engine immediately before processing begins.
     // Linked to appCts — cancelling it only affects this job and its children.
     public CancellationTokenSource? Cts { get; internal set; }
-    public void Cancel() => Cts?.Cancel()
+    public void Cancel() => Cts?.Cancel();
 }
 ```
 
@@ -323,82 +369,18 @@ The CTS hierarchy is:
 ```
 appCts                            (engine-wide — engine.Cancel())
   └── job.Cts                     (per job — job.Cancel(), set by engine at processing time)
-        └── searchCts             (per search cycle — cancelled on fast-search win, linked to job.Cts)
+        └── searchCts             (per search cycle — cancelled on fast-search win, linked to appCts)
 ```
-
-Cancelling a `JobList` propagates to all its children by cancelling each child's CTS (which are
-all linked to the list's CTS, which is itself linked to `appCts`).
 
 The `cancelOnFail` pattern in album downloads (cancel remaining file downloads when one fails) is
-implemented by calling `albumJob.Cancel()` — no closure-captured local CTS needed.
+implemented via the album's local `CancellationTokenSource` passed to `RunAlbumDownloads` — no
+per-job `Cts` needed for this case.
 
-**'c' keypress — stripped for now, to be re-implemented properly later:**
-The current 'c' handler is baked into `ProcessAlbumJob` inside the engine and only works because
-album downloads are sequential. With concurrent album downloads it becomes ambiguous (which album
-does 'c' cancel?), and the clean fix is non-trivial. The feature is removed from the engine now;
-a TODO comment is left at the removal site.
-
-The correct future implementation (deferred): the CLI owns keyboard input and, on 'c', presents
-a numbered list of all currently running jobs (name + state) and lets the user select which one
-to cancel. The engine just exposes `job.Cancel()` and `engine.Cancel()`; the CLI wires them.
-This is consistent with the `SelectAlbumVersion` pattern — all user interaction is a CLI concern.
-
-The engine's main loop becomes a recursive tree-walker:
-
-```
-ProcessJob(Job job):
-    ExtractJob ej  →  ej.Result = extractor.GetTracks(ej.Input)
-                      ProcessJob(ej.Result)               // recurses — uniform, no special-casing
-
-    JobList jl     →  foreach job in jl.Jobs: ProcessJob(job)   // fan-out point
-
-    AlbumJob aj    →  SearchAlbum(aj) → DownloadAlbum(aj)
-
-    SongJob sj     →  SearchAndDownload(sj)
-```
-
-Concurrency applies **uniformly** at every `ProcessJob` call — there is no distinction between
-the root `JobList`, a nested `JobList` inside an `ExtractJob.Result`, or any other level. The
-`JobList` branch is the fan-out point regardless of how deep in the tree it sits. An
-`ExtractJob.Result` that is a `JobList` gets the same concurrent fan-out as the root.
-
-When concurrency is enabled, the `JobList` branch becomes `await Task.WhenAll(...)` over its
-children, limited by semaphores. All semaphores are tree-wide (not per-list).
-
-**Search concurrency** is the primary resource constraint — issuing too many simultaneous
-searches pummels the network. Two independent limiters compose in series on every search:
-
-1. **`RateLimitedSemaphore` (existing)** — inside `Searcher.RunSearches`. Limits *rate*:
-   N searches issued per time window (e.g. 5 per 5s). Config: `--searches-per-time` /
-   `--search-renew-time`.
-2. **`SemaphoreSlim concurrentSearches` (new, engine-level)** — limits *concurrency*: at most
-   N searches in-flight simultaneously across the whole tree. Acquired around the full duration
-   of each search (including the fast-search background task). Default: 2.
-   Config: `--concurrent-searches`.
-
-`SearchDirectLinkAlbum` (browse request to a single known peer, not a network keyword search)
-does **not** consume a search concurrency slot.
-
-**Extractor concurrency** — limits simultaneous `ExtractJob` runs to avoid API rate limits
-(Spotify, YouTube, etc.). Default: 2. Config: `--concurrent-extractors`.
-
-**Download/album concurrency** — downloads are p2p and each peer serialises uploads anyway,
-so there is no meaningful reason to cap simultaneous downloads at the engine level. Album and
-song job concurrency limits default to unlimited (effectively ∞). Config flags can be added
-later if needed.
-
-For now the loop remains sequential (step 11 adds the fan-out).
-
-**CLI rendering:** The existing `CliProgressReporter` already handles concurrent song downloads
-(progress bars per `SongJob`, updated in-place via Konsole) and concurrent album searches
-(`_jobBars` per job). The infrastructure is largely there. However, rendering multiple
-simultaneously active albums (each with its own block of per-song progress bars) will likely
-have issues: bars from different albums may interleave unexpectedly, and many active bars can
-break when they overflow the visible terminal area. Fixing this is a separate concern from the
-structural refactor and is deferred to a later step alongside step 11.
-
-The current `parallelAlbumSearch` feature (search-only parallelism) is removed (see breaking
-changes) — it is superseded by the full parallel search+download the new architecture enables.
+**'c' keypress — deferred:**
+The correct future implementation: the CLI owns keyboard input and, on 'c', presents a numbered
+list of all currently running jobs (name + state) and lets the user select which one to cancel.
+The engine exposes `job.Cancel()` and `engine.Cancel()`; it does not listen for console keys.
+`SongJob`s that are part of an `AlbumJob` should not be listed individually for the cancel prompt.
 
 ---
 
@@ -407,22 +389,11 @@ changes) — it is superseded by the full parallel search+download the new archi
 | Change | Notes |
 |--------|-------|
 | `{state}` name-format / on-complete variable for songs: `"Downloaded"` → `"Done"` | `JobState` replaces `TrackState` on `SongJob` |
-| `--parallel-album-search` / `parallelAlbumSearch` removed | Superseded by full parallel search+download (step 11); CLI rendering deferred |
+| `--parallel-album-search` / `parallelAlbumSearch` removed | Superseded by full parallel search+download |
+| `--concurrent-processes` / `--concurrent-downloads` removed | Downloads are now unlimited; `--concurrent-searches` replaces the search-limiting role |
 
 Index file format is **unchanged** — `JobState` values 0–4 are aligned with the old `TrackState`
 values so existing index files remain readable.
-
----
-
-## Current code status
-
-Steps 1–10 are complete with the following caveats:
-- `ExtractJob` class exists but lacks the `Result: Job?` field and the engine does not yet process
-  `ExtractJob` nodes recursively — it still calls `extractor.GetTracks` directly and adds results
-  to `Queue`. The full `ExtractJob`-based pipeline (CLI submits `ExtractJob`, engine recurses) is
-  part of step 11.
-- `ListExtractor` still eagerly resolves each line by calling sub-extractors directly, rather than
-  returning a `JobList` of `ExtractJob`s. This is intentional — deferred to step 11.
 
 ---
 
@@ -430,17 +401,49 @@ Steps 1–10 are complete with the following caveats:
 
 | Step | Description |
 |------|-------------|
-| 1 | ✓ Introduce `ExtractJob` and `JobList` types. |
-| 2 | ✓ Collapse `SongJob` into `Job` hierarchy. Remove `SongQueryJob`, `SongDownloadJob`. |
-| 3 | ✓ Collapse `AlbumQueryJob` + `AlbumDownloadJob` → `AlbumJob` with `ResolvedTarget`. Remove `AlbumFile`. |
-| 4 | ✓ Rename `AggregateQueryJob` → `AggregateJob`, `AlbumAggregateQueryJob` → `AlbumAggregateJob`. Remove `QueryJob`, `DownloadJob`. |
-| 5 | ✓ Collapse `SongListQueryJob` + `AlbumListJob` → `JobList`. Remove `JobQueue`. |
-| 6 | ✓ `IExtractor.GetTracks` → `Job` (singular). Engine: `Queue.Jobs.Add(result)`. Remove `parallelAlbumSearch`. |
-| 7 | ✓ Update `JobPreparer` to tree-walk instead of flat loop. |
-| 8 | ✓ Remove `TrackState`. Extend `JobState` with `Skipped`, `Extracting`, `Searching`, `Downloading`. |
-| 9 | ✓ Update `IProgressReporter` signatures. |
+| 1  | ✓ Introduce `ExtractJob` and `JobList` types. |
+| 2  | ✓ Collapse `SongJob` into `Job` hierarchy. Remove `SongQueryJob`, `SongDownloadJob`. |
+| 3  | ✓ Collapse `AlbumQueryJob` + `AlbumDownloadJob` → `AlbumJob` with `ResolvedTarget`. Remove `AlbumFile`. |
+| 4  | ✓ Rename `AggregateQueryJob` → `AggregateJob`, `AlbumAggregateQueryJob` → `AlbumAggregateJob`. Remove `QueryJob`, `DownloadJob`. |
+| 5  | ✓ Collapse `SongListQueryJob` + `AlbumListJob` → `JobList`. Remove `JobQueue`. |
+| 6  | ✓ `IExtractor.GetTracks` → `Job` (singular). Engine: `Queue.Jobs.Add(result)`. Remove `parallelAlbumSearch`. |
+| 7  | ✓ Update `JobPreparer` to tree-walk instead of flat loop. |
+| 8  | ✓ Remove `TrackState`. Extend `JobState` with `Skipped`, `Extracting`, `Searching`, `Downloading`. |
+| 9  | ✓ Update `IProgressReporter` signatures. |
 | 10 | ✓ Update `Preprocessor`, `TrackSkipper`, `FileManager`, `OnCompleteExecutor` for new types. |
-| 11 | Add `ExtractJob.Result`, recursive engine processing, and concurrency. | <-- Stop and discuss first!
+| 11 | ✓ `ExtractJob.Result`, recursive `ProcessJob` tree-walker, `Task.WhenAll` fan-out, search/extractor semaphores, `InteractiveModeManager` moved to CLI, `--concurrent-processes` removed. |
+
+---
+
+## Next steps
+
+These are the remaining known todos, roughly in priority order:
+
+### CLI rendering for concurrent jobs
+The existing `CliProgressReporter` was written for sequential album processing. With true
+concurrent fan-out, progress bars from different albums interleave and can overflow the terminal.
+This needs to be addressed before concurrent mode is usable in practice.
+
+### Per-job cancellation (`job.Cts`)
+`Job.Cts` and `Job.Cancel()` are not yet implemented. The engine currently only exposes
+`engine.Cancel()` (engine-wide). Implementing per-job cancellation requires:
+1. Engine sets `job.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token)` before
+   processing each job.
+2. All per-job async operations use `job.Cts.Token` instead of (or linked to) `appCts.Token`.
+3. The CLI wires a keyboard handler that presents a numbered list of running jobs and calls
+   `job.Cancel()` on the chosen one.
+
+### ~~`Searching` and `Downloading` states not yet set~~ ✓
+`song.State = JobState.Searching` is set before the search block in `SearchAndDownloadSong`, and
+`song.State = JobState.Downloading` is set before each `DownloadFile` call.
+
+### ~~`ReportExtractionStarted` / `ReportExtractionCompleted` not yet called~~ ✓
+Added to `IProgressReporter` (no-op in all implementations); called at the start of extraction
+and immediately after `ej.State = Done` in the `ExtractJob` branch of `ProcessJob`.
+
+### ~~`ReportJobStarted(parallel: false)` hardcoded~~ ✓
+`ProcessJob` and `ProcessLeafJob` now accept a `bool parallel` parameter; both `Task.WhenAll`
+fan-outs pass `parallel: jl.Jobs.Count > 1`.
 
 ---
 
@@ -459,44 +462,28 @@ Steps 1–10 are complete with the following caveats:
   concurrency tree-walker a stable root fan-out point.
 - **Profile resolution is per-leaf, siblings are independent** — profiles are re-evaluated at each
   leaf job using `input-type` from the ancestor `ExtractJob` and `download-mode` from the leaf
-  type. The current sequential accumulation across jobs is accidental and removed.
+  type.
 - **`ExtractJob.Result` preserves history** — the engine sets `Result` after extraction and recurses
   into it; the `ExtractJob` itself stays in the tree as a historical record. No queue replacement.
 - **`IExtractor.GetTracks` returns `Job`** — the extractor decides the shape (single `AlbumJob`,
   `JobList` of `SongJob`s, `JobList` of `ExtractJob`s, etc.). The engine does not wrap the result.
-- **Concurrency is tree-wide, not list-local** — three semaphores (extractor / album / song) count
-  across the whole tree. `JobList` is the fan-out point; semaphores are acquired inside the leaf
-  processors (`ProcessAlbumJob`, `ProcessSongJob`), not held by the list itself.
-- **CLI interactive mode is compatible with album concurrency** — album search runs concurrently;
-  interactive selection is a sequential gate (FIFO queue of completed searches awaiting user input);
-  download resumes concurrently after selection. The user works through prompts one at a time while
-  searching and downloading proceed in parallel around them.
-- **`parallelAlbumSearch` is removed** — superseded by full parallel search+download (step 11).
-  CLI rendering of concurrent albums is deferred; the existing bar-per-job infrastructure handles
-  it partially but bar interleaving and overflow need separate work.
+- **Concurrency is tree-wide, not list-local** — semaphores count across the whole tree. `JobList`
+  is the fan-out point; semaphores are acquired inside the leaf processors and inside `Searcher`,
+  not held by the list itself.
 - **`SelectAlbumVersion`** callback: `Func<AlbumJob, Task<AlbumFolder?>>` — `JobContext` not
-  exposed to the consumer.
+  exposed to the consumer. `InteractiveModeManager` is wired by the CLI, not the engine.
 - **`TrackState` is removed** — merged into `JobState` on the job itself. Index file format
   unchanged (values 0–4 preserved).
 - **`AlbumFile` is removed** — `AlbumFolder.Files` becomes `List<SongJob>`; `IsNotAudio` is a
   computed property on `SongJob` based on the file extension of `ResolvedTarget?.Filename`.
-  `DownloadAlbumFile` merges with `DownloadSong`.
-- **`InteractiveModeManager`** is wired in by the CLI as the `SelectAlbumVersion` implementation.
-  The engine has no direct dependency on it.
-- **Per-job cancellation via `job.Cts`** — the engine sets a `CancellationTokenSource` on each job
-  before processing, linked to `appCts`. Consumers call `job.Cancel()` to cancel a specific job.
-  The CTS hierarchy is `appCts → job.Cts → searchCts`. `Downloader.DownloadFile` takes a plain
-  `CancellationToken`; it never owns or cancels a search CTS.
-- **'c' keypress removed for now** — the existing handler is engine-internal and only works for
-  sequential downloads. Removed with a TODO comment. Future implementation: CLI presents a
-  numbered list of running jobs and calls `job.Cancel()` on the chosen one. The engine exposes
-  `job.Cancel()` and `engine.Cancel()`; it does not listen for console keys. (Note for future: 
-  SongJobs that are part of an AlbumJob should not be listed individually for the CLI cancel prompt).
 - **Fast-search is engine-internal, coordinator-owned** — `SearchAndDownloadSong` runs search and
   provisional download concurrently. `searchCts` is created and cancelled inside this function.
   `Downloader.DownloadFile` has no knowledge of `searchCts`.
-- **Search concurrency uses two composing limiters** — `RateLimitedSemaphore` (existing, inside
-  `Searcher`) limits rate; a new engine-level `SemaphoreSlim` limits simultaneous in-flight
-  searches tree-wide (default 2, config `--concurrent-searches`). `SearchDirectLinkAlbum` is
-  exempt (peer browse, not a network keyword search). Download concurrency is unlimited.
-  Extractor concurrency is limited separately (default 2, config `--concurrent-extractors`).
+- **Search concurrency uses two composing limiters** — both live inside `Searcher`. Rate limiter:
+  `RateLimitedSemaphore`. Concurrency limiter: `SemaphoreSlim concurrencySemaphore`. Both wrap
+  `RunSearches`. `SearchDirectLinkAlbum` is exempt. Download concurrency is unlimited.
+- **`--concurrent-processes` removed** — its search-limiting role is superseded by
+  `--concurrent-searches`. Downloads have no engine-level concurrency cap.
+- **`extractor` is not a field** — threaded as a `ProcessJob` parameter to avoid data races under
+  concurrent fan-out.
+- **`_contexts` is `ConcurrentDictionary`** — written from concurrent tasks during fan-out.

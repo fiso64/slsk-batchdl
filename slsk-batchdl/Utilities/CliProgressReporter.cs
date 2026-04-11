@@ -152,6 +152,9 @@ namespace Utilities
 
         // ── display events ───────────────────────────────────────────────────
 
+        public void ReportExtractionStarted(ExtractJob job) { }
+        public void ReportExtractionCompleted(ExtractJob job, Job result) { }
+
         public void ReportJobStarted(Job job, bool parallel)
         {
             var bar = parallel ? Printing.GetProgressBar(_config) : null;

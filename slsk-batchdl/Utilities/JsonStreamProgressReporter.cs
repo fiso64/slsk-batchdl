@@ -143,6 +143,8 @@ namespace Utilities
         }
 
         // Display-only events — no-ops for JSON output.
+        public void ReportExtractionStarted(ExtractJob job) { }
+        public void ReportExtractionCompleted(ExtractJob job, Job result) { }
         public void ReportJobStarted(Job job, bool parallel) { }
         public void ReportJobFolderRetrieving(Job job) { }
         public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }
