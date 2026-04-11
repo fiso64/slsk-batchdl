@@ -37,7 +37,33 @@ internal static partial class Program
             reporter = new CliProgressReporter(config);
 
         var engine = new DownloadEngine(config, clientManager, progressReporter: reporter);
-        
+
+        if (config.interactiveMode)
+        {
+            string? filterStr = null;
+            engine.SelectAlbumVersion = async (job) =>
+            {
+                var retrievedFolders = new HashSet<string>();
+                var interactive = new InteractiveModeManager(
+                    job, engine.Queue, job.Results,
+                    canRetrieve: true,
+                    retrievedFolders: retrievedFolders,
+                    retrieveFolderCallback: async (f) => await engine.RetrieveFullFolderAsync(f, job.Config),
+                    filterStr: filterStr);
+
+                var result = await interactive.Run();
+                filterStr = result.FilterStr;
+
+                if (result.Index == -1 || result.Index == -2 || result.Folder == null)
+                    return null;
+
+                if (result.ExitInteractiveMode)
+                    config.interactiveMode = false;
+
+                return result.Folder;
+            };
+        }
+
         // TODO: wire up per-job cancellation here — see PLAN.md §Cancellation.
         // cli.OnKeyPressed = key => { ... present numbered list of running jobs ... }
 
