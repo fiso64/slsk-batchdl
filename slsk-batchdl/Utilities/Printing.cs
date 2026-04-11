@@ -8,7 +8,7 @@ using SlFile = Soulseek.File;
 
 public static class Printing
 {
-    static readonly object consoleLock = new();
+    public static readonly object ConsoleLock = new();
 
     public static string DisplayString(SongQuery query, Soulseek.File? file = null, SearchResponse? response = null,
         FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
@@ -432,7 +432,7 @@ public static class Printing
 
     public static ProgressBar? GetProgressBar(Config config)
     {
-        lock (consoleLock)
+        lock (ConsoleLock)
         {
             if (!config.noProgress)
             {

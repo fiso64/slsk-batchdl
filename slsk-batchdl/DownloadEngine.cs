@@ -86,6 +86,7 @@ public class DownloadEngine
 
         if (defaultConfig.NeedLogin)
         {
+            await _clientManager.EnsureConnectedAndLoggedInAsync(defaultConfig, ct);
             await _clientManager.WaitUntilReadyAsync(ct);
             searcher   = new Searcher(Client!, _registry, _registry, _progressReporter, defaultConfig.searchesPerTime, defaultConfig.searchRenewTime, defaultConfig.concurrentSearches);
             downloader = new Downloader(Client!, _clientManager, _registry, _progressReporter);
@@ -106,7 +107,7 @@ public class DownloadEngine
 
     // ── recursive job processor ───────────────────────────────────────────────
 
-    async Task ProcessJob(Job job, IExtractor? extractor = null, bool parallel = false)
+    async Task ProcessJob(Job job, IExtractor? extractor = null)
     {
         // ── ExtractJob: run extractor, set Result, recurse ───────────────────
         if (job is ExtractJob ej)
@@ -241,11 +242,10 @@ public class DownloadEngine
             {
                 var intervalReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, directSongs);
 
-                bool songParallel = jl.Jobs.Count > 1;
                 await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
                 {
                     bool wasInitial = child is SongJob s && s.State == JobState.Pending;
-                    await ProcessJob(child, extractor, parallel: songParallel);
+                    await ProcessJob(child, extractor);
 
                     if (wasInitial && child is SongJob song)
                     {
@@ -278,18 +278,17 @@ public class DownloadEngine
             }
             else
             {
-                bool childParallel = jl.Jobs.Count > 1;
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, parallel: childParallel)));
+                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor)));
             }
 
             return;
         }
 
         // ── Leaf jobs: skip checks, search, download ─────────────────────────
-        await ProcessLeafJob(job, parallel);
+        await ProcessLeafJob(job);
     }
 
-    async Task ProcessLeafJob(Job job, bool parallel = false)
+    async Task ProcessLeafJob(Job job)
     {
         var ctx    = Ctx(job);
         var config = job.Config;
@@ -332,7 +331,7 @@ public class DownloadEngine
         {
             await _clientManager.WaitUntilReadyAsync(appCts.Token);
 
-            _progressReporter.ReportJobStarted(job, parallel);
+            _progressReporter.ReportJobStarted(job);
 
             bool         foundSomething = false;
             ResponseData responseData   = new ResponseData();
@@ -575,10 +574,7 @@ public class DownloadEngine
             organizer.SetremoteBaseDir(chosenFolder.FolderPath);
 
             if (!wasInteractive)
-            {
-                Console.WriteLine();
-                Printing.PrintAlbum(chosenFolder);
-            }
+                _progressReporter.ReportAlbumDownloadStarted(job, chosenFolder);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
 
@@ -588,7 +584,6 @@ public class DownloadEngine
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
                 {
-                    Console.WriteLine();
                     var newFilesFound = await RetrieveFullFolderAsync(chosenFolder, config);
                     retrievedFolders.Add(chosenFolder.FolderPath);
                     if (newFilesFound > 0)
@@ -665,6 +660,8 @@ public class DownloadEngine
 
         if (chosenFiles != null && !string.IsNullOrEmpty(job.DownloadPath))
             organizer.OrganizeAlbum(job, chosenFiles, additionalImages);
+
+        _progressReporter.ReportAlbumDownloadCompleted(job);
 
         ctx.IndexEditor?.Update();
         ctx.PlaylistEditor?.Update();
@@ -1126,13 +1123,11 @@ public class DownloadEngine
 
             if (!wasInteractive)
             {
-                Console.WriteLine();
-                // Print images as a mini-album.
                 var syntheticFolder = new AlbumFolder(
                     imgs[0].ResolvedTarget!.Response.Username,
                     Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)),
                     imgs);
-                Printing.PrintAlbum(syntheticFolder);
+                _progressReporter.ReportAlbumDownloadStarted(job, syntheticFolder);
             }
 
             fileManager.downloadingAdditionalImages = true;

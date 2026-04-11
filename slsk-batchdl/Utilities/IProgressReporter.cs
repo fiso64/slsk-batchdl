@@ -32,7 +32,9 @@ namespace Utilities
         void ReportExtractionCompleted(ExtractJob job, Job result);
 
         // Job-level
-        void ReportJobStarted(Job job, bool parallel);
+        void ReportJobStarted(Job job);
+        void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder);
+        void ReportAlbumDownloadCompleted(AlbumJob job);
         void ReportJobFolderRetrieving(Job job);
         void ReportJobCompleted(Job job, bool found, int lockedFiles);
 
@@ -63,7 +65,9 @@ namespace Utilities
         public void ReportListProgress(JobList list, int downloaded, int failed, int total) { }
         public void ReportExtractionStarted(ExtractJob job) { }
         public void ReportExtractionCompleted(ExtractJob job, Job result) { }
-        public void ReportJobStarted(Job job, bool parallel) { }
+        public void ReportJobStarted(Job job) { }
+        public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder) { }
+        public void ReportAlbumDownloadCompleted(AlbumJob job) { }
         public void ReportJobFolderRetrieving(Job job) { }
         public void ReportJobCompleted(Job job, bool found, int lockedFiles) { }
         public void ReportSongSearching(SongJob song) { }
