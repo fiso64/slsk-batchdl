@@ -442,8 +442,8 @@ Added to `IProgressReporter` (no-op in all implementations); called at the start
 and immediately after `ej.State = Done` in the `ExtractJob` branch of `ProcessJob`.
 
 ### ~~`ReportJobStarted(parallel: false)` hardcoded~~ ✓
-`ProcessJob` and `ProcessLeafJob` now accept a `bool parallel` parameter; both `Task.WhenAll`
-fan-outs pass `parallel: jl.Jobs.Count > 1`.
+`parallel` parameter removed entirely from `ProcessJob`, `ProcessLeafJob`, and `ReportJobStarted`
+— the distinction was meaningless since all fan-outs use `Task.WhenAll`.
 
 ---
 

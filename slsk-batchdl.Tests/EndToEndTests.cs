@@ -133,5 +133,43 @@ namespace Tests.EndToEnd
             }
         }
 
+        [TestMethod]
+        public async Task AlbumDownload_CliPath_Completes()
+        {
+            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-cli-" + Guid.NewGuid());
+            var albumDir  = Path.Combine(musicRoot, "TestArtist", "TestAlbum");
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-cli-" + Guid.NewGuid());
+            Directory.CreateDirectory(albumDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllBytes(Path.Combine(albumDir, "01. Track1.mp3"), TestHelpers.EmptyMp3Bytes);
+            File.WriteAllBytes(Path.Combine(albumDir, "02. Track2.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            // Use the real CLI path: SoulseekClientManager created from config (not pre-injected).
+            // mockFilesDir triggers MockSoulseekClient creation inside SoulseekClientManager.
+            var testArgs = new string[]
+            {
+                "--config",              "none",
+                "--input",               "TestArtist TestAlbum",
+                "--album",
+                "--path",                outputDir,
+                "--mock-files-dir",      musicRoot,
+                "--mock-files-no-read-tags",
+                "--user",                "test_user",
+                "--pass",                "test_pass",
+            };
+
+            var config        = new Config(testArgs);
+            var clientManager = new SoulseekClientManager(config);  // CLI path: no pre-injected client
+            var app           = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await app.RunAsync(cts.Token);
+
+            Assert.IsFalse(cts.IsCancellationRequested, "RunAsync timed out — connection was never initiated");
+
+            var files = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
+            Assert.IsTrue(files.Length >= 2, $"Expected >=2 downloaded files, got {files.Length}");
+        }
     }
 }

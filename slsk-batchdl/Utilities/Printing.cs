@@ -8,7 +8,7 @@ using SlFile = Soulseek.File;
 
 public static class Printing
 {
-    static readonly object consoleLock = new();
+    public static readonly object ConsoleLock = new();
 
     public static string DisplayString(SongQuery query, Soulseek.File? file = null, SearchResponse? response = null,
         FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
@@ -297,9 +297,9 @@ public static class Printing
     }
 
 
-    public static int PrintAlbum(AlbumFolder folder, bool indices = false)
+    public static void PrintAlbumHeader(AlbumFolder folder)
     {
-        if (folder.Files.Count == 0) return 0;
+        if (folder.Files.Count == 0) return;
 
         var firstResponse = folder.Files[0].ResolvedTarget!.Response;
         string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
@@ -316,6 +316,13 @@ public static class Printing
         Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine(otherProps + "]");
         Console.ResetColor();
+    }
+
+    public static int PrintAlbum(AlbumFolder folder, bool indices = false)
+    {
+        if (folder.Files.Count == 0) return 0;
+
+        PrintAlbumHeader(folder);
 
         string ancestor = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.ResolvedTarget!.Filename));
         int i = 0;
@@ -432,7 +439,7 @@ public static class Printing
 
     public static ProgressBar? GetProgressBar(Config config)
     {
-        lock (consoleLock)
+        lock (ConsoleLock)
         {
             if (!config.noProgress)
             {
