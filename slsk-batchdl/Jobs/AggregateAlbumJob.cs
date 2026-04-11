@@ -12,7 +12,6 @@ namespace Jobs
         public override SongQuery QueryTrack =>
             new SongQuery { Artist = Query.Artist, Title = Query.Album, IsDirectLink = Query.IsDirectLink, URI = Query.URI };
 
-        public override bool OutputsDirectory      => false;
         protected override bool DefaultCanBeSkipped => false;
 
         public AlbumAggregateJob(AlbumQuery query)

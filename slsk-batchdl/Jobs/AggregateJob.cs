@@ -9,7 +9,6 @@ namespace Jobs
         public SongQuery Query { get; }
         public override SongQuery QueryTrack => Query;
 
-        public override bool OutputsDirectory      => true;
         protected override bool DefaultCanBeSkipped => false;
 
         // One SongJob per found variant. Populated after search.

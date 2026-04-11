@@ -14,8 +14,7 @@ namespace Jobs
         public string? Other { get; set; }
 
         public override SongQuery QueryTrack => Query;
-        public override bool      OutputsDirectory    => false;
-        protected override bool   DefaultCanBeSkipped => true;
+        protected override bool  DefaultCanBeSkipped => true;
 
         // True for non-audio files inside album folders (cover art, .txt, etc.).
         // Computed from the candidate filename.

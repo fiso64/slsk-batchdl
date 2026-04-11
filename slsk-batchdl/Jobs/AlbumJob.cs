@@ -14,7 +14,6 @@ namespace Jobs
         public override SongQuery QueryTrack =>
             new SongQuery { Artist = Query.Artist, Title = Query.Album, IsDirectLink = Query.IsDirectLink, URI = Query.URI };
 
-        public override bool    OutputsDirectory    => true;
         protected override bool DefaultCanBeSkipped => true;
 
         // Populated after search. Each element is one candidate folder version.

@@ -14,10 +14,7 @@ namespace Jobs
 
         public Job this[int index] => Jobs[index];
 
-        public override bool    OutputsDirectory      => false;
-        protected override bool DefaultCanBeSkipped   => false;
-
-        public override SongQuery QueryTrack => new SongQuery { Title = ItemName ?? "" };
+        protected override bool DefaultCanBeSkipped => false;
 
         public JobList(string? name = null, IEnumerable<Job>? jobs = null)
         {
@@ -169,7 +166,6 @@ namespace Jobs
             dst.ExtractorCond         = src.ExtractorCond;
             dst.ExtractorPrefCond     = src.ExtractorPrefCond;
             dst.ItemName              = src.ItemName;
-            dst.SubItemName           = src.SubItemName;
             dst.EnablesIndexByDefault = src.EnablesIndexByDefault;
             dst.ItemNumber            = src.ItemNumber;
             dst.LineNumber            = src.LineNumber;

@@ -14,10 +14,7 @@ namespace Jobs
         // Set by the engine after extraction. Null until the engine processes this job.
         public Job? Result { get; set; }
 
-        public override bool     OutputsDirectory      => false;
-        protected override bool  DefaultCanBeSkipped   => false;
-
-        public override SongQuery QueryTrack => new SongQuery { Title = Input };
+        protected override bool DefaultCanBeSkipped => false;
 
         public ExtractJob(string input, InputType? inputType = null)
         {

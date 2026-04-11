@@ -29,16 +29,16 @@ namespace Jobs
             set { if (_state != value) { _state = value; OnPropertyChanged(); } }
         }
 
-        // Transient init fields — set by extractors, consumed and cleared by JobPreparer
-        public FileConditions? ExtractorCond     { get; set; }
-        public FileConditions? ExtractorPrefCond { get; set; }
+        // Extractor hints — set by extractors, consumed by JobPreparer when preparing this job's
+        // Config and JobContext. JobPreparer clears them after use so they don't linger.
+        public FileConditions? ExtractorCond         { get; set; }
+        public FileConditions? ExtractorPrefCond     { get; set; }
         public bool            EnablesIndexByDefault { get; set; }
 
         // Display / identity
-        public string? ItemName           { get; set; }
-        public string? SubItemName        { get; set; }
+        public string? ItemName { get; set; }
 
-        // Source provenance (position in the input file)
+        // Source provenance (position in the input file / playlist)
         public int ItemNumber { get; set; } = 1;
         public int LineNumber { get; set; } = 1;
 
@@ -50,16 +50,13 @@ namespace Jobs
             set { if (_failureReason != value) { _failureReason = value; OnPropertyChanged(); } }
         }
 
-        // Type-specific contract
-        public abstract bool OutputsDirectory { get; }
-
         // Subclasses declare their default; callers can override with CanBeSkippedOverride.
         protected abstract bool DefaultCanBeSkipped { get; }
         public bool? CanBeSkippedOverride { get; set; }
         public bool  CanBeSkipped => CanBeSkippedOverride ?? DefaultCanBeSkipped;
 
-        // Every job has a primary query used for display and key computation.
-        public abstract SongQuery QueryTrack { get; }
+        // Primary query used for display and key computation. Non-leaf types return null.
+        public virtual SongQuery? QueryTrack => null;
 
         private List<string>? _printLines;
 
@@ -79,9 +76,7 @@ namespace Jobs
 
         public string DefaultFolderName()
         {
-            return Path.Join(
-                (ItemName    ?? "").ReplaceInvalidChars(" ").Trim(),
-                (SubItemName ?? "").ReplaceInvalidChars(" ").Trim());
+            return (ItemName ?? "").ReplaceInvalidChars(" ").Trim();
         }
 
         public string ItemNameOrSource() => ItemName ?? ToString(noInfo: true);
@@ -92,6 +87,6 @@ namespace Jobs
             return $"_{name.ReplaceInvalidChars(" ").Trim()}.m3u8";
         }
 
-        public virtual string ToString(bool noInfo) => ItemName ?? QueryTrack.ToString(noInfo);
+        public virtual string ToString(bool noInfo) => ItemName ?? QueryTrack?.ToString(noInfo) ?? "";
     }
 }

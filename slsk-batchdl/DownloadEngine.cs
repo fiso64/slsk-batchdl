@@ -269,7 +269,7 @@ public class DownloadEngine
                 if (config.removeTracksFromSource && extractor != null
                     && directSongs.All(s => s.State == JobState.Done || s.State == JobState.AlreadyExists))
                 {
-                    try { await extractor.RemoveTrackFromSource(new SongJob(jl.QueryTrack)); }
+                    try { await extractor.RemoveTrackFromSource(new SongJob(new SongQuery { Title = jl.ItemName ?? "" })); }
                     catch { /* list-level removal is best-effort */ }
                 }
             }
