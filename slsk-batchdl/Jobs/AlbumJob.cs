@@ -5,7 +5,7 @@ namespace Jobs
 {
     // Unified album job. If ResolvedTarget is null the engine searches; once
     // a folder is chosen it's set on ResolvedTarget and download proceeds.
-    public class AlbumJob : Job
+    public class AlbumJob : Job, IUpgradeable
     {
         public AlbumQuery Query { get; set; }
 
@@ -64,5 +64,20 @@ namespace Jobs
 
         public override string ToString(bool noInfo)
             => ItemName ?? Query.ToString(noInfo);
+
+        public IEnumerable<Job> Upgrade(bool album, bool aggregate)
+        {
+            if (aggregate)
+            {
+                var newJob = new AlbumAggregateJob(Query);
+                newJob.CopySharedFieldsFrom(this);
+                newJob.ItemName ??= newJob.ToString(noInfo: true);
+                yield return newJob;
+            }
+            else
+            {
+                yield return this;
+            }
+        }
     }
 }

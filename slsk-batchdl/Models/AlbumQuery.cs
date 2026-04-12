@@ -59,5 +59,8 @@ namespace Models
 
             return str;
         }
+
+        public static AlbumQuery FromSongQuery(SongQuery q)
+            => new AlbumQuery { Artist = q.Artist, Album = q.Title, URI = q.URI, ArtistMaybeWrong = q.ArtistMaybeWrong, IsDirectLink = q.IsDirectLink };
     }
 }

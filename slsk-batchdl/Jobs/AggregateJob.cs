@@ -4,7 +4,7 @@ namespace Jobs
 {
     // Downloads all search results matching a query (e.g. all songs by an artist,
     // all versions of a song, or all results for a given name). Groups same songs.
-    public class AggregateJob : Job
+    public class AggregateJob : Job, IUpgradeable
     {
         public SongQuery Query { get; }
         public override SongQuery QueryTrack => Query;
@@ -21,5 +21,21 @@ namespace Jobs
 
         public override string ToString(bool noInfo)
             => ItemName ?? Query.ToString(noInfo);
+
+        public IEnumerable<Job> Upgrade(bool album, bool aggregate)
+        {
+            if (album)
+            {
+                var newQuery = AlbumQuery.FromSongQuery(Query);
+                var newJob = new AlbumAggregateJob(newQuery);
+                newJob.CopySharedFieldsFrom(this);
+                newJob.ItemName ??= newJob.ToString(noInfo: true);
+                yield return newJob;
+            }
+            else
+            {
+                yield return this;
+            }
+        }
     }
 }

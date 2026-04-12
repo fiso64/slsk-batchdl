@@ -149,23 +149,20 @@ public class DownloadEngine
             Logger.Debug("Got tracks");
 
             // Post-extraction transforms — album/aggregate upgrades and name assignment
-            // apply to the direct children of the extracted JobList (if it is one).
-            if (extracted is JobList extractedList)
+            if (extracted is IUpgradeable upgradeable)
             {
-                extractedList.UpgradeToAlbumMode(ej.Config.album, ej.Config.aggregate);
-                extractedList.SetAggregateItemNames();
-            }
-            else
-            {
-                // Bare job (e.g. AlbumJob from StringExtractor) — wrap in a temporary list
-                // just to run UpgradeToAlbumMode, then unwrap.
-                var wrapper = new JobList();
-                wrapper.Jobs.Add(extracted);
-                wrapper.UpgradeToAlbumMode(ej.Config.album, ej.Config.aggregate);
-                if (wrapper.Jobs.Count == 1 && !ReferenceEquals(wrapper.Jobs[0], extracted))
+                var upgraded = upgradeable.Upgrade(ej.Config.album, ej.Config.aggregate).ToList();
+
+                if (upgraded.Count == 1)
                 {
-                    ej.Result = wrapper.Jobs[0];
+                    ej.Result = upgraded[0];
                     extracted = ej.Result;
+                }
+                else
+                {
+                    ej.Result = new JobList(extracted.ItemName, upgraded);
+                    extracted = ej.Result;
+                    ((Job)extracted).CopySharedFieldsFrom(upgradeable as Job ?? extracted);
                 }
             }
 

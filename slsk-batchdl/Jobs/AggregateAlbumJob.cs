@@ -4,7 +4,7 @@ namespace Jobs
 {
     // Finds all distinct albums matching a query (e.g. by an artist); converts each to an AlbumJob added to the queue.
     // Has no download state of its own after conversion.
-    public class AlbumAggregateJob : Job
+    public class AlbumAggregateJob : Job, IUpgradeable
     {
         public AlbumQuery Query { get; set; }
 
@@ -21,5 +21,10 @@ namespace Jobs
 
         public override string ToString(bool noInfo)
             => ItemName ?? Query.ToString(noInfo);
+
+        public IEnumerable<Job> Upgrade(bool album, bool aggregate)
+        {
+            yield return this;
+        }
     }
 }

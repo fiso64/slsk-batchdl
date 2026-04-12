@@ -94,5 +94,16 @@ namespace Jobs
         }
 
         public virtual string ToString(bool noInfo) => ItemName ?? QueryTrack?.ToString(noInfo) ?? "";
+
+        public void CopySharedFieldsFrom(Job src)
+        {
+            ExtractorCond         = src.ExtractorCond;
+            ExtractorPrefCond     = src.ExtractorPrefCond;
+            ItemName              = src.ItemName;
+            EnablesIndexByDefault = src.EnablesIndexByDefault;
+            ItemNumber            = src.ItemNumber;
+            LineNumber            = src.LineNumber;
+            CanBeSkippedOverride  = src.CanBeSkippedOverride;
+        }
     }
 }

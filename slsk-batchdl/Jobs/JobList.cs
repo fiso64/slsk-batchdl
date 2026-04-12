@@ -6,7 +6,7 @@ namespace Jobs
     // Replaces SongListQueryJob, AlbumListJob, and JobQueue as the root container.
     //
     // State is derived: Done when all children are done, Failed if all failed.
-    public class JobList : Job
+    public class JobList : Job, IUpgradeable
     {
         public List<Job> Jobs { get; } = new();
 
@@ -70,109 +70,50 @@ namespace Jobs
             }
         }
 
-        // Converts JobList entries (and existing typed jobs) to the appropriate job type
-        // based on album/aggregate flags. Replaces TrackLists.UpgradeListTypes().
-        public void UpgradeToAlbumMode(bool album, bool aggregate)
+        public override string ToString(bool noInfo)
+            => ItemName ?? $"JobList ({Jobs.Count} jobs)";
+
+        public IEnumerable<Job> Upgrade(bool album, bool aggregate)
         {
-            if (!album && !aggregate) return;
-
-            var upgraded = new List<Job>();
-
-            foreach (var job in Jobs)
+            if (!album && !aggregate)
             {
-                if (job is AlbumJob aj && aggregate)
+                yield return this;
+                yield break;
+            }
+
+            if (album && !aggregate)
+            {
+                var albumList = new JobList();
+                albumList.CopySharedFieldsFrom(this);
+                foreach (var job in Jobs)
                 {
-                    var newJob = new AlbumAggregateJob(aj.Query);
-                    CopySharedFields(aj, newJob);
-                    upgraded.Add(newJob);
-                }
-                else if (job is AggregateJob agj && album)
-                {
-                    var newJob = new AlbumAggregateJob(SongQueryToAlbumQuery(agj.Query));
-                    CopySharedFields(agj, newJob);
-                    upgraded.Add(newJob);
-                }
-                else if (job is JobList jl)
-                {
-                    if (album && !aggregate)
+                    if (job is IUpgradeable u)
                     {
-                        var albumList = new JobList();
-                        CopySharedFields(jl, albumList);
-                        foreach (var song in jl.Jobs.OfType<SongJob>())
-                        {
-                            var childAj = new AlbumJob(SongQueryToAlbumQuery(song.Query));
-                            CopySharedFields(jl, childAj);
-                            childAj.ItemNumber = song.ItemNumber;
-                            childAj.LineNumber = song.LineNumber;
-                            albumList.Jobs.Add(childAj);
-                        }
-                        upgraded.Add(albumList);
+                        foreach (var upgraded in u.Upgrade(album, aggregate))
+                            albumList.Add(upgraded);
                     }
                     else
                     {
-                        foreach (var song in jl.Jobs.OfType<SongJob>())
-                        {
-                            var q = song.Query;
-                            Job newJob;
-
-                            if (album && aggregate)
-                                newJob = new AlbumAggregateJob(SongQueryToAlbumQuery(q));
-                            else // aggregate only
-                                newJob = new AggregateJob(q);
-
-                            CopySharedFields(jl, newJob);
-                            newJob.ItemNumber = jl.ItemNumber;
-                            upgraded.Add(newJob);
-                        }
+                        albumList.Add(job);
                     }
                 }
-                else if (job is SongJob sj)
-                {
-                    Job newJob;
-                    if (album && aggregate)
-                        newJob = new AlbumAggregateJob(SongQueryToAlbumQuery(sj.Query));
-                    else if (album)
-                        newJob = new AlbumJob(SongQueryToAlbumQuery(sj.Query));
-                    else // aggregate only
-                        newJob = new AggregateJob(sj.Query);
-                    CopySharedFields(sj, newJob);
-                    upgraded.Add(newJob);
-                }
-                else
-                {
-                    upgraded.Add(job);
-                }
+                yield return albumList;
             }
-
-            Jobs.Clear();
-            Jobs.AddRange(upgraded);
-        }
-
-        // Sets ItemName on aggregate-type jobs that don't have one.
-        public void SetAggregateItemNames()
-        {
-            foreach (var job in Jobs)
+            else
             {
-                if (job is AggregateJob or AlbumAggregateJob)
-                    job.ItemName ??= job.ToString(noInfo: true);
+                foreach (var job in Jobs)
+                {
+                    if (job is IUpgradeable u)
+                    {
+                        foreach (var upgraded in u.Upgrade(album, aggregate))
+                            yield return upgraded;
+                    }
+                    else
+                    {
+                        yield return job;
+                    }
+                }
             }
         }
-
-        private static AlbumQuery SongQueryToAlbumQuery(SongQuery q)
-            => new AlbumQuery { Artist = q.Artist, Album = q.Title, URI = q.URI, ArtistMaybeWrong = q.ArtistMaybeWrong, IsDirectLink = q.IsDirectLink };
-
-        private static void CopySharedFields(Job src, Job dst)
-        {
-            dst.ExtractorCond         = src.ExtractorCond;
-            dst.ExtractorPrefCond     = src.ExtractorPrefCond;
-            dst.ItemName              = src.ItemName;
-            dst.EnablesIndexByDefault = src.EnablesIndexByDefault;
-            dst.ItemNumber            = src.ItemNumber;
-            dst.LineNumber            = src.LineNumber;
-            dst.CanBeSkippedOverride  = src.CanBeSkippedOverride;
-        }
-
-        public override string ToString(bool noInfo)
-            => ItemName ?? $"JobList ({Jobs.Count} jobs)";
     }
 }

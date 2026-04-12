@@ -6,7 +6,7 @@ namespace Jobs
     // Unified song job. Used for both search+download and pre-resolved downloads.
     // If ResolvedTarget is non-null the engine skips the search phase.
     // Also used as the per-file unit inside AlbumFolder.Files.
-    public class SongJob : Job
+    public class SongJob : Job, IUpgradeable
     {
         public SongQuery Query { get; set; }
 
@@ -83,5 +83,33 @@ namespace Jobs
 
         public override string ToString(bool noInfo) => Query.ToString(noInfo);
         public override string ToString()             => Query.ToString();
+
+        public IEnumerable<Job> Upgrade(bool album, bool aggregate)
+        {
+            if (album && aggregate)
+            {
+                var newJob = new AlbumAggregateJob(AlbumQuery.FromSongQuery(Query));
+                newJob.CopySharedFieldsFrom(this);
+                newJob.ItemName ??= newJob.ToString(noInfo: true);
+                yield return newJob;
+            }
+            else if (album)
+            {
+                var newJob = new AlbumJob(AlbumQuery.FromSongQuery(Query));
+                newJob.CopySharedFieldsFrom(this);
+                yield return newJob;
+            }
+            else if (aggregate)
+            {
+                var newJob = new AggregateJob(Query);
+                newJob.CopySharedFieldsFrom(this);
+                newJob.ItemName ??= newJob.ToString(noInfo: true);
+                yield return newJob;
+            }
+            else
+            {
+                yield return this;
+            }
+        }
     }
 }
