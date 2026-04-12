@@ -89,7 +89,7 @@ namespace Utilities
         }
 
         static string AlbumHeaderText(AlbumJob job, int done, int total)
-            => $"{job.ToString(true)}  [{done}/{total}]";
+            => $"[{job.DisplayId}] {job.ToString(true)}  [{done}/{total}]";
 
         static string FailureReasonLabel(FailureReason reason) => reason switch
         {
@@ -158,7 +158,7 @@ namespace Utilities
                 lock (Printing.ConsoleLock)
                 {
                     Console.WriteLine();
-                    Logger.Info($"Input ({job.InputType}): {job.Input}");
+                    Logger.Info($"[{job.DisplayId}] Input ({job.InputType}): {job.Input}");
                 }
             }
         }
@@ -167,7 +167,7 @@ namespace Utilities
 
         public void ReportExtractionFailed(ExtractJob job, string reason)
         {
-            Logger.Error($"Failed:      {job.Input}\n  Reason:    {reason}");
+            Logger.Error($"[{job.DisplayId}] Failed:      {job.Input}\n  Reason:    {reason}");
             _jobBars.TryRemove(job, out _);
         }
 
@@ -175,7 +175,7 @@ namespace Utilities
         {
             var bar = Printing.GetProgressBar(_config);
             _jobBars[job] = bar;
-            Printing.RefreshOrPrint(bar, 0, $"{job.GetType().Name}: {job.ToString(true)}, searching..", print: true);
+            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {job.ToString(true)}, searching..", print: true);
         }
 
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
@@ -254,7 +254,7 @@ namespace Utilities
             if (!found)
             {
                 string lockedMsg = lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
-                Printing.RefreshOrPrint(bar, 0, $"No results: {job.ToString(true)}{lockedMsg}", print: true);
+                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] No results: {job.ToString(true)}{lockedMsg}", print: true);
                 _jobBars.TryRemove(job, out _);
                 if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
             }
@@ -263,7 +263,7 @@ namespace Utilities
             else if (job is not AlbumJob)
             {
                 if (bar != null)
-                    Printing.RefreshOrPrint(bar, 0, $"Found results: {job.ToString(true)}", print: true);
+                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] Found results: {job.ToString(true)}", print: true);
                 _jobBars.TryRemove(job, out _);
             }
         }
@@ -273,7 +273,7 @@ namespace Utilities
             if (_bars.TryGetValue(song, out var existing))
             {
                 existing.StateLabel = "Searching";
-                existing.BaseText   = song.ToString();
+                existing.BaseText   = $"[{song.DisplayId}] {song.ToString()}";
                 Printing.RefreshOrPrint(existing.Bar, 0, BuildText(existing), print: false);
                 return;
             }
@@ -281,7 +281,7 @@ namespace Utilities
             bool isFirst = !_bars.ContainsKey(song);
             var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar(_config) });
             d.StateLabel = "Searching";
-            d.BaseText   = song.ToString();
+            d.BaseText   = $"[{song.DisplayId}] {song.ToString()}";
             Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: isFirst);
         }
 

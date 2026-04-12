@@ -28,6 +28,12 @@ public class DownloadEngine
 
     private readonly ConcurrentDictionary<Guid, JobContext> _contexts = new();
 
+    private readonly ConcurrentDictionary<Guid, Job> _jobById = new();
+    private readonly ConcurrentDictionary<int, Job> _jobByDisplayId = new();
+
+    public Job? GetJob(Guid id) => _jobById.TryGetValue(id, out var job) ? job : null;
+    public Job? GetJob(int displayId) => _jobByDisplayId.TryGetValue(displayId, out var job) ? job : null;
+
     private JobContext Ctx(Job job) => _contexts[job.Id];
 
     // ── public state (read by Searcher / Downloader) ─────────────────────────
@@ -109,6 +115,9 @@ public class DownloadEngine
 
     async Task ProcessJob(Job job, IExtractor? extractor = null, CancellationToken parentToken = default)
     {
+        _jobById[job.Id] = job;
+        _jobByDisplayId[job.DisplayId] = job;
+
         // Create a per-job CTS linked to both the engine-wide appCts and the parent job's token
         // (if any). Cancelling this job propagates to all descendants; cancelling the parent
         // propagates here automatically. ExtractJob passes parentToken (not its own token) when

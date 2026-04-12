@@ -13,7 +13,10 @@ namespace Jobs
         protected void OnPropertyChanged([CallerMemberName] string? name = null)
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
+        private static int _nextDisplayId = 0;
+
         public Guid Id { get; } = Guid.NewGuid();
+        public int DisplayId { get; } = Interlocked.Increment(ref _nextDisplayId);
 
         // Set by the engine immediately before processing begins.
         // Linked to appCts (and the parent job's Cts if any) so that cancelling a parent
