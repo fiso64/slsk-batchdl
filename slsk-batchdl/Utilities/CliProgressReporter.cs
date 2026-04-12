@@ -7,53 +7,13 @@ using ProgressBar = Konsole.ProgressBar;
 
 namespace Utilities
 {
-    /// <summary>
-    /// IProgressReporter implementation that renders Konsole progress bars in the terminal.
-    ///
-    /// Structured events (ReportSearchStart, …) are no-ops; use JsonStreamProgressReporter
-    /// alongside this if machine-readable output is also needed.
-    ///
-    /// Bar lifecycle per song:
-    ///   ReportSongSearching       → create bar, "Searching: {song}"
-    ///   ReportDownloadStart       → set base display text (for album files, bar is pre-allocated)
-    ///   ReportDownloadStart       → set base display text (for album files, bar is pre-allocated)
-    ///   ReportDownloadStateChanged → update state label + advance spinner frame on InProgress
-    ///   ReportDownloadProgress    → update percentage fill
-    ///   ReportStateChanged        → final label (Succeeded/Failed), then drop reference
-    ///
-    /// Album block lifecycle:
-    ///   ReportJobStarted          → allocate header bar, "AlbumJob: {name}, searching.."
-    ///   ReportAlbumDownloadStarted → reserve N lines, allocate N song bars, map SongJob→bar
-    ///   (downloads proceed using per-song events above, looking up pre-allocated bars)
-    ///   tick loop                 → refresh header with "N/M done" aggregate
-    ///   ReportJobCompleted        → finalize header (not found / done)
-    ///   ReportStateChanged        → final label (Succeeded/Failed), then drop reference
-    ///
-    /// Album block lifecycle:
-    ///   ReportJobStarted          → allocate header bar, "AlbumJob: {name}, searching.."
-    ///   ReportAlbumDownloadStarted → reserve N lines, allocate N song bars, map SongJob→bar
-    ///   (downloads proceed using per-song events above, looking up pre-allocated bars)
-    ///   tick loop                 → refresh header with "N/M done" aggregate
-    ///   ReportJobCompleted        → finalize header (not found / done)
-    /// </summary>
     public class CliProgressReporter : IProgressReporter
     {
         private readonly Config _config;
 
-        // Per-song bar state.
         private readonly ConcurrentDictionary<SongJob, BarData> _bars = new();
-
-        // Per-job (album/aggregate) header bar.
-        // Per-job (album/aggregate) header bar.
         private readonly ConcurrentDictionary<Job, ProgressBar?> _jobBars = new();
-
-        // Album blocks: job → all song bars for that album's current folder.
         private readonly ConcurrentDictionary<AlbumJob, AlbumBlock> _albumBlocks = new();
-
-        // Album blocks: job → all song bars for that album's current folder.
-        private readonly ConcurrentDictionary<AlbumJob, AlbumBlock> _albumBlocks = new();
-
-        // Saved bar text/pos for restoring after OnComplete execution.
         private readonly ConcurrentDictionary<SongJob, (string text, int pos)> _savedState = new();
 
         static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
@@ -72,15 +32,8 @@ namespace Utilities
             public List<SongJob> Songs = new();
         }
 
-        sealed class AlbumBlock
-        {
-            public List<SongJob> Songs = new();
-        }
-
         private readonly CancellationTokenSource _tickCts = new();
 
-        // Wired up by the CLI entry point so key events reach engine handlers
-        // without racing against console I/O from the tick loop.
         public Action<ConsoleKey>? OnKeyPressed { get; set; }
 
         public CliProgressReporter(Config config)
@@ -99,8 +52,6 @@ namespace Utilities
                 {
                     await Task.Delay(100, ct);
 
-                    // Advance spinner on all in-progress song bars.
-                    // Advance spinner on all in-progress song bars.
                     foreach (var (_, d) in _bars)
                     {
                         if (d.StateLabel != "InProgress" || d.Bar == null) continue;
@@ -108,7 +59,6 @@ namespace Utilities
                         try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
                     }
 
-                    // Refresh album header bars with current done/total count.
                     foreach (var (job, block) in _albumBlocks)
                     {
                         if (!_jobBars.TryGetValue(job, out var headerBar) || headerBar == null) continue;
@@ -117,16 +67,6 @@ namespace Utilities
                         try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total)); } catch { }
                     }
 
-                    // Refresh album header bars with current done/total count.
-                    foreach (var (job, block) in _albumBlocks)
-                    {
-                        if (!_jobBars.TryGetValue(job, out var headerBar) || headerBar == null) continue;
-                        int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
-                        int total = block.Songs.Count;
-                        try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total)); } catch { }
-                    }
-
-                    // Poll keyboard — done here so it doesn't race with bar.Refresh above.
                     if (OnKeyPressed != null && !Console.IsInputRedirected && Console.KeyAvailable)
                         OnKeyPressed(Console.ReadKey(intercept: true).Key);
                 }
@@ -139,23 +79,12 @@ namespace Utilities
 
         static string BuildText(BarData d)
         {
-            string prefix;
-            if (d.StateLabel == "InProgress")
-            {
-                char frame = SpinFrames[d.SpinIndex % SpinFrames.Length];
-                prefix = $"{frame} ";
-            }
-            else
-            {
-                prefix = "  ";
-            }
-
+            string prefix = d.StateLabel == "InProgress"
+                ? $"{SpinFrames[d.SpinIndex % SpinFrames.Length]} "
+                : "  ";
             string label = (d.StateLabel + ":").PadRight(12);
             return $"{prefix}{label} {d.BaseText}";
         }
-
-        static string AlbumHeaderText(AlbumJob job, int done, int total)
-            => $"{job.ToString(true)}  [{done}/{total}]";
 
         static string AlbumHeaderText(AlbumJob job, int done, int total)
             => $"{job.ToString(true)}  [{done}/{total}]";
@@ -174,10 +103,6 @@ namespace Utilities
 
         public void ReportDownloadStart(SongJob song, FileCandidate candidate)
         {
-            // For album files the bar is pre-allocated by ReportAlbumDownloadStarted;
-            // for standalone songs it may not exist yet (no search phase).
-            // For album files the bar is pre-allocated by ReportAlbumDownloadStarted;
-            // for standalone songs it may not exist yet (no search phase).
             var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar(_config) });
             d.StateLabel = "Queued";
             d.BaseText   = Printing.DisplayString(song.Query, candidate.File, candidate.Response, infoFirst: false);
@@ -189,7 +114,6 @@ namespace Utilities
         {
             if (!_bars.TryGetValue(song, out var d)) return;
             d.Pct = totalBytes > 0 ? (int)(bytesTransferred * 100 / totalBytes) : 0;
-            // No Refresh here — the tick loop renders at 100ms intervals.
         }
 
         public void ReportStateChanged(SongJob song, FileCandidate? chosen = null)
@@ -212,9 +136,7 @@ namespace Utilities
         public void ReportExtractionCompleted(ExtractJob job, Job result) { }
 
         public void ReportJobStarted(Job job)
-        public void ReportJobStarted(Job job)
         {
-            var bar = Printing.GetProgressBar(_config);
             var bar = Printing.GetProgressBar(_config);
             _jobBars[job] = bar;
             Printing.RefreshOrPrint(bar, 0, $"{job.GetType().Name}: {job.ToString(true)}, searching..", print: true);
@@ -224,7 +146,6 @@ namespace Utilities
         {
             if (Console.IsOutputRedirected || _config.noProgress)
             {
-                // No progress bars — just print the album info as before.
                 Console.WriteLine();
                 Printing.PrintAlbum(folder);
                 return;
@@ -243,7 +164,6 @@ namespace Utilities
 
                 Printing.PrintAlbumHeader(folder);
 
-                // Pre-allocate one progress bar per file, atomically reserving N lines.
                 var block = new AlbumBlock { Songs = folder.Files.ToList() };
 
                 foreach (var song in block.Songs)
@@ -294,20 +214,11 @@ namespace Utilities
                 Printing.RefreshOrPrint(bar, 0, $"No results: {job.ToString(true)}{lockedMsg}", print: true);
                 _jobBars.TryRemove(job, out _);
                 if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
-                Printing.RefreshOrPrint(bar, 0, $"No results: {job.ToString(true)}{lockedMsg}", print: true);
-                _jobBars.TryRemove(job, out _);
-                if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
             }
             // If found and it's an AlbumJob, leave the header bar in _jobBars so
-            // ReportAlbumDownloadStarted can update it. It will be removed there.
-            else if (job is not AlbumJob)
-            // If found and it's an AlbumJob, leave the header bar in _jobBars so
-            // ReportAlbumDownloadStarted can update it. It will be removed there.
+            // ReportAlbumDownloadStarted can update it. Removed by ReportAlbumDownloadCompleted.
             else if (job is not AlbumJob)
             {
-                if (bar != null)
-                    Printing.RefreshOrPrint(bar, 0, $"Found results: {job.ToString(true)}", print: true);
-                _jobBars.TryRemove(job, out _);
                 if (bar != null)
                     Printing.RefreshOrPrint(bar, 0, $"Found results: {job.ToString(true)}", print: true);
                 _jobBars.TryRemove(job, out _);
@@ -316,16 +227,6 @@ namespace Utilities
 
         public void ReportSongSearching(SongJob song)
         {
-            // If this song already has a pre-allocated bar (album block), update it in-place.
-            if (_bars.TryGetValue(song, out var existing))
-            {
-                existing.StateLabel = "Searching";
-                existing.BaseText   = song.ToString();
-                Printing.RefreshOrPrint(existing.Bar, 0, BuildText(existing), print: false);
-                return;
-            }
-
-            // If this song already has a pre-allocated bar (album block), update it in-place.
             if (_bars.TryGetValue(song, out var existing))
             {
                 existing.StateLabel = "Searching";
