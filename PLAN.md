@@ -351,30 +351,51 @@ this is deferred (see §Next steps).
 
 ## Cancellation
 
-Every job gets a `CancellationTokenSource` set by the engine when it starts processing that job,
-linked to `appCts` so that engine-wide cancellation propagates automatically:
+Every job gets a `CancellationTokenSource` set by the engine when it starts processing that job.
+The CTS is tree-linked: each job's CTS is linked to both `appCts` (engine-wide) and its parent
+job's CTS, so that cancelling any ancestor propagates to all descendants automatically.
 
 ```csharp
 public class Job
 {
     // Set by the engine immediately before processing begins.
-    // Linked to appCts — cancelling it only affects this job and its children.
+    // Linked to appCts and the parent job's token (if any).
+    // Cancelling this job cancels all its descendants; engine-wide cancel propagates here too.
     public CancellationTokenSource? Cts { get; internal set; }
     public void Cancel() => Cts?.Cancel();
 }
 ```
 
-The CTS hierarchy is:
+`ProcessJob` accepts a `parentToken` parameter (default: `CancellationToken.None`) and sets:
+```csharp
+job.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, parentToken);
+```
+
+`JobList` passes `jl.Cts.Token` as `parentToken` to each child in the `Task.WhenAll` fan-out,
+so cancelling a list cancels all its songs.
+
+**`ExtractJob` does not propagate to its `Result`.** When the engine recurses into `ej.Result`
+after extraction, it passes `parentToken` (not `ej.Cts.Token`). Reason: the `ExtractJob` is
+`Done` by the time its `Result` starts processing. Cancelling a `Done` job should have no effect
+on the still-running `Result`. The `Result` can be cancelled independently by targeting the
+`JobList` or individual leaf jobs directly.
+
+The CTS hierarchy in practice:
 
 ```
-appCts                            (engine-wide — engine.Cancel())
-  └── job.Cts                     (per job — job.Cancel(), set by engine at processing time)
-        └── searchCts             (per search cycle — cancelled on fast-search win, linked to appCts)
+appCts                                     (engine-wide — engine.Cancel())
+  └── rootExtractJob.Cts                   (linked to appCts only)
+  └── resultJobList.Cts                    (linked to appCts — sibling of ExtractJob, not child)
+        └── song1.Cts                      (linked to resultJobList.Cts — cancel list cancels song)
+        └── song2.Cts                      (independent of song1 — cancel one doesn't affect other)
+        └── nestedList.Cts                 (linked to resultJobList.Cts)
+              └── song3.Cts               (linked to nestedList.Cts)
+                    └── searchCts         (per search cycle — cancelled on fast-search win)
 ```
 
 The `cancelOnFail` pattern in album downloads (cancel remaining file downloads when one fails) is
-implemented via the album's local `CancellationTokenSource` passed to `RunAlbumDownloads` — no
-per-job `Cts` needed for this case.
+implemented via the album's local `CancellationTokenSource` passed to `RunAlbumDownloads`, which
+is itself linked to `job.Cts` so that user-initiated album cancellation also propagates.
 
 **'c' keypress — deferred:**
 The correct future implementation: the CLI owns keyboard input and, on 'c', presents a numbered
@@ -419,19 +440,19 @@ values so existing index files remain readable.
 
 These are the remaining known todos, roughly in priority order:
 
-### CLI rendering for concurrent jobs
+### CLI rendering for concurrent jobs ✓
 The existing `CliProgressReporter` was written for sequential album processing. With true
 concurrent fan-out, progress bars from different albums interleave and can overflow the terminal.
 This needs to be addressed before concurrent mode is usable in practice.
 
-### Per-job cancellation (`job.Cts`)
-`Job.Cts` and `Job.Cancel()` are not yet implemented. The engine currently only exposes
-`engine.Cancel()` (engine-wide). Implementing per-job cancellation requires:
-1. Engine sets `job.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token)` before
-   processing each job.
-2. All per-job async operations use `job.Cts.Token` instead of (or linked to) `appCts.Token`.
-3. The CLI wires a keyboard handler that presents a numbered list of running jobs and calls
-   `job.Cancel()` on the chosen one.
+### ~~Per-job cancellation (`job.Cts`)~~ ✓
+`Job.Cts` and `Job.Cancel()` are implemented. Each job's CTS is tree-linked: `ProcessJob` accepts
+a `parentToken` parameter and sets `job.Cts = CreateLinkedTokenSource(appCts.Token, parentToken)`.
+`JobList` passes `jl.Cts.Token` to each child in the fan-out. `ExtractJob` passes `parentToken`
+(not its own token) when recursing into its `Result` — the `Result` is a sibling in the hierarchy,
+not a child. Remaining step:
+- The CLI wires a keyboard handler that presents a numbered list of running jobs and calls
+  `job.Cancel()` on the chosen one.
 
 ### ~~`Searching` and `Downloading` states not yet set~~ ✓
 `song.State = JobState.Searching` is set before the search block in `SearchAndDownloadSong`, and

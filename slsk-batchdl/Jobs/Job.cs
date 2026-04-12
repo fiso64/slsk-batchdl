@@ -15,6 +15,12 @@ namespace Jobs
 
         public Guid Id { get; } = Guid.NewGuid();
 
+        // Set by the engine immediately before processing begins.
+        // Linked to appCts (and the parent job's Cts if any) so that cancelling a parent
+        // propagates to all descendants. Cancelling this only affects this job and its children.
+        public CancellationTokenSource? Cts { get; internal set; }
+        public void Cancel() => Cts?.Cancel();
+
         private Config? _config;
         public Config Config
         {

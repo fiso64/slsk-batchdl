@@ -107,8 +107,14 @@ public class DownloadEngine
 
     // ── recursive job processor ───────────────────────────────────────────────
 
-    async Task ProcessJob(Job job, IExtractor? extractor = null)
+    async Task ProcessJob(Job job, IExtractor? extractor = null, CancellationToken parentToken = default)
     {
+        // Create a per-job CTS linked to both the engine-wide appCts and the parent job's token
+        // (if any). Cancelling this job propagates to all descendants; cancelling the parent
+        // propagates here automatically. ExtractJob passes parentToken (not its own token) when
+        // recursing into its Result so that the Result is a sibling, not a child, in the hierarchy.
+        job.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, parentToken);
+
         // ── ExtractJob: run extractor, set Result, recurse ───────────────────
         if (job is ExtractJob ej)
         {
@@ -120,7 +126,7 @@ public class DownloadEngine
             _progressReporter.ReportExtractionStarted(ej);
 
             Job extracted;
-            await _extractorSemaphore.WaitAsync(appCts.Token);
+            await _extractorSemaphore.WaitAsync(ej.Cts!.Token);
             try
             {
                 extracted = await ex.GetTracks(ej.Input, defaultConfig.maxTracks, defaultConfig.offset, defaultConfig.reverse, ej.Config);
@@ -183,7 +189,10 @@ public class DownloadEngine
             foreach (var (id, ctx) in newContexts)
                 _contexts[id] = ctx;
 
-            await ProcessJob(extracted, ex);
+            // Pass parentToken (not ej.Cts.Token): the Result is a sibling of the ExtractJob in
+            // the CTS hierarchy. Cancelling the ExtractJob after extraction completes has no effect
+            // on the already-running Result; the Result can be cancelled independently.
+            await ProcessJob(extracted, ex, parentToken);
             return;
         }
 
@@ -229,7 +238,7 @@ public class DownloadEngine
 
             if (config.PrintResults && directSongs.Count > 0)
             {
-                await _clientManager.WaitUntilReadyAsync(appCts.Token);
+                await _clientManager.WaitUntilReadyAsync(jl.Cts!.Token);
                 await Printing.PrintResults(jl, existing, notFound, config, searcher!);
                 return;
             }
@@ -245,7 +254,7 @@ public class DownloadEngine
                 await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
                 {
                     bool wasInitial = child is SongJob s && s.State == JobState.Pending;
-                    await ProcessJob(child, extractor);
+                    await ProcessJob(child, extractor, jl.Cts!.Token);
 
                     if (wasInitial && child is SongJob song)
                     {
@@ -278,7 +287,7 @@ public class DownloadEngine
             }
             else
             {
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor)));
+                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token)));
             }
 
             return;
@@ -329,7 +338,7 @@ public class DownloadEngine
 
         if (job is AlbumJob or AggregateJob or AlbumAggregateJob)
         {
-            await _clientManager.WaitUntilReadyAsync(appCts.Token);
+            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
 
             _progressReporter.ReportJobStarted(job);
 
@@ -339,13 +348,13 @@ public class DownloadEngine
             if (job is AlbumJob albumJob)
             {
                 if (!albumJob.Query.IsDirectLink)
-                    await searcher!.SearchAlbum(albumJob, config, responseData, appCts.Token);
+                    await searcher!.SearchAlbum(albumJob, config, responseData, job.Cts!.Token);
                 else
                 {
                     try
                     {
                         _progressReporter.ReportJobFolderRetrieving(job);
-                        await searcher!.SearchDirectLinkAlbum(albumJob, appCts.Token);
+                        await searcher!.SearchDirectLinkAlbum(albumJob, job.Cts!.Token);
                     }
                     catch (UserOfflineException e)
                     {
@@ -356,12 +365,12 @@ public class DownloadEngine
             }
             else if (job is AggregateJob aggJob)
             {
-                await searcher!.SearchAggregate(aggJob, config, responseData, appCts.Token);
+                await searcher!.SearchAggregate(aggJob, config, responseData, job.Cts!.Token);
                 foundSomething = aggJob.Songs.Count > 0;
             }
             else if (job is AlbumAggregateJob aabJob)
             {
-                var newAlbumJobs = await searcher!.SearchAggregateAlbum(aabJob, config, responseData, appCts.Token);
+                var newAlbumJobs = await searcher!.SearchAggregateAlbum(aabJob, config, responseData, job.Cts!.Token);
 
                 job.State = JobState.Done;
                 foundSomething = newAlbumJobs.Count > 0;
@@ -387,7 +396,7 @@ public class DownloadEngine
                         PlaylistEditor   = ctx.PlaylistEditor,
                         PreprocessTracks = false,
                     };
-                    await ProcessJob(albumList);
+                    await ProcessJob(albumList, null, job.Cts!.Token);
                 }
                 return;
             }
@@ -418,7 +427,7 @@ public class DownloadEngine
 
         if (config.PrintResults)
         {
-            await _clientManager.WaitUntilReadyAsync(appCts.Token);
+            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
             await Printing.PrintResults(job, new(), new(), config, searcher!);
             return;
         }
@@ -428,7 +437,7 @@ public class DownloadEngine
         ctx.IndexEditor?.Update();
         ctx.PlaylistEditor?.Update();
 
-        await _clientManager.WaitUntilReadyAsync(appCts.Token);
+        await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
 
         switch (job)
         {
@@ -460,7 +469,7 @@ public class DownloadEngine
         if (job.ResolvedTarget != null && job.Candidates == null)
             job.Candidates = new List<FileCandidate> { job.ResolvedTarget };
 
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
         await DownloadSong(job, job, config, organizer, cts,
             cancelOnFail: false, organize: true);
 
@@ -477,7 +486,7 @@ public class DownloadEngine
 
         var downloadTasks = songs.Select(async song =>
         {
-            using var cts = new CancellationTokenSource();
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
             await DownloadSong(song, job, config, organizer, cts, cancelOnFail: false, organize: true);
             ctx.IndexEditor?.Update();
             ctx.PlaylistEditor?.Update();
@@ -543,7 +552,7 @@ public class DownloadEngine
                     if (!retrievedFolders.Contains(chosenFolder.FolderPath))
                     {
                         await RetrieveFullFolderAsync(chosenFolder, config,
-                            "Verifying album track count.\n    Retrieving full folder contents...");
+                            "Verifying album track count.\n    Retrieving full folder contents...", job.Cts!.Token);
                         retrievedFolders.Add(chosenFolder.FolderPath);
                     }
                     int newCount = chosenFolder.Files.Count(af => !af.IsNotAudio);
@@ -576,7 +585,7 @@ public class DownloadEngine
             if (!wasInteractive)
                 _progressReporter.ReportAlbumDownloadStarted(job, chosenFolder);
 
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
 
             try
             {
@@ -584,7 +593,7 @@ public class DownloadEngine
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
                 {
-                    var newFilesFound = await RetrieveFullFolderAsync(chosenFolder, config);
+                    var newFilesFound = await RetrieveFullFolderAsync(chosenFolder, config, ct: job.Cts!.Token);
                     retrievedFolders.Add(chosenFolder.FolderPath);
                     if (newFilesFound > 0)
                     {
@@ -682,7 +691,7 @@ public class DownloadEngine
 
         while (tries > 0)
         {
-            await _clientManager.WaitUntilReadyAsync(appCts.Token);
+            await _clientManager.WaitUntilReadyAsync(cts.Token);
             cts.Token.ThrowIfCancellationRequested();
 
             try
@@ -778,7 +787,7 @@ public class DownloadEngine
 
             if (!config.fastSearch)
             {
-                await searcher!.SearchSong(song, config, responseData, appCts.Token,
+                await searcher!.SearchSong(song, config, responseData, cts.Token,
                     onSearch: () => _progressReporter.ReportSongSearching(song));
             }
             else
@@ -787,7 +796,7 @@ public class DownloadEngine
                 // provisional download of the first qualifying candidate.
                 // The search concurrency slot is held by SearchSong internally; cancelling
                 // searchCts causes SearchSong to return and release it naturally.
-                using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
+                using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
 
                 Task<(string path, FileCandidate? candidate)>? fastDownloadTask = null;
 
@@ -854,7 +863,7 @@ public class DownloadEngine
             {
                 song.State = JobState.Downloading;
                 // ReportDownloadStart is called inside DownloadFile (via Downloader).
-                await downloader!.DownloadFile(candidate, outputPath, song, config, appCts.Token);
+                await downloader!.DownloadFile(candidate, outputPath, song, config, cts.Token);
                 _registry.UserSuccessCounts.AddOrUpdate(candidate.Username, 1, (_, c) => c + 1);
                 return (outputPath, candidate.File);
             }
@@ -1009,12 +1018,12 @@ public class DownloadEngine
     // ── folder retrieval ──────────────────────────────────────────────────────
 
     public async Task<int> RetrieveFullFolderAsync(
-        AlbumFolder folder, Config config, string? customMessage = null)
+        AlbumFolder folder, Config config, string? customMessage = null, CancellationToken ct = default)
     {
         customMessage ??= "Getting all files in folder...";
         Logger.Info(customMessage);
 
-        return await searcher!.CompleteFolder(folder, appCts.Token);
+        return await searcher!.CompleteFolder(folder, ct == default ? appCts.Token : ct);
     }
 
 
@@ -1134,7 +1143,7 @@ public class DownloadEngine
             fileManager.SetRemoteCommonImagesDir(Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)));
 
             bool allSucceeded = true;
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
 
             foreach (var af in imgs)
             {
