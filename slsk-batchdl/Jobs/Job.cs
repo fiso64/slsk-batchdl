@@ -40,9 +40,11 @@ namespace Jobs
 
         // Extractor hints — set by extractors, consumed by JobPreparer when preparing this job's
         // Config and JobContext. JobPreparer clears them after use so they don't linger.
-        public FileConditions? ExtractorCond         { get; set; }
-        public FileConditions? ExtractorPrefCond     { get; set; }
-        public bool            EnablesIndexByDefault { get; set; }
+        public FileConditions?          ExtractorCond         { get; set; }
+        public FileConditions?          ExtractorPrefCond     { get; set; }
+        public Models.FolderConditions? ExtractorFolderCond   { get; set; }
+        public Models.FolderConditions? ExtractorPrefFolderCond { get; set; }
+        public bool                     EnablesIndexByDefault { get; set; }
 
         // Display / identity
         public string? ItemName { get; set; }
@@ -103,9 +105,11 @@ namespace Jobs
 
         public void CopySharedFieldsFrom(Job src)
         {
-            ExtractorCond         = src.ExtractorCond;
-            ExtractorPrefCond     = src.ExtractorPrefCond;
-            ItemName              = src.ItemName;
+            ExtractorCond             = src.ExtractorCond;
+            ExtractorPrefCond         = src.ExtractorPrefCond;
+            ExtractorFolderCond       = src.ExtractorFolderCond;
+            ExtractorPrefFolderCond   = src.ExtractorPrefFolderCond;
+            ItemName                  = src.ItemName;
             EnablesIndexByDefault = src.EnablesIndexByDefault;
             ItemNumber            = src.ItemNumber;
             LineNumber            = src.LineNumber;

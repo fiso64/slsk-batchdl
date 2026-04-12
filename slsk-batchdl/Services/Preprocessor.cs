@@ -111,6 +111,13 @@ namespace Services
             if (config.maxAlbumTrackCount != -1)
                 maxTrackCount = config.maxAlbumTrackCount;
 
+            // Per-job folder conditions (e.g. from list.txt "album-track-count=10") override config defaults.
+            if (config.necessaryFolderCond.MinTrackCount != -1)
+                minTrackCount = config.necessaryFolderCond.MinTrackCount;
+
+            if (config.necessaryFolderCond.MaxTrackCount != -1)
+                maxTrackCount = config.necessaryFolderCond.MaxTrackCount;
+
             job.Query = new AlbumQuery(q)
             {
                 Artist          = artist.Trim(),

@@ -63,6 +63,16 @@ namespace Services
                 job.Config.preferredCond.AddConditions(job.ExtractorPrefCond);
                 job.ExtractorPrefCond = null;
             }
+            if (job.ExtractorFolderCond != null)
+            {
+                job.Config.necessaryFolderCond.AddConditions(job.ExtractorFolderCond);
+                job.ExtractorFolderCond = null;
+            }
+            if (job.ExtractorPrefFolderCond != null)
+            {
+                job.Config.preferredFolderCond.AddConditions(job.ExtractorPrefFolderCond);
+                job.ExtractorPrefFolderCond = null;
+            }
 
             SetupIndexEditor(job, ctx, ownerList, editors);
             SetupPlaylistEditor(job, ctx, ownerList, editors);

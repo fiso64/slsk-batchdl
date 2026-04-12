@@ -1,6 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
+using Jobs;
 using Enums;
+using Services;
 
 namespace Tests.ConfigParsingTests
 {
@@ -154,6 +156,70 @@ namespace Tests.ConfigParsingTests
         {
             var config = new Config(new[] { "--config", "none", "--print", "index", "some input" });
             Assert.IsFalse(config.NeedLogin);
+        }
+    }
+
+    // Confirms that --cond album-track-count=N flows from CLI parsing all the way through
+    // the real Spotify/CSV + -a execution path: SongJob (created by extractor) → Upgrade() →
+    // JobPreparer.PrepareSubtree() → Preprocessor.PreprocessAlbum() → AlbumQuery.
+    [TestClass]
+    public class FolderConditionCliPathTests
+    {
+        // Simulates: spotify input → SongJob created by extractor → Upgrade(album:true) →
+        // PrepareSubtree on upgraded AlbumJob → PreprocessAlbum.
+        static AlbumJob UpgradeAndPrepare(Config startConfig,
+            SongQuery? query = null, bool aggregate = false)
+        {
+            var songJob = new SongJob(query ?? new SongQuery { Title = "Some Song", Artist = "Some Artist" });
+            var albumJob = (AlbumJob)((IUpgradeable)songJob).Upgrade(album: true, aggregate: aggregate).First();
+            JobPreparer.PrepareSubtree(albumJob, startConfig);
+            Preprocessor.PreprocessAlbum(albumJob, albumJob.Config);
+            return albumJob;
+        }
+
+        [TestMethod]
+        public void CondAlbumTrackCountExact_FlowsThroughUpgradeAndPreprocessor()
+        {
+            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count=10", "x" });
+
+            Assert.AreEqual(10, config.necessaryFolderCond.MinTrackCount, "CLI --cond must set necessaryFolderCond.MinTrackCount");
+            Assert.AreEqual(10, config.necessaryFolderCond.MaxTrackCount, "CLI --cond must set necessaryFolderCond.MaxTrackCount");
+
+            var albumJob = UpgradeAndPrepare(config);
+
+            Assert.AreEqual(10, albumJob.Query.MinTrackCount, "Preprocessor must apply necessaryFolderCond to AlbumQuery after Upgrade");
+            Assert.AreEqual(10, albumJob.Query.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public void CondAlbumTrackCountGe_SetsOnlyMin()
+        {
+            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count>=8", "x" });
+
+            Assert.AreEqual(8,  config.necessaryFolderCond.MinTrackCount);
+            Assert.AreEqual(-1, config.necessaryFolderCond.MaxTrackCount);
+
+            var albumJob = UpgradeAndPrepare(config);
+
+            Assert.AreEqual(8,  albumJob.Query.MinTrackCount);
+            Assert.AreEqual(-1, albumJob.Query.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public void CondAlbumTrackCount_OverridesQueryDefaultAfterUpgrade()
+        {
+            // If a metadata extractor (e.g. MusicBrainz) embeds a track count in the SongQuery
+            // before upgrade, necessaryFolderCond (from CLI --cond) should win after Preprocessor.
+            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count=12", "x" });
+
+            // Simulate a SongQuery that already has track-count hints (e.g. from MusicBrainz).
+            var albumJob = UpgradeAndPrepare(config,
+                query: new SongQuery { Title = "T", Artist = "A" });
+
+            // Even though the upgraded AlbumQuery starts with default MinTrackCount=-1,
+            // the CLI folder-cond must still apply.
+            Assert.AreEqual(12, albumJob.Query.MinTrackCount, "necessaryFolderCond must apply after Upgrade+Preprocessor");
+            Assert.AreEqual(12, albumJob.Query.MaxTrackCount);
         }
     }
 }

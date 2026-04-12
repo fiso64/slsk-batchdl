@@ -278,9 +278,9 @@ namespace Utilities
             if (!found)
             {
                 string lockedMsg = lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
-                string prefix    = job is RetrieveFolderJob ? "No additional files found" : "No results";
-                _jobStatuses.TryGetValue(job, out var status);
-                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status ?? prefix}: {job.ToString(true)}{lockedMsg}", print: true);
+                string prefix    = job is RetrieveFolderJob ? "no additional files found" : "no results found";
+                _jobStatuses[job] = prefix;
+                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}{lockedMsg}", print: true);
                 _jobBars.TryRemove(job, out _);
                 _jobStatuses.TryRemove(job, out _);
                 if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
@@ -291,9 +291,9 @@ namespace Utilities
             {
                 if (bar != null)
                 {
-                    string prefix = job is RetrieveFolderJob ? "Found additional files in" : "Found results";
-                    _jobStatuses.TryGetValue(job, out var status);
-                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status ?? prefix}: {job.ToString(true)}", print: true);
+                    string prefix = job is RetrieveFolderJob ? "found additional files in" : "found results";
+                    _jobStatuses[job] = prefix;
+                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}", print: true);
                 }
                 _jobBars.TryRemove(job, out _);
                 _jobStatuses.TryRemove(job, out _);

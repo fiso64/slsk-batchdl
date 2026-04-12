@@ -7,6 +7,78 @@ using Extractors;
 namespace Tests.ExtractorTests2
 {
     [TestClass]
+    public class ListExtractorTests
+    {
+        private string _tempList = "";
+
+        [TestInitialize]
+        public void Setup()
+        {
+            _tempList = Path.GetTempFileName() + ".txt";
+        }
+
+        [TestCleanup]
+        public void Cleanup()
+        {
+            if (File.Exists(_tempList)) File.Delete(_tempList);
+        }
+
+        [TestMethod]
+        public async Task GetTracks_AlbumLineWithAlbumTrackCountCondition_SetsExtractorFolderCond()
+        {
+            File.WriteAllText(_tempList, "a:\"some album\"    album-track-count=10");
+
+            var extractor = new ListExtractor();
+            var config = TestHelpers.CreateDefaultConfig();
+
+            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var jobList = (JobList)result;
+            var ej = (ExtractJob)jobList.Jobs[0];
+
+            Assert.IsNotNull(ej.ExtractorFolderCond, "album-track-count in list.txt conditions is silently dropped (ExtractorFolderCond is null)");
+            Assert.AreEqual(10, ej.ExtractorFolderCond.MinTrackCount);
+            Assert.AreEqual(10, ej.ExtractorFolderCond.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public async Task GetTracks_AlbumLineWithAlbumTrackCountGe_SetsMinOnly()
+        {
+            File.WriteAllText(_tempList, "a:\"some album\"    album-track-count>=8");
+
+            var extractor = new ListExtractor();
+            var config = TestHelpers.CreateDefaultConfig();
+
+            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var jobList = (JobList)result;
+            var ej = (ExtractJob)jobList.Jobs[0];
+
+            Assert.IsNotNull(ej.ExtractorFolderCond);
+            Assert.AreEqual(8,  ej.ExtractorFolderCond.MinTrackCount);
+            Assert.AreEqual(-1, ej.ExtractorFolderCond.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public async Task GetTracks_AlbumLineWithStrictAlbumAndTrackCount_TrackCountInFolderCondStrictAlbumInFileCond()
+        {
+            // strict-album stays in FileConditions; album-track-count goes to FolderConditions
+            File.WriteAllText(_tempList, "a:\"some album\"    strict-album=true;album-track-count=10");
+
+            var extractor = new ListExtractor();
+            var config = TestHelpers.CreateDefaultConfig();
+
+            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var jobList = (JobList)result;
+            var ej = (ExtractJob)jobList.Jobs[0];
+
+            Assert.IsNotNull(ej.ExtractorFolderCond);
+            Assert.AreEqual(10,  ej.ExtractorFolderCond.MinTrackCount);
+            Assert.AreEqual(10,  ej.ExtractorFolderCond.MaxTrackCount);
+            Assert.IsTrue(ej.ExtractorCond?.StrictAlbum == true);
+        }
+    }
+
+
+    [TestClass]
     public class SoulseekExtractorTests
     {
         [TestMethod]

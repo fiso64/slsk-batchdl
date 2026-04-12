@@ -52,21 +52,33 @@ namespace Extractors
                 if (isAlbum)
                     fields[0] = "album://" + fields[0];
 
-                FileConditions? extractorCond     = null;
-                FileConditions? extractorPrefCond = null;
+                FileConditions?          extractorCond         = null;
+                FileConditions?          extractorPrefCond     = null;
+                Models.FolderConditions? extractorFolderCond     = null;
+                Models.FolderConditions? extractorPrefFolderCond = null;
 
                 if (fields.Count >= 2)
-                    extractorCond = Config.ParseConditions(fields[1]);
+                {
+                    var fc = new Models.FolderConditions();
+                    extractorCond       = Config.ParseConditions(fields[1], fc);
+                    extractorFolderCond = fc;
+                }
                 if (fields.Count >= 3)
-                    extractorPrefCond = Config.ParseConditions(fields[2]);
+                {
+                    var fc = new Models.FolderConditions();
+                    extractorPrefCond       = Config.ParseConditions(fields[2], fc);
+                    extractorPrefFolderCond = fc;
+                }
 
                 var ej = new ExtractJob(fields[0])
                 {
-                    ExtractorCond         = extractorCond,
-                    ExtractorPrefCond     = extractorPrefCond,
-                    EnablesIndexByDefault = true,
-                    LineNumber            = i + 1,
-                    ItemNumber            = offset + added + 1,
+                    ExtractorCond           = extractorCond,
+                    ExtractorPrefCond       = extractorPrefCond,
+                    ExtractorFolderCond     = extractorFolderCond,
+                    ExtractorPrefFolderCond = extractorPrefFolderCond,
+                    EnablesIndexByDefault   = true,
+                    LineNumber              = i + 1,
+                    ItemNumber              = offset + added + 1,
                 };
 
                 result.Jobs.Add(ej);

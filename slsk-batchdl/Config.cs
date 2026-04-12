@@ -30,6 +30,9 @@ public class Config
         StrictAlbum = true,
     };
 
+    public Models.FolderConditions necessaryFolderCond  = new();
+    public Models.FolderConditions preferredFolderCond  = new();
+
     public string parentDir = Directory.GetCurrentDirectory();
     public string input = "";
     public string m3uFilePath = "";
@@ -219,8 +222,10 @@ public class Config
     {
         var copy = (Config)this.MemberwiseClone();
 
-        copy.necessaryCond = new FileConditions(necessaryCond);
-        copy.preferredCond = new FileConditions(preferredCond);
+        copy.necessaryCond        = new FileConditions(necessaryCond);
+        copy.preferredCond        = new FileConditions(preferredCond);
+        copy.necessaryFolderCond  = new Models.FolderConditions(necessaryFolderCond);
+        copy.preferredFolderCond  = new Models.FolderConditions(preferredFolderCond);
 
         if (regex != null)
         {
@@ -622,7 +627,7 @@ public class Config
     }
 
 
-    public static FileConditions ParseConditions(string input, Models.AlbumQuery? albumQuery = null)
+    public static FileConditions ParseConditions(string input, Models.FolderConditions? folderCond = null)
     {
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
@@ -708,12 +713,16 @@ public class Config
                     cond.AcceptMissingProps = bool.Parse(value);
                     break;
                 case "albumtrackcount":
-                    if (albumQuery != null)
+                    if (folderCond != null)
                     {
-                        int minC = albumQuery.MinTrackCount, maxC = albumQuery.MaxTrackCount;
+                        int minC = folderCond.MinTrackCount, maxC = folderCond.MaxTrackCount;
                         UpdateMinMax2(value, condition, ref minC, ref maxC);
-                        albumQuery.MinTrackCount = minC;
-                        albumQuery.MaxTrackCount = maxC;
+                        folderCond.MinTrackCount = minC;
+                        folderCond.MaxTrackCount = maxC;
+                    }
+                    else
+                    {
+                        InputError($"'{condition}' is a folder condition and has no effect here");
                     }
                     break;
                 default:
@@ -1316,14 +1325,20 @@ public class Config
                         setNullableFlag(ref necessaryCond.AcceptNoLength, ref i);
                         break;
                     case "--cond":
-                    case "--conditions":
-                        necessaryCond.AddConditions(ParseConditions(GetParameter(ref i)));
+                    case "--conditions": {
+                        var fc = new Models.FolderConditions();
+                        necessaryCond.AddConditions(ParseConditions(GetParameter(ref i), fc));
+                        necessaryFolderCond.AddConditions(fc);
                         break;
+                    }
                     case "--pc":
                     case "--pref":
-                    case "--preferred-conditions":
-                        preferredCond.AddConditions(ParseConditions(GetParameter(ref i)));
+                    case "--preferred-conditions": {
+                        var fc = new Models.FolderConditions();
+                        preferredCond.AddConditions(ParseConditions(GetParameter(ref i), fc));
+                        preferredFolderCond.AddConditions(fc);
                         break;
+                    }
                     case "--nmsc":
                     case "--no-modify-share-count":
                         setFlag(ref noModifyShareCount, ref i);
