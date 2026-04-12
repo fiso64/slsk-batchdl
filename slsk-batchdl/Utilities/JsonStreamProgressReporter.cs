@@ -165,6 +165,7 @@ namespace Utilities
         public void ReportDownloadStateChanged(SongJob song, string stateLabel) { }
         public void ReportOnCompleteStart(SongJob song) { }
         public void ReportOnCompleteEnd(SongJob song) { }
+        public void ReportJobStatus(Job job, string status) { }
 
         private void WriteEvent(string type, object data)
         {

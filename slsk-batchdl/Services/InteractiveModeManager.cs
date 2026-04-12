@@ -62,10 +62,13 @@ public class InteractiveModeManager
 
     public async Task<RunResult> Run()
     {
-        int aidx = 0;
-        string retrieveAll1 = canRetrieve ? "| [r]            " : "";
-        string retrieveAll2 = canRetrieve ? "| Load All Files " : "";
-        Console.WriteLine();
+        ConsoleInputManager.GlobalCancelEnabled = false;
+        try
+        {
+            int aidx = 0;
+            string retrieveAll1 = canRetrieve ? "| [r]            " : "";
+            string retrieveAll2 = canRetrieve ? "| Load All Files " : "";
+            Console.WriteLine();
         Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | {retrieveAll1}| [s]  | [Esc/q] | [h]", ConsoleColor.Green);
         Printing.WriteLine($" Prev   | Next     | Accept  | {retrieveAll2}| Skip | Quit    | Help", ConsoleColor.Green);
 
@@ -91,7 +94,7 @@ public class InteractiveModeManager
             Console.WriteLine();
 
         Loop:
-            string userInputStr = InteractiveModeInput().Trim().ToLower();
+            string userInputStr = (await InteractiveModeInput()).Trim().ToLower();
             string command      = userInputStr;
             string options      = "";
             string subfolder    = "";
@@ -118,6 +121,17 @@ public class InteractiveModeManager
                     ClearOutput(savedPos);
                     aidx = (aidx + 1) % filterList.Count;
                     break;
+
+                case "c":
+                    if (ConsoleInputManager.OnCancelRequested != null)
+                    {
+                        Printing.SetBuffering(true);
+                        await ConsoleInputManager.OnCancelRequested();
+                        Printing.SetBuffering(false);
+                        Printing.Flush();
+                        ClearOutput(savedPos);
+                    }
+                    goto Loop;
 
                 case "s":
                     return new RunResult(-1, null, false, false, null);
@@ -275,10 +289,15 @@ public class InteractiveModeManager
                     goto Loop;
             }
         }
+        }
+        finally
+        {
+            ConsoleInputManager.GlobalCancelEnabled = true;
+        }
     }
 
 
-    private string InteractiveModeInput()
+    private async Task<string> InteractiveModeInput()
     {
         var buffer    = new StringBuilder();
         var firstKey  = true;
@@ -286,7 +305,7 @@ public class InteractiveModeManager
 
         while (true)
         {
-            var key = Console.ReadKey(true);
+            var key = await ConsoleInputManager.ReadKeyAsync();
 
             if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.Escape)
             {

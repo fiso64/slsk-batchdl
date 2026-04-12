@@ -48,6 +48,7 @@ namespace Utilities
         // OnComplete around a song download
         void ReportOnCompleteStart(SongJob song);
         void ReportOnCompleteEnd(SongJob song);
+        void ReportJobStatus(Job job, string status);
     }
 
     /// <summary>
@@ -78,5 +79,6 @@ namespace Utilities
         public void ReportDownloadStateChanged(SongJob song, string stateLabel) { }
         public void ReportOnCompleteStart(SongJob song) { }
         public void ReportOnCompleteEnd(SongJob song) { }
+        public void ReportJobStatus(Job job, string status) { }
     }
 }

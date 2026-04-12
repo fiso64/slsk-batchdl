@@ -6,9 +6,86 @@ using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
 
+public interface IProgressBar
+{
+    int Y { get; }
+    string? Line1 { get; }
+    int Current { get; }
+    void Refresh(int current, string item);
+}
+
 public static class Printing
 {
     public static readonly object ConsoleLock = new();
+    public static bool IsBuffering { get; private set; }
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<Action> _buffer = new();
+
+    public static void SetBuffering(bool enable)
+    {
+        lock (ConsoleLock)
+        {
+            IsBuffering = enable;
+        }
+    }
+
+    public static void Flush()
+    {
+        lock (ConsoleLock)
+        {
+            while (_buffer.TryDequeue(out var action))
+                action();
+        }
+    }
+
+    internal static void Enqueue(Action action) => _buffer.Enqueue(action);
+
+    private class BufferedProgressBar : IProgressBar
+    {
+        private Konsole.ProgressBar? _inner;
+        private readonly Config _config;
+        private int _lastCurrent;
+        private string _lastItem = "";
+        private bool _isQueued = false;
+
+        public BufferedProgressBar(Config config)
+        {
+            _config = config;
+            if (!IsBuffering)
+                _inner = GetRealProgressBar(config);
+        }
+
+        public int Y => _inner?.Y ?? Console.CursorTop;
+        public string? Line1 => _inner?.Line1;
+        public int Current => _inner?.Current ?? _lastCurrent;
+
+        public void Refresh(int current, string item)
+        {
+            _lastCurrent = current;
+            _lastItem = item;
+
+            if (IsBuffering)
+            {
+                if (!_isQueued)
+                {
+                    _isQueued = true;
+                    Enqueue(() => { _isQueued = false; RealRefresh(); });
+                }
+                return;
+            }
+
+            RealRefresh();
+        }
+
+        private void RealRefresh()
+        {
+            lock (ConsoleLock)
+            {
+                if (_inner == null)
+                    _inner = GetRealProgressBar(_config);
+                try { _inner?.Refresh(_lastCurrent, _lastItem); } catch { }
+            }
+        }
+    }
 
     public static string DisplayString(SongQuery query, Soulseek.File? file = null, SearchResponse? response = null,
         FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
@@ -410,14 +487,19 @@ public static class Printing
         };
     }
 
-    public static void RefreshOrPrint(ProgressBar? progress, int current, string item, bool print = false, bool refreshIfOffscreen = false)
+    public static void RefreshOrPrint(IProgressBar? progress, int current, string item, bool print = false, bool refreshIfOffscreen = false)
     {
+        if (IsBuffering)
+        {
+            _buffer.Enqueue(() => RefreshOrPrint(progress, current, item, print, refreshIfOffscreen));
+            return;
+        }
+
         lock (ConsoleLock)
         {
             if (progress != null && !Console.IsOutputRedirected && (refreshIfOffscreen || progress.Y >= Console.WindowTop))
             {
-                try { progress.Refresh(current, item); }
-                catch { }
+                progress.Refresh(current, item);
 
                 if (print)
                     Logger.LogNonConsole(Logger.LogLevel.Info, item);
@@ -429,27 +511,52 @@ public static class Printing
         }
     }
 
-    public static void WriteLine(string value, ConsoleColor color = ConsoleColor.Gray)
+    public static void WriteLine(string value = "", ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
-        Console.ForegroundColor = color;
-        Console.WriteLine(value);
-        Console.ResetColor();
+        if (IsBuffering && !force)
+        {
+            _buffer.Enqueue(() => WriteLine(value, color, force));
+            return;
+        }
+
+        lock (ConsoleLock)
+        {
+            Console.ForegroundColor = color;
+            Console.WriteLine(value);
+            Console.ResetColor();
+        }
     }
 
-    public static void Write(string value, ConsoleColor color = ConsoleColor.Gray)
+    public static void Write(string value, ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
-        Console.ForegroundColor = color;
-        Console.Write(value);
-        Console.ResetColor();
+        if (IsBuffering && !force)
+        {
+            _buffer.Enqueue(() => Write(value, color, force));
+            return;
+        }
+
+        lock (ConsoleLock)
+        {
+            Console.ForegroundColor = color;
+            Console.Write(value);
+            Console.ResetColor();
+        }
     }
 
-    public static ProgressBar? GetProgressBar(Config config)
+    public static IProgressBar? GetProgressBar(Config config)
+    {
+        if (!config.noProgress)
+            return new BufferedProgressBar(config);
+        return null;
+    }
+
+    private static Konsole.ProgressBar? GetRealProgressBar(Config config)
     {
         lock (ConsoleLock)
         {
             if (!config.noProgress)
             {
-                try { return new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' '); }
+                try { return new Konsole.ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' '); }
                 catch { return null; }
             }
             return null;

@@ -25,6 +25,7 @@ namespace Enums
         AllDownloadsFailed = 4,
         Other = 5,
         ExtractionFailed = 6,
+        Cancelled = 7,
     }
 
     public enum SkipMode

@@ -1,4 +1,4 @@
-﻿public static class Logger
+public static class Logger
 {
     public enum LogLevel
     {
@@ -54,7 +54,7 @@
 
     public static void AddConsole(LogLevel minimumLevel = LogLevel.Info, bool useColors = true, bool prependDate = false, bool prependLogLevel = false)
     {
-        AddOutput(Console.WriteLine, minimumLevel, prependDate, prependLogLevel);
+        AddOutput(msg => Printing.WriteLine(msg), minimumLevel, prependDate, prependLogLevel);
         var consoleConfig = OutputConfigs[^1];
         consoleConfig.UseConsoleColors = useColors;
         consoleConfig.IsConsoleOutput = true;
@@ -62,9 +62,12 @@
 
     public static void SetConsoleLogLevel(LogLevel logLevel)
     {
-        var consoleConfig = OutputConfigs.FirstOrDefault(x => x.Output == Console.WriteLine);
-        if (consoleConfig != null)
-            consoleConfig.MinimumLevel = logLevel;
+        lock (LockObject)
+        {
+            var consoleConfig = OutputConfigs.FirstOrDefault(x => x.IsConsoleOutput);
+            if (consoleConfig != null)
+                consoleConfig.MinimumLevel = logLevel;
+        }
     }
 
     public static void AddFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
@@ -85,43 +88,50 @@
 
     public static void Log(LogLevel level, string message, ConsoleColor? color = null, IEnumerable<OutputConfig>? outputs = null)
     {
-        if (outputs == null)
-            outputs = OutputConfigs;
-
+        List<OutputConfig> targets;
         lock (LockObject)
         {
-            foreach (var config in outputs)
+            targets = (outputs ?? OutputConfigs).ToList();
+        }
+
+        foreach (var config in targets)
+        {
+            if (level < config.MinimumLevel)
+                continue;
+
+            string msg = message;
+            if (!config.IsConsoleOutput) msg = msg.TrimStart();
+            string logEntry = BuildLogEntry(level, msg, config.PrependDate, config.PrependLogLevel);
+
+            if (config.IsConsoleOutput && config.UseConsoleColors)
             {
-                if (level < config.MinimumLevel)
-                    continue;
-
-                if (!config.IsConsoleOutput) message = message.TrimStart();
-                string logEntry = BuildLogEntry(level, message, config.PrependDate, config.PrependLogLevel);
-
-                if (config.IsConsoleOutput && config.UseConsoleColors)
+                ConsoleColor? targetColor = color;
+                if (!targetColor.HasValue)
                 {
-                    if (color.HasValue)
+                    targetColor = level switch
                     {
-                        Console.ForegroundColor = color.Value;
-                    }
-                    else
-                    {
-                        SetConsoleColor(level);
-                    }
-                    config.Output(logEntry);
-                    Console.ResetColor();
+                        LogLevel.Error or LogLevel.Fatal => ConsoleColor.Red,
+                        LogLevel.Warn or LogLevel.DebugError => ConsoleColor.DarkYellow,
+                        _ => ConsoleColor.Gray,
+                    };
                 }
-                else
-                {
-                    config.Output(logEntry);
-                }
+                Printing.WriteLine(logEntry, targetColor.Value);
+            }
+            else
+            {
+                config.Output(logEntry);
             }
         }
     }
 
     public static void LogNonConsole(LogLevel level, string message)
     {
-        Log(level, message, color: null, outputs: OutputConfigs.Where(x => x.Output != Console.WriteLine));
+        List<OutputConfig> nonConsole;
+        lock (LockObject)
+        {
+            nonConsole = OutputConfigs.Where(x => !x.IsConsoleOutput).ToList();
+        }
+        Log(level, message, color: null, outputs: nonConsole);
     }
 
     private static string BuildLogEntry(LogLevel level, string message, bool prependDate, bool prependLogLevel)

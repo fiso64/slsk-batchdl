@@ -459,21 +459,32 @@ public class DownloadEngine
 
         await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
 
-        switch (job)
+        try
         {
-            case SongJob sj:
-                await ProcessSongJob(sj, ctx);
-                break;
+            switch (job)
+            {
+                case SongJob sj:
+                    await ProcessSongJob(sj, ctx);
+                    break;
 
-            case AlbumJob aj:
-                await ProcessAlbumJob(aj, ctx);
-                break;
+                case AlbumJob aj:
+                    await ProcessAlbumJob(aj, ctx);
+                    break;
 
-            case AggregateJob ag:
-                Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
-                    new(), new(), isNormal: false, config);
-                await ProcessAggregateJob(ag, ctx);
-                break;
+                case AggregateJob ag:
+                    Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
+                        new(), new(), isNormal: false, config);
+                    await ProcessAggregateJob(ag, ctx);
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (job.Cts != null && job.Cts.IsCancellationRequested)
+            {
+                job.State         = JobState.Failed;
+                job.FailureReason = FailureReason.Cancelled;
+            }
         }
     }
 
@@ -629,7 +640,14 @@ public class DownloadEngine
             catch (OperationCanceledException)
             {
                 if (!config.IgnoreAlbumFail)
-                    HandleAlbumFail(chosenFolder, config.DeleteAlbumOnFail, config);
+                    HandleAlbumFail(job, chosenFolder, config.DeleteAlbumOnFail, config);
+
+                if (job.Cts != null && job.Cts.IsCancellationRequested)
+                {
+                    job.State = JobState.Failed;
+                    job.FailureReason = FailureReason.Cancelled;
+                    break;
+                }
             }
 
             if (!succeeded)
@@ -654,7 +672,7 @@ public class DownloadEngine
                 // for albums is handled at the JobList fan-out level if needed.
             }
         }
-        else if (index != -1)
+        else if (index != -1 && job.State != JobState.Failed)
         {
             job.State         = JobState.Failed;
             job.FailureReason = FailureReason.NoSuitableFileFound;
@@ -739,7 +757,7 @@ public class DownloadEngine
                 else if (ex is OperationCanceledException && cts.IsCancellationRequested)
                 {
                     song.State         = JobState.Failed;
-                    song.FailureReason = FailureReason.Other;
+                    song.FailureReason = FailureReason.Cancelled;
                     _progressReporter.ReportStateChanged(song);
                     throw;
                 }
@@ -756,7 +774,7 @@ public class DownloadEngine
         if (tries == 0 && cancelOnFail)
         {
             song.State         = JobState.Failed;
-            song.FailureReason = FailureReason.Other;
+            song.FailureReason = FailureReason.OutOfDownloadRetries;
             _progressReporter.ReportStateChanged(song);
             cts.Cancel();
             throw new OperationCanceledException();
@@ -997,12 +1015,18 @@ public class DownloadEngine
 
     // ── album failure handling ────────────────────────────────────────────────
 
-    void HandleAlbumFail(AlbumFolder folder, bool deleteDownloaded, Config config)
+    void HandleAlbumFail(AlbumJob job, AlbumFolder folder, bool deleteDownloaded, Config config)
     {
         if (deleteDownloaded)
-            Logger.Info("Deleting album files");
+        {
+            _progressReporter.ReportJobStatus(job, "deleting files");
+            Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Deleting album files");
+        }
         else if (config.failedAlbumPath.Length > 0)
-            Logger.Info($"Moving album files to {config.failedAlbumPath}");
+        {
+            _progressReporter.ReportJobStatus(job, $"moving to {config.failedAlbumPath}");
+            Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Moving album files to {config.failedAlbumPath}");
+        }
 
         foreach (var af in folder.Files)
         {
@@ -1027,6 +1051,11 @@ public class DownloadEngine
                 Logger.Error($"Error: Unable to move or delete file '{af.DownloadPath}' after album fail: {e}");
             }
         }
+
+        if (deleteDownloaded)
+            _progressReporter.ReportJobStatus(job, "deleted files");
+        else if (config.failedAlbumPath.Length > 0)
+            _progressReporter.ReportJobStatus(job, $"moved to {config.failedAlbumPath}");
     }
 
 
@@ -1053,7 +1082,9 @@ public class DownloadEngine
         {
             // Suppress upward exception and return 0 so the parent job doesn't fail
             rfJob.State         = JobState.Failed;
-            Logger.Info($"[{rfJob.DisplayId}] Skipped folder retrieval for {folder.FolderPath}");
+            rfJob.FailureReason = FailureReason.Cancelled;
+            _progressReporter.ReportJobStatus(rfJob, "cancelled");
+            Logger.LogNonConsole(Logger.LogLevel.Info, $"[{rfJob.DisplayId}] RetrieveFolderJob: Cancelled folder retrieval for {folder.FolderPath}");
             return 0;
         }
         finally

@@ -898,7 +898,7 @@ public abstract class SearchAndDownloadException : Exception
 public class OutOfDownloadRetriesException : SearchAndDownloadException
 {
     public OutOfDownloadRetriesException(Exception inner)
-        : base(FailureReason.Other, "Out of download retries.", inner) { }
+        : base(FailureReason.OutOfDownloadRetries, "Out of download retries.", inner) { }
 }
 
 public class NoSuitableFileFoundException : SearchAndDownloadException
@@ -912,5 +912,5 @@ public class NoSuitableFileFoundException : SearchAndDownloadException
 public class AllDownloadsFailedException : SearchAndDownloadException
 {
     public AllDownloadsFailedException()
-        : base(FailureReason.Other, "All downloads failed.") { }
+        : base(FailureReason.AllDownloadsFailed, "All downloads failed.") { }
 }

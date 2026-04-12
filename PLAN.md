@@ -441,18 +441,12 @@ values so existing index files remain readable.
 These are the remaining known todos, roughly in priority order:
 
 ### CLI rendering for concurrent jobs ✓
-The existing `CliProgressReporter` was written for sequential album processing. With true
-concurrent fan-out, progress bars from different albums interleave and can overflow the terminal.
-This needs to be addressed before concurrent mode is usable in practice.
+Fixed via a centralized output buffering system in `Printing.cs`. All console output and `ProgressBar` creation is suppressed/queued during interactive prompts and flushed atomically on completion. `IProgressReporter` expanded with `ReportJobStatus` for dynamic labels.
 
-### ~~Per-job cancellation (`job.Cts`)~~ ✓
-`Job.Cts` and `Job.Cancel()` are implemented. Each job's CTS is tree-linked: `ProcessJob` accepts
-a `parentToken` parameter and sets `job.Cts = CreateLinkedTokenSource(appCts.Token, parentToken)`.
-`JobList` passes `jl.Cts.Token` to each child in the fan-out. `ExtractJob` passes `parentToken`
-(not its own token) when recursing into its `Result` — the `Result` is a sibling in the hierarchy,
-not a child. Remaining step:
-- The CLI wires a keyboard handler that presents a numbered list of running jobs and calls
-  `job.Cancel()` on the chosen one.
+### Per-job cancellation (`job.Cts`) ✓
+`Job.Cts` and `Job.Cancel()` are implemented and tree-linked. Global cancellation via 'c' hotkey presents a prompted list of active jobs. `FailureReason.Cancelled` ensures uniform reporting.
+- Input is centralized in `ConsoleInputManager` to prevent UI race conditions.
+- Prompt visibility is guaranteed via the `force` flag in the buffered `Printing` utility.
 
 ### ~~`Searching` and `Downloading` states not yet set~~ ✓
 `song.State = JobState.Searching` is set before the search block in `SearchAndDownloadSong`, and

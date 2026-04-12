@@ -3,7 +3,7 @@ using Enums;
 using Jobs;
 using Models;
 using Konsole;
-using ProgressBar = Konsole.ProgressBar;
+using ProgressBar = IProgressBar;
 
 namespace Utilities
 {
@@ -14,6 +14,8 @@ namespace Utilities
         private readonly ConcurrentDictionary<SongJob, BarData> _bars = new();
         private readonly ConcurrentDictionary<Job, ProgressBar?> _jobBars = new();
         private readonly ConcurrentDictionary<AlbumJob, AlbumBlock> _albumBlocks = new();
+        private readonly ConcurrentDictionary<Job, string> _jobStatuses = new();
+        private readonly ConcurrentDictionary<Job, int> _jobSpinIndexes = new();
         private readonly ConcurrentDictionary<SongJob, (string text, int pos)> _savedState = new();
 
         static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
@@ -34,7 +36,7 @@ namespace Utilities
 
         private readonly CancellationTokenSource _tickCts = new();
 
-        public Action<ConsoleKey>? OnKeyPressed { get; set; }
+        public bool IsPaused { get; set; } = false;
 
         public CliProgressReporter(Config config)
         {
@@ -51,13 +53,13 @@ namespace Utilities
                 while (!ct.IsCancellationRequested)
                 {
                     await Task.Delay(100, ct);
+                    if (IsPaused) continue;
 
                     foreach (var (_, d) in _bars)
                     {
                         if (d.StateLabel != "InProgress" || d.Bar == null) continue;
                         d.SpinIndex++;
-                        lock (Printing.ConsoleLock)
-                            try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
+                        try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
                     }
 
                     foreach (var (job, block) in _albumBlocks)
@@ -65,12 +67,10 @@ namespace Utilities
                         if (!_jobBars.TryGetValue(job, out var headerBar) || headerBar == null) continue;
                         int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
                         int total = block.Songs.Count;
-                        lock (Printing.ConsoleLock)
-                            try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total)); } catch { }
+                        _jobStatuses.TryGetValue(job, out var status);
+                        try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total, status)); } catch { }
                     }
 
-                    if (OnKeyPressed != null && !Console.IsInputRedirected && Console.KeyAvailable)
-                        OnKeyPressed(Console.ReadKey(intercept: true).Key);
                 }
             }
             catch (OperationCanceledException) { }
@@ -88,8 +88,22 @@ namespace Utilities
             return $"{prefix}{label} {d.BaseText}";
         }
 
-        static string AlbumHeaderText(AlbumJob job, int done, int total)
-            => $"[{job.DisplayId}] {job.ToString(true)}  [{done}/{total}]";
+        private string AlbumHeaderText(AlbumJob job, int done, int total, string? status = null)
+        {
+            string statusStr = !string.IsNullOrEmpty(status) ? $" ({status})" : "";
+            return $"[{job.DisplayId}] AlbumJob: {job.ToString(true)}{statusStr}  [{done}/{total}]";
+        }
+
+        private static string GetJobTypePrefix(Job job) => job switch
+        {
+            AlbumJob            => "AlbumJob: ",
+            ExtractJob          => "ExtractJob: ",
+            SongJob             => "SongJob: ",
+            RetrieveFolderJob   => "RetrieveFolderJob: ",
+            JobList             => "JobList: ",
+            AggregateJob        => "AggregateJob: ",
+            _                   => ""
+        };
 
         static string FailureReasonLabel(FailureReason reason) => reason switch
         {
@@ -98,6 +112,7 @@ namespace Utilities
             FailureReason.OutOfDownloadRetries => "Out of download retries",
             FailureReason.AllDownloadsFailed   => "All downloads failed",
             FailureReason.ExtractionFailed     => "Extraction failed",
+            FailureReason.Cancelled            => "Cancelled",
             FailureReason.Other                => "Unknown error",
             _                                  => "",
         };
@@ -157,8 +172,8 @@ namespace Utilities
             {
                 lock (Printing.ConsoleLock)
                 {
-                    Console.WriteLine();
-                    Logger.Info($"[{job.DisplayId}] Input ({job.InputType}): {job.Input}");
+                    Printing.WriteLine();
+                    Logger.Info($"[{job.DisplayId}] ExtractJob: Input ({job.InputType}): {job.Input}");
                 }
             }
         }
@@ -167,7 +182,7 @@ namespace Utilities
 
         public void ReportExtractionFailed(ExtractJob job, string reason)
         {
-            Logger.Error($"[{job.DisplayId}] Failed:      {job.Input}\n  Reason:    {reason}");
+            Logger.Error($"[{job.DisplayId}] ExtractJob: Failed: {job.Input}\n  Reason:    {reason}");
             _jobBars.TryRemove(job, out _);
         }
 
@@ -175,15 +190,16 @@ namespace Utilities
         {
             var bar = Printing.GetProgressBar(_config);
             _jobBars[job] = bar;
-            string verb = job is RetrieveFolderJob ? "retrieving folder" : "searching";
-            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {verb}: {job.ToString(true)}", print: true);
+            string status = job is RetrieveFolderJob ? "retrieving folder" : "searching";
+            _jobStatuses[job] = status;
+            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}", print: true);
         }
 
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
         {
             if (Console.IsOutputRedirected || _config.noProgress)
             {
-                Console.WriteLine();
+                Printing.WriteLine();
                 Printing.PrintAlbum(folder);
                 return;
             }
@@ -197,7 +213,10 @@ namespace Utilities
             lock (Printing.ConsoleLock)
             {
                 if (_jobBars.TryGetValue(job, out var headerBar) && headerBar != null)
-                    try { headerBar.Refresh(0, AlbumHeaderText(job, 0, total)); } catch { }
+                {
+                    _jobStatuses[job] = "downloading";
+                    try { headerBar.Refresh(0, AlbumHeaderText(job, 0, total, "downloading")); } catch { }
+                }
 
                 Printing.PrintAlbumHeader(folder);
 
@@ -213,10 +232,10 @@ namespace Utilities
                         ? Printing.DisplayString(song.Query, song.ResolvedTarget.File, song.ResolvedTarget.Response, customPath: shortName, showUser: false)
                         : shortName;
 
-                    var bar = new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
+                    var bar = Printing.GetProgressBar(_config);
                     var d   = new BarData { Bar = bar, BaseText = baseText, StateLabel = "Pending", Pct = 0 };
                     _bars[song] = d;
-                    lock (Printing.ConsoleLock)
+                    if (bar != null)
                         try { bar.Refresh(0, BuildText(d)); } catch { }
                 }
 
@@ -231,15 +250,19 @@ namespace Utilities
                 int total = block.Songs.Count;
                 int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
                 if (_jobBars.TryGetValue(job, out var headerBar) && headerBar != null)
-                    lock (Printing.ConsoleLock)
-                        try { headerBar.Refresh(100, AlbumHeaderText(job, done, total)); } catch { }
+                {
+                    _jobStatuses.TryGetValue(job, out var status);
+                    try { headerBar.Refresh(100, AlbumHeaderText(job, done, total, status)); } catch { }
+                }
                 _albumBlocks.TryRemove(job, out _);
             }
             _jobBars.TryRemove(job, out _);
+            _jobStatuses.TryRemove(job, out _);
+            _jobSpinIndexes.TryRemove(job, out _);
 
             if (!Console.IsOutputRedirected && !_config.noProgress)
             {
-                Console.WriteLine();
+                Printing.WriteLine();
             }
         }
 
@@ -256,8 +279,10 @@ namespace Utilities
             {
                 string lockedMsg = lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
                 string prefix    = job is RetrieveFolderJob ? "No additional files found" : "No results";
-                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {prefix}: {job.ToString(true)}{lockedMsg}", print: true);
+                _jobStatuses.TryGetValue(job, out var status);
+                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status ?? prefix}: {job.ToString(true)}{lockedMsg}", print: true);
                 _jobBars.TryRemove(job, out _);
+                _jobStatuses.TryRemove(job, out _);
                 if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
             }
             // If found and it's an AlbumJob, leave the header bar in _jobBars so
@@ -267,9 +292,11 @@ namespace Utilities
                 if (bar != null)
                 {
                     string prefix = job is RetrieveFolderJob ? "Found additional files in" : "Found results";
-                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {prefix}: {job.ToString(true)}", print: true);
+                    _jobStatuses.TryGetValue(job, out var status);
+                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status ?? prefix}: {job.ToString(true)}", print: true);
                 }
                 _jobBars.TryRemove(job, out _);
+                _jobStatuses.TryRemove(job, out _);
             }
         }
 
@@ -325,6 +352,24 @@ namespace Utilities
             if (!_bars.TryGetValue(song, out var d) || d.Bar == null) return;
             if (_savedState.TryGetValue(song, out var saved))
                 Printing.RefreshOrPrint(d.Bar, saved.pos, saved.text);
+        }
+
+        public void ReportJobStatus(Job job, string status)
+        {
+            _jobStatuses[job] = status;
+            if (_jobBars.TryGetValue(job, out var bar) && bar != null)
+            {
+                if (job is AlbumJob aj && _albumBlocks.TryGetValue(aj, out var block))
+                {
+                    int done = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
+                    int total = block.Songs.Count;
+                    try { bar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(aj, done, total, status)); } catch { }
+                }
+                else
+                {
+                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}", print: false);
+                }
+            }
         }
     }
 }

@@ -64,10 +64,54 @@ internal static partial class Program
             };
         }
 
-        // TODO: wire up per-job cancellation here — see PLAN.md §Cancellation.
-        // cli.OnKeyPressed = key => { ... present numbered list of running jobs ... }
+        ConsoleInputManager.Reporter = reporter as CliProgressReporter;
+        ConsoleInputManager.OnCancelRequested = async () =>
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Console.WriteLine();
+                Printing.Write("Cancel Job ID (or 'all', Enter to abort): ", ConsoleColor.Yellow, force: true);
+            }
 
-        await engine.RunAsync(cts.Token);
+            string? input = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(input)) return;
+
+            if (input.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                cts.Cancel();
+                return;
+            }
+
+            if (int.TryParse(input, out int id))
+            {
+                var jobToCancel = engine.GetJob(id);
+                if (jobToCancel != null)
+                {
+                    Logger.Info($"Cancelling job [{id}]...");
+                    jobToCancel.Cancel();
+                }
+                else
+                {
+                    Logger.Error($"Job ID [{id}] not found.");
+                }
+            }
+            else
+            {
+                Logger.Error($"Invalid input '{input}'.");
+            }
+        };
+
+        _ = Task.Run(() => ConsoleInputManager.RunLoopAsync(cts.Token), cts.Token);
+
+        try
+        {
+            await engine.RunAsync(cts.Token);
+        }
+        finally
+        {
+            Printing.SetBuffering(false);
+            Printing.Flush();
+        }
     }
 
     private static SoulseekClientManager soulseekClientManager(Config config)
