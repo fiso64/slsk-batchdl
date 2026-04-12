@@ -48,7 +48,7 @@ internal static partial class Program
                     job, engine.Queue, job.Results,
                     canRetrieve: true,
                     retrievedFolders: retrievedFolders,
-                    retrieveFolderCallback: async (f) => await engine.RetrieveFullFolderAsync(f, job.Config),
+                    retrieveFolderCallback: async (f) => await engine.ProcessFolderRetrieval(f, job),
                     filterStr: filterStr);
 
                 var result = await interactive.Run();

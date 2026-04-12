@@ -571,8 +571,8 @@ public class DownloadEngine
                 {
                     if (!retrievedFolders.Contains(chosenFolder.FolderPath))
                     {
-                        await RetrieveFullFolderAsync(chosenFolder, config,
-                            "Verifying album track count.\n    Retrieving full folder contents...", job.Cts!.Token);
+                        await ProcessFolderRetrieval(chosenFolder, job,
+                            "Verifying album track count.\n    Retrieving full folder contents...");
                         retrievedFolders.Add(chosenFolder.FolderPath);
                     }
                     int newCount = chosenFolder.Files.Count(af => !af.IsNotAudio);
@@ -613,16 +613,11 @@ public class DownloadEngine
 
                 if (!config.noBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
                 {
-                    var newFilesFound = await RetrieveFullFolderAsync(chosenFolder, config, ct: job.Cts!.Token);
+                    var newFilesFound = await ProcessFolderRetrieval(chosenFolder, job);
                     retrievedFolders.Add(chosenFolder.FolderPath);
                     if (newFilesFound > 0)
                     {
-                        Logger.Info($"Found {newFilesFound} more files, downloading:");
                         await RunAlbumDownloads(chosenFolder, cts);
-                    }
-                    else
-                    {
-                        Logger.Info("No more files found.");
                     }
                 }
 
@@ -1037,13 +1032,34 @@ public class DownloadEngine
 
     // ── folder retrieval ──────────────────────────────────────────────────────
 
-    public async Task<int> RetrieveFullFolderAsync(
-        AlbumFolder folder, Config config, string? customMessage = null, CancellationToken ct = default)
+    public async Task<int> ProcessFolderRetrieval(AlbumFolder folder, Job parentJob, string? customMessage = null)
     {
-        customMessage ??= "Getting all files in folder...";
-        Logger.Info(customMessage);
+        var rfJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
 
-        return await searcher!.CompleteFolder(folder, ct == default ? appCts.Token : ct);
+        _jobById[rfJob.Id] = rfJob;
+        _jobByDisplayId[rfJob.DisplayId] = rfJob;
+        rfJob.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, parentJob.Cts!.Token);
+
+        _progressReporter.ReportJobStarted(rfJob);
+
+        int count = 0;
+        try
+        {
+            count = await searcher!.CompleteFolder(rfJob.TargetFolder, rfJob.Cts.Token);
+            rfJob.State = JobState.Done;
+            return count;
+        }
+        catch (OperationCanceledException)
+        {
+            // Suppress upward exception and return 0 so the parent job doesn't fail
+            rfJob.State         = JobState.Failed;
+            Logger.Info($"[{rfJob.DisplayId}] Skipped folder retrieval for {folder.FolderPath}");
+            return 0;
+        }
+        finally
+        {
+            _progressReporter.ReportJobCompleted(rfJob, count > 0, 0);
+        }
     }
 
 

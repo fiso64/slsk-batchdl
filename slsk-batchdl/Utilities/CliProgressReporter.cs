@@ -175,7 +175,8 @@ namespace Utilities
         {
             var bar = Printing.GetProgressBar(_config);
             _jobBars[job] = bar;
-            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {job.ToString(true)}, searching..", print: true);
+            string verb = job is RetrieveFolderJob ? "retrieving folder" : "searching";
+            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {verb}: {job.ToString(true)}", print: true);
         }
 
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
@@ -245,7 +246,7 @@ namespace Utilities
         public void ReportJobFolderRetrieving(Job job)
         {
             _jobBars.TryGetValue(job, out var bar);
-            Printing.RefreshOrPrint(bar, 0, "Getting files in folder..", print: true);
+            Printing.RefreshOrPrint(bar, 0, "Getting all files in folder..", print: true);
         }
 
         public void ReportJobCompleted(Job job, bool found, int lockedFiles)
@@ -254,7 +255,8 @@ namespace Utilities
             if (!found)
             {
                 string lockedMsg = lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
-                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] No results: {job.ToString(true)}{lockedMsg}", print: true);
+                string prefix    = job is RetrieveFolderJob ? "No additional files found" : "No results";
+                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {prefix}: {job.ToString(true)}{lockedMsg}", print: true);
                 _jobBars.TryRemove(job, out _);
                 if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
             }
@@ -263,7 +265,10 @@ namespace Utilities
             else if (job is not AlbumJob)
             {
                 if (bar != null)
-                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] Found results: {job.ToString(true)}", print: true);
+                {
+                    string prefix = job is RetrieveFolderJob ? "Found additional files in" : "Found results";
+                    Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {job.GetType().Name}: {prefix}: {job.ToString(true)}", print: true);
+                }
                 _jobBars.TryRemove(job, out _);
             }
         }
