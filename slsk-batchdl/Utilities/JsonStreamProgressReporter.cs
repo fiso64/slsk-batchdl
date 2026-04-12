@@ -145,6 +145,15 @@ namespace Utilities
         // Display-only events — no-ops for JSON output.
         public void ReportExtractionStarted(ExtractJob job) { }
         public void ReportExtractionCompleted(ExtractJob job, Job result) { }
+
+        public void ReportExtractionFailed(ExtractJob job, string reason)
+        {
+            WriteEvent("extraction_failed", new
+            {
+                input  = job.Input,
+                reason,
+            });
+        }
         public void ReportJobStarted(Job job) { }
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder) { }
         public void ReportAlbumDownloadCompleted(AlbumJob job) { }

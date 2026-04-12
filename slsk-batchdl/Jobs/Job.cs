@@ -56,6 +56,9 @@ namespace Jobs
             set { if (_failureReason != value) { _failureReason = value; OnPropertyChanged(); } }
         }
 
+        // Optional human-readable explanation for the failure (complements FailureReason).
+        public string? FailureMessage { get; set; }
+
         // Subclasses declare their default; callers can override with CanBeSkippedOverride.
         protected abstract bool DefaultCanBeSkipped { get; }
         public bool? CanBeSkippedOverride { get; set; }

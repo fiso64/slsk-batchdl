@@ -24,6 +24,7 @@ namespace Enums
         NoSuitableFileFound = 3,
         AllDownloadsFailed = 4,
         Other = 5,
+        ExtractionFailed = 6,
     }
 
     public enum SkipMode

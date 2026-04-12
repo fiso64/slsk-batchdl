@@ -20,7 +20,10 @@ namespace Extractors
                 input = input[8..];
             }
 
-            // ParseArgs builds into mutable holders; then we build typed queries.
+            // Catch the common mistake of passing a local file path without --input-type.
+            var expanded = Utils.ExpandVariables(input);
+            if (File.Exists(expanded))
+                throw new ArgumentException($"Input is a local file. To read it as a track list, specify --input-type list or --input-type csv.");
             ParseArgs(input, isAlbum,
                 out string artist, out string title, out string album, out string uri, out int length,
                 out bool artistMaybeWrong, out bool isDirectLink,

@@ -118,10 +118,22 @@ public class DownloadEngine
         // ── ExtractJob: run extractor, set Result, recurse ───────────────────
         if (job is ExtractJob ej)
         {
-            var (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None);
-            ej.InputType = inputType;
+            InputType inputType;
+            IExtractor ex;
+            try
+            {
+                (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None);
+            }
+            catch (Exception e)
+            {
+                ej.State          = JobState.Failed;
+                ej.FailureReason  = FailureReason.ExtractionFailed;
+                ej.FailureMessage = e.Message;
+                _progressReporter.ReportExtractionFailed(ej, e.Message);
+                return;
+            }
 
-            Logger.Info($"Input ({inputType}): {ej.Input}");
+            ej.InputType = inputType;
             ej.State = JobState.Extracting;
             _progressReporter.ReportExtractionStarted(ej);
 
@@ -133,8 +145,10 @@ public class DownloadEngine
             }
             catch (Exception e)
             {
-                Logger.Fatal($"Extractor failed: {e.Message}");
-                ej.State = JobState.Failed;
+                ej.State          = JobState.Failed;
+                ej.FailureReason  = FailureReason.ExtractionFailed;
+                ej.FailureMessage = e.Message;
+                _progressReporter.ReportExtractionFailed(ej, e.Message);
                 return;
             }
             finally

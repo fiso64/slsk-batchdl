@@ -30,6 +30,7 @@ namespace Utilities
         // Extraction-level
         void ReportExtractionStarted(ExtractJob job);
         void ReportExtractionCompleted(ExtractJob job, Job result);
+        void ReportExtractionFailed(ExtractJob job, string reason);
 
         // Job-level
         void ReportJobStarted(Job job);
@@ -65,6 +66,7 @@ namespace Utilities
         public void ReportListProgress(JobList list, int downloaded, int failed, int total) { }
         public void ReportExtractionStarted(ExtractJob job) { }
         public void ReportExtractionCompleted(ExtractJob job, Job result) { }
+        public void ReportExtractionFailed(ExtractJob job, string reason) { }
         public void ReportJobStarted(Job job) { }
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder) { }
         public void ReportAlbumDownloadCompleted(AlbumJob job) { }

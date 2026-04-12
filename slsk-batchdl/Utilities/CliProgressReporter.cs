@@ -56,7 +56,8 @@ namespace Utilities
                     {
                         if (d.StateLabel != "InProgress" || d.Bar == null) continue;
                         d.SpinIndex++;
-                        try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
+                        lock (Printing.ConsoleLock)
+                            try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
                     }
 
                     foreach (var (job, block) in _albumBlocks)
@@ -64,7 +65,8 @@ namespace Utilities
                         if (!_jobBars.TryGetValue(job, out var headerBar) || headerBar == null) continue;
                         int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
                         int total = block.Songs.Count;
-                        try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total)); } catch { }
+                        lock (Printing.ConsoleLock)
+                            try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total)); } catch { }
                     }
 
                     if (OnKeyPressed != null && !Console.IsInputRedirected && Console.KeyAvailable)
@@ -88,6 +90,17 @@ namespace Utilities
 
         static string AlbumHeaderText(AlbumJob job, int done, int total)
             => $"{job.ToString(true)}  [{done}/{total}]";
+
+        static string FailureReasonLabel(FailureReason reason) => reason switch
+        {
+            FailureReason.NoSuitableFileFound  => "No suitable file found",
+            FailureReason.InvalidSearchString  => "Invalid search string",
+            FailureReason.OutOfDownloadRetries => "Out of download retries",
+            FailureReason.AllDownloadsFailed   => "All downloads failed",
+            FailureReason.ExtractionFailed     => "Extraction failed",
+            FailureReason.Other                => "Unknown error",
+            _                                  => "",
+        };
 
 
         // ── structured events — no-ops ───────────────────────────────────────
@@ -122,7 +135,13 @@ namespace Utilities
             {
                 bool succeeded = chosen != null || song.State == JobState.Done;
                 d.StateLabel = succeeded ? "Succeeded" : "Failed";
-                if (succeeded) d.Pct = 100;
+                if (succeeded)
+                    d.Pct = 100;
+                else
+                {
+                    var reason = FailureReasonLabel(song.FailureReason);
+                    if (reason.Length > 0) d.BaseText += $" [{reason}]";
+                }
                 Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
             }
             _bars.TryRemove(song, out _);
@@ -132,8 +151,25 @@ namespace Utilities
 
         // ── display events ───────────────────────────────────────────────────
 
-        public void ReportExtractionStarted(ExtractJob job) { }
+        public void ReportExtractionStarted(ExtractJob job)
+        {
+            if (job.InputType.HasValue)
+            {
+                lock (Printing.ConsoleLock)
+                {
+                    Console.WriteLine();
+                    Logger.Info($"Input ({job.InputType}): {job.Input}");
+                }
+            }
+        }
+
         public void ReportExtractionCompleted(ExtractJob job, Job result) { }
+
+        public void ReportExtractionFailed(ExtractJob job, string reason)
+        {
+            Logger.Error($"Failed:      {job.Input}\n  Reason:    {reason}");
+            _jobBars.TryRemove(job, out _);
+        }
 
         public void ReportJobStarted(Job job)
         {
@@ -179,7 +215,8 @@ namespace Utilities
                     var bar = new ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' ');
                     var d   = new BarData { Bar = bar, BaseText = baseText, StateLabel = "Pending", Pct = 0 };
                     _bars[song] = d;
-                    try { bar.Refresh(0, BuildText(d)); } catch { }
+                    lock (Printing.ConsoleLock)
+                        try { bar.Refresh(0, BuildText(d)); } catch { }
                 }
 
                 _albumBlocks[job] = block;
@@ -193,10 +230,16 @@ namespace Utilities
                 int total = block.Songs.Count;
                 int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
                 if (_jobBars.TryGetValue(job, out var headerBar) && headerBar != null)
-                    try { headerBar.Refresh(100, AlbumHeaderText(job, done, total)); } catch { }
+                    lock (Printing.ConsoleLock)
+                        try { headerBar.Refresh(100, AlbumHeaderText(job, done, total)); } catch { }
                 _albumBlocks.TryRemove(job, out _);
             }
             _jobBars.TryRemove(job, out _);
+
+            if (!Console.IsOutputRedirected && !_config.noProgress)
+            {
+                Console.WriteLine();
+            }
         }
 
         public void ReportJobFolderRetrieving(Job job)
@@ -246,6 +289,8 @@ namespace Utilities
         {
             if (!_bars.TryGetValue(song, out var d)) return;
             d.StateLabel = "Not found";
+            var reason = FailureReasonLabel(song.FailureReason);
+            if (reason.Length > 0) d.BaseText += $" [{reason}]";
             Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
         }
 

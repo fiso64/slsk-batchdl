@@ -301,21 +301,24 @@ public static class Printing
     {
         if (folder.Files.Count == 0) return;
 
-        var firstResponse = folder.Files[0].ResolvedTarget!.Response;
-        string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
-        string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
-        var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.ResolvedTarget!.File));
+        lock (ConsoleLock)
+        {
+            var firstResponse = folder.Files[0].ResolvedTarget!.Response;
+            string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
+            string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
+            var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.ResolvedTarget!.File));
 
-        string format     = propsList.FirstOrDefault() ?? "";
-        string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
+            string format     = propsList.FirstOrDefault() ?? "";
+            string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
 
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.Write($"User  : {userInfo}\nFolder: {parents}\nProps : [");
-        Console.ForegroundColor = GetFormatColor(format);
-        Console.Write(format);
-        Console.ForegroundColor = ConsoleColor.White;
-        Console.WriteLine(otherProps + "]");
-        Console.ResetColor();
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.Write($"User  : {userInfo}\nFolder: {parents}\nProps : [");
+            Console.ForegroundColor = GetFormatColor(format);
+            Console.Write(format);
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.WriteLine(otherProps + "]");
+            Console.ResetColor();
+        }
     }
 
     public static int PrintAlbum(AlbumFolder folder, bool indices = false)
@@ -409,17 +412,20 @@ public static class Printing
 
     public static void RefreshOrPrint(ProgressBar? progress, int current, string item, bool print = false, bool refreshIfOffscreen = false)
     {
-        if (progress != null && !Console.IsOutputRedirected && (refreshIfOffscreen || progress.Y >= Console.WindowTop))
+        lock (ConsoleLock)
         {
-            try { progress.Refresh(current, item); }
-            catch { }
+            if (progress != null && !Console.IsOutputRedirected && (refreshIfOffscreen || progress.Y >= Console.WindowTop))
+            {
+                try { progress.Refresh(current, item); }
+                catch { }
 
-            if (print)
-                Logger.LogNonConsole(Logger.LogLevel.Info, item);
-        }
-        else if ((progress == null || Console.IsOutputRedirected) && print)
-        {
-            Logger.Info(item);
+                if (print)
+                    Logger.LogNonConsole(Logger.LogLevel.Info, item);
+            }
+            else if ((progress == null || Console.IsOutputRedirected) && print)
+            {
+                Logger.Info(item);
+            }
         }
     }
 
