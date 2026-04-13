@@ -2,9 +2,9 @@ using Models;
 using System.Text;
 using System.Text.RegularExpressions;
 
-public static class TrackTemplateParser
+public static partial class TrackTemplateParser
 {
-    private static readonly object cacheLock = new();
+    private static readonly Lock cacheLock = new();
     private static Dictionary<string, Tuple<Regex, List<string>>>? regexCache = null;
 
     /// <summary>
@@ -13,8 +13,8 @@ public static class TrackTemplateParser
     /// </summary>
     public static SongQuery? CreateFromString(string input, string template)
     {
-        if (input    == null) throw new ArgumentNullException(nameof(input));
-        if (template == null) throw new ArgumentNullException(nameof(template));
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(template);
 
         (var patternRegex, var fieldNames) = GetOrCreateRegexAndFields(template);
         Match match = patternRegex.Match(input);
@@ -30,8 +30,8 @@ public static class TrackTemplateParser
     /// </summary>
     public static bool TryUpdateSongQuery(string input, string template, ref SongQuery query)
     {
-        if (input    == null) throw new ArgumentNullException(nameof(input));
-        if (template == null) throw new ArgumentNullException(nameof(template));
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(template);
 
         (var patternRegex, var fieldNames) = GetOrCreateRegexAndFields(template);
         Match match = patternRegex.Match(input);
@@ -52,16 +52,16 @@ public static class TrackTemplateParser
             switch (fieldNames[i].ToLowerInvariant())
             {
                 case "artist": artist = value; break;
-                case "title":  title  = value; break;
-                case "album":  album  = value; break;
+                case "title": title = value; break;
+                case "album": album = value; break;
             }
         }
 
         return new SongQuery(baseQuery)
         {
             Artist = artist ?? baseQuery.Artist,
-            Title  = title  ?? baseQuery.Title,
-            Album  = album  ?? baseQuery.Album,
+            Title = title ?? baseQuery.Title,
+            Album = album ?? baseQuery.Album,
         };
     }
 
@@ -80,14 +80,16 @@ public static class TrackTemplateParser
         }
     }
 
+    [GeneratedRegex(@"\{([^{}]+)\}")]
+    private static partial Regex PlaceholderRegex();
+
     private static (Regex, List<string>) BuildRegexFromTemplate(string template)
     {
-        var fieldNames     = new List<string>();
+        var fieldNames = new List<string>();
         var patternBuilder = new StringBuilder("^\\s*");
-        string placeholderPattern = @"\{([^{}]+)\}";
         int lastIndex = 0;
 
-        foreach (Match match in Regex.Matches(template, placeholderPattern))
+        foreach (Match match in PlaceholderRegex().Matches(template))
         {
             if (match.Index > lastIndex)
                 patternBuilder.Append(Regex.Escape(template.Substring(lastIndex, match.Index - lastIndex)));

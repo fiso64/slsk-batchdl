@@ -6,6 +6,7 @@ using Utilities;
 
 using File = System.IO.File;
 using Directory = System.IO.Directory;
+using Settings;
 
 
 public class Downloader
@@ -26,7 +27,7 @@ public class Downloader
         this.progressReporter = progressReporter;
     }
 
-    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, Config config, CancellationToken? ct = null)
+    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, DownloadSettings config, CancellationToken? ct = null)
     {
         string fileKey = candidate.Username + '\\' + candidate.Filename;
 
@@ -62,7 +63,7 @@ public class Downloader
 
         await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        string incompleteOutputPath = config.noIncompleteExt ? outputPath : outputPath + ".incomplete";
+        string incompleteOutputPath = config.Transfer.NoIncompleteExt ? outputPath : outputPath + ".incomplete";
 
         Logger.Debug($"Downloading: {song} to '{incompleteOutputPath}'");
 
@@ -123,13 +124,13 @@ public class Downloader
         catch
         {
             if (File.Exists(incompleteOutputPath))
-                try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.parentDir); } catch { }
+                try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.Output.ParentDir); } catch { }
             downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
             throw;
         }
 
 
-        if (!config.noIncompleteExt)
+        if (!config.Transfer.NoIncompleteExt)
         {
             try { Utils.Move(incompleteOutputPath, outputPath); }
             catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }

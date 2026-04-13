@@ -138,7 +138,7 @@ namespace Tests.ResultSorterTests
         public void OrderedResults_EmptyResults_ReturnsEmpty()
         {
             var results = new List<(SearchResponse, File)>();
-            var config = new Config();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "A", title: "T");
 
@@ -153,7 +153,7 @@ namespace Tests.ResultSorterTests
             var file = TestHelpers.CreateSlFile("Music\\Artist\\Track.mp3", bitrate: 320, length: 200);
             var response = CreateResponse("user1", files: file);
             var results = new List<(SearchResponse, File)> { (response, file) };
-            var config = new Config();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
@@ -172,8 +172,8 @@ namespace Tests.ResultSorterTests
             var response2 = CreateResponse("winner", files: file2);
             var results = new List<(SearchResponse, File)> { (response1, file1), (response2, file2) };
 
-            var config = new Config();
-            config.downrankOn = 0;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.DownrankOn = 0;
             var counts = new ConcurrentDictionary<string, int>();
             counts["winner"] = 5;  // Above downrankOn
             // "loser" has 0, which is not > 0
@@ -192,8 +192,8 @@ namespace Tests.ResultSorterTests
             var response1 = CreateResponse("baduser", files: file1);
             var results = new List<(SearchResponse, File)> { (response1, file1) };
 
-            var config = new Config();
-            config.ignoreOn = 0;  // Need > 0 to be included
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.IgnoreOn = 0;  // Need > 0 to be included
             var counts = new ConcurrentDictionary<string, int>();
             // "baduser" has 0 which is not > 0
 
@@ -212,7 +212,7 @@ namespace Tests.ResultSorterTests
             var freeSlot = CreateResponse("freeslot", freeSlot: true, files: file2);
             var results = new List<(SearchResponse, File)> { (noSlot, file1), (freeSlot, file2) };
 
-            var config = new Config();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
@@ -231,8 +231,8 @@ namespace Tests.ResultSorterTests
             var response2 = CreateResponse("mp3user", files: mp3File);
             var results = new List<(SearchResponse, File)> { (response1, flacFile), (response2, mp3File) };
 
-            var config = new Config();
-            config.preferredCond = new FileConditions { Formats = new[] { "flac" } };
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.PreferredCond = new FileConditions { Formats = new[] { "flac" } };
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 

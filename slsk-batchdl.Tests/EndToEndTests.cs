@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Text;
 using Jobs;
+using Services;
 
 namespace Tests.EndToEnd
 {
@@ -49,9 +50,12 @@ namespace Tests.EndToEnd
 
             try
             {
-                var config = new Config(testArgs);
-                var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
-                var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+                var configFile = ConfigManager.Load("none");
+                var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var app = new DownloadEngine(engineSettings, clientManager, progressReporter: Utilities.NullProgressReporter.Instance);
+                app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
+                app.CompleteEnqueue();
                 await app.RunAsync(CancellationToken.None);
 
                 // Files must land directly in outputDir/TestAlbum/, NOT buried inside a
@@ -99,9 +103,12 @@ namespace Tests.EndToEnd
                 "--pass", "test_pass",
             };
 
-            var config = new Config(testArgs);
-            var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
-            var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+            var configFile = ConfigManager.Load("none");
+            var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
+            var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+            var app = new DownloadEngine(engineSettings, clientManager, Utilities.NullProgressReporter.Instance);
+            app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
+            app.CompleteEnqueue();
 
             try
             {
@@ -159,9 +166,12 @@ namespace Tests.EndToEnd
                 "--pass",                "test_pass",
             };
 
-            var config        = new Config(testArgs);
-            var clientManager = new SoulseekClientManager(config);  // CLI path: no pre-injected client
-            var app           = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+            var configFile = ConfigManager.Load("none");
+            var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
+            var clientManager = new SoulseekClientManager(engineSettings);  // CLI path: no pre-injected client
+            var app           = new DownloadEngine(engineSettings, clientManager, Utilities.NullProgressReporter.Instance);
+            app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
+            app.CompleteEnqueue();
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await app.RunAsync(cts.Token);

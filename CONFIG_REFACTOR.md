@@ -24,14 +24,38 @@ Consequences:
 
 ---
 
+## Design Principle: Library vs. Frontend Boundary
+
+**Settings objects are pure library data.** They have no knowledge of CLI flags, option names,
+or how they were populated. The CLI and GUI are both consumers of the library; they know how to
+translate user input into settings, but the settings themselves don't know where they came from.
+
+- **Library (`sldl.core`):** `EngineSettings`, `DownloadSettings`, `CliSettings`, `ConfigManager`,
+  `DownloadEngine`, `IProgressReporter` — everything a frontend needs to drive downloads.
+- **CLI frontend (`sldl`):** thin layer — reads `argv`, calls `ConfigManager.BindCli()`, wires up
+  `CliSettings`, runs `engine.RunAsync()`. Can optionally delegate to a running server via `--url`.
+- **GUI/server frontend:** ASP.NET Core process, imports `sldl.core`, hosts `DownloadEngine` and
+  exposes an HTTP API + web UI. The CLI attaches to this when `--url` is set.
+- **Engine interfaces (`IProgressReporter`, `SelectAlbumVersion` callback):** the engine's only UI surface.
+
+`ConfigManager` belongs in the library — config file loading, profile management, and
+auto-profile evaluation are needed by all frontends. `CliSettings` also lives in the library
+(GUI frontends simply ignore it).
+
+Corollary: `[Option]` / `[Positional]` attributes on settings classes are a violation of this
+principle — they couple library types to frontend concerns. Settings classes carry no such annotations.
+
+---
+
 ## Goals
 
-1. **Decouple CLI parsing from configuration data.** Config classes are pure data; the parser is
-   a separate utility.
+1. **Decouple CLI parsing from configuration data.** Settings classes are pure data; the binding
+   logic lives in `ConfigManager` (CLI layer).
 2. **Separate engine-level from per-submission settings.** This enables clean dynamic job
    enqueueing from a GUI without faking argv.
-3. **Attribute-based CLI parser.** Options are declared on the config fields themselves; no
-   separate maintenance of a switch/case.
+3. **Explicit binding table.** Option-to-field mappings live in one place (`ConfigManager.ApplyTokens`),
+   not scattered across attributes on settings classes. Every flag and its transformation is
+   readable in a single switch/case. Adding an option means one edit here and one on the settings class.
 4. **Extract profile management** into a `ConfigManager` that owns config file loading, profile
    merging, and profile condition evaluation. Config classes have no knowledge of profiles.
 5. **Extract `ParseConditions`** into `ConditionParser` — a standalone static utility.
@@ -47,31 +71,29 @@ Consequences:
 
 ### `EngineSettings`
 
-Stable for the lifetime of the engine. Set once at construction.
+Stable for the lifetime of the engine. Set once at construction. No CLI annotations.
 
 ```csharp
 public class EngineSettings
 {
-    public string?           Username             { get; init; }
-    public string?           Password             { get; init; }
-    public bool              UseRandomLogin       { get; init; }
-    public int?              ListenPort           { get; init; } = 49998;
-    public int               ConnectTimeout       { get; init; } = 20_000;
-    public int               ConcurrentSearches   { get; init; } = 2;
-    public int               ConcurrentExtractors { get; init; } = 2;
-    public int               SearchesPerTime      { get; init; } = 34;
-    public int               SearchRenewTime      { get; init; } = 220;
-    public int               SharedFiles          { get; init; }
-    public int               SharedFolders        { get; init; }
-    public string?           UserDescription      { get; init; }
-    public bool              NoModifyShareCount   { get; init; }
-    public Logger.LogLevel   LogLevel             { get; init; } = Logger.LogLevel.Info;
-    public string?           LogFilePath          { get; init; }
-    public bool              NoProgress           { get; init; }
-    public bool              ProgressJson         { get; init; }
-    public string?           MockFilesDir         { get; init; }
-    public bool              MockFilesReadTags    { get; init; } = true;
-    public bool              MockFilesSlow        { get; init; }
+    public string?           Username             { get; set; }
+    public string?           Password             { get; set; }
+    public bool              UseRandomLogin       { get; set; }
+    public int?              ListenPort           { get; set; } = 49998;
+    public int               ConnectTimeout       { get; set; } = 20_000;
+    public int               ConcurrentSearches   { get; set; } = 2;
+    public int               ConcurrentExtractors { get; set; } = 2;
+    public int               SearchesPerTime      { get; set; } = 34;
+    public int               SearchRenewTime      { get; set; } = 220;
+    public int               SharedFiles          { get; set; }
+    public int               SharedFolders        { get; set; }
+    public string?           UserDescription      { get; set; }
+    public bool              NoModifyShareCount   { get; set; }
+    public Logger.LogLevel   LogLevel             { get; set; } = Logger.LogLevel.Info;
+    public string?           LogFilePath          { get; set; }
+    public string?           MockFilesDir         { get; set; }
+    public bool              MockFilesReadTags    { get; set; } = true;
+    public bool              MockFilesSlow        { get; set; }
 }
 ```
 
@@ -82,30 +104,34 @@ sub-objects so that services receive only what they need.
 
 ```
 DownloadSettings
+├── [top-level]           — PrintOption, IsAggregate (mode flags consumed by the engine)
 ├── OutputSettings        — ParentDir, NameFormat, InvalidReplaceStr, WritePlaylist,
 │                           WriteIndex, IndexFilePath, M3uFilePath, FailedAlbumPath,
-│                           OnComplete, PrintOption
+│                           OnComplete
 ├── SearchSettings        — NecessaryCond, PreferredCond, NecessaryFolderCond,
 │                           PreferredFolderCond, SearchTimeout, MaxStaleTime,
-│                           MaxRetriesPerTrack, UnknownErrorRetries, DownrankOn,
-│                           IgnoreOn, FastSearch, FastSearchDelay, FastSearchMinUpSpeed,
+│                           IsAggregate, MinSharesAggregate, AggregateLengthTol,
+│                           ArtistMaybeWrong, DownrankOn, IgnoreOn,
+│                           FastSearch, FastSearchDelay, FastSearchMinUpSpeed,
 │                           DesperateSearch, NoRemoveSpecialChars,
-│                           RemoveSingleCharTerms, NoBrowseFolder, Relax, NoIncompleteExt
+│                           RemoveSingleCharTerms, NoBrowseFolder, Relax
 ├── SkipSettings          — SkipExisting, SkipNotFound, SkipMode, SkipMusicDir,
 │                           SkipModeMusicDir, SkipCheckCond, SkipCheckPrefCond
-├── PreprocessSettings    — RemoveFt, RemoveBrackets, ExtractArtist, ArtistMaybeWrong,
+├── PreprocessSettings    — RemoveFt, RemoveBrackets, ExtractArtist,
 │                           ParseTitleTemplate, Regex
-├── AlbumSettings         — Album, Aggregate, AlbumArtOnly, AlbumArtOption,
-│                           InteractiveMode, MinAlbumTrackCount, MaxAlbumTrackCount,
+├── AlbumSettings         — IsAlbum, AlbumArtOnly, AlbumArtOption,
+│                           MinAlbumTrackCount, MaxAlbumTrackCount,
 │                           SetAlbumMinTrackCount, SetAlbumMaxTrackCount,
 │                           AlbumTrackCountMaxRetries
-├── ExtractionSettings    — Input, InputType, MaxTracks, Offset, Reverse, GetDeleted,
-│                           DeletedOnly, RemoveTracksFromSource,
-│                           MinSharesAggregate, AggregateLengthTol
+├── ExtractionSettings    — Input, InputType, MaxTracks, Offset, Reverse,
+│                           RemoveTracksFromSource
+├── TransferSettings      — MaxRetriesPerTrack, UnknownErrorRetries, NoIncompleteExt
 ├── SpotifySettings       — ClientId, ClientSecret, Token, Refresh
-├── YouTubeSettings       — ApiKey, YtdlpArgument, UseYtdlp, YtParse
-└── CsvSettings           — ArtistCol, AlbumCol, TitleCol, YtIdCol, DescCol,
-                            TrackCountCol, LengthCol, TimeUnit, HtmlFromFile
+├── YouTubeSettings       — ApiKey, YtParse, GetDeleted, DeletedOnly
+├── YtDlpSettings         — UseYtdlp, YtdlpArgument
+├── CsvSettings           — ArtistCol, AlbumCol, TitleCol, YtIdCol, DescCol,
+│                           TrackCountCol, LengthCol, TimeUnit
+└── BandcampSettings      — HtmlFromFile
 ```
 
 `Job.Config` holds one `DownloadSettings`. Callees receive the sub-object they care about:
@@ -120,130 +146,120 @@ TrackSkipper.Check(song, job.Config.Skip);
 Computed properties that span sub-objects (`NeedLogin`, `DoNotDownload`, `PrintTracks`, etc.)
 live on `DownloadSettings` itself.
 
-**On immutability:** `init`-only properties require a builder/construction pattern rather than
-the current mutation-based `ProcessArgs`. During construction (CLI parsing, profile application),
-a mutable intermediate is used; the final settings object is frozen at the end. The profile
-replay pattern (`UpdateProfiles`) reconstructs from scratch — this is compatible with `init`
-properties since it already rebuilds from defaults every time.
+### `CliSettings`
 
----
-
-## Attribute-based CLI parser
-
-Options are declared on config fields; the parser is driven by reflection. No more switch/case.
+Frontend-only presentation settings. Lives in the library so all frontends can consume it;
+GUI frontends simply ignore the fields they don't need.
 
 ```csharp
-// On any sub-config class:
-[Option("--album", "-a", HelpText = "Download as album")]
-public bool Album { get; init; }
-
-[Option("--path", "-p", HelpText = "Output directory")]
-public string? ParentDir { get; init; }
-
-[Option("--max-tracks", "-n")]
-public int MaxTracks { get; init; } = int.MaxValue;
-
-[Option("--spotify-id", "--si")]   // declared on SpotifySettings
-public string? ClientId { get; init; }
-
-// Input accepts both --input/-i and as the bare positional argument.
-[Option("--input", "-i")]
-[Positional]   // first bare non-flag token maps here if --input/-i not already set
-public string? Input { get; init; }
-```
-
-The binder handles:
-- `--arg=val` → split on first `=`
-- `-abc` → expand to `-a -b -c`
-- Bool flags: bare `--flag` = true, `--flag false` = false, `--flag true` = true
-- Enum fields: attribute carries the string→enum mapping or a converter delegate
-- Nested sub-objects: binder walks the `DownloadSettings` object graph; each sub-config
-  class has `[Option]` attributes on its own properties
-- Positional: a token that does not start with `-` and has no preceding flag awaiting a
-  parameter fills the `[Positional]`-annotated field. If the field is already set
-  (via `--input`/`-i`), emitting a positional token is an error.
-
-A `[CustomParser]` attribute or explicit pre-processing handles the ~8 non-trivial cases:
-- `--login user;pass` → splits into `Username` + `Password`
-- `--album-track-count N+` / `N-` shorthand
-- `--regex T:pattern;replacement` with target-field prefix and append mode
-- `--on-complete + cmd` append mode
-
-**Validation is separate from binding.** The binder only produces a settings object; it does not
-enforce business rules. `DownloadSettings` has a `Validate()` method called by `ConfigManager`
-after binding is complete:
-
-```csharp
-public IEnumerable<string> Validate()
+public class CliSettings
 {
-    if (Extraction.Input == null && (Output.PrintOption & PrintOption.Index) == 0)
-        yield return "No input provided";
-    // other cross-field validations
+    public bool InteractiveMode { get; set; }  // wire up SelectAlbumVersion callback
+    public bool NoProgress      { get; set; }  // use NullProgressReporter
+    public bool ProgressJson    { get; set; }  // use JsonProgressReporter
 }
 ```
 
-This keeps the binder general-purpose and makes validation testable independently.
+---
 
-**Config file format stays the same.** `ParseConfig()` converts `key = val` lines to
-`--key val` token pairs, which flow through the same binder. Profile sections are labelled
-groups of those tokens.
+## Token binding: `ConfigManager.ApplyTokens`
 
-**[DEFERRED]**: **Help text.** `[Option]` attributes carry a `HelpText` string, which becomes the authoritative
-source for the option reference table. `slsk-batchdl.HelpGenerator` currently reads `README.md`
-and generates `Help.Content.cs`; after this refactor it should read attribute metadata instead,
-so adding an option without documentation becomes impossible. The README's narrative sections
-(examples, cross-references, grouped explanations) stay hand-written — only the option table
-is generated.
+The binding table lives in `ConfigManager.ApplyTokens` — a single explicit method that maps
+token streams to settings mutations. This is the old `Config.ProcessArgs` switch/case, living
+in the right place.
+
+```csharp
+// Excerpt — the full table covers all ~100 flags
+private static void ApplyTokens(IList<string> tokens, EngineSettings eng,
+    DownloadSettings dl, CliSettings cli)
+{
+    for (int i = 0; i < tokens.Count; i++)
+    {
+        switch (tokens[i])
+        {
+            case "--username": case "--user":
+                eng.Username = Next(tokens, ref i); break;
+
+            case "--format": case "--af":
+                dl.Search.NecessaryCond.Formats = NextArray(tokens, ref i); break;
+
+            case "--pref-format": case "--pf":
+                dl.Search.PreferredCond.Formats = NextArray(tokens, ref i); break;
+
+            case "--fails-to-downrank": case "--ftd":
+                dl.Search.DownrankOn = -NextInt(tokens, ref i); break;
+
+            case "--cond": case "--conditions":
+                var fc = new FolderConditions();
+                dl.Search.NecessaryCond.AddConditions(ConditionParser.ParseFileConditions(Next(tokens, ref i), fc));
+                dl.Search.NecessaryFolderCond.AddConditions(fc);
+                break;
+
+            // ... all other flags
+        }
+    }
+}
+```
+
+**No reflection. No attributes on settings classes.** Every flag and its transformation is
+visible in one place. The "cost" vs. the attribute approach is one extra line when adding a new
+option (the switch case), which is a fair trade for having settings classes that are clean
+library objects, and for eliminating the problems that arise when library types (like
+`FileConditions`) need CLI annotations.
+
+**Config file format stays the same.** `ParseConfigFile()` converts `key = val` lines to
+`--key val` token pairs, which flow through the same `ApplyTokens`. Profile sections are
+labelled groups of those tokens.
+
+**[DEFERRED]**: Help text and option reference generation. Currently sourced from `README.md`
+via `slsk-batchdl.HelpGenerator`. With the explicit binding table, help strings could be
+registered alongside each case (e.g. a parallel help dictionary), or kept in the README.
+Not a blocker for the refactor.
 
 ---
 
 ## `ConfigManager`
 
-Owns everything related to loading and merging configuration. The config classes themselves have
-no knowledge of profiles, files, or argv.
+Owns config file loading, token application, profile merging, and profile condition evaluation.
+The binding table (`ApplyTokens`) lives here — it is the CLI layer's knowledge of how flags
+map to settings fields.
 
 ```csharp
 public static class ConfigManager
 {
-    // Discovers and loads the config file. Returns parsed profile dict.
+    // Discovers and parses the config file.
     public static ConfigFile Load(string? explicitPath = null);
 
-    // Applies the named profiles (and default) from a loaded config file
-    // to a raw token list, then binds to settings objects.
-    public static (EngineSettings engine, DownloadSettings download)
-        Bind(ConfigFile file, string[] cliArgs, string? profileName = null);
+    // Creates fresh settings, applies default profile + named profile + cliArgs in order.
+    public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli)
+        Bind(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null);
 
-    // Re-evaluates auto-profiles against the given job; returns new settings
-    // if any profile changed, or the same instance if nothing changed.
+    // Re-evaluates auto-profiles against the given job.
+    // Reconstructs from scratch (default → auto-profiles → named → CLI) if anything changed.
     public static DownloadSettings UpdateProfiles(
-        DownloadSettings current, ConfigFile file, string[] cliArgs, Job job);
+        DownloadSettings current, ConfigFile file, IReadOnlyList<string> cliArgs,
+        string? profileName, Job job);
 
-    // Evaluates a profile-cond expression string against variables derived from
-    // the job and current settings. Extracted from Config.ProfileConditionSatisfied.
+    // Evaluates a profile-cond expression against variables derived from the job and settings.
     public static bool ProfileConditionSatisfied(string cond, DownloadSettings settings, Job? job);
 }
 ```
 
-**Token merging model:** All config sources (default profile, named profiles, CLI args) are
-reduced to ordered token lists. Merging is left-to-right override — later tokens win for scalar
-fields, and appendable fields (`--on-complete + ...`, `--regex + ...`) accumulate. The profile
-replay in `UpdateProfiles` replays: defaults → auto-profiles → named profile → CLI args.
+**Token merging model:** All config sources reduce to ordered token lists. Later tokens win
+for scalar fields; appendable fields (`--on-complete + ...`, `--regex + ...`) accumulate.
+Profile replay: defaults → auto-profiles → named profile → CLI args.
 
-**`ConfigFile`** is a plain data object:
+**`ConfigFile`** is a plain data record:
 ```csharp
-public record ConfigFile(
-    string Path,
-    IReadOnlyDictionary<string, ProfileEntry> Profiles
-);
-
-public record ProfileEntry(IReadOnlyList<string> Tokens, string? Condition);
+public record ConfigFile(string Path, Dictionary<string, ProfileEntry> Profiles, bool HasAutoProfiles);
+public record ProfileEntry(List<string> Tokens, string? Condition);
 ```
 
 ---
 
 ## `ConditionParser`
 
-`ParseConditions` is currently a static method on `Config` for no reason. Move it:
+Standalone static utility for parsing composite condition strings.
 
 ```csharp
 // Services/ConditionParser.cs
@@ -254,17 +270,16 @@ public static class ConditionParser
 }
 ```
 
-Callers (`List.cs` extractor, `ConfigManager`) import `ConditionParser` directly.
-
 ---
 
 ## `Job.Config` and `JobPreparer`
 
 `Job.Config` currently holds a `Config` instance. After the refactor it holds `DownloadSettings`.
-`JobPreparer.PrepareJob` currently does `job.Config = parentConfig.Copy()` — `Copy()` disappears;
-since `DownloadSettings` is immutable (`init` properties), "copying" is just passing the same
-reference. A new instance is only created when profile re-evaluation produces a change (via
-`ConfigManager.UpdateProfiles`).
+`JobPreparer.PrepareJob` currently does `job.Config = parentConfig.Copy()`. With mutable settings,
+sharing a reference isn't safe — but since `ConfigManager.UpdateProfiles` rebuilds from scratch
+when profiles change, and unchanged jobs receive the same reference as their parent, `Copy()` can
+be replaced by passing the same reference, with a fresh `DownloadSettings` created only when
+`UpdateProfiles` detects a profile change.
 
 `EngineSettings` is not on `Job` at all — it belongs to `DownloadEngine` only.
 
@@ -276,17 +291,14 @@ After this refactor:
 
 ```csharp
 // Construction — engine-level settings only
-new DownloadEngine(EngineSettings, clientManager, progressReporter);
+new DownloadEngine(engineSettings, clientManager, progressReporter);
 
 // Submit a job at any time, with its own per-submission settings
 engine.EnqueueAsync(new ExtractJob(url), downloadSettings);
 ```
 
 `RunAsync` loops over a `Channel<(ExtractJob, DownloadSettings)>`. The CLI writes one item and
-completes the writer. The GUI writes items as the user queues downloads.
-
-This is the direct payoff of separating `EngineSettings` from `DownloadSettings` — the engine
-no longer needs a `defaultConfig` field, and every submission is self-contained.
+completes the writer. A server frontend writes items as they arrive over HTTP.
 
 ---
 
@@ -297,8 +309,7 @@ strings). Current code uses `""` as "not set", leading to defensive `Length > 0`
 checks everywhere. After migration, `== null` / `!= null` is the idiom.
 
 **Risk:** `== ""` and `.Length == 0` checks will not become compile errors when the field type
-changes to `string?`. They will silently evaluate to `false` for `null` values (since null ≠ ""),
-causing "not set" checks to stop working.
+changes to `string?`. They will silently evaluate to `false` for `null` values.
 
 **Mitigation — before changing any field type, run these greps and treat output as a fix-list:**
 
@@ -311,14 +322,6 @@ string\.IsNullOrEmpty    ← already correct, no change needed
 string\.IsNullOrWhitespace  ← already correct
 ```
 
-Scope is bounded: config fields are read in extractors, `FileManager`, `JobPreparer`,
-`Preprocessor`, `DownloadEngine`, and the CLI layer. The highest-traffic fields to audit first:
-`parentDir`, `nameFormat`, `indexFilePath`, `skipMusicDir`, `failedAlbumPath`.
-
-Enable `<Nullable>enable</Nullable>` in the project as part of this refactor. It catches
-unguarded dereferences of `string?` fields (the compile-time half of the risk). Combine with the
-grep checklist above to cover the silent-semantic half.
-
 ---
 
 ## What disappears
@@ -327,15 +330,17 @@ grep checklist above to cover the silent-semantic half.
 |---------|-------------|
 | `Config` class (1600 lines) | `EngineSettings` + `DownloadSettings` + sub-objects |
 | `Config(string[] args)` constructor | `ConfigManager.Bind(file, args)` |
-| `Config.Copy()` | Not needed — `DownloadSettings` is immutable; profile re-eval via `ConfigManager.UpdateProfiles` |
-| `Config.ProcessArgs()` (800-line switch) | Attribute-based binder driven by reflection |
+| `Config.Copy()` | Pass same reference; `ConfigManager.UpdateProfiles` rebuilds when needed |
+| `Config.ProcessArgs()` (800-line switch) | `ConfigManager.ApplyTokens` — same pattern, right place |
 | `Config.ParseConfig()` | `ConfigManager.Load()` |
 | `Config.UpdateProfiles()` / `ApplyProfiles()` | `ConfigManager.UpdateProfiles()` |
 | `Config.ProfileConditionSatisfied()` + expression parser | `ConfigManager.ProfileConditionSatisfied()` |
 | `Config.ParseConditions()` | `ConditionParser.ParseFileConditions()` |
-| `Config.PostProcessArgs()` | Path expansion moves to `ConfigManager.Bind()`; derived-field logic moves to computed properties on `DownloadSettings` |
-| `Config.InputError()` / `InputWarning()` | Throw site + Logger.Warn at the call site, or a shared `ParseException` type |
+| `Config.PostProcessArgs()` | Path expansion + constraint enforcement in `ConfigManager.PostProcess()` |
+| `Config.InputError()` / `InputWarning()` | Throw at call site; `Logger.Warn` for warnings |
 | `DownloadEngine.defaultConfig` | `EngineSettings` at construction; `DownloadSettings` per submission |
+| `[Option]` / `[Positional]` attributes on settings | Removed — settings are clean library objects |
+| `OptionAttribute.cs`, `CommandLineBinder.cs` | Removed — binding is explicit in `ApplyTokens` |
 
 ---
 
@@ -343,12 +348,12 @@ grep checklist above to cover the silent-semantic half.
 
 | Step | Description |
 |------|-------------|
-| 1 | Define `EngineSettings`, `DownloadSettings`, sub-config classes as data-only (`init` properties). No logic yet. Wire nullable annotations. |
-| 2 | Run null-migration grep checklist. Fix all `== ""`/`.Length` patterns on fields being migrated. Enable `<Nullable>enable</Nullable>`. |
-| 3 | Write `ConditionParser` as a standalone static class. Replace `Config.ParseConditions` calls. |
-| 4 | Write the attribute-based binder. Start with the common cases (string, int, bool, enum). Handle the ~8 special-case args explicitly in the CLI layer. |
-| 5 | Write `ConfigManager` (Load, Bind, UpdateProfiles, ProfileConditionSatisfied). Port profile logic from `Config`. |
-| 6 | Update `Job.Config` to `DownloadSettings`. Update `JobPreparer` — drop `Copy()`, pass immutable references, call `ConfigManager.UpdateProfiles` instead of `config.UpdateProfiles`. |
-| 7 | Update all callsites (extractors, `Preprocessor`, `FileManager`, `Searcher`, `Downloader`, `DownloadEngine`). |
-| 8 | Add `Channel<(ExtractJob, DownloadSettings)>` to `DownloadEngine`. Expose `EnqueueAsync`. Update `RunAsync` to loop over the channel. |
-| 9 | Delete `Config.cs`. |
+| ~~1~~ | ~~Define `EngineSettings`, `DownloadSettings`, sub-config classes as data-only. No logic yet.~~ ✅ |
+| ~~2~~ | ~~Run null-migration grep checklist. Fix all `== ""`/`.Length` patterns.~~ ✅ |
+| ~~3~~ | ~~Write `ConditionParser`. Replace `Config.ParseConditions` calls.~~ ✅ |
+| ~~4~~ | ~~**Clean up attribute experiment.** Remove `[Option]`/`[Positional]` attributes from all settings classes. Delete `OptionAttribute.cs` and `CommandLineBinder.cs`. Rewrite `ConfigManager.ApplyTokens` as a clean explicit switch/case covering all flags. Remove the 12 binder tests that tested the now-deleted infrastructure.~~ ✅ |
+| ~~5~~ | ~~`ConfigManager` is already written. Verify `ApplyTokens` is complete and correct. Add tests for the binding.~~ ✅ |
+| ~~6~~ | ~~Update `Job.Config` to `DownloadSettings`. Update `JobPreparer` — drop `Copy()`, pass references, call `ConfigManager.UpdateProfiles`. Add `WillWriteIndex` to `ConfigManager`. Thread `CliSettings?` through `UpdateProfiles`/`ProfileConditionSatisfied`/`GetVarValue` to fix `interactive` profile condition (was hard-coded `false`). Remove now-redundant `interactiveMode` mutation from `InteractiveModeManager`.~~ ✅ ⚠️ **Build broken** — `DownloadEngine` and `OnCompleteExecutor` still reference old `Config` fields; resolved in step 7. |
+| ~~7~~ | ~~Update all callsites (extractors, `Preprocessor`, `FileManager`, `Searcher`, `Downloader`, `DownloadEngine`). Use Python rename script for the ~170 mechanical field renames. Fix null string patterns found during migration. **Resolves step 6 build breakage.**~~ ✅ |
+| ~~8~~ | ~~Add `Channel<(ExtractJob, DownloadSettings)>` to `DownloadEngine`. Expose `Enqueue`/`CompleteEnqueue`. Update `RunAsync`.~~ ✅ |
+| ~~9~~ | ~~Delete `Config.cs` and `ConfigTests.cs` (old tests for the deleted class).~~ ✅ |

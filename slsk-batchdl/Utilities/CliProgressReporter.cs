@@ -4,12 +4,14 @@ using Jobs;
 using Models;
 using Konsole;
 using ProgressBar = IProgressBar;
+using Settings;
 
 namespace Utilities
 {
     public class CliProgressReporter : IProgressReporter
     {
-        private readonly Config _config;
+        private readonly DownloadSettings _config;
+        private readonly CliSettings      _cli;
 
         private readonly ConcurrentDictionary<SongJob, BarData> _bars = new();
         private readonly ConcurrentDictionary<Job, ProgressBar?> _jobBars = new();
@@ -38,9 +40,10 @@ namespace Utilities
 
         public bool IsPaused { get; set; } = false;
 
-        public CliProgressReporter(Config config)
+        public CliProgressReporter(DownloadSettings config, CliSettings cli)
         {
             _config = config;
+            _cli    = cli;
             _ = TickLoopAsync(_tickCts.Token);
         }
 
@@ -197,7 +200,7 @@ namespace Utilities
 
         public void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
         {
-            if (Console.IsOutputRedirected || _config.noProgress)
+            if (Console.IsOutputRedirected || _cli.NoProgress)
             {
                 Printing.WriteLine();
                 Printing.PrintAlbum(folder);
@@ -260,7 +263,7 @@ namespace Utilities
             _jobStatuses.TryRemove(job, out _);
             _jobSpinIndexes.TryRemove(job, out _);
 
-            if (!Console.IsOutputRedirected && !_config.noProgress)
+            if (!Console.IsOutputRedirected && !_cli.NoProgress)
             {
                 Printing.WriteLine();
             }

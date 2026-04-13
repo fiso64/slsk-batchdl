@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Jobs;
 using Models;
 using Enums;
+using Settings;
 
 public static class OnCompleteExecutor
 {
@@ -31,7 +32,7 @@ public static class OnCompleteExecutor
     // song is null when called for an album-level completion (no individual song).
     public static async Task ExecuteAsync(Job job, SongJob? song, JobContext ctx)
     {
-        if (!job.Config.HasOnComplete || job.Config.onComplete == null)
+        if (!job.Config.HasOnComplete || job.Config.Output.OnComplete == null)
             return;
 
         bool isAlbumOnComplete = job is AlbumJob;
@@ -63,9 +64,9 @@ public static class OnCompleteExecutor
         ProcessResult? firstCommandResult = null;
         ProcessResult? prevCommandResult  = null;
 
-        for (int i = 0; i < job.Config.onComplete.Count; i++)
+        for (int i = 0; i < job.Config.Output.OnComplete.Count; i++)
         {
-            string rawCommand = job.Config.onComplete[i];
+            string rawCommand = job.Config.Output.OnComplete[i];
             if (string.IsNullOrWhiteSpace(rawCommand))
                 continue;
 
@@ -91,12 +92,12 @@ public static class OnCompleteExecutor
             {
                 if (config.UseLocking)
                 {
-                    Logger.Debug($"on-complete [{i + 1}/{job.Config.onComplete.Count}]: Waiting for lock...");
+                    Logger.Debug($"on-complete [{i + 1}/{job.Config.Output.OnComplete.Count}]: Waiting for lock...");
                     await _lockingSemaphore.WaitAsync();
                     acquiredLock = true;
                 }
 
-                Logger.Debug($"on-complete [{i + 1}/{job.Config.onComplete.Count}]: Executing: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}', UseShellExecute={startInfo.UseShellExecute}, CreateNoWindow={startInfo.CreateNoWindow}, RedirectOutput={startInfo.RedirectStandardOutput}");
+                Logger.Debug($"on-complete [{i + 1}/{job.Config.Output.OnComplete.Count}]: Executing: FileName='{startInfo.FileName}', Arguments='{startInfo.Arguments}', UseShellExecute={startInfo.UseShellExecute}, CreateNoWindow={startInfo.CreateNoWindow}, RedirectOutput={startInfo.RedirectStandardOutput}");
                 currentResult = await ExecuteProcessAsync(startInfo);
             }
             finally

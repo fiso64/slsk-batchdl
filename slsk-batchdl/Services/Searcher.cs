@@ -10,9 +10,10 @@ using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
+using Settings;
 
 
-public class Searcher
+public partial class Searcher
 {
     private readonly ISoulseekClient client;
     private readonly ISearchRegistry searchRegistry;
@@ -31,7 +32,7 @@ public class Searcher
         this.searchRegistry = searchRegistry;
         this.userStats = userStats;
         this.progressReporter = progressReporter;
-        rateSemaphore        = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
+        rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
 
@@ -41,7 +42,7 @@ public class Searcher
     // Populates song.Candidates (ordered best-first).
     // onFastSearchCandidate: called when a highly-ranked candidate is found early,
     // before the full search completes, so the engine can start a provisional download.
-    public async Task SearchSong(SongJob song, Config config, ResponseData responseData,
+    public async Task SearchSong(SongJob song, DownloadSettings config, ResponseData responseData,
         CancellationToken ct, Action? onSearch = null,
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
@@ -56,14 +57,14 @@ public class Searcher
             foreach (var file in r.Files)
                 results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
 
-            if (onFastSearchCandidate != null && config.fastSearch
-                && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > config.downrankOn)
+            if (onFastSearchCandidate != null && config.Search.FastSearch
+                && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > config.Search.DownrankOn)
             {
                 var f = r.Files.First();
                 var candidate = new FileCandidate(r, f);
-                if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= config.fastSearchMinUpSpeed
+                if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= config.Search.FastSearchMinUpSpeed
                     && FileConditions.BracketCheck(song.Query, InferSongQuery(f.Filename, song.Query))
-                    && config.preferredCond.FileSatisfies(f, song.Query, r))
+                    && config.Search.PreferredCond.FileSatisfies(f, song.Query, r))
                 {
                     onFastSearchCandidate(candidate);
                 }
@@ -75,13 +76,13 @@ public class Searcher
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
                 searchTimeout: timeout,
-                removeSingleCharacterSearchTerms: config.removeSingleCharacterSearchTerms,
+                removeSingleCharacterSearchTerms: config.Search.RemoveSingleCharSearchTerms,
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                fileFilter:     f => nec.FileSatisfies(f, song.Query, null));
+                fileFilter: f => nec.FileSatisfies(f, song.Query, null));
 
         progressReporter.ReportSearchStart(song);
         await concurrencySemaphore.WaitAsync(ct);
-        try   { await RunSearches(song.Query, results, getOpts, responseHandler, config, ct, onSearch); }
+        try { await RunSearches(song.Query, results, getOpts, responseHandler, config, ct, onSearch); }
         finally { concurrencySemaphore.Release(); }
 
         searchRegistry.Searches.TryRemove(song, out _);
@@ -100,14 +101,14 @@ public class Searcher
             .Sum(r => 0); // already counted per-response above
 
         var ordered = ResultSorter.OrderedResults(results, song.Query, config, userStats.UserSuccessCounts, useInfer: true);
-        song.Candidates = ordered.Select(x => new FileCandidate(x.response, x.file)).ToList();
+        song.Candidates = [.. ordered.Select(x => new FileCandidate(x.response, x.file))];
     }
 
 
     // ── album search ─────────────────────────────────────────────────────────
 
     // Populates job.Results with candidate AlbumFolders found on the network.
-    public async Task SearchAlbum(AlbumJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task SearchAlbum(AlbumJob job, DownloadSettings config, ResponseData responseData, CancellationToken ct)
     {
         var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
         // For folder-matching (Album), use only the album name. For the network search keyword
@@ -115,8 +116,8 @@ public class Searcher
         var query = new SongQuery
         {
             Artist = job.Query.Artist,
-            Title  = job.Query.Album.Length > 0 ? job.Query.Album : job.Query.SearchHint,
-            Album  = job.Query.Album,
+            Title = job.Query.Album.Length > 0 ? job.Query.Album : job.Query.SearchHint,
+            Album = job.Query.Album,
             ArtistMaybeWrong = job.Query.ArtistMaybeWrong,
             IsDirectLink = job.Query.IsDirectLink,
         };
@@ -125,10 +126,10 @@ public class Searcher
             new SearchOptions(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
-                removeSingleCharacterSearchTerms: config.removeSingleCharacterSearchTerms,
+                removeSingleCharacterSearchTerms: config.Search.RemoveSingleCharSearchTerms,
                 searchTimeout: timeout,
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                fileFilter:     f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, query, null));
+                fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, query, null));
 
         void handler(SlResponse r)
         {
@@ -140,7 +141,7 @@ public class Searcher
 
         using var cts = new CancellationTokenSource();
         await concurrencySemaphore.WaitAsync(cts.Token);
-        try   { await RunSearches(query, results, getOpts, handler, config, cts.Token); }
+        try { await RunSearches(query, results, getOpts, handler, config, cts.Token); }
         finally { concurrencySemaphore.Release(); }
 
         job.Results = BuildAlbumFolders(results, job.Query, config);  // was job.FoundFolders
@@ -149,8 +150,8 @@ public class Searcher
     // Populates job.Results from a direct slsk:// link (no network search).
     public async Task SearchDirectLinkAlbum(AlbumJob job, CancellationToken ct)
     {
-        var parts    = job.Query.URI["slsk://".Length..].Split('/', 2);
-        var username  = parts[0];
+        var parts = job.Query.URI["slsk://".Length..].Split('/', 2);
+        var username = parts[0];
         var directory = parts[1].TrimEnd('/').Replace('/', '\\');
 
         var rawFiles = await GetAllFilesInFolder(username, directory, ct);
@@ -159,10 +160,10 @@ public class Searcher
         var files = new List<SongJob>();
         foreach (var (dir, file) in rawFiles)
         {
-            var fullPath  = dir.TrimEnd('\\') + '\\' + file.Filename;
-            var slFile    = new Soulseek.File(file.Code, fullPath, file.Size, file.Extension);
+            var fullPath = dir.TrimEnd('\\') + '\\' + file.Filename;
+            var slFile = new Soulseek.File(file.Code, fullPath, file.Size, file.Extension);
             var candidate = new FileCandidate(response, slFile);
-            var info      = InferSongQuery(file.Filename, new SongQuery { Artist = job.Query.Artist, Album = job.Query.Album });
+            var info = InferSongQuery(file.Filename, new SongQuery { Artist = job.Query.Artist, Album = job.Query.Album });
             files.Add(new SongJob(info) { ResolvedTarget = candidate });
         }
 
@@ -176,7 +177,7 @@ public class Searcher
     // ── aggregate search ─────────────────────────────────────────────────────
 
     // Populates job.Songs: one SongJob per distinct inferred track version found.
-    public async Task SearchAggregate(AggregateJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task SearchAggregate(AggregateJob job, DownloadSettings config, ResponseData responseData, CancellationToken ct)
     {
         var results = new SlDictionary();
 
@@ -184,10 +185,10 @@ public class Searcher
             new(
                 minimumResponseFileCount: 1,
                 minimumPeerUploadSpeed: 1,
-                removeSingleCharacterSearchTerms: config.removeSingleCharacterSearchTerms,
+                removeSingleCharacterSearchTerms: config.Search.RemoveSingleCharSearchTerms,
                 searchTimeout: timeout,
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                fileFilter:     f => nec.FileSatisfies(f, job.Query, null));
+                fileFilter: f => nec.FileSatisfies(f, job.Query, null));
 
         void handler(SlResponse r)
         {
@@ -199,14 +200,14 @@ public class Searcher
 
         using var cts = new CancellationTokenSource();
         await concurrencySemaphore.WaitAsync(cts.Token);
-        try   { await RunSearches(job.Query, results, getOpts, handler, config, cts.Token); }
+        try { await RunSearches(job.Query, results, getOpts, handler, config, cts.Token); }
         finally { concurrencySemaphore.Release(); }
 
         var equivalentFiles = EquivalentFiles(job.Query, results.Select(x => x.Value), config)
             .Select(x => (x.query, ResultSorter.OrderedResults(x.candidates.Select(c => (c.Response, c.File)), x.query, config, userStats.UserSuccessCounts, false, false, false)))
             .ToList();
 
-        if (!config.relax)
+        if (!config.Search.Relax)
         {
             equivalentFiles = equivalentFiles
                 .Where(x => FileConditions.StrictString(x.query.Title, job.Query.Title, ignoreCase: true)
@@ -225,13 +226,13 @@ public class Searcher
     }
 
     // Returns new AlbumJobs (one per distinct album version found on the network).
-    public async Task<List<AlbumJob>> SearchAggregateAlbum(AlbumAggregateJob job, Config config, ResponseData responseData, CancellationToken ct)
+    public async Task<List<AlbumJob>> SearchAggregateAlbum(AlbumAggregateJob job, DownloadSettings config, ResponseData responseData, CancellationToken ct)
     {
         var tempJob = new AlbumJob(job.Query);
         await SearchAlbum(tempJob, config, responseData, ct);
         var albums = tempJob.Results;
 
-        int maxDiff = config.aggregateLengthTol;
+        int maxDiff = config.Search.AggregateLengthTol;
 
         bool LengthsAreSimilar(int[] s1, int[] s2)
         {
@@ -282,7 +283,7 @@ public class Searcher
         }
 
         return byLength
-            .Where(x => x.users.Count >= config.minSharesAggregate)
+            .Where(x => x.users.Count >= config.Search.MinSharesAggregate)
             .OrderByDescending(x => x.users.Count)
             .Select(x =>
             {
@@ -325,7 +326,7 @@ public class Searcher
             catch (OperationCanceledException) { return 0; }
             catch (Exception e) { Logger.Error($"Error getting all files in '{folder.FolderPath}': {e}"); return 0; }
 
-            var existing  = folder.Files.Select(f => f.ResolvedTarget!.Filename).ToHashSet();
+            var existing = folder.Files.Select(f => f.ResolvedTarget!.Filename).ToHashSet();
             var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Query ?? new SongQuery();
             var firstResp = folder.Files.FirstOrDefault()?.ResolvedTarget?.Response
                             ?? new SearchResponse(folder.Username, -1, false, -1, -1, null);
@@ -337,9 +338,9 @@ public class Searcher
                 if (existing.Contains(file.Filename)) continue;
 
                 newFiles++;
-                var slFile    = new SlFile(file.Code, file.Filename, file.Size, file.Extension, file.Attributes);
+                var slFile = new SlFile(file.Code, file.Filename, file.Size, file.Extension, file.Attributes);
                 var candidate = new FileCandidate(firstResp, slFile);
-                var info      = InferSongQuery(file.Filename, new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
+                var info = InferSongQuery(file.Filename, new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
                 folder.Files.Add(new SongJob(info) { ResolvedTarget = candidate });
             }
         }
@@ -354,7 +355,7 @@ public class Searcher
     // ── print-mode helper ────────────────────────────────────────────────────
 
     // Called when config.PrintResults = true.
-    public async Task SearchAndPrintResults(IEnumerable<SongJob> songs, Config config)
+    public async Task SearchAndPrintResults(IEnumerable<SongJob> songs, DownloadSettings config)
     {
         foreach (var song in songs)
         {
@@ -367,10 +368,10 @@ public class Searcher
                 new SearchOptions(
                     minimumResponseFileCount: 1,
                     minimumPeerUploadSpeed: 1,
-                    searchTimeout: config.searchTimeout,
-                    removeSingleCharacterSearchTerms: config.removeSingleCharacterSearchTerms,
+                    searchTimeout: config.Search.SearchTimeout,
+                    removeSingleCharacterSearchTerms: config.Search.RemoveSingleCharSearchTerms,
                     responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                    fileFilter:     f => nec.FileSatisfies(f, song.Query, null) || config.PrintFull);
+                    fileFilter: f => nec.FileSatisfies(f, song.Query, null) || config.PrintFull);
 
             void responseHandler(SearchResponse r)
             {
@@ -383,8 +384,8 @@ public class Searcher
 
             if (config.DoNotDownload && results.IsEmpty)
             {
-                if (config.printOption.HasFlag(PrintOption.Json))
-                    JsonPrinter.PrintTrackResultJson(song.Query, Enumerable.Empty<(SearchResponse, Soulseek.File)>());
+                if (config.PrintOption.HasFlag(PrintOption.Json))
+                    JsonPrinter.PrintTrackResultJson(song.Query, []);
                 if (!config.NonVerbosePrint)
                     Printing.WriteLine("No results", ConsoleColor.Yellow);
             }
@@ -395,12 +396,12 @@ public class Searcher
                 if (!config.NonVerbosePrint)
                     Console.WriteLine();
 
-                if (config.printOption.HasFlag(PrintOption.Json))
-                    JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, config.printOption.HasFlag(PrintOption.Full));
-                else if (config.printOption.HasFlag(PrintOption.Link))
+                if (config.PrintOption.HasFlag(PrintOption.Json))
+                    JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, config.PrintOption.HasFlag(PrintOption.Full));
+                else if (config.PrintOption.HasFlag(PrintOption.Link))
                     Printing.PrintLink(orderedResults.First().response.Username, orderedResults.First().file.Filename);
                 else
-                    Printing.PrintTrackResults(orderedResults, song.Query, config.PrintFull, config.necessaryCond, config.preferredCond);
+                    Printing.PrintTrackResults(orderedResults, song.Query, config.PrintFull, config.Search.NecessaryCond, config.Search.PreferredCond);
             }
 
             if (!config.NonVerbosePrint)
@@ -411,11 +412,23 @@ public class Searcher
 
     // ── query inference ───────────────────────────────────────────────────────
 
+    [GeneratedRegex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)")]
+    private static partial Regex TrackNumStartRegex();
+
+    [GeneratedRegex(@"(?<= - )((\d-)?\d{2,3}|\d{2,3}\.?)\s+")]
+    private static partial Regex TrackNumMiddleRegex();
+
+    [GeneratedRegex(@"\s+-(\d{2,3})-\s+")]
+    private static partial Regex TrackNumMiddleAltRegex();
+
+    [GeneratedRegex(@"-\s*<<tracknum>>\s*-")]
+    private static partial Regex TrackNumPlaceholderRegex();
+
     public static SongQuery InferSongQuery(string filename, SongQuery defaultQuery)
     {
         string artist = defaultQuery.Artist;
-        string title  = defaultQuery.Title;
-        string album  = defaultQuery.Album;
+        string title = defaultQuery.Title;
+        string album = defaultQuery.Album;
         bool artistMaybeWrong = defaultQuery.ArtistMaybeWrong;
 
         filename = Utils.GetFileNameWithoutExtSlsk(filename);
@@ -432,7 +445,7 @@ public class Searcher
                 if (titleStart < filename.Length)
                 {
                     artist = filename[6..close];
-                    title  = filename[titleStart..];
+                    title = filename[titleStart..];
                     return new SongQuery(defaultQuery) { Artist = artist.RemoveFt(), Title = title.RemoveFt(), ArtistMaybeWrong = false };
                 }
             }
@@ -440,35 +453,31 @@ public class Searcher
 
         filename = filename.Replace(" — ", " - ").Replace('_', ' ').Trim().RemoveConsecutiveWs();
 
-        var trackNumStart     = new Regex(@"^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)(?=.+\S)");
-        var trackNumMiddle    = new Regex(@"(?<= - )((\d-)?\d{2,3}|\d{2,3}\.?)\s+");
-        var trackNumMiddleAlt = new Regex(@"\s+-(\d{2,3})-\s+");
-
-        if (trackNumStart.IsMatch(filename))
+        if (TrackNumStartRegex().IsMatch(filename))
         {
-            filename = trackNumStart.Replace(filename, "", 1).Trim();
+            filename = TrackNumStartRegex().Replace(filename, "", 1).Trim();
             if (filename.StartsWith("- ")) filename = filename[2..].Trim();
         }
         else
         {
-            var reg = trackNumMiddle.IsMatch(filename) ? trackNumMiddle
-                    : trackNumMiddleAlt.IsMatch(filename) ? trackNumMiddleAlt : null;
+            var reg = TrackNumMiddleRegex().IsMatch(filename) ? TrackNumMiddleRegex()
+                    : TrackNumMiddleAltRegex().IsMatch(filename) ? TrackNumMiddleAltRegex() : null;
             if (reg != null && !reg.IsMatch(defaultQuery.ToString(noInfo: true)))
             {
                 filename = reg.Replace(filename, "<<tracknum>>", 1).Trim();
-                filename = Regex.Replace(filename, @"-\s*<<tracknum>>\s*-", "-");
+                filename = TrackNumPlaceholderRegex().Replace(filename, "-");
                 filename = filename.Replace("<<tracknum>>", "");
             }
         }
 
-        string aname  = artist.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
-        string tname  = title.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
+        string aname = artist.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
+        string tname = title.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
         string alname = album.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveFt().RemoveConsecutiveWs().Trim();
-        string fname  = filename.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveConsecutiveWs().Trim();
+        string fname = filename.Replace('—', '-').Replace('_', ' ').Replace('[', '(').Replace(']', ')').ReplaceInvalidChars("", true).RemoveConsecutiveWs().Trim();
 
         bool maybeRemix = aname.Length > 0 && Regex.IsMatch(fname, @$"\({Regex.Escape(aname)} .+\)", RegexOptions.IgnoreCase);
-        string[] parts     = fname.Split(new[] { " - " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        string[] realParts = filename.Split(new[] { " - " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] parts = fname.Split([" - "], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] realParts = filename.Split([" - "], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length != realParts.Length) realParts = parts;
 
         if (parts.Length == 1)
@@ -479,7 +488,7 @@ public class Searcher
         else if (parts.Length == 2)
         {
             artist = realParts[0];
-            title  = realParts[1];
+            title = realParts[1];
             if (maybeRemix)
                 artistMaybeWrong = true;
             else if (!parts[0].ContainsIgnoreCase(aname) || !parts[1].ContainsIgnoreCase(tname))
@@ -493,17 +502,17 @@ public class Searcher
             int artistPos = -1, albumPos = -1;
             if (aname.Length > 0)
             {
-                if      (parts[0].ContainsIgnoreCase(aname)) artistPos = 0;
+                if (parts[0].ContainsIgnoreCase(aname)) artistPos = 0;
                 else if (parts[1].ContainsIgnoreCase(aname)) artistPos = 1;
-                else    artistMaybeWrong = true;
+                else artistMaybeWrong = true;
             }
             if (alname.Length > 0)
             {
-                if      (parts[0].ContainsIgnoreCase(alname)) albumPos = 0;
+                if (parts[0].ContainsIgnoreCase(alname)) albumPos = 0;
                 else if (parts[1].ContainsIgnoreCase(alname)) albumPos = 1;
             }
             if (artistPos >= 0 && artistPos == albumPos) { artistPos = 0; albumPos = 1; }
-            if (artistPos == -1 && maybeRemix)           { artistMaybeWrong = true; artistPos = 0; albumPos = 1; }
+            if (artistPos == -1 && maybeRemix) { artistMaybeWrong = true; artistPos = 0; albumPos = 1; }
 
             if (artistPos == -1 && albumPos == -1)
             { artistMaybeWrong = true; artist = realParts[0] + " - " + realParts[1]; }
@@ -540,24 +549,24 @@ public class Searcher
         }
         else if (artist.Length > 0 && !title.ContainsIgnoreCase(defaultQuery.Title) && !artist.ContainsIgnoreCase(defaultQuery.Artist))
         {
-            string[] x   = { artist, album, title };
+            string[] x = [artist, album, title];
             var perm = (0, 1, 2);
-            (int, int, int)[] permutations = { (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0) };
+            (int, int, int)[] permutations = [(0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)];
             foreach (var p in permutations)
             {
                 if (x[p.Item1].ContainsIgnoreCase(defaultQuery.Artist) && x[p.Item3].ContainsIgnoreCase(defaultQuery.Title))
                 { perm = p; break; }
             }
             artist = x[perm.Item1];
-            album  = x[perm.Item2];
-            title  = x[perm.Item3];
+            album = x[perm.Item2];
+            title = x[perm.Item3];
         }
 
         return new SongQuery(defaultQuery)
         {
-            Artist           = artist.RemoveFt().Trim(),
-            Title            = title.RemoveFt().Trim(),
-            Album            = album.Trim(),
+            Artist = artist.RemoveFt().Trim(),
+            Title = title.RemoveFt().Trim(),
+            Album = album.Trim(),
             ArtistMaybeWrong = artistMaybeWrong,
         };
     }
@@ -565,10 +574,10 @@ public class Searcher
     public static IEnumerable<(SongQuery query, IEnumerable<FileCandidate> candidates)> EquivalentFiles(
         SongQuery query,
         IEnumerable<(SlResponse, SlFile)> fileResponses,
-        Config config,
+        DownloadSettings config,
         int minShares = -1)
     {
-        if (minShares == -1) minShares = config.minSharesAggregate;
+        if (minShares == -1) minShares = config.Search.MinSharesAggregate;
 
         SongQuery infer((SearchResponse r, Soulseek.File f) x)
         {
@@ -577,13 +586,13 @@ public class Searcher
         }
 
         return fileResponses
-            .GroupBy(infer, new SongQueryComparer(ignoreCase: true, config.aggregateLengthTol))
+            .GroupBy(infer, new SongQueryComparer(ignoreCase: true, config.Search.AggregateLengthTol))
             .Select(g => (g, g.Select(x => x.Item1.Username).Distinct().Count()))
             .Where(x => x.Item2 >= minShares)
             .OrderByDescending(x => x.Item2)
             .Select(x =>
             {
-                var grp    = x.g;
+                var grp = x.g;
                 var inferQ = grp.Key;
                 // fill in length from results if unknown
                 if (inferQ.Length == -1)
@@ -615,17 +624,17 @@ public class Searcher
 
     public async Task RunSearches(SongQuery query, SlDictionary results,
         Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
-        Action<SearchResponse> responseHandler, Config config,
+        Action<SearchResponse> responseHandler, DownloadSettings config,
         CancellationToken? ct = null, Action? onSearch = null)
     {
         bool artist = query.Artist.Length > 0;
-        bool title  = query.Title.Length > 0;
-        bool album  = query.Album.Length > 0;
+        bool title = query.Title.Length > 0;
+        bool album = query.Album.Length > 0;
 
         string search = GetSearchString(query, isAlbum: false);
         var searchTasks = new List<Task>();
 
-        var defaultOpts = getSearchOptions(config.searchTimeout, config.necessaryCond, config.preferredCond);
+        var defaultOpts = getSearchOptions(config.Search.SearchTimeout, config.Search.NecessaryCond, config.Search.PreferredCond);
         searchTasks.Add(DoSearch(search, defaultOpts, responseHandler, config, ct, onSearch));
 
         if (search.RemoveDiacriticsIfExist(out string noDiacr) && !query.ArtistMaybeWrong)
@@ -636,12 +645,12 @@ public class Searcher
         if (results.IsEmpty && query.ArtistMaybeWrong && title)
         {
             var inferred = InferSongQuery(query.Title, new SongQuery());
-            var cond = new FileConditions(config.necessaryCond) { StrictTitle = inferred.Title == query.Title, StrictArtist = false };
-            var opts = getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond);
+            var cond = new FileConditions(config.Search.NecessaryCond) { StrictTitle = inferred.Title == query.Title, StrictArtist = false };
+            var opts = getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond);
             searchTasks.Add(DoSearch($"{inferred.Artist} {inferred.Title}", opts, responseHandler, config, ct, onSearch));
         }
 
-        if (config.desperateSearch)
+        if (config.Search.DesperateSearch)
         {
             await Task.WhenAll(searchTasks);
 
@@ -649,16 +658,16 @@ public class Searcher
             {
                 if (artist && album && title)
                 {
-                    var cond = new FileConditions(config.necessaryCond) { StrictTitle = true, StrictAlbum = true };
+                    var cond = new FileConditions(config.Search.NecessaryCond) { StrictTitle = true, StrictAlbum = true };
                     searchTasks.Add(DoSearch($"{query.Artist} {query.Album}",
-                        getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond),
+                        getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond),
                         responseHandler, config, ct, onSearch));
                 }
-                if (artist && title && query.Length != -1 && config.necessaryCond.LengthTolerance != -1)
+                if (artist && title && query.Length != -1 && config.Search.NecessaryCond.LengthTolerance != -1)
                 {
-                    var cond = new FileConditions(config.necessaryCond) { LengthTolerance = -1, StrictTitle = true, StrictArtist = true };
+                    var cond = new FileConditions(config.Search.NecessaryCond) { LengthTolerance = -1, StrictTitle = true, StrictArtist = true };
                     searchTasks.Add(DoSearch($"{query.Artist} {query.Title}",
-                        getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond),
+                        getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond),
                         responseHandler, config, ct, onSearch));
                 }
             }
@@ -671,23 +680,23 @@ public class Searcher
 
                 if (query.Album.Length > 3 && album)
                 {
-                    var cond = new FileConditions(config.necessaryCond)
+                    var cond = new FileConditions(config.Search.NecessaryCond)
                     { StrictAlbum = true, StrictTitle = !query.ArtistMaybeWrong, StrictArtist = !query.ArtistMaybeWrong, LengthTolerance = -1 };
-                    searchTasks.Add(DoSearch(query.Album, getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond),
+                    searchTasks.Add(DoSearch(query.Album, getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond),
                         responseHandler, config, ct, onSearch));
                 }
                 if (q2.Title.Length > 3 && artist)
                 {
-                    var cond = new FileConditions(config.necessaryCond)
+                    var cond = new FileConditions(config.Search.NecessaryCond)
                     { StrictTitle = !query.ArtistMaybeWrong, StrictArtist = !query.ArtistMaybeWrong, LengthTolerance = -1 };
-                    searchTasks.Add(DoSearch(q2.Title, getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond),
+                    searchTasks.Add(DoSearch(q2.Title, getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond),
                         responseHandler, config, ct, onSearch));
                 }
                 if (q2.Artist.Length > 3 && title)
                 {
-                    var cond = new FileConditions(config.necessaryCond)
+                    var cond = new FileConditions(config.Search.NecessaryCond)
                     { StrictTitle = !query.ArtistMaybeWrong, StrictArtist = !query.ArtistMaybeWrong, LengthTolerance = -1 };
-                    searchTasks.Add(DoSearch(q2.Artist, getSearchOptions(Math.Min(config.searchTimeout, 5000), cond, config.preferredCond),
+                    searchTasks.Add(DoSearch(q2.Artist, getSearchOptions(Math.Min(config.Search.SearchTimeout, 5000), cond, config.Search.PreferredCond),
                         responseHandler, config, ct, onSearch));
                 }
             }
@@ -697,12 +706,12 @@ public class Searcher
     }
 
     private async Task DoSearch(string search, SearchOptions opts, Action<SearchResponse> rHandler,
-        Config config, CancellationToken? ct = null, Action? onSearch = null)
+        DownloadSettings config, CancellationToken? ct = null, Action? onSearch = null)
     {
         await rateSemaphore.WaitAsync();
         try
         {
-            search = CleanSearchString(search, !config.noRemoveSpecialChars);
+            search = CleanSearchString(search, !config.Search.NoRemoveSpecialChars);
             var q = SearchQuery.FromText(search);
             onSearch?.Invoke();
             await client.SearchAsync(q, options: opts, cancellationToken: ct, responseHandler: rHandler);
@@ -748,20 +757,22 @@ public class Searcher
         return str.Trim();
     }
 
+    [GeneratedRegex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$")]
+    private static partial Regex DiscPatternRegex();
+
     // Builds AlbumFolders from raw search results for album searches.
     private static List<AlbumFolder> BuildAlbumFolders(
         ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results,
-        AlbumQuery query, Config config)
+        AlbumQuery query, DownloadSettings config)
     {
-        var discPattern   = new Regex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$");
-        bool canMatchDisc = !discPattern.IsMatch(query.Album) && !discPattern.IsMatch(query.Artist);
+        bool canMatchDisc = !DiscPatternRegex().IsMatch(query.Album) && !DiscPatternRegex().IsMatch(query.Artist);
 
         // Build directory buckets ordered by first-appearance in ResultSorter output.
         var bridgeQuery = new SongQuery
         {
             Artist = query.Artist,
-            Title  = query.Album.Length > 0 ? query.Album : query.SearchHint,
-            Album  = query.Album,
+            Title = query.Album.Length > 0 ? query.Album : query.SearchHint,
+            Album = query.Album,
             ArtistMaybeWrong = query.ArtistMaybeWrong,
         };
         // Use a placeholder SongQuery-based sort to preserve ordering.
@@ -774,25 +785,25 @@ public class Searcher
 
         foreach (var (response, file) in orderedResults)
         {
-            string username   = response.Username;
+            string username = response.Username;
             string folderPath = file.Filename[..file.Filename.LastIndexOf('\\')];
-            string dirName    = folderPath[(folderPath.LastIndexOf('\\') + 1)..];
+            string dirName = folderPath[(folderPath.LastIndexOf('\\') + 1)..];
 
-            if (canMatchDisc && discPattern.IsMatch(dirName))
+            if (canMatchDisc && DiscPatternRegex().IsMatch(dirName))
                 folderPath = folderPath[..folderPath.LastIndexOf('\\')];
 
             string key = username + '\\' + folderPath;
-            if (!dirStructure.ContainsKey(key))
+            if (!dirStructure.TryGetValue(key, out (string username, string folderPath, List<(SlResponse r, SlFile f)> list, int idx) value))
                 dirStructure[key] = (username, folderPath, new List<(SlResponse, SlFile)> { (response, file) }, idx);
             else
-                dirStructure[key].list.Add((response, file));
+                value.list.Add((response, file));
 
             idx++;
         }
 
         // Merge child directories (e.g., Artist/Album/Scans) into parent (Artist/Album).
         var sortedKeys = dirStructure.Keys.OrderBy(k => k).ToList();
-        var toRemove   = new HashSet<string>();
+        var toRemove = new HashSet<string>();
 
         for (int i = 0; i < sortedKeys.Count; i++)
         {
@@ -846,45 +857,45 @@ public class Searcher
 
     // copyright is joke
     public static readonly string[][] bannedTerms =
-    {
-        new[] { "depeche", "mode" },
-        new[] { "beatles" },
-        new[] { "prince", "revolutions" },
-        new[] { "michael", "jackson" },
-        new[] { "coexist" },
-        new[] { "bob", "dylan" },
-        new[] { "enter", "shikari" },
-        new[] { "village", "people" },
-        new[] { "lenny", "kravitz" },
-        new[] { "beyonce" },
-        new[] { "beyoncé" },
-        new[] { "lady", "gaga" },
-        new[] { "jay", "z" },
-        new[] { "kanye", "west" },
-        new[] { "rihanna" },
-        new[] { "adele" },
-        new[] { "kendrick", "lamar" },
-        new[] { "romance", "bad" },
-        new[] { "born", "this", "way" },
-        new[] { "weeknd" },
-        new[] { "broken", "hearted" },
-        new[] { "highway", "61", "revisited" },
-        new[] { "west", "gold", "digger" },
-        new[] { "west", "good", "life" },
-        new[] { "hold", "my", "hand" },
-        new[] { "ymca" },
-        new[] { "navy", "in", "the" },
-        new[] { "macho" },
-        new[] { "west", "go" },
-        new[] { "hot", "cop" },
-        new[] { "phone", "sex", "over", "the" },
-        new[] { "minaj" },
-        new[] { "government", "hooker" },
-        new[] { "wayne", "lil" },
-        new[] { "mood", "4", "eva" },
-        new[] { "ghosts", "again" },
-        new[] { "purple", "rain" },
-    };
+    [
+        ["depeche", "mode"],
+        ["beatles"],
+        ["prince", "revolutions"],
+        ["michael", "jackson"],
+        ["coexist"],
+        ["bob", "dylan"],
+        ["enter", "shikari"],
+        ["village", "people"],
+        ["lenny", "kravitz"],
+        ["beyonce"],
+        ["beyoncé"],
+        ["lady", "gaga"],
+        ["jay", "z"],
+        ["kanye", "west"],
+        ["rihanna"],
+        ["adele"],
+        ["kendrick", "lamar"],
+        ["romance", "bad"],
+        ["born", "this", "way"],
+        ["weeknd"],
+        ["broken", "hearted"],
+        ["highway", "61", "revisited"],
+        ["west", "gold", "digger"],
+        ["west", "good", "life"],
+        ["hold", "my", "hand"],
+        ["ymca"],
+        ["navy", "in", "the"],
+        ["macho"],
+        ["west", "go"],
+        ["hot", "cop"],
+        ["phone", "sex", "over", "the"],
+        ["minaj"],
+        ["government", "hooker"],
+        ["wayne", "lil"],
+        ["mood", "4", "eva"],
+        ["ghosts", "again"],
+        ["purple", "rain"],
+    ];
 }
 
 

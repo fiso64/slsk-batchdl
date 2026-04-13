@@ -1,8 +1,8 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 
-public static class Utils
+public static partial class Utils
 {
     public static readonly string[] musicExtensions = new string[] { ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac" };
     public static readonly string[] imageExtensions = new string[] { ".jpg", ".png", ".jpeg", ".gif", ".webp" };
@@ -475,13 +475,16 @@ public static class Utils
         return new string(src, 0, index);
     }
 
+    [GeneratedRegex(@"\[[^\]]*\]")]
+    private static partial Regex SquareBracketsRegex();
+
     public static string RemoveSquareBrackets(this string str)
     {
         if (str.Length == 0)
             return str;
         if (!str.Contains('['))
             return str;
-        return Regex.Replace(str, @"\[[^\]]*\]", "").Trim();
+        return SquareBracketsRegex().Replace(str, "").Trim();
     }
 
     public static bool ContainsIgnoreCase(this string s, string other)
@@ -548,13 +551,15 @@ public static class Utils
         return false;
     }
 
+    [GeneratedRegex(@"\[(.*?)\]|\((.*?)\)")]
+    private static partial Regex BracketsRegex();
+
     public static bool ContainsInBrackets(this string str, string searchTerm, bool ignoreCase = false)
     {
         if (str.Length == 0 && searchTerm.Length > 0)
             return false;
 
-        var regex = new Regex(@"\[(.*?)\]|\((.*?)\)");
-        var matches = regex.Matches(str);
+        var matches = BracketsRegex().Matches(str);
         var comp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
         foreach (Match match in matches)

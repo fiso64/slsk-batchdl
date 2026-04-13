@@ -1,14 +1,24 @@
 using Models;
 using Jobs;
 using System.Text.RegularExpressions;
+using Settings;
 
 namespace Extractors
 {
-    public class CsvExtractor : IExtractor
+    public partial class CsvExtractor : IExtractor
     {
+        [GeneratedRegex(@"\(.*?\)")]
+        private static partial Regex ParenthesesRegex();
+
+        [GeneratedRegex("[a-zA-Z]")]
+        private static partial Regex LettersRegex();
+
+        [GeneratedRegex(@"\W+")]
+        private static partial Regex NonWordRegex();
+
         string? csvFilePath = null;
         int csvColumnCount = -1;
-        private readonly SemaphoreSlim csvLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim csvLock = new(1, 1);
 
         public static bool InputMatches(string input)
         {
@@ -16,15 +26,15 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var rows = await ParseCsvRows(csvFilePath, config.artistCol, config.titleCol, config.lengthCol,
-                config.albumCol, config.descCol, config.ytIdCol, config.trackCountCol, config.timeUnit, config.ytParse);
+            var rows = await ParseCsvRows(csvFilePath, config.Csv.ArtistCol, config.Csv.TitleCol, config.Csv.LengthCol,
+                config.Csv.AlbumCol, config.Csv.DescCol, config.Csv.YtIdCol, config.Csv.TrackCountCol, config.Csv.TimeUnit, config.Csv.YtParse);
 
             if (reverse)
                 rows.Reverse();
@@ -62,12 +72,11 @@ namespace Extractors
                 }
                 else if (row is SongJob song)
                 {
-                    if (currentSlj == null)
-                        currentSlj = new JobList
-                        {
-                            ItemName              = csvName,
-                            EnablesIndexByDefault = true,
-                        };
+                    currentSlj ??= new JobList
+                    {
+                        ItemName              = csvName,
+                        EnablesIndexByDefault = true,
+                    };
                     currentSlj.Jobs.Add(song);
                 }
             }
@@ -124,23 +133,23 @@ namespace Extractors
                 header = parser.ReadNextRow();
             }
 
-            string[] cols = { artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol, trackCountCol };
-            string[][] aliases = {
-                new[] { "artist", "artist name", "artists", "artist names" },
-                new[] { "album", "album name", "album title" },
-                new[] { "title", "song", "track title", "track name", "song name", "track" },
-                new[] { "length", "duration", "track length", "track duration", "song length", "song duration" },
-                new[] { "description", "youtube description" },
-                new[] { "url", "track url", "uri", "id", "youtube id" },
-                new[] { "track count", "album track count" }
-            };
+            string[] cols = [artistCol, albumCol, trackCol, lengthCol, descCol, ytIdCol, trackCountCol];
+            string[][] aliases = [
+                ["artist", "artist name", "artists", "artist names"],
+                ["album", "album name", "album title"],
+                ["title", "song", "track title", "track name", "song name", "track"],
+                ["length", "duration", "track length", "track duration", "song length", "song duration"],
+                ["description", "youtube description"],
+                ["url", "track url", "uri", "id", "youtube id"],
+                ["track count", "album track count"]
+            ];
 
             string usingColumns = "";
             for (int i = 0; i < cols.Length; i++)
             {
                 if (string.IsNullOrEmpty(cols[i]))
                 {
-                    string? res = header.FirstOrDefault(h => Regex.Replace(h, @"\(.*?\)", "").Trim().EqualsAny(aliases[i], StringComparison.OrdinalIgnoreCase));
+                    string? res = header.FirstOrDefault(h => ParenthesesRegex().Replace(h, "").Trim().EqualsAny(aliases[i], StringComparison.OrdinalIgnoreCase));
                     if (!string.IsNullOrEmpty(res))
                     {
                         cols[i] = res;
@@ -259,9 +268,9 @@ namespace Extractors
         {
             if (string.IsNullOrEmpty(format))
                 throw new ArgumentException("Duration format string empty");
-            duration = Regex.Replace(duration, "[a-zA-Z]", "");
-            var formatParts   = Regex.Split(format, @"\W+");
-            var durationParts = Regex.Split(duration, @"\W+").Where(s => !string.IsNullOrEmpty(s)).ToArray();
+            duration = LettersRegex().Replace(duration, "");
+            var formatParts   = NonWordRegex().Split(format);
+            var durationParts = NonWordRegex().Split(duration).Where(s => !string.IsNullOrEmpty(s)).ToArray();
 
             double totalSeconds = 0;
             for (int i = 0; i < formatParts.Length; i++)

@@ -2,6 +2,7 @@ using Models;
 using Jobs;
 using System.Web;
 using Soulseek;
+using Settings;
 
 namespace Extractors
 {
@@ -12,11 +13,11 @@ namespace Extractors
             return input.StartsWith("slsk://", StringComparison.OrdinalIgnoreCase);
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             var uri = HttpUtility.UrlDecode(input);
 
-            if (input.EndsWith('/') || config.album)
+            if (input.EndsWith('/') || config.Extraction.IsAlbum)
             {
                 // Direct-link album: the URI is the folder path
                 var query = new AlbumQuery { URI = uri, IsDirectLink = true };

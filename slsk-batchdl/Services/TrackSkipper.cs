@@ -1,6 +1,7 @@
 using Jobs;
 using Models;
 using Enums;
+using Settings;
 
 namespace Services
 {
@@ -24,13 +25,13 @@ namespace Services
         public M3uEditor?      indexEditor;
         public bool            checkFileExists;
 
-        public static TrackSkipperContext From(JobContext ctx, Config config)
+        public static TrackSkipperContext From(JobContext ctx, DownloadSettings config)
         {
             FileConditions? cond = null;
-            if (config.skipCheckPrefCond)
-                cond = config.necessaryCond.With(config.preferredCond);
-            else if (config.skipCheckCond)
-                cond = config.necessaryCond;
+            if (config.Skip.SkipCheckPrefCond)
+                cond = config.Search.NecessaryCond.With(config.Search.PreferredCond);
+            else if (config.Skip.SkipCheckCond)
+                cond = config.Search.NecessaryCond;
 
             return new TrackSkipperContext
             {
@@ -196,10 +197,10 @@ namespace Services
                     string pname  = Path.GetFileName(ppath);
                     var    parent = Utils.NormalizedPath(Path.GetDirectoryName(path));
 
-                    if (!index.ContainsKey(parent))
+                    if (!index.TryGetValue(parent, out var value))
                         index[parent] = new() { (path, (ppath, pname, new SimpleFile(musicFile))) };
                     else
-                        index[parent].Add((path, (ppath, pname, new SimpleFile(musicFile))));
+                        value.Add((path, (ppath, pname, new SimpleFile(musicFile))));
                 }
             }
             IndexIsBuilt = true;
@@ -300,10 +301,10 @@ namespace Services
                     string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
                     var    parent       = Utils.NormalizedPath(Path.GetDirectoryName(path));
 
-                    if (!index.ContainsKey(parent))
+                    if (!index.TryGetValue(parent, out var value))
                         index[parent] = new() { (path, (partist, ptitle, palbum, palbumArtist, new SimpleFile(musicFile))) };
                     else
-                        index[parent].Add((path, (partist, ptitle, palbum, palbumArtist, new SimpleFile(musicFile))));
+                        value.Add((path, (partist, ptitle, palbum, palbumArtist, new SimpleFile(musicFile))));
                 }
             }
             IndexIsBuilt = true;

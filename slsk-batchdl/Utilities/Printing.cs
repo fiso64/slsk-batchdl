@@ -5,6 +5,7 @@ using Konsole;
 using ProgressBar = Konsole.ProgressBar;
 using SearchResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
+using Settings;
 
 public interface IProgressBar
 {
@@ -42,12 +43,12 @@ public static class Printing
     private class BufferedProgressBar : IProgressBar
     {
         private Konsole.ProgressBar? _inner;
-        private readonly Config _config;
+        private readonly DownloadSettings _config;
         private int _lastCurrent;
         private string _lastItem = "";
         private bool _isQueued = false;
 
-        public BufferedProgressBar(Config config)
+        public BufferedProgressBar(DownloadSettings config)
         {
             _config = config;
             if (!IsBuffering)
@@ -135,7 +136,7 @@ public static class Printing
         string ancestor = "";
         if (!showAncestors)
             ancestor = Utils.GreatestCommonDirectorySlsk(
-                songList.SelectMany(s => s.Candidates?.Select(c => c.Filename) ?? Enumerable.Empty<string>()));
+                songList.SelectMany(s => s.Candidates?.Select(c => c.Filename) ?? []));
 
         if (pathsOnly)
         {
@@ -203,7 +204,7 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound, Config config, Searcher searchService)
+    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound, DownloadSettings config, Searcher searchService)
     {
         if (job is JobList slj)
         {
@@ -211,11 +212,11 @@ public static class Printing
         }
         else if (job is AggregateJob ag)
         {
-            if (config.printOption.HasFlag(PrintOption.Json))
+            if (config.PrintOption.HasFlag(PrintOption.Json))
             {
                 JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == JobState.Pending));
             }
-            else if (config.printOption.HasFlag(PrintOption.Link))
+            else if (config.PrintOption.HasFlag(PrintOption.Link))
             {
                 var first = ag.Songs.FirstOrDefault(s => s.ChosenCandidate != null);
                 if (first?.ChosenCandidate != null)
@@ -229,34 +230,34 @@ public static class Printing
         }
         else if (job is AlbumJob albumJob)
         {
-            if (config.printOption.HasFlag(PrintOption.Json))
+            if (config.PrintOption.HasFlag(PrintOption.Json))
             {
-                var foldersToPrint = config.printOption.HasFlag(PrintOption.Full)
+                var foldersToPrint = config.PrintOption.HasFlag(PrintOption.Full)
                     ? albumJob.Results
                     : albumJob.Results.Take(1).ToList();
                 JsonPrinter.PrintAlbumJson(foldersToPrint, albumJob);
             }
-            else if (config.printOption.HasFlag(PrintOption.Link))
+            else if (config.PrintOption.HasFlag(PrintOption.Link))
             {
                 if (albumJob.Results.Count > 0)
                     PrintAlbumLink(albumJob.Results[0]);
             }
             else
             {
-                if (!config.printOption.HasFlag(PrintOption.Full))
+                if (!config.PrintOption.HasFlag(PrintOption.Full))
                     Console.WriteLine($"Result 1 of {albumJob.Results.Count} for album {job.ToString(true)}:");
                 else
                     Console.WriteLine($"Results ({albumJob.Results.Count}) for album {job.ToString(true)}:");
 
                 if (albumJob.Results.Count > 0)
                 {
-                    if (!config.noBrowseFolder)
+                    if (!config.Search.NoBrowseFolder)
                         Console.WriteLine("[Skipping full folder retrieval]");
 
                     foreach (var folder in albumJob.Results)
                     {
                         PrintAlbum(folder);
-                        if (!config.printOption.HasFlag(PrintOption.Full))
+                        if (!config.PrintOption.HasFlag(PrintOption.Full))
                             break;
                     }
                 }
@@ -303,7 +304,7 @@ public static class Printing
 
 
     public static void PrintTracksTbd(List<SongJob> toBeDownloaded, List<SongJob> existing, List<SongJob> notFound,
-        bool isNormal, Config config, bool summary = true)
+        bool isNormal, DownloadSettings config, bool summary = true)
     {
         if (isNormal && !config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
             return;
@@ -312,7 +313,7 @@ public static class Printing
         string alreadyExist     = existing.Count > 0 ? $"{existing.Count} already exist" : "";
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        bool full       = config.printOption.HasFlag(PrintOption.Full);
+        bool full       = config.PrintOption.HasFlag(PrintOption.Full);
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
         if (summary && (isNormal || skippedTracks.Length > 0))
@@ -543,23 +544,17 @@ public static class Printing
         }
     }
 
-    public static IProgressBar? GetProgressBar(Config config)
+    public static IProgressBar? GetProgressBar(DownloadSettings config)
     {
-        if (!config.noProgress)
-            return new BufferedProgressBar(config);
-        return null;
+        return new BufferedProgressBar(config);
     }
 
-    private static Konsole.ProgressBar? GetRealProgressBar(Config config)
+    private static Konsole.ProgressBar? GetRealProgressBar(DownloadSettings config)
     {
         lock (ConsoleLock)
         {
-            if (!config.noProgress)
-            {
-                try { return new Konsole.ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' '); }
-                catch { return null; }
-            }
-            return null;
+            try { return new Konsole.ProgressBar(PbStyle.SingleLine, 100, Console.WindowWidth - 10, character: ' '); }
+            catch { return null; }
         }
     }
 }

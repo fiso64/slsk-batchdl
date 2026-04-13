@@ -29,7 +29,7 @@ namespace Tests.ExtractorTests2
             File.WriteAllText(_tempList, "a:\"some album\"    album-track-count=10");
 
             var extractor = new ListExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
             var jobList = (JobList)result;
@@ -46,7 +46,7 @@ namespace Tests.ExtractorTests2
             File.WriteAllText(_tempList, "a:\"some album\"    album-track-count>=8");
 
             var extractor = new ListExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
             var jobList = (JobList)result;
@@ -64,7 +64,7 @@ namespace Tests.ExtractorTests2
             File.WriteAllText(_tempList, "a:\"some album\"    strict-album=true;album-track-count=10");
 
             var extractor = new ListExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
             var jobList = (JobList)result;
@@ -109,7 +109,7 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_FileLink_CreatesDirectDownload()
         {
             var extractor = new SoulseekExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", 100, 0, false, config);
 
             var slj = (SongJob)result;
@@ -120,7 +120,7 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_FolderLink_CreatesAlbumType()
         {
             var extractor = new SoulseekExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", 100, 0, false, config);
 
             Assert.IsInstanceOfType(result, typeof(AlbumJob));
@@ -130,8 +130,8 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithAlbumConfig_CreatesAlbumType()
         {
             var extractor = new SoulseekExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
-            config.album = true;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Extraction.IsAlbum = true;
             var result = await extractor.GetTracks("slsk://someuser/Music/Song.mp3", 100, 0, false, config);
 
             Assert.IsInstanceOfType(result, typeof(AlbumJob));
@@ -141,7 +141,7 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_FileLink_SetsUsernameAndPath()
         {
             var extractor = new SoulseekExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", 100, 0, false, config);
 
             var song = (SongJob)result;
@@ -197,7 +197,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
             var songs = ((JobList)result).AllSongs().ToList();
@@ -214,7 +214,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title,album\nBand,Track,TheAlbum\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
             var songs = ((JobList)result).AllSongs().ToList();
@@ -227,7 +227,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,album\nBand,TheAlbum\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
 
@@ -239,7 +239,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\nArtist3,Song3\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 100, 1, false, config);
             var songs = ((JobList)result).AllSongs().ToList();
@@ -253,7 +253,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, true, config);
             var songs = ((JobList)result).AllSongs().ToList();
@@ -267,7 +267,7 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title\nA,T1\nB,T2\nC,T3\nD,T4\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
 
             var result = await extractor.GetTracks(_tempCsv, 2, 0, false, config);
             var songs = ((JobList)result).AllSongs().ToList();
@@ -280,8 +280,8 @@ namespace Tests.ExtractorTests2
         {
             File.WriteAllText(_tempCsv, "artist,title,length\nArtist,Track,200\n");
             var extractor = new CsvExtractor();
-            var config = TestHelpers.CreateDefaultConfig();
-            config.timeUnit = "s";
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Csv.TimeUnit = "s";
 
             var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
             var songs = ((JobList)result).AllSongs().ToList();

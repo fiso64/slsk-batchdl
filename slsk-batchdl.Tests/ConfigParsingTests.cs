@@ -3,6 +3,7 @@ using Models;
 using Jobs;
 using Enums;
 using Services;
+using Settings;
 
 namespace Tests.ConfigParsingTests
 {
@@ -12,48 +13,48 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Defaults_NecessaryCondFormats_AreSet()
         {
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             CollectionAssert.IsSubsetOf(
                 new[] { "mp3", "flac", "ogg" },
-                config.necessaryCond.Formats);
+                config.Search.NecessaryCond.Formats);
         }
 
         [TestMethod]
         public void Defaults_PreferredCondBitrate_IsSet()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            Assert.IsNotNull(config.preferredCond.MinBitrate);
-            Assert.IsNotNull(config.preferredCond.MaxBitrate);
-            Assert.IsTrue(config.preferredCond.MinBitrate > 0);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            Assert.IsNotNull(config.Search.PreferredCond.MinBitrate);
+            Assert.IsNotNull(config.Search.PreferredCond.MaxBitrate);
+            Assert.IsTrue(config.Search.PreferredCond.MinBitrate > 0);
         }
 
         [TestMethod]
         public void Defaults_PreferredCondLengthTolerance_IsSet()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            Assert.IsNotNull(config.preferredCond.LengthTolerance);
-            Assert.IsTrue(config.preferredCond.LengthTolerance >= 0);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            Assert.IsNotNull(config.Search.PreferredCond.LengthTolerance);
+            Assert.IsTrue(config.Search.PreferredCond.LengthTolerance >= 0);
         }
 
         [TestMethod]
         public void Defaults_AlbumFalse_AggregateFalse()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            Assert.IsFalse(config.album);
-            Assert.IsFalse(config.aggregate);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            Assert.IsFalse(config.Extraction.IsAlbum);
+            Assert.IsFalse(config.Search.IsAggregate);
         }
 
         [TestMethod]
         public void Defaults_SkipExistingTrue()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            Assert.IsTrue(config.skipExisting);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            Assert.IsTrue(config.Skip.SkipExisting);
         }
 
         [TestMethod]
         public void Defaults_DoNotDownload_FalseByDefault()
         {
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             Assert.IsFalse(config.DoNotDownload);
         }
     }
@@ -61,84 +62,96 @@ namespace Tests.ConfigParsingTests
     [TestClass]
     public class ArgumentParsingTests
     {
+        static DownloadSettings Cfg(params string[] args)
+        {
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
+            return ConfigManager.Bind(file, args).Download;
+        }
+
         [TestMethod]
         public void Album_Flag_SetsAlbumTrue()
         {
-            var config = new Config(new[] { "--config", "none", "--album", "some input" });
-            Assert.IsTrue(config.album);
+            var config = Cfg("--album", "some input");
+            Assert.IsTrue(config.Extraction.IsAlbum);
         }
 
         [TestMethod]
         public void Aggregate_Flag_SetsAggregateTrue()
         {
-            var config = new Config(new[] { "--config", "none", "--aggregate", "some input" });
-            Assert.IsTrue(config.aggregate);
+            var config = Cfg("--aggregate", "some input");
+            Assert.IsTrue(config.Search.IsAggregate);
         }
 
         [TestMethod]
         public void NameFormat_SetsValue()
         {
-            var config = new Config(new[] { "--config", "none", "--name-format", "{artist}/{title}", "some input" });
-            Assert.AreEqual("{artist}/{title}", config.nameFormat);
+            var config = Cfg("--name-format", "{artist}/{title}", "some input");
+            Assert.AreEqual("{artist}/{title}", config.Output.NameFormat);
         }
 
         [TestMethod]
         public void MaxStaleTime_SetsValue()
         {
-            var config = new Config(new[] { "--config", "none", "--max-stale-time", "60000", "some input" });
-            Assert.AreEqual(60000, config.maxStaleTime);
+            var config = Cfg("--max-stale-time", "60000", "some input");
+            Assert.AreEqual(60000, config.Search.MaxStaleTime);
         }
 
         [TestMethod]
         public void Format_SetsNecessaryCondFormats()
         {
-            var config = new Config(new[] { "--config", "none", "--format", "mp3,flac", "some input" });
-            CollectionAssert.AreEquivalent(new[] { "mp3", "flac" }, config.necessaryCond.Formats);
+            var config = Cfg("--format", "mp3,flac", "some input");
+            CollectionAssert.AreEquivalent(new[] { "mp3", "flac" }, config.Search.NecessaryCond.Formats);
         }
 
         [TestMethod]
         public void MinBitrate_SetsNecessaryCondMinBitrate()
         {
-            var config = new Config(new[] { "--config", "none", "--min-bitrate", "200", "some input" });
-            Assert.AreEqual(200, config.necessaryCond.MinBitrate);
+            var config = Cfg("--min-bitrate", "200", "some input");
+            Assert.AreEqual(200, config.Search.NecessaryCond.MinBitrate);
         }
 
         [TestMethod]
         public void MaxBitrate_SetsNecessaryCondMaxBitrate()
         {
-            var config = new Config(new[] { "--config", "none", "--max-bitrate", "320", "some input" });
-            Assert.AreEqual(320, config.necessaryCond.MaxBitrate);
+            var config = Cfg("--max-bitrate", "320", "some input");
+            Assert.AreEqual(320, config.Search.NecessaryCond.MaxBitrate);
         }
 
         [TestMethod]
         public void PrefFormat_SetsPreferredCondFormats()
         {
-            var config = new Config(new[] { "--config", "none", "--pref-format", "flac", "some input" });
-            CollectionAssert.AreEquivalent(new[] { "flac" }, config.preferredCond.Formats);
+            var config = Cfg("--pref-format", "flac", "some input");
+            CollectionAssert.AreEquivalent(new[] { "flac" }, config.Search.PreferredCond.Formats);
         }
 
         [TestMethod]
         public void PrefLengthTol_SetsPreferredCondTolerance()
         {
-            var config = new Config(new[] { "--config", "none", "--pref-length-tol", "5", "some input" });
-            Assert.AreEqual(5, config.preferredCond.LengthTolerance);
+            var config = Cfg("--pref-length-tol", "5", "some input");
+            Assert.AreEqual(5, config.Search.PreferredCond.LengthTolerance);
         }
 
         [TestMethod]
         public void Path_SetsParentDir()
         {
-            var config = new Config(new[] { "--config", "none", "--path", "/tmp/music", "some input" });
-            Assert.AreEqual("/tmp/music", config.parentDir);
+            var config = Cfg("--path", "/tmp/music", "some input");
+            Assert.AreEqual(Path.GetFullPath("/tmp/music"), config.Output.ParentDir);
         }
     }
 
     [TestClass]
     public class ComputedPropertiesTests
     {
+        static DownloadSettings Cfg(params string[] args)
+        {
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
+            return ConfigManager.Bind(file, args).Download;
+        }
+
         [TestMethod]
         public void DoNotDownload_TrueWhenPrintTracks()
         {
-            var config = new Config(new[] { "--config", "none", "--print-tracks", "some input" });
+            var config = Cfg("--print-tracks", "some input");
             Assert.IsTrue(config.DoNotDownload);
             Assert.IsTrue(config.PrintTracks);
         }
@@ -146,7 +159,7 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void DoNotDownload_TrueWhenPrintResults()
         {
-            var config = new Config(new[] { "--config", "none", "--print-results", "some input" });
+            var config = Cfg("--print-results", "some input");
             Assert.IsTrue(config.DoNotDownload);
             Assert.IsTrue(config.PrintResults);
         }
@@ -154,7 +167,7 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void NeedLogin_FalseWhenPrintIndex()
         {
-            var config = new Config(new[] { "--config", "none", "--print", "index", "some input" });
+            var config = Cfg("--print", "index", "some input");
             Assert.IsFalse(config.NeedLogin);
         }
     }
@@ -165,9 +178,15 @@ namespace Tests.ConfigParsingTests
     [TestClass]
     public class FolderConditionCliPathTests
     {
+        static DownloadSettings Cfg(params string[] args)
+        {
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
+            return ConfigManager.Bind(file, args).Download;
+        }
+
         // Simulates: spotify input → SongJob created by extractor → Upgrade(album:true) →
         // PrepareSubtree on upgraded AlbumJob → PreprocessAlbum.
-        static AlbumJob UpgradeAndPrepare(Config startConfig,
+        static AlbumJob UpgradeAndPrepare(DownloadSettings startConfig,
             SongQuery? query = null, bool aggregate = false)
         {
             var songJob = new SongJob(query ?? new SongQuery { Title = "Some Song", Artist = "Some Artist" });
@@ -180,24 +199,24 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void CondAlbumTrackCountExact_FlowsThroughUpgradeAndPreprocessor()
         {
-            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count=10", "x" });
+            var config = Cfg("--cond", "album-track-count=10", "x");
 
-            Assert.AreEqual(10, config.necessaryFolderCond.MinTrackCount, "CLI --cond must set necessaryFolderCond.MinTrackCount");
-            Assert.AreEqual(10, config.necessaryFolderCond.MaxTrackCount, "CLI --cond must set necessaryFolderCond.MaxTrackCount");
+            Assert.AreEqual(10, config.Search.NecessaryFolderCond.MinTrackCount, "CLI --cond must set NecessaryFolderCond.MinTrackCount");
+            Assert.AreEqual(10, config.Search.NecessaryFolderCond.MaxTrackCount, "CLI --cond must set NecessaryFolderCond.MaxTrackCount");
 
             var albumJob = UpgradeAndPrepare(config);
 
-            Assert.AreEqual(10, albumJob.Query.MinTrackCount, "Preprocessor must apply necessaryFolderCond to AlbumQuery after Upgrade");
+            Assert.AreEqual(10, albumJob.Query.MinTrackCount, "Preprocessor must apply NecessaryFolderCond to AlbumQuery after Upgrade");
             Assert.AreEqual(10, albumJob.Query.MaxTrackCount);
         }
 
         [TestMethod]
         public void CondAlbumTrackCountGe_SetsOnlyMin()
         {
-            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count>=8", "x" });
+            var config = Cfg("--cond", "album-track-count>=8", "x");
 
-            Assert.AreEqual(8,  config.necessaryFolderCond.MinTrackCount);
-            Assert.AreEqual(-1, config.necessaryFolderCond.MaxTrackCount);
+            Assert.AreEqual(8,  config.Search.NecessaryFolderCond.MinTrackCount);
+            Assert.AreEqual(-1, config.Search.NecessaryFolderCond.MaxTrackCount);
 
             var albumJob = UpgradeAndPrepare(config);
 
@@ -209,8 +228,8 @@ namespace Tests.ConfigParsingTests
         public void CondAlbumTrackCount_OverridesQueryDefaultAfterUpgrade()
         {
             // If a metadata extractor (e.g. MusicBrainz) embeds a track count in the SongQuery
-            // before upgrade, necessaryFolderCond (from CLI --cond) should win after Preprocessor.
-            var config = new Config(new[] { "--config", "none", "--cond", "album-track-count=12", "x" });
+            // before upgrade, NecessaryFolderCond (from CLI --cond) should win after Preprocessor.
+            var config = Cfg("--cond", "album-track-count=12", "x");
 
             // Simulate a SongQuery that already has track-count hints (e.g. from MusicBrainz).
             var albumJob = UpgradeAndPrepare(config,
@@ -218,8 +237,247 @@ namespace Tests.ConfigParsingTests
 
             // Even though the upgraded AlbumQuery starts with default MinTrackCount=-1,
             // the CLI folder-cond must still apply.
-            Assert.AreEqual(12, albumJob.Query.MinTrackCount, "necessaryFolderCond must apply after Upgrade+Preprocessor");
+            Assert.AreEqual(12, albumJob.Query.MinTrackCount, "NecessaryFolderCond must apply after Upgrade+Preprocessor");
             Assert.AreEqual(12, albumJob.Query.MaxTrackCount);
+        }
+    }
+
+
+    [TestClass]
+    public class ConfigManagerBindingTests
+    {
+        private static (Settings.EngineSettings eng, Settings.DownloadSettings dl, Settings.CliSettings cli)
+            Bind(params string[] args)
+        {
+            var file = new Settings.ConfigFile("none", new Dictionary<string, Settings.ProfileEntry>());
+            return ConfigManager.Bind(file, args);
+        }
+
+        // ── Scalar types ──────────────────────────────────────────────────────
+
+        [TestMethod]
+        public void String_LongFlag()
+        {
+            var (eng, _, _) = Bind("--username", "alice");
+            Assert.AreEqual("alice", eng.Username);
+        }
+
+        [TestMethod]
+        public void Int_LongFlag()
+        {
+            var (eng, _, _) = Bind("--connect-timeout", "5000");
+            Assert.AreEqual(5000, eng.ConnectTimeout);
+        }
+
+        [TestMethod]
+        public void Double_LongFlag()
+        {
+            var (_, dl, _) = Bind("--fast-search-min-up-speed", "2.5");
+            Assert.AreEqual(2.5, dl.Search.FastSearchMinUpSpeed);
+        }
+
+        [TestMethod]
+        public void Enum_SkipMode_ParsedCaseInsensitive()
+        {
+            var (_, dl, _) = Bind("--skip-mode-output-dir", "name");
+            Assert.AreEqual(SkipMode.Name, dl.Skip.SkipMode);
+        }
+
+        // ── Bool flags ────────────────────────────────────────────────────────
+
+        [TestMethod]
+        public void Bool_BareFlagDefaultsToTrue()
+        {
+            var (_, dl, _) = Bind("x", "--fast-search");
+            Assert.IsTrue(dl.Search.FastSearch);
+        }
+
+        [TestMethod]
+        public void Bool_ExplicitFalse()
+        {
+            var (_, dl, _) = Bind("x", "--fast-search", "false");
+            Assert.IsFalse(dl.Search.FastSearch);
+        }
+
+        [TestMethod]
+        public void Bool_InvertedFlag_NoSkipExisting()
+        {
+            var (_, dl, _) = Bind("x", "--no-skip-existing");
+            Assert.IsFalse(dl.Skip.SkipExisting);
+        }
+
+        [TestMethod]
+        public void Bool_InvertedFlag_MockFilesNoReadTags()
+        {
+            var (eng, _, _) = Bind("--mock-files-no-read-tags");
+            Assert.IsFalse(eng.MockFilesReadTags);
+        }
+
+        // ── Inline = form ─────────────────────────────────────────────────────
+
+        [TestMethod]
+        public void InlineEquals_SetsValue()
+        {
+            var (eng, _, _) = Bind("--username=bob");
+            Assert.AreEqual("bob", eng.Username);
+        }
+
+        // ── Positional ────────────────────────────────────────────────────────
+
+        [TestMethod]
+        public void Positional_SetsInput()
+        {
+            var (_, dl, _) = Bind("https://open.spotify.com/playlist/x");
+            Assert.AreEqual("https://open.spotify.com/playlist/x", dl.Extraction.Input);
+        }
+
+        [TestMethod]
+        public void Positional_DuplicateThrows()
+        {
+            Assert.ThrowsException<Exception>(() => Bind("url1", "url2"));
+        }
+
+        // ── Special cases ─────────────────────────────────────────────────────
+
+        [TestMethod]
+        public void Login_SplitsOnSemicolon()
+        {
+            var (eng, _, _) = Bind("--login", "user;pass");
+            Assert.AreEqual("user", eng.Username);
+            Assert.AreEqual("pass", eng.Password);
+        }
+
+        [TestMethod]
+        public void NoListen_SetsListenPortNull()
+        {
+            var (eng, _, _) = Bind("--no-listen");
+            Assert.IsNull(eng.ListenPort);
+        }
+
+        [TestMethod]
+        public void Verbose_SetsLogLevelDebug()
+        {
+            var (eng, _, _) = Bind("-v");
+            Assert.AreEqual(Logger.LogLevel.Debug, eng.LogLevel);
+        }
+
+        [TestMethod]
+        public void FailsToDownrank_StoredNegated()
+        {
+            var (_, dl, _) = Bind("x", "--fails-to-downrank", "3");
+            Assert.AreEqual(-3, dl.Search.DownrankOn);
+        }
+
+        [TestMethod]
+        public void OnComplete_AppendMode()
+        {
+            var (_, dl, _) = Bind("x", "--on-complete", "cmd1", "--on-complete", "+ cmd2");
+            CollectionAssert.AreEqual(new[] { "cmd1", "cmd2" }, dl.Output.OnComplete);
+        }
+
+        [TestMethod]
+        public void OnComplete_OverwriteMode()
+        {
+            var (_, dl, _) = Bind("x", "--on-complete", "cmd1", "--on-complete", "cmd2");
+            CollectionAssert.AreEqual(new[] { "cmd2" }, dl.Output.OnComplete);
+        }
+
+        [TestMethod]
+        public void AlbumTrackCount_RangeMin()
+        {
+            var (_, dl, _) = Bind("x", "--album-track-count", "8+");
+            Assert.AreEqual(8,  dl.Search.NecessaryFolderCond.MinTrackCount);
+            Assert.AreEqual(-1, dl.Search.NecessaryFolderCond.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public void AlbumTrackCount_RangeMax()
+        {
+            var (_, dl, _) = Bind("x", "--album-track-count", "12-");
+            Assert.AreEqual(-1, dl.Search.NecessaryFolderCond.MinTrackCount);
+            Assert.AreEqual(12, dl.Search.NecessaryFolderCond.MaxTrackCount);
+        }
+
+        [TestMethod]
+        public void AlbumArtOnly_ClearsConditions()
+        {
+            var (_, dl, _) = Bind("x", "--album-art-only");
+            Assert.AreEqual(0, dl.Search.NecessaryCond.Formats?.Length ?? 0);
+            Assert.AreEqual(0, dl.Search.PreferredCond.Formats?.Length ?? 0);
+        }
+
+        [TestMethod]
+        public void WriteIndex_SetsHasConfiguredIndex()
+        {
+            var (_, dl, _) = Bind("x", "--write-index");
+            Assert.IsTrue(dl.Output.HasConfiguredIndex);
+        }
+
+        [TestMethod]
+        public void NoWriteIndex_SetsHasConfiguredIndexAndFalse()
+        {
+            var (_, dl, _) = Bind("x", "--no-write-index");
+            Assert.IsTrue(dl.Output.HasConfiguredIndex);
+            Assert.IsFalse(dl.Output.WriteIndex);
+        }
+
+        [TestMethod]
+        public void NoProgress_SetsCli()
+        {
+            var (_, _, cli) = Bind("--no-progress");
+            Assert.IsTrue(cli.NoProgress);
+        }
+
+        [TestMethod]
+        public void Progress_ClearsNoProgress()
+        {
+            var (_, _, cli) = Bind("--no-progress", "--progress");
+            Assert.IsFalse(cli.NoProgress);
+        }
+
+        // ── Profile merging ───────────────────────────────────────────────────
+
+        [TestMethod]
+        public void Profile_DefaultAppliedFirst()
+        {
+            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            {
+                ["default"] = new(["--connect-timeout", "1000"], null),
+            };
+            var file = new Settings.ConfigFile("none", profiles);
+            var (eng, _, _) = ConfigManager.Bind(file, []);
+            Assert.AreEqual(1000, eng.ConnectTimeout);
+        }
+
+        [TestMethod]
+        public void Profile_CliOverridesDefault()
+        {
+            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            {
+                ["default"] = new(["--connect-timeout", "1000"], null),
+            };
+            var file = new Settings.ConfigFile("none", profiles);
+            var (eng, _, _) = ConfigManager.Bind(file, ["--connect-timeout", "9000"]);
+            Assert.AreEqual(9000, eng.ConnectTimeout);
+        }
+
+        [TestMethod]
+        public void Profile_NamedAppliedBetweenDefaultAndCli()
+        {
+            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            {
+                ["default"] = new(["--connect-timeout", "1000"], null),
+                ["fast"]    = new(["--connect-timeout", "500"], null),
+            };
+            var file = new Settings.ConfigFile("none", profiles);
+            var (eng, _, _) = ConfigManager.Bind(file, [], profileName: "fast");
+            Assert.AreEqual(500, eng.ConnectTimeout);
+        }
+
+        [TestMethod]
+        public void UnknownFlag_Throws()
+        {
+            Assert.ThrowsException<Exception>(() => Bind("--not-a-real-flag"));
         }
     }
 }

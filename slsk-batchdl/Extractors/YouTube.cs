@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 
 using Models;
 using Jobs;
+using Settings;
 
 namespace Extractors
 {
@@ -21,25 +22,25 @@ namespace Extractors
             return input.IsInternetUrl() && (input.Contains("youtu.be") || input.Contains("youtube.com"));
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
-            YouTube.apiKey = config.ytKey;
+            YouTube.apiKey = config.YouTube.ApiKey ?? "";
 
             string name;
             List<SongJob>? deleted = null;
             List<SongJob> songs = new();
 
-            if (config.getDeleted)
+            if (config.YouTube.GetDeleted)
             {
                 Logger.Info("Getting deleted videos..");
                 var archive = new YouTube.YouTubeArchiveRetriever();
-                deleted = await archive.RetrieveDeleted(input, printFailed: config.deletedOnly);
+                deleted = await archive.RetrieveDeleted(input, printFailed: config.YouTube.DeletedOnly);
             }
-            if (!config.deletedOnly)
+            if (!config.YouTube.DeletedOnly)
             {
-                if (YouTube.apiKey.Length > 0)
+                if (!string.IsNullOrEmpty(YouTube.apiKey))
                 {
                     Logger.Info("Loading YouTube playlist (API)");
                     (name, songs) = await YouTube.GetSongsApi(input, max, off);
@@ -77,9 +78,9 @@ namespace Extractors
     }
 
 
-    public static class YouTube
+    public static partial class YouTube
     {
-        private static YoutubeClient? youtube = new YoutubeClient();
+        private static readonly YoutubeClient? youtube = new YoutubeClient();
         private static YouTubeService? youtubeService = null;
         public static string apiKey = "";
 
@@ -110,16 +111,16 @@ namespace Extractors
                 {
                     if (count >= offset)
                     {
-                        if (songsDict.ContainsKey(playlistItem.Snippet.ResourceId.VideoId))
+                        if (songsDict.TryGetValue(playlistItem.Snippet.ResourceId.VideoId, out SongJob? value))
                         {
-                            songs.Add(songsDict[playlistItem.Snippet.ResourceId.VideoId]);
+                            songs.Add(value);
                         }
                         else
                         {
-                            var title    = "";
+                            var title = "";
                             var uploader = "";
-                            var length   = 0;
-                            var desc     = "";
+                            var length = 0;
+                            var desc = "";
 
                             var videoRequest = youtubeService.Videos.List("contentDetails,snippet");
                             videoRequest.Id = playlistItem.Snippet.ResourceId.VideoId;
@@ -128,8 +129,8 @@ namespace Extractors
                             title = playlistItem.Snippet.Title;
                             if (videoResponse.Items.Count == 0) continue;
                             uploader = videoResponse.Items[0].Snippet.ChannelTitle;
-                            length   = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
-                            desc     = videoResponse.Items[0].Snippet.Description;
+                            length = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
+                            desc = videoResponse.Items[0].Snippet.Description;
 
                             var song = await ParseSongInfo(title, uploader, playlistItem.Snippet.ResourceId.VideoId, length, desc);
                             song.ItemNumber = count + 1;
@@ -163,15 +164,15 @@ namespace Extractors
         {
             (string title, string uploader, int length, string desc) info = ("", "", -1, "");
 
-            string uri            = id;
+            string uri = id;
             bool artistMaybeWrong = false;
-            string artist         = uploader;
-            string trackTitle     = title;
-            string other          = "";
+            string artist = uploader;
+            string trackTitle = title;
+            string other = "";
 
-            uploader  = uploader.Replace("–", "-").Trim().RemoveConsecutiveWs();
-            title     = title.Replace("–", "-").Replace(" -- ", " - ").Trim().RemoveConsecutiveWs();
-            artist    = uploader;
+            uploader = uploader.Replace("–", "-").Trim().RemoveConsecutiveWs();
+            title = title.Replace("–", "-").Replace(" -- ", " - ").Trim().RemoveConsecutiveWs();
+            artist = uploader;
             trackTitle = title;
 
             if (artist.EndsWith(" - Topic"))
@@ -189,10 +190,10 @@ namespace Extractors
 
                     if (desc.Length > 0)
                     {
-                        var lines   = desc.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+                        var lines = desc.Split(["\r\n", "\r", "\n"], StringSplitOptions.RemoveEmptyEntries);
                         var dotLine = lines.FirstOrDefault(line => line.Contains(" · "));
                         if (dotLine != null)
-                            artist = dotLine.Split(new[] { " · " }, StringSplitOptions.None)[1];
+                            artist = dotLine.Split([" · "], StringSplitOptions.None)[1];
                     }
                 }
             }
@@ -203,8 +204,8 @@ namespace Extractors
                 var split = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                 if (split.Length == 2)
                 {
-                    artist      = split[0];
-                    trackTitle  = split[1];
+                    artist = split[0];
+                    trackTitle = split[1];
                     artistMaybeWrong = false;
                 }
                 else if (split.Length > 2)
@@ -212,7 +213,7 @@ namespace Extractors
                     int index = Array.FindIndex(split, s => s.ContainsWithBoundary(artist, true));
                     if (index != -1 && index < split.Length - 1)
                     {
-                        artist     = split[index];
+                        artist = split[index];
                         trackTitle = String.Join(" - ", split[(index + 1)..]);
                         artistMaybeWrong = false;
                     }
@@ -220,7 +221,7 @@ namespace Extractors
 
                 if (artistMaybeWrong && requestInfoIfNeeded && desc.Length == 0)
                 {
-                    info             = await GetVideoInfo(id);
+                    info = await GetVideoInfo(id);
                     artistMaybeWrong = !info.desc.ContainsWithBoundary(artist, true);
                 }
             }
@@ -231,17 +232,17 @@ namespace Extractors
                     length = info.length;
                 else
                 {
-                    info   = await GetVideoInfo(id);
+                    info = await GetVideoInfo(id);
                     length = info.length;
                 }
             }
 
             var query = new SongQuery
             {
-                Artist          = artist,
-                Title           = trackTitle,
-                URI             = uri,
-                Length          = length,
+                Artist = artist,
+                Title = trackTitle,
+                URI = uri,
+                Length = length,
                 ArtistMaybeWrong = artistMaybeWrong,
             };
 
@@ -258,10 +259,10 @@ namespace Extractors
             try
             {
                 var vid = await youtube.Videos.GetAsync(id);
-                o.title    = vid.Title;
+                o.title = vid.Title;
                 o.uploader = vid.Author.ChannelTitle;
-                o.desc     = vid.Description;
-                o.length   = (int)vid.Duration.Value.TotalSeconds;
+                o.desc = vid.Description;
+                o.length = (int)vid.Duration.Value.TotalSeconds;
             }
             catch
             {
@@ -273,10 +274,10 @@ namespace Extractors
                         var videoRequest = youtubeService.Videos.List("contentDetails,snippet");
                         videoRequest.Id = id;
                         var videoResponse = videoRequest.Execute();
-                        o.title    = videoResponse.Items[0].Snippet.Title;
+                        o.title = videoResponse.Items[0].Snippet.Title;
                         o.uploader = videoResponse.Items[0].Snippet.ChannelTitle;
-                        o.length   = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
-                        o.desc     = videoResponse.Items[0].Snippet.Description;
+                        o.length = (int)XmlConvert.ToTimeSpan(videoResponse.Items[0].ContentDetails.Duration).TotalSeconds;
+                        o.desc = videoResponse.Items[0].Snippet.Description;
                     }
                     catch { }
                 }
@@ -293,7 +294,7 @@ namespace Extractors
 
                 youtubeService = new YouTubeService(new BaseClientService.Initializer()
                 {
-                    ApiKey          = apiKey,
+                    ApiKey = apiKey,
                     ApplicationName = "slsk-batchdl"
                 });
             }
@@ -306,19 +307,19 @@ namespace Extractors
 
         public static async Task<Dictionary<string, SongJob>> GetDictYtExplode(string url, int max = int.MaxValue, int offset = 0)
         {
-            var youtube   = new YoutubeClient();
-            var playlist  = await youtube.Playlists.GetAsync(url);
-            var songs     = new Dictionary<string, SongJob>();
-            int count     = 0;
+            var youtube = new YoutubeClient();
+            var playlist = await youtube.Playlists.GetAsync(url);
+            var songs = new Dictionary<string, SongJob>();
+            int count = 0;
 
             await foreach (var video in youtube.Playlists.GetVideosAsync(playlist.Id))
             {
                 if (count >= offset && count < offset + max)
                 {
-                    var title    = video.Title;
+                    var title = video.Title;
                     var uploader = video.Author.ChannelTitle;
-                    var ytId     = video.Id.Value;
-                    var length   = (int)video.Duration.Value.TotalSeconds;
+                    var ytId = video.Id.Value;
+                    var length = (int)video.Duration.Value.TotalSeconds;
 
                     var song = await ParseSongInfo(title, uploader, ytId, length);
                     song.ItemNumber = count + 1;
@@ -333,27 +334,27 @@ namespace Extractors
 
         public static async Task<string> GetPlaylistTitle(string url)
         {
-            var youtube  = new YoutubeClient();
+            var youtube = new YoutubeClient();
             var playlist = await youtube.Playlists.GetAsync(url);
             return playlist.Title;
         }
 
         public static async Task<(string, List<SongJob>)> GetSongsYtExplode(string url, int max = int.MaxValue, int offset = 0)
         {
-            var youtube       = new YoutubeClient();
-            var playlist      = await youtube.Playlists.GetAsync(url);
+            var youtube = new YoutubeClient();
+            var playlist = await youtube.Playlists.GetAsync(url);
             var playlistTitle = playlist.Title;
-            var songs         = new List<SongJob>();
-            int count         = 0;
+            var songs = new List<SongJob>();
+            int count = 0;
 
             await foreach (var video in youtube.Playlists.GetVideosAsync(playlist.Id))
             {
                 if (count >= offset && count < offset + max)
                 {
-                    var title    = video.Title;
+                    var title = video.Title;
                     var uploader = video.Author.ChannelTitle;
-                    var ytId     = video.Id.Value;
-                    var length   = (int)video.Duration.Value.TotalSeconds;
+                    var ytId = video.Id.Value;
+                    var length = (int)video.Duration.Value.TotalSeconds;
 
                     var song = await ParseSongInfo(title, uploader, ytId, length);
                     song.ItemNumber = count + 1;
@@ -379,6 +380,12 @@ namespace Extractors
             return playlist.Id.ToString();
         }
 
+        [GeneratedRegex(@"^(\d+) === ([\w-]+) === (.+)$")]
+        private static partial Regex YtdlpOutputRegex();
+
+        [GeneratedRegex(@"document\.title\s*=\s*""(.+?) - YouTube"";")]
+        private static partial Regex DocumentTitleRegex();
+
         public static async Task<List<(int length, string id, string title)>> YtdlpSearch(SongQuery query)
         {
             Process process = new Process();
@@ -387,25 +394,24 @@ namespace Extractors
             string search = query.Artist.Length > 0 ? $"{query.Artist} - {query.Title}" : query.Title;
             startInfo.Arguments = $"\"ytsearch3:{search}\" --print \"%(duration>%s)s === %(id)s === %(title)s\"";
             startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError  = true;
-            startInfo.UseShellExecute        = false;
+            startInfo.RedirectStandardError = true;
+            startInfo.UseShellExecute = false;
             process.StartInfo = startInfo;
             process.OutputDataReceived += (sender, e) => { Logger.Info(e.Data ?? ""); };
-            process.ErrorDataReceived  += (sender, e) => { Logger.Info(e.Data ?? ""); };
+            process.ErrorDataReceived += (sender, e) => { Logger.Info(e.Data ?? ""); };
 
             Logger.Debug($"{startInfo.FileName} {startInfo.Arguments}");
             process.Start();
 
             List<(int, string, string)> results = new List<(int, string, string)>();
             string output;
-            Regex regex = new Regex(@"^(\d+) === ([\w-]+) === (.+)$");
             while ((output = process.StandardOutput.ReadLine()) != null)
             {
-                Match match = regex.Match(output);
+                Match match = YtdlpOutputRegex().Match(output);
                 if (match.Success)
                 {
                     int seconds = int.Parse(match.Groups[1].Value);
-                    string id   = match.Groups[2].Value;
+                    string id = match.Groups[2].Value;
                     string title = match.Groups[3].Value;
                     results.Add((seconds, id, title));
                 }
@@ -417,7 +423,7 @@ namespace Extractors
 
         public static async Task<string> YtdlpDownload(string id, string savePathNoExt, string ytdlpArgument = "")
         {
-            var process   = new Process();
+            var process = new Process();
             var startInfo = new ProcessStartInfo();
 
             bool isCustomPath = ytdlpArgument.Length > 0 && !ytdlpArgument.Contains("{savepath-noext}.%(ext)s") && !ytdlpArgument.Contains("{savepath}.%(ext)s");
@@ -425,16 +431,16 @@ namespace Extractors
             if (ytdlpArgument.Length == 0)
                 ytdlpArgument = "\"{id}\" -f bestaudio/best -ci -o \"{savepath-noext}.%(ext)s\" -x";
 
-            startInfo.FileName  = "yt-dlp";
+            startInfo.FileName = "yt-dlp";
             startInfo.Arguments = ytdlpArgument
-                .Replace("{id}",          id)
-                .Replace("{savepath}",    savePathNoExt)
+                .Replace("{id}", id)
+                .Replace("{savepath}", savePathNoExt)
                 .Replace("{savepath-noext}", savePathNoExt)
-                .Replace("{savedir}",     Path.GetDirectoryName(savePathNoExt));
+                .Replace("{savedir}", Path.GetDirectoryName(savePathNoExt));
 
             startInfo.RedirectStandardOutput = true;
-            startInfo.RedirectStandardError  = true;
-            startInfo.UseShellExecute        = false;
+            startInfo.RedirectStandardError = true;
+            startInfo.UseShellExecute = false;
             process.StartInfo = startInfo;
 
             Logger.Debug($"{startInfo.FileName} {startInfo.Arguments}");
@@ -445,7 +451,7 @@ namespace Extractors
                 return savePathNoExt + ".opus";
 
             string parentDirectory = Path.GetDirectoryName(savePathNoExt);
-            string fileName        = Path.GetFileName(savePathNoExt);
+            string fileName = Path.GetFileName(savePathNoExt);
 
             var musicFiles = Enumerable.Empty<string>();
             try
@@ -470,7 +476,7 @@ namespace Extractors
 
         public class YouTubeArchiveRetriever
         {
-            private HttpClient _client;
+            private readonly HttpClient _client;
 
             public YouTubeArchiveRetriever()
             {
@@ -482,15 +488,15 @@ namespace Extractors
             {
                 var deletedVideoUrls = new BlockingCollection<string>();
 
-                int totalCount    = 0;
+                int totalCount = 0;
                 int archivedCount = 0;
-                var songs         = new ConcurrentBag<SongJob>();
-                var noArchive     = new ConcurrentBag<string>();
-                var failRetrieve  = new ConcurrentBag<string>();
+                var songs = new ConcurrentBag<SongJob>();
+                var noArchive = new ConcurrentBag<string>();
+                var failRetrieve = new ConcurrentBag<string>();
 
-                int workerCount  = 4;
-                var workers      = new List<Task>();
-                var consoleLock  = new object();
+                int workerCount = 4;
+                var workers = new List<Task>();
+                var consoleLock = new object();
 
                 void updateInfo()
                 {
@@ -509,11 +515,11 @@ namespace Extractors
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName               = "yt-dlp",
-                        Arguments              = $"--ignore-no-formats-error --no-warn --match-filter \"!uploader\" --print webpage_url {url}",
+                        FileName = "yt-dlp",
+                        Arguments = $"--ignore-no-formats-error --no-warn --match-filter \"!uploader\" --print webpage_url {url}",
                         RedirectStandardOutput = true,
-                        UseShellExecute        = false,
-                        CreateNoWindow         = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
                     },
                     EnableRaisingEvents = true
                 };
@@ -607,12 +613,12 @@ namespace Extractors
                 if (response.IsSuccessStatusCode)
                 {
                     var content = await response.Content.ReadAsStringAsync();
-                    var lines   = content.Split("\n").Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+                    var lines = content.Split("\n").Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
                     if (lines.Count > 0)
                     {
                         for (int i = 0; i < lines.Count; i++)
                         {
-                            var parts     = lines[i].Split(" ");
+                            var parts = lines[i].Split(" ");
                             var timestamp = parts[0];
                             var originalUrl = parts[1];
                             lines[i] = $"http://web.archive.org/web/{timestamp}/{originalUrl}";
@@ -623,7 +629,7 @@ namespace Extractors
                 return null;
             }
 
-            public async Task<(string title, string uploader, int duration)> GetVideoDetails(string url)
+            public static async Task<(string title, string uploader, int duration)> GetVideoDetails(string url)
             {
                 var web = new HtmlWeb();
                 var doc = await web.LoadFromWebAsync(url);
@@ -666,10 +672,10 @@ namespace Extractors
                 }
 
                 var title = getItem(titlePatterns);
+
                 if (string.IsNullOrEmpty(title))
                 {
-                    var pattern = @"document\.title\s*=\s*""(.+?) - YouTube"";";
-                    var match = Regex.Match(doc.Text, pattern);
+                    var match = DocumentTitleRegex().Match(doc.Text);
                     if (match.Success)
                         title = match.Groups[1].Value;
                 }

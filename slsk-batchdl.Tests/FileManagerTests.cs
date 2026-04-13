@@ -5,15 +5,16 @@ using Enums;
 using System.Reflection;
 using System.IO;
 using Services;
+using Settings;
 
 namespace Tests.FileManagerTests
 {
     [TestClass]
     public class GetSavePathTests
     {
-        private static FileManager MakeManager(Config? config = null, Job? job = null)
+        private static FileManager MakeManager(DownloadSettings? config = null, Job? job = null)
         {
-            config ??= TestHelpers.CreateDefaultConfig();
+            config ??= TestHelpers.CreateDefaultSettings().Download;
             job ??= new JobList();
             return new FileManager(job, config);
         }
@@ -21,8 +22,8 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void GetSavePath_NormalTrack_ReturnsParentDirPlusFilename()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            config.parentDir = "/music";
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Output.ParentDir = "/music";
             var manager = MakeManager(config);
 
             string path = manager.GetSavePath("Music\\Artist\\Song.mp3");
@@ -34,7 +35,7 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void GetSavePath_PreservesExtension()
         {
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var manager = MakeManager(config);
 
             string path = manager.GetSavePath("folder\\track.flac");
@@ -45,8 +46,8 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void GetSavePath_AlbumTrack_WithRemoteBaseDir_PreservesRelativePath()
         {
-            var config = TestHelpers.CreateDefaultConfig();
-            config.parentDir = "/music";
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Output.ParentDir = "/music";
             var job = new AlbumJob(new AlbumQuery());
             var manager = new FileManager(job, config);
 
@@ -60,7 +61,7 @@ namespace Tests.FileManagerTests
         [TestMethod]
         public void GetSavePathNoExt_NoExtension_OmitsExtension()
         {
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var manager = MakeManager(config);
 
             string path = manager.GetSavePathNoExt("folder\\track.mp3");
@@ -119,9 +120,9 @@ namespace Tests.FileManagerTests
             string album = "",
             Soulseek.File? slFile = null,
             string? downloadPath = null,
-            Config? config = null)
+            DownloadSettings? config = null)
         {
-            config ??= TestHelpers.CreateDefaultConfig();
+            config ??= TestHelpers.CreateDefaultSettings().Download;
             var job = new JobList();
             var query = new SongQuery { Artist = artist, Title = title, Album = album };
             Soulseek.SearchResponse? response = slFile != null
@@ -211,14 +212,15 @@ namespace Tests.FileManagerTests
     public class OrganizationTests
     {
         private string testRoot = "";
-        private Config config = null!;
+        private DownloadSettings config = null!;
 
         [TestInitialize]
         public void Setup()
         {
             testRoot = Path.Combine(Path.GetTempPath(), "slsk-org-tests-" + Guid.NewGuid().ToString().Substring(0, 8));
             Directory.CreateDirectory(testRoot);
-            config = new Config(new string[] { "--path", testRoot, "--config", "none", "dummy_input" });
+            var configFile = ConfigManager.Load("none");
+            (_, config, _) = ConfigManager.Bind(configFile, ["--path", testRoot, "dummy_input"]);
         }
 
         [TestCleanup]
@@ -275,7 +277,7 @@ namespace Tests.FileManagerTests
         {
             // Setup
             var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            config.nameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
+            config.Output.NameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
             var manager = new FileManager(job, config);
             manager.SetremoteBaseDir(@"Artist1\Album1");
 

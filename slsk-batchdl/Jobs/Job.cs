@@ -24,8 +24,8 @@ namespace Jobs
         public CancellationTokenSource? Cts { get; internal set; }
         public void Cancel() => Cts?.Cancel();
 
-        private Config? _config;
-        public Config Config
+        private Settings.DownloadSettings? _config;
+        public Settings.DownloadSettings Config
         {
             get => _config!;
             set { if (_config != value) { _config = value; OnPropertyChanged(); } }

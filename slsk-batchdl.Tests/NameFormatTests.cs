@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Models;
 using Jobs;
 using System.Reflection;
+using Settings;
 
 namespace Tests.NameFormat
 {
@@ -37,8 +38,8 @@ namespace Tests.NameFormat
         [TestMethod]
         public void LongExample_Passes()
         {
-            var cfg = new Config();
-            cfg.nameFormat = "{albumartist(/)album(/)track(. )title|artist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
+            var cfg = new DownloadSettings();
+            cfg.Output.NameFormat = "{albumartist(/)album(/)track(. )title|artist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename}";
 
             var slFile = new Soulseek.File(0, "music\\test\\testfile.mp3", 1, ".mp3");
             var ctx = MakeCtx(slFile: slFile, remoteBaseDir: "music\\test");
@@ -54,7 +55,7 @@ namespace Tests.NameFormat
             );
 
             var result = (string?)method!.Invoke(null, new object[] {
-                cfg.nameFormat,
+                cfg.Output.NameFormat,
                 cfg,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile),
@@ -70,7 +71,7 @@ namespace Tests.NameFormat
             );
 
             var result2 = (string?)method.Invoke(null, new object[] {
-                cfg.nameFormat,
+                cfg.Output.NameFormat,
                 cfg,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile2),
@@ -86,7 +87,7 @@ namespace Tests.NameFormat
             );
 
             var result3 = (string?)method.Invoke(null, new object[] {
-                cfg.nameFormat,
+                cfg.Output.NameFormat,
                 cfg,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile3),

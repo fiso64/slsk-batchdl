@@ -1,11 +1,12 @@
 using Jobs;
 using Enums;
+using Settings;
 
 namespace Extractors
 {
     public interface IExtractor
     {
-        Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config);
+        Task<Job> GetTracks(string input, int max, int offset, bool reverse, DownloadSettings config);
         Task RemoveTrackFromSource(SongJob job) => Task.CompletedTask;
     }
 

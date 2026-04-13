@@ -1,5 +1,6 @@
 using Utilities;
 using Services;
+using Settings;
 
 internal static partial class Program
 {
@@ -13,17 +14,20 @@ internal static partial class Program
         Logger.SetupExceptionHandling();
         Logger.AddConsole();
 
-        var config = new Config(args);
-        Logger.SetConsoleLogLevel(config.GetConsoleLogLevel());
+        string configPath = ConfigManager.ExtractConfigPath(args);
+        var configFile = ConfigManager.Load(configPath);
+        var (engineSettings, rootSettings, cliSettings) = ConfigManager.Bind(configFile, args);
+
+        Logger.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
         
         var cts = new CancellationTokenSource();
-        var clientManager = soulseekClientManager(config);
+        var clientManager = new SoulseekClientManager(engineSettings);
 
-        if (!config.RequiresInput)
+        if (string.IsNullOrEmpty(rootSettings.Extraction.Input))
         {
             var diagnostic = new DiagnosticService(clientManager);
             try {
-                await diagnostic.PerformNoInputActions(config, cts.Token);
+                await diagnostic.PerformNoInputActions(rootSettings, cts.Token);
             } catch (Exception ex) {
                 Logger.Fatal($"Diagnostic action failed: {ex.Message}");
             }
@@ -31,14 +35,16 @@ internal static partial class Program
         }
 
         IProgressReporter reporter;
-        if (config.progressJson)
+        if (cliSettings.ProgressJson)
             reporter = new JsonStreamProgressReporter(Console.Out);
         else
-            reporter = new CliProgressReporter(config);
+            reporter = new CliProgressReporter(rootSettings, cliSettings);
 
-        var engine = new DownloadEngine(config, clientManager, progressReporter: reporter);
+        var engine = new DownloadEngine(engineSettings, clientManager, progressReporter: reporter);
+        engine.Enqueue(new Jobs.ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);
+        engine.CompleteEnqueue();
 
-        if (config.interactiveMode)
+        if (cliSettings.InteractiveMode)
         {
             string? filterStr = null;
             engine.SelectAlbumVersion = async (job) =>
@@ -58,7 +64,7 @@ internal static partial class Program
                     return null;
 
                 if (result.ExitInteractiveMode)
-                    config.interactiveMode = false;
+                    cliSettings.InteractiveMode = false;
 
                 return result.Folder;
             };
@@ -114,8 +120,4 @@ internal static partial class Program
         }
     }
 
-    private static SoulseekClientManager soulseekClientManager(Config config)
-    {
-        return new SoulseekClientManager(config);
-    }
 }

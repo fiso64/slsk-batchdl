@@ -16,8 +16,8 @@ public static partial class Help
             { "notes", notesAndTipsHelp },
         };
 
-        if (option != null && dict.ContainsKey(option))
-            text = dict[option];
+        if (option != null && dict.TryGetValue(option, out string? value))
+            text = value;
         else if (option == "all")
             text = $"{helpText}\n{string.Join('\n', dict.Values)}";
         else if (option == "help")

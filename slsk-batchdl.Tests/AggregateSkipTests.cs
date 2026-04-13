@@ -3,6 +3,8 @@ using System.Text;
 using Models;
 using Jobs;
 using Enums;
+using Services;
+using Settings;
 using Tests.ClientTests;
 
 namespace Tests.EndToEnd
@@ -49,9 +51,11 @@ namespace Tests.EndToEnd
                     "--no-write-playlist"
                 };
 
-                var config = new Config(testArgs);
-                var clientManager = TestHelpers.CreateMockClientManager(testClient, config);
-                var app = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+                var (eng, dl, _) = ConfigManager.Bind(ConfigManager.Load("none"), testArgs);
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, eng);
+                var app = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+                app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
+                app.CompleteEnqueue();
                 await app.RunAsync(CancellationToken.None);
 
                 // Check the job queue to see if the track was marked as already existing

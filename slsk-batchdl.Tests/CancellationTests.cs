@@ -2,6 +2,8 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
 using Jobs;
 using Enums;
+using Services;
+using Settings;
 
 namespace Tests.Cancellation
 {
@@ -33,9 +35,12 @@ namespace Tests.Cancellation
                 "--pass",   "p",
             }.Concat(extra ?? Array.Empty<string>()).ToArray();
 
-            var config        = new Config(args);
-            var clientManager = TestHelpers.CreateMockClientManager(client, config);
-            return (new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance), outputDir);
+            var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
+            var clientManager = TestHelpers.CreateMockClientManager(client, eng);
+            var engine = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+            engine.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
+            engine.CompleteEnqueue();
+            return (engine, outputDir);
         }
 
         private static async Task WaitForAsync(Func<bool> cond, int timeoutMs = 3000)

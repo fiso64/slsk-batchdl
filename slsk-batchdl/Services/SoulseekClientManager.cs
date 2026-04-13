@@ -1,9 +1,10 @@
 using Soulseek;
 using System.Net.Sockets;
+using Settings;
 
 public class SoulseekClientManager
 {
-    private readonly Config _initialConfig;
+    private readonly EngineSettings _initialSettings;
     private ISoulseekClient? _client;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
     private TaskCompletionSource _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -23,9 +24,9 @@ public class SoulseekClientManager
         return _readyTcs.Task.WaitAsync(cancellationToken);
     }
 
-    public SoulseekClientManager(Config initialConfig, ISoulseekClient? client = null)
+    public SoulseekClientManager(EngineSettings initialSettings, ISoulseekClient? client = null)
     {
-        _initialConfig = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
+        _initialSettings = initialSettings ?? throw new ArgumentNullException(nameof(initialSettings));
         if (client != null)
         {
             _client = client;
@@ -46,11 +47,11 @@ public class SoulseekClientManager
     /// Ensures the Soulseek client is created, connected, and logged in.
     /// Uses the provided config for login credentials if login is needed.
     /// </summary>
-    /// <param name="loginConfig">Configuration containing potentially updated credentials.</param>
+    /// <param name="loginSettings">Configuration containing potentially updated credentials.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="InvalidOperationException">Thrown if login fails after retries.</exception>
     /// <exception cref="OperationCanceledException">Thrown if cancelled.</exception>
-    public async Task EnsureConnectedAndLoggedInAsync(Config loginConfig, CancellationToken cancellationToken = default)
+    public async Task EnsureConnectedAndLoggedInAsync(EngineSettings loginSettings, CancellationToken cancellationToken = default)
     {
         if (IsConnectedAndLoggedIn) return;
 
@@ -62,17 +63,17 @@ public class SoulseekClientManager
 
             if (_client == null)
             {
-                _client = CreateClientInstance(_initialConfig);
+                _client = CreateClientInstance(_initialSettings);
             }
 
             if (!IsConnectedAndLoggedIn)
             {
-                if (!loginConfig.useRandomLogin && (string.IsNullOrEmpty(loginConfig.username) || string.IsNullOrEmpty(loginConfig.password)))
+                if (!loginSettings.UseRandomLogin && (string.IsNullOrEmpty(loginSettings.Username) || string.IsNullOrEmpty(loginSettings.Password)))
                 {
-                    Config.InputError("No soulseek username or password provided for login.");
+                    Logger.Fatal("No soulseek username or password provided for login.");
                 }
 
-                await LoginInternalAsync(_client, loginConfig, cancellationToken);
+                await LoginInternalAsync(_client, loginSettings, cancellationToken);
                 _readyTcs.TrySetResult();
                 StartMonitoring();
             }
@@ -105,7 +106,7 @@ public class SoulseekClientManager
                     Logger.Warn($"Connection lost. Retrying in {retryDelay}s...");
                     await Task.Delay(retryDelay * 1000, ct);
                     
-                    await EnsureConnectedAndLoggedInAsync(_initialConfig, ct);
+                    await EnsureConnectedAndLoggedInAsync(_initialSettings, ct);
                     retryDelay = 1; // Reset on success
                     Logger.Info("Reconnected successfully.");
                 }
@@ -126,19 +127,19 @@ public class SoulseekClientManager
     }
 
 
-    private ISoulseekClient CreateClientInstance(Config config)
+    private ISoulseekClient CreateClientInstance(EngineSettings settings)
     {
         Logger.Debug("Creating Soulseek client instance...");
-        if (!string.IsNullOrEmpty(config.mockFilesDir))
+        if (!string.IsNullOrEmpty(settings.MockFilesDir))
         {
             Logger.Info("Using Mock Soulseek Client.");
-            return Tests.ClientTests.MockSoulseekClient.FromLocalPaths(config.mockFilesReadTags, config.mockFilesSlow, config.mockFilesDir);
+            return Tests.ClientTests.MockSoulseekClient.FromLocalPaths(settings.MockFilesReadTags, settings.MockFilesSlow, settings.MockFilesDir);
         }
         else
         {
             Logger.Debug("Configuring real Soulseek Client connection options.");
             var serverConnectionOptions = new ConnectionOptions(
-            connectTimeout: config.connectTimeout,
+            connectTimeout: settings.ConnectTimeout,
             configureSocket: (socket) =>
             {
                 socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -158,7 +159,7 @@ public class SoulseekClientManager
                 });
 
             Task<UserInfo> userInfoResolver(string username, System.Net.IPEndPoint ip) => Task.FromResult(new UserInfo(
-                description: config.userDescription ?? "",
+                description: settings.UserDescription ?? "",
                 uploadSlots: 1,
                 queueLength: 0,
                 hasFreeUploadSlot: true
@@ -167,12 +168,12 @@ public class SoulseekClientManager
             var clientOptionsBuilder = new SoulseekClientOptions(
                 transferConnectionOptions: transferConnectionOptions,
                 serverConnectionOptions: serverConnectionOptions,
-                listenPort: config.listenPort ?? 49998,
+                listenPort: settings.ListenPort ?? 49998,
                 maximumConcurrentSearches: int.MaxValue, // this is limited later in the searcher code
                 userInfoResolver: userInfoResolver
             );
 
-            if (config.listenPort == null)
+            if (settings.ListenPort == null)
             {
                 // No listen port: create client without listener to avoid bind failures
                 clientOptionsBuilder = new SoulseekClientOptions(
@@ -191,12 +192,12 @@ public class SoulseekClientManager
     /// <summary>
     /// Internal login logic extracted from DownloaderApplication.
     /// </summary>
-    private async Task LoginInternalAsync(ISoulseekClient client, Config config, CancellationToken cancellationToken, int tries = 3)
+    private async Task LoginInternalAsync(ISoulseekClient client, EngineSettings settings, CancellationToken cancellationToken, int tries = 3)
     {
-        string user = config.username;
-        string pass = config.password;
+        string user = settings.Username;
+        string pass = settings.Password;
 
-        if (config.useRandomLogin)
+        if (settings.UseRandomLogin)
         {
             var r = new Random();
             const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -205,7 +206,7 @@ public class SoulseekClientManager
             Logger.Debug($"Generated random username: {user}");
         }
 
-        string displayUser = config.useRandomLogin ? "[Random]" : user;
+        string displayUser = settings.UseRandomLogin ? "[Random]" : user;
         Logger.Info($"Login {displayUser}");
 
         int attempt = 0;
@@ -220,10 +221,10 @@ public class SoulseekClientManager
                 // Assuming it doesn't directly, we rely on the loop's cancellation check.
                 await client.ConnectAsync(user, pass);
 
-                if (!config.noModifyShareCount)
+                if (!settings.NoModifyShareCount)
                 {
                     Logger.Debug($"Setting share count for {displayUser}");
-                    await client.SetSharedCountsAsync(config.sharedFiles, config.sharedFolders, cancellationToken);
+                    await client.SetSharedCountsAsync(settings.SharedFiles, settings.SharedFolders, cancellationToken);
                 }
                 Logger.Debug($"Logged in {displayUser}");
                 break;

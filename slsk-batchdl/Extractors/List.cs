@@ -2,6 +2,7 @@ using System.Text;
 
 using Models;
 using Jobs;
+using Settings;
 
 namespace Extractors
 {
@@ -15,7 +16,7 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             listFilePath = Utils.ExpandVariables(input);
 
@@ -60,13 +61,13 @@ namespace Extractors
                 if (fields.Count >= 2)
                 {
                     var fc = new Models.FolderConditions();
-                    extractorCond       = Config.ParseConditions(fields[1], fc);
+                    extractorCond       = Services.ConditionParser.ParseFileConditions(fields[1], fc);
                     extractorFolderCond = fc;
                 }
                 if (fields.Count >= 3)
                 {
                     var fc = new Models.FolderConditions();
-                    extractorPrefCond       = Config.ParseConditions(fields[2], fc);
+                    extractorPrefCond       = Services.ConditionParser.ParseFileConditions(fields[2], fc);
                     extractorPrefFolderCond = fc;
                 }
 

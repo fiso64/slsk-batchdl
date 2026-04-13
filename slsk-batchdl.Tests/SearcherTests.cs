@@ -4,6 +4,7 @@ using Models;
 using Jobs;
 using Services;
 using Tests.ClientTests;
+using Settings;
 
 namespace Tests.Unit
 {
@@ -59,7 +60,7 @@ namespace Tests.Unit
             return index;
         }
 
-        private Searcher CreateSearcher(ISoulseekClient client, Config config)
+        private Searcher CreateSearcher(ISoulseekClient client, DownloadSettings config)
         {
             var registry = TestHelpers.CreateSessionRegistry();
             return new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -70,7 +71,7 @@ namespace Tests.Unit
         {
             var index = CreateSophisticatedIndex();
             var client = new MockSoulseekClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
+            var config = TestHelpers.CreateDefaultSettings().Download;
             var searcher = CreateSearcher(client, config);
             
             // Search for "ELO Time" specifically
@@ -97,8 +98,8 @@ namespace Tests.Unit
         {
             var index = CreateSophisticatedIndex();
             var client = new MockSoulseekClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 1;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -125,8 +126,8 @@ namespace Tests.Unit
         {
             var index = CreateSophisticatedIndex();
             var client = new MockSoulseekClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 2; // Only return if shared by 2+ peers
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 2; // Only return if shared by 2+ peers
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -159,8 +160,8 @@ namespace Tests.Unit
             }));
 
             var client = new MockSoulseekClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 1;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -193,8 +194,8 @@ namespace Tests.Unit
             }));
 
             var client = CreateMockClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 1;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -224,8 +225,8 @@ namespace Tests.Unit
                 }));
 
             var client = CreateMockClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 1;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
@@ -257,8 +258,8 @@ namespace Tests.Unit
             index.Add(new SearchResponse("User3", 1, true, 100, 0, files3));
 
             var client = CreateMockClient(index);
-            var config = TestHelpers.CreateDefaultConfig();
-            config.minSharesAggregate = 1;
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);

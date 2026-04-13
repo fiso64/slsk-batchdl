@@ -141,8 +141,6 @@ public class InteractiveModeManager
 
                 case "y":
                     Console.WriteLine("Exiting interactive mode");
-                    job.Config.interactiveMode = false;
-                    job.Config = job.Config.UpdateProfiles(job, queue);
                     job.PrintLines();
                     return new RunResult(index, folder, true, ExitInteractiveMode: true, filterStr);
 

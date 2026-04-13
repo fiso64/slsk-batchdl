@@ -1,5 +1,6 @@
 using Models;
 using Jobs;
+using Settings;
 
 namespace Extractors
 {
@@ -10,9 +11,9 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
-            bool isAlbum = config.album;
+            bool isAlbum = config.Extraction.IsAlbum;
 
             if (input.StartsWith("album://"))
             {

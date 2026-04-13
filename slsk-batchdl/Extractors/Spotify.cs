@@ -4,6 +4,7 @@ using Swan;
 
 using Models;
 using Jobs;
+using Settings;
 
 namespace Extractors
 {
@@ -18,18 +19,18 @@ namespace Extractors
             return input == "spotify-likes" || input == "spotify-albums" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            bool needLogin = input == "spotify-likes" || input == "spotify-albums" || config.removeTracksFromSource;
+            bool needLogin = input == "spotify-likes" || input == "spotify-albums" || config.Extraction.RemoveTracksFromSource;
 
-            if (needLogin && config.spotifyToken.Length == 0 && (config.spotifyId.Length == 0 || config.spotifySecret.Length == 0))
+            if (needLogin && config.Spotify.Token.Length == 0 && (config.Spotify.ClientId.Length == 0 || config.Spotify.ClientSecret.Length == 0))
                 throw new Exception("Credentials are required when downloading liked music or removing from source playlists.");
 
-            spotifyClient = new Spotify(config.spotifyId, config.spotifySecret, config.spotifyToken, config.spotifyRefresh);
-            await spotifyClient.Authorize(needLogin, config.removeTracksFromSource);
+            spotifyClient = new Spotify(config.Spotify.ClientId, config.Spotify.ClientSecret, config.Spotify.Token, config.Spotify.Refresh);
+            await spotifyClient.Authorize(needLogin, config.Extraction.RemoveTracksFromSource);
 
             Job result;
 
@@ -72,7 +73,7 @@ namespace Extractors
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
-                        await spotifyClient.Authorize(true, config.removeTracksFromSource);
+                        await spotifyClient.Authorize(true, config.Extraction.RemoveTracksFromSource);
                         (playlistName, playlistUri, songs) = await spotifyClient.GetPlaylist(input, max, off);
                     }
                     else if (!needLogin)
@@ -410,7 +411,7 @@ namespace Extractors
             return segments[segments.Length - 1].TrimEnd('/');
         }
 
-        public async Task<AlbumJob> GetAlbumJob(string url, Config config)
+        public async Task<AlbumJob> GetAlbumJob(string url, DownloadSettings config)
         {
             var albumId = GetAlbumIdFromUrl(url);
             var album   = await _client.Albums.Get(albumId);
@@ -435,8 +436,8 @@ namespace Extractors
                 Artist = album.Artists.First().Name,
             };
 
-            if (config.setAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
-            if (config.setAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
+            if (config.Extraction.SetAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
+            if (config.Extraction.SetAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
 
             return new AlbumJob(albumQuery);
         }

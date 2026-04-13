@@ -1,8 +1,11 @@
 using Models;
 using Jobs;
+using Services;
 using Enums;
 using Soulseek;
 using File = Soulseek.File;
+using Settings;
+using Services;
 
 namespace Tests
 {
@@ -107,9 +110,10 @@ namespace Tests
             return new SongJob(new SongQuery { Artist = artist, Title = title, Album = album, Length = length });
         }
 
-        public static Config CreateDefaultConfig()
+        public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli) CreateDefaultSettings()
         {
-            return new Config(new[] { "--config", "none", "some input" });
+            var configFile = ConfigManager.Load("none");
+            return ConfigManager.Bind(configFile, ["some input"]);
         }
 
         public static readonly byte[] EmptyMp3Bytes =
@@ -152,9 +156,9 @@ namespace Tests
             return file;
         }
         
-        public static SoulseekClientManager CreateMockClientManager(ISoulseekClient client, Config config)
+        public static SoulseekClientManager CreateMockClientManager(ISoulseekClient client, EngineSettings engineSettings)
         {
-            return new SoulseekClientManager(config, client);
+            return new SoulseekClientManager(engineSettings, client);
         }
 
         public static SessionRegistry CreateSessionRegistry()

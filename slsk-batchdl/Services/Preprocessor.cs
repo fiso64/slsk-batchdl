@@ -1,6 +1,7 @@
 using Jobs;
 using Models;
 using System.Text.RegularExpressions;
+using Settings;
 
 namespace Services
 {
@@ -11,7 +12,7 @@ namespace Services
         /// Sets song.Query = new SongQuery(song.Query) { ... } (copy-and-replace — no mutation of original).
         /// No-op when song.Query.IsDirectLink is true.
         /// </summary>
-        public static void PreprocessSong(SongJob song, Config config)
+        public static void PreprocessSong(SongJob song, DownloadSettings config)
         {
             if (song.Query.IsDirectLink) return;
 
@@ -21,20 +22,20 @@ namespace Services
             string album  = q.Album;
             bool   artistMaybeWrong = q.ArtistMaybeWrong;
 
-            if (config.removeFt)
+            if (config.Preprocess.RemoveFt)
             {
                 title  = title.RemoveFt();
                 artist = artist.RemoveFt();
             }
 
-            if (config.removeBrackets)
+            if (config.Preprocess.RemoveBrackets)
             {
                 title = title.RemoveSquareBrackets();
             }
 
-            if (config.regex != null)
+            if (config.Preprocess.Regex != null)
             {
-                foreach (var (toReplace, replaceBy) in config.regex)
+                foreach (var (toReplace, replaceBy) in config.Preprocess.Regex)
                 {
                     title  = Regex.Replace(title,  toReplace.Title,  replaceBy.Title,  RegexOptions.IgnoreCase);
                     artist = Regex.Replace(artist, toReplace.Artist, replaceBy.Artist, RegexOptions.IgnoreCase);
@@ -42,16 +43,16 @@ namespace Services
                 }
             }
 
-            if (config.parseTitleTemplate.Length > 0 && title.Length > 0)
+            if (config.Preprocess.ParseTitleTemplate.Length > 0 && title.Length > 0)
             {
                 var updated = new SongQuery(q) { Artist = artist, Title = title, Album = album };
-                TrackTemplateParser.TryUpdateSongQuery(title, config.parseTitleTemplate, ref updated);
+                TrackTemplateParser.TryUpdateSongQuery(title, config.Preprocess.ParseTitleTemplate, ref updated);
                 artist = updated.Artist;
                 title  = updated.Title;
                 album  = updated.Album;
             }
 
-            if (config.extractArtist && title.Length > 0)
+            if (config.Preprocess.ExtractArtist && title.Length > 0)
             {
                 (var parsedArtist, var parsedTitle) = Utils.SplitArtistAndTitle(title);
                 if (parsedArtist != null)
@@ -61,7 +62,7 @@ namespace Services
                 }
             }
 
-            if (config.artistMaybeWrong)
+            if (config.Search.ArtistMaybeWrong)
                 artistMaybeWrong = true;
 
             song.Query = new SongQuery(q)
@@ -79,7 +80,7 @@ namespace Services
         /// No-op when job.Query.IsDirectLink is true.
         /// Also applies minAlbumTrackCount / maxAlbumTrackCount from config.
         /// </summary>
-        public static void PreprocessAlbum(AlbumJob job, Config config)
+        public static void PreprocessAlbum(AlbumJob job, DownloadSettings config)
         {
             if (job.Query.IsDirectLink) return;
 
@@ -90,33 +91,26 @@ namespace Services
             int    minTrackCount    = q.MinTrackCount;
             int    maxTrackCount    = q.MaxTrackCount;
 
-            if (config.removeFt)
+            if (config.Preprocess.RemoveFt)
                 artist = artist.RemoveFt();
 
-            if (config.regex != null)
+            if (config.Preprocess.Regex != null)
             {
-                foreach (var (toReplace, replaceBy) in config.regex)
+                foreach (var (toReplace, replaceBy) in config.Preprocess.Regex)
                 {
                     artist = Regex.Replace(artist, toReplace.Artist, replaceBy.Artist, RegexOptions.IgnoreCase);
                     album  = Regex.Replace(album,  toReplace.Album,  replaceBy.Album,  RegexOptions.IgnoreCase);
                 }
             }
 
-            if (config.artistMaybeWrong)
+            if (config.Search.ArtistMaybeWrong)
                 artistMaybeWrong = true;
 
-            if (config.minAlbumTrackCount > 0)
-                minTrackCount = config.minAlbumTrackCount;
+            if (config.Search.NecessaryFolderCond.MinTrackCount != -1)
+                minTrackCount = config.Search.NecessaryFolderCond.MinTrackCount;
 
-            if (config.maxAlbumTrackCount != -1)
-                maxTrackCount = config.maxAlbumTrackCount;
-
-            // Per-job folder conditions (e.g. from list.txt "album-track-count=10") override config defaults.
-            if (config.necessaryFolderCond.MinTrackCount != -1)
-                minTrackCount = config.necessaryFolderCond.MinTrackCount;
-
-            if (config.necessaryFolderCond.MaxTrackCount != -1)
-                maxTrackCount = config.necessaryFolderCond.MaxTrackCount;
+            if (config.Search.NecessaryFolderCond.MaxTrackCount != -1)
+                maxTrackCount = config.Search.NecessaryFolderCond.MaxTrackCount;
 
             job.Query = new AlbumQuery(q)
             {
@@ -132,7 +126,7 @@ namespace Services
         /// Preprocesses all songs/albums in a job according to its Config.
         /// Called per-job during the main loop, just before download begins.
         /// </summary>
-        public static void PreprocessJob(Job job, Config config)
+        public static void PreprocessJob(Job job, DownloadSettings config)
         {
 
             switch (job)

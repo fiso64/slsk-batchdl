@@ -3,18 +3,23 @@ using Jobs;
 using HtmlAgilityPack;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Diagnostics;
+using Settings;
 
 namespace Extractors
 {
-    public class BandcampExtractor : IExtractor
+    public partial class BandcampExtractor : IExtractor
     {
+        [GeneratedRegex(@"band_id=(\d+)&")]
+        private static partial Regex BandIdRegex();
+
         public static bool InputMatches(string input)
         {
             input = input.ToLower();
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, Config config)
+        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
         {
             var jobs = new List<Job>();  // temporary; always ends up with exactly one item
             bool isTrack = input.Contains("/track/");
@@ -27,10 +32,10 @@ namespace Extractors
                 Logger.Info("Retrieving bandcamp wishlist..");
                 HtmlDocument doc;
 
-                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
                 {
                     doc = new HtmlDocument();
-                    doc.Load(config.htmlFromFile);
+                    doc.Load(config.Bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -72,9 +77,9 @@ namespace Extractors
                 using var httpClient = new HttpClient();
                 string response;
 
-                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
                 {
-                    response = await File.ReadAllTextAsync(config.htmlFromFile);
+                    response = await File.ReadAllTextAsync(config.Bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -84,8 +89,7 @@ namespace Extractors
                     response = await httpClient.GetStringAsync(artistUrl);
                 }
 
-                string idPattern = @"band_id=(\d+)&";
-                var match = Regex.Match(response, idPattern);
+                var match = BandIdRegex().Match(response);
                 var id = match.Groups[1].Value;
 
                 var address = $"http://bandcamp.com/api/mobile/24/band_details?band_id={id}";
@@ -115,10 +119,10 @@ namespace Extractors
                 Logger.Info("Retrieving bandcamp item..");
                 HtmlDocument doc;
 
-                if (!string.IsNullOrEmpty(config.htmlFromFile))
+                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
                 {
                     doc = new HtmlDocument();
-                    doc.Load(config.htmlFromFile);
+                    doc.Load(config.Bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -134,13 +138,13 @@ namespace Extractors
                     var artist = nameSection.SelectSingleNode(".//h3/span/a").InnerText.UnHtmlString().Trim();
                     var query  = new AlbumQuery { Artist = artist, Album = name };
 
-                    if (config.setAlbumMinTrackCount || config.setAlbumMaxTrackCount)
+                    if (config.Extraction.SetAlbumMinTrackCount || config.Extraction.SetAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (config.setAlbumMinTrackCount) query.MinTrackCount = n;
-                        if (config.setAlbumMaxTrackCount) query.MaxTrackCount = n;
+                        if (config.Extraction.SetAlbumMinTrackCount) query.MinTrackCount = n;
+                        if (config.Extraction.SetAlbumMaxTrackCount) query.MaxTrackCount = n;
                     }
 
                     jobs.Add(new AlbumJob(query));

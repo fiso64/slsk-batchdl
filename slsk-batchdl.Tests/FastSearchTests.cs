@@ -2,6 +2,8 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
 using Jobs;
 using Enums;
+using Services;
+using Settings;
 
 namespace Tests.FastSearch
 {
@@ -25,9 +27,11 @@ namespace Tests.FastSearch
                 "--pass",   "test_pass",
             }.Concat(extraArgs ?? Array.Empty<string>()).ToArray();
 
-            var config        = new Config(args);
-            var clientManager = TestHelpers.CreateMockClientManager(client, config);
-            var app           = new DownloadEngine(config, clientManager, Utilities.NullProgressReporter.Instance);
+            var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
+            var clientManager = TestHelpers.CreateMockClientManager(client, eng);
+            var app           = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+            app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
+            app.CompleteEnqueue();
             return (app, outputDir);
         }
 

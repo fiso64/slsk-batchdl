@@ -3,37 +3,38 @@ using System.Text.RegularExpressions;
 using Jobs;
 using Models;
 using Enums;
+using Settings;
 
 
 // Context object passed to VarExtractors lambdas and name-format helpers.
 // Constructed from a SongJob so name format works uniformly across single songs and album files.
 public struct FileManagerContext
 {
-    public Job           Job;
-    public Config?       Config;        // inputType, input, parentDir
-    public SongQuery     Query;         // artist, title, album, length, uri, artistMaybeWrong
+    public Job Job;
+    public DownloadSettings? Config;        // inputType, input, parentDir
+    public SongQuery Query;         // artist, title, album, length, uri, artistMaybeWrong
     public FileCandidate? Candidate;    // slsk-filename, slsk-foldername
-    public string?       DownloadPath;  // path, path-noext, ext
-    public JobState      State;
+    public string? DownloadPath;  // path, path-noext, ext
+    public JobState State;
     public FailureReason FailureReason;
-    public bool          IsNotAudio;
-    public int           LineNumber;
-    public int           ItemNumber;
-    public string?       RemoteBaseDir;
+    public bool IsNotAudio;
+    public int LineNumber;
+    public int ItemNumber;
+    public string? RemoteBaseDir;
 
     public static FileManagerContext FromSongJob(SongJob song, Job job, string? remoteBaseDir = null)
     {
         return new FileManagerContext
         {
-            Job           = job,
-            Query         = song.Query,
-            Candidate     = song.ChosenCandidate ?? song.Candidates?.FirstOrDefault(),
-            DownloadPath  = song.DownloadPath,
-            State         = song.State,
+            Job = job,
+            Query = song.Query,
+            Candidate = song.ChosenCandidate ?? song.Candidates?.FirstOrDefault(),
+            DownloadPath = song.DownloadPath,
+            State = song.State,
             FailureReason = song.FailureReason,
-            IsNotAudio    = false,
-            LineNumber    = song.LineNumber,
-            ItemNumber    = song.ItemNumber,
+            IsNotAudio = false,
+            LineNumber = song.LineNumber,
+            ItemNumber = song.ItemNumber,
             RemoteBaseDir = remoteBaseDir,
         };
     }
@@ -41,7 +42,7 @@ public struct FileManagerContext
 }
 
 
-public class FileManager
+public partial class FileManager
 {
     readonly Job job;
     readonly HashSet<object> organized = new();
@@ -49,11 +50,11 @@ public class FileManager
     public string? remoteImagesCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }
     public bool downloadingAdditionalImages = false;
-    private readonly Config config;
+    private readonly DownloadSettings config;
 
-    public FileManager(Job job, Config config)
+    public FileManager(Job job, DownloadSettings config)
     {
-        this.job    = job;
+        this.job = job;
         this.config = config;
     }
 
@@ -64,22 +65,22 @@ public class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string? rcd    = downloadingAdditionalImages ? remoteImagesCommonDir : remoteBaseDir;
-        string  parent = config.parentDir;
-        string  name   = Utils.GetFileNameWithoutExtSlsk(sourceFname);
+        string? rcd = downloadingAdditionalImages ? remoteImagesCommonDir : remoteBaseDir;
+        string parent = config.Output.ParentDir;
+        string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
         if (!string.IsNullOrEmpty(job.DefaultFolderName()))
             parent = Path.Join(parent, job.DefaultFolderName());
 
         if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
         {
-            string dirname   = defaultFolderName ?? Path.GetFileName(rcd);
+            string dirname = defaultFolderName ?? Path.GetFileName(rcd);
             string normFname = Utils.NormalizedPath(sourceFname);
-            string relpath   = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
+            string relpath = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
             parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
         }
 
-        return Path.Join(parent, name).CleanPath(config.invalidReplaceStr);
+        return Path.Join(parent, name).CleanPath(config.Output.InvalidReplaceStr);
     }
 
     public void SetremoteBaseDir(string? dir)
@@ -107,7 +108,7 @@ public class FileManager
             OrganizeSong(file);
         }
 
-        var nonAudioToOrganize = string.IsNullOrEmpty(config.nameFormat)
+        var nonAudioToOrganize = string.IsNullOrEmpty(config.Output.NameFormat)
             ? additionalImages
             : (IEnumerable<SongJob>)allFiles.Where(f => f.IsNotAudio);
 
@@ -132,18 +133,18 @@ public class FileManager
         if (string.IsNullOrEmpty(song.DownloadPath) || !Utils.IsMusicFile(song.DownloadPath))
             return;
 
-        if (config.nameFormat.Length == 0)
+        if (config.Output.NameFormat.Length == 0)
         {
             organized.Add(song);
             return;
         }
 
-        string pathPart    = ApplyNameFormat(config.nameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir) with { Config = config });
-        string newFilePath = Path.Join(config.parentDir, pathPart + Path.GetExtension(song.DownloadPath));
+        string pathPart = ApplyNameFormat(config.Output.NameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir) with { Config = config });
+        string newFilePath = Path.Join(config.Output.ParentDir, pathPart + Path.GetExtension(song.DownloadPath));
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
         {
-            try { Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, config.parentDir); }
+            try { Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, config.Output.ParentDir); }
             catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
         }
 
@@ -157,8 +158,8 @@ public class FileManager
             return;
 
         string? part = null;
-        string? rcd  = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
-        string  filename = file.ResolvedTarget?.Filename ?? file.DownloadPath;
+        string? rcd = isAdditionalImage ? remoteImagesCommonDir : remoteBaseDir;
+        string filename = file.ResolvedTarget?.Filename ?? file.DownloadPath;
 
         if (rcd != null && Utils.IsInDirectory(Utils.GetDirectoryNameSlsk(filename), rcd, true))
             part = Utils.GetFileNameSlsk(Utils.GetDirectoryNameSlsk(filename));
@@ -167,7 +168,7 @@ public class FileManager
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, config.parentDir); }
+            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, config.Output.ParentDir); }
             catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
         }
 
@@ -177,8 +178,8 @@ public class FileManager
 
     private string ApplyNameFormat(string format, FileManagerContext ctx)
     {
-        TagLib.File? tagFile  = null;
-        bool         tried    = false;
+        TagLib.File? tagFile = null;
+        bool tried = false;
         TagLib.File? getTagFile()
         {
             if (!tried)
@@ -192,56 +193,63 @@ public class FileManager
         return ApplyNameFormatInternal(format, config, ctx, getTagFile);
     }
 
-    static string ApplyNameFormatInternal(string format, Config config, FileManagerContext ctx, Func<TagLib.File?> getTagFile)
+    [GeneratedRegex(@"(\{(?:\{??[^\{]*?\}))")]
+    private static partial Regex VariableRegex();
+
+    [GeneratedRegex(@"\([^\)]*\)")]
+    private static partial Regex ParenRegex();
+
+    [GeneratedRegex(@"\([^()]*\)|[^()]+")]
+    private static partial Regex ConditionalChoiceRegex();
+
+    static string ApplyNameFormatInternal(string format, DownloadSettings config, FileManagerContext ctx, Func<TagLib.File?> getTagFile)
     {
         string newName = format;
-        var regex   = new Regex(@"(\{(?:\{??[^\{]*?\}))");
-        var matches = regex.Matches(newName);
+        var matches = VariableRegex().Matches(newName);
 
         while (matches.Count > 0)
         {
             foreach (var match in matches.Cast<Match>())
             {
                 string inner = match.Groups[1].Value[1..^1];
-                var options  = inner.Split('|');
+                var options = inner.Split('|');
                 string? chosenOpt = null;
 
                 foreach (var opt in options)
                 {
-                    string[] parts  = Regex.Split(opt, @"\([^\)]*\)");
+                    string[] parts = ParenRegex().Split(opt);
                     string[] result = parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
-                    if (result.All(x => TryGetCleanVarValue(x, ctx, getTagFile, config.invalidReplaceStr, out string res) && res.Length > 0))
+                    if (result.All(x => TryGetCleanVarValue(x, ctx, getTagFile, config.Output.InvalidReplaceStr, out string res) && res.Length > 0))
                     {
                         chosenOpt = opt;
                         break;
                     }
                 }
 
-                if (chosenOpt == null)
-                    chosenOpt = options[^1];
+                chosenOpt ??= options[^1];
 
-                chosenOpt = Regex.Replace(chosenOpt, @"\([^()]*\)|[^()]+", m =>
+                chosenOpt = ConditionalChoiceRegex().Replace(chosenOpt, m =>
                 {
-                    if (m.Value.StartsWith("(") && m.Value.EndsWith(")"))
-                        return m.Value[1..^1].ReplaceInvalidChars(config.invalidReplaceStr, removeSlash: false);
-                    TryGetCleanVarValue(m.Value, ctx, getTagFile, config.invalidReplaceStr, out string res);
+                    if (m.Value.StartsWith('(') && m.Value.EndsWith(')'))
+                        return m.Value[1..^1].ReplaceInvalidChars(config.Output.InvalidReplaceStr, removeSlash: false);
+                    TryGetCleanVarValue(m.Value, ctx, getTagFile, config.Output.InvalidReplaceStr, out string res);
                     return res;
                 });
 
                 string old = match.Groups[1].Value;
-                old        = old.StartsWith("{{") ? old[1..] : old;
-                newName    = newName.Replace(old, chosenOpt);
+                old = old.StartsWith("{{") ? old[1..] : old;
+                newName = newName.Replace(old, chosenOpt);
             }
 
-            matches = regex.Matches(newName);
+            matches = VariableRegex().Matches(newName);
         }
 
         if (newName != format)
         {
             char dirsep = Path.DirectorySeparatorChar;
             newName = newName.Replace('/', dirsep).Replace('\\', dirsep);
-            var x   = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
-            newName = string.Join(dirsep, x.Select(s => s.ReplaceInvalidChars(config.invalidReplaceStr).Trim(' ', '.')));
+            var x = newName.Split(dirsep, StringSplitOptions.RemoveEmptyEntries);
+            newName = string.Join(dirsep, x.Select(s => s.ReplaceInvalidChars(config.Output.InvalidReplaceStr).Trim(' ', '.')));
             return newName;
         }
 
@@ -289,11 +297,11 @@ public class FileManager
         { "foldername",      (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
 
         // Job / config vars
-        { "extractor",      (ctx, _) => ctx.Config?.inputType.ToString() ?? "" },
-        { "input",          (ctx, _) => ctx.Config?.input ?? "" },
+        { "extractor",      (ctx, _) => ctx.Config?.Extraction.InputType.ToString() ?? "" },
+        { "input",          (ctx, _) => ctx.Config?.Extraction.Input ?? "" },
         { "item-name",      (ctx, _) => ctx.Job.ItemNameOrSource() },
         { "default-folder", (ctx, _) => ctx.Job.DefaultFolderName() },
-        { "output-dir",     (ctx, _) => ctx.Config?.parentDir ?? "" },
+        { "output-dir",     (ctx, _) => ctx.Config?.Output.ParentDir ?? "" },
 
         // Local path vars (from the downloaded file's local path)
         { "path",      (ctx, _) => (ctx.DownloadPath ?? "").TrimEnd('/').TrimEnd('\\') },
@@ -338,8 +346,8 @@ public class FileManager
         }
 
         string normalizedRbd = Utils.NormalizedPath(remoteBaseDir);
-        string d   = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
-        string r   = Path.GetFileName(normalizedRbd);
+        string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
+        string r = Path.GetFileName(normalizedRbd);
         string result = Path.Join(r, Path.GetRelativePath(normalizedRbd, d));
         return result;
     }

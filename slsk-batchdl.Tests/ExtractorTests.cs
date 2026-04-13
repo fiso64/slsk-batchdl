@@ -3,6 +3,7 @@ using Models;
 using Jobs;
 using Enums;
 using Extractors;
+using Settings;
 
 namespace Tests.Extractors
 {
@@ -10,7 +11,7 @@ namespace Tests.Extractors
     public class StringExtractorTests
     {
         private StringExtractor extractor;
-        private Config config;
+        private DownloadSettings config;
         private List<string> testStrings;
 
         // Expected SongQuery fields in song mode: (title, artist, album, length)
@@ -23,8 +24,7 @@ namespace Tests.Extractors
         public void Setup()
         {
             extractor = new StringExtractor();
-            config = new Config();
-            config.aggregate = false;
+            config = new DownloadSettings();
 
             testStrings = new List<string>
             {
@@ -70,16 +70,15 @@ namespace Tests.Extractors
         [TestMethod]
         public async Task GetTracks_WithSongMode_ExtractsCorrectTrackInfo()
         {
-            config.album = false;
+            config.Extraction.IsAlbum = false;
 
             for (int i = 0; i < testStrings.Count; i++)
             {
-                config.input = testStrings[i];
-                var result = await extractor.GetTracks(config.input, 0, 0, false, config);
+                var result = await extractor.GetTracks(testStrings[i], 0, 0, false, config);
                 var song = (SongJob)result;
                 var q = song.Query;
 
-                Assert.IsTrue(StringExtractor.InputMatches(config.input));
+                Assert.IsTrue(StringExtractor.InputMatches(testStrings[i]));
                 Assert.AreEqual(expectedSongs[i].title,  q.Title,  $"Case {i}: Title mismatch");
                 Assert.AreEqual(expectedSongs[i].artist, q.Artist, $"Case {i}: Artist mismatch");
                 Assert.AreEqual(expectedSongs[i].album,  q.Album,  $"Case {i}: Album mismatch");
@@ -90,15 +89,14 @@ namespace Tests.Extractors
         [TestMethod]
         public async Task GetTracks_WithAlbumMode_ExtractsCorrectAlbumInfo()
         {
-            config.album = true;
+            config.Extraction.IsAlbum = true;
 
             for (int i = 0; i < testStrings.Count; i++)
             {
-                config.input = testStrings[i];
-                var result = await extractor.GetTracks(config.input, 0, 0, false, config);
+                var result = await extractor.GetTracks(testStrings[i], 0, 0, false, config);
                 var q = ((AlbumJob)result).Query;
 
-                Assert.IsTrue(StringExtractor.InputMatches(config.input));
+                Assert.IsTrue(StringExtractor.InputMatches(testStrings[i]));
                 Assert.AreEqual(expectedAlbums[i].album,  q.Album,  $"Case {i}: Album mismatch");
                 Assert.AreEqual(expectedAlbums[i].artist, q.Artist, $"Case {i}: Artist mismatch");
 
