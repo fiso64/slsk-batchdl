@@ -8,10 +8,13 @@ using Settings;
 
 namespace Extractors
 {
-    public class SpotifyExtractor : IExtractor
+    public class SpotifyExtractor : IExtractor, IInputMatcher
     {
+        private readonly SpotifySettings _spotify;
         private Spotify? spotifyClient;
         public string playlistUri = "";
+
+        public SpotifyExtractor(SpotifySettings spotify) { _spotify = spotify; }
 
         public static bool InputMatches(string input)
         {
@@ -19,18 +22,22 @@ namespace Extractors
             return input == "spotify-likes" || input == "spotify-albums" || input.IsInternetUrl() && input.Contains("spotify.com");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
 
-            bool needLogin = input == "spotify-likes" || input == "spotify-albums" || config.Extraction.RemoveTracksFromSource;
+            bool needLogin = input == "spotify-likes" || input == "spotify-albums" || extraction.RemoveTracksFromSource;
 
-            if (needLogin && config.Spotify.Token.Length == 0 && (config.Spotify.ClientId.Length == 0 || config.Spotify.ClientSecret.Length == 0))
+            if (needLogin && _spotify.Token.Length == 0 && (_spotify.ClientId.Length == 0 || _spotify.ClientSecret.Length == 0))
                 throw new Exception("Credentials are required when downloading liked music or removing from source playlists.");
 
-            spotifyClient = new Spotify(config.Spotify.ClientId, config.Spotify.ClientSecret, config.Spotify.Token, config.Spotify.Refresh);
-            await spotifyClient.Authorize(needLogin, config.Extraction.RemoveTracksFromSource);
+            spotifyClient = new Spotify(_spotify.ClientId, _spotify.ClientSecret, _spotify.Token, _spotify.Refresh);
+            await spotifyClient.Authorize(needLogin, extraction.RemoveTracksFromSource);
 
             Job result;
 
@@ -53,7 +60,7 @@ namespace Extractors
             else if (input.Contains("/album/"))
             {
                 Logger.Info("Loading Spotify album..");
-                result = await spotifyClient.GetAlbumJob(input, config);
+                result = await spotifyClient.GetAlbumJob(input, extraction);
             }
             else if (input.Contains("/artist/"))
             {
@@ -73,7 +80,7 @@ namespace Extractors
                 {
                     if (!needLogin && !spotifyClient.UsedDefaultCredentials)
                     {
-                        await spotifyClient.Authorize(true, config.Extraction.RemoveTracksFromSource);
+                        await spotifyClient.Authorize(true, extraction.RemoveTracksFromSource);
                         (playlistName, playlistUri, songs) = await spotifyClient.GetPlaylist(input, max, off);
                     }
                     else if (!needLogin)
@@ -411,7 +418,7 @@ namespace Extractors
             return segments[segments.Length - 1].TrimEnd('/');
         }
 
-        public async Task<AlbumJob> GetAlbumJob(string url, DownloadSettings config)
+        public async Task<AlbumJob> GetAlbumJob(string url, ExtractionSettings extraction)
         {
             var albumId = GetAlbumIdFromUrl(url);
             var album   = await _client.Albums.Get(albumId);
@@ -436,8 +443,8 @@ namespace Extractors
                 Artist = album.Artists.First().Name,
             };
 
-            if (config.Extraction.SetAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
-            if (config.Extraction.SetAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
+            if (extraction.SetAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
+            if (extraction.SetAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
 
             return new AlbumJob(albumQuery);
         }

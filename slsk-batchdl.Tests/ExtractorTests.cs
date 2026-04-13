@@ -74,7 +74,7 @@ namespace Tests.Extractors
 
             for (int i = 0; i < testStrings.Count; i++)
             {
-                var result = await extractor.GetTracks(testStrings[i], 0, 0, false, config);
+                var result = await extractor.GetTracks(testStrings[i], config.Extraction);
                 var song = (SongJob)result;
                 var q = song.Query;
 
@@ -93,7 +93,7 @@ namespace Tests.Extractors
 
             for (int i = 0; i < testStrings.Count; i++)
             {
-                var result = await extractor.GetTracks(testStrings[i], 0, 0, false, config);
+                var result = await extractor.GetTracks(testStrings[i], config.Extraction);
                 var q = ((AlbumJob)result).Query;
 
                 Assert.IsTrue(StringExtractor.InputMatches(testStrings[i]));

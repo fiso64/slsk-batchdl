@@ -8,7 +8,7 @@ using Settings;
 
 namespace Extractors
 {
-    public partial class MusicBrainzExtractor : IExtractor
+    public partial class MusicBrainzExtractor : IExtractor, IInputMatcher
     {
         [GeneratedRegex(@"musicbrainz\.org/([a-z\-]+)/([0-9a-f\-]{36})")]
         private static partial Regex MusicBrainzUrlRegex();
@@ -18,8 +18,12 @@ namespace Extractors
             return input.IsInternetUrl() && input.ToLower().Contains("musicbrainz.org");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             var musicBrainzClient = new MusicBrainzClient();
 
             int max = reverse ? int.MaxValue : maxTracks;
@@ -36,12 +40,12 @@ namespace Extractors
             {
                 case "release":
                     {
-                        var queue = await musicBrainzClient.GetReleaseAsAlbum(mbid, max, off, config);
+                        var queue = await musicBrainzClient.GetReleaseAsAlbum(mbid, max, off, extraction);
                         return queue.Jobs.Count == 1 ? queue.Jobs[0] : queue;
                     }
                 case "release-group":
                     {
-                        var queue = await musicBrainzClient.GetReleaseGroupAsAlbum(mbid, max, off, config);
+                        var queue = await musicBrainzClient.GetReleaseGroupAsAlbum(mbid, max, off, extraction);
                         return queue.Jobs.Count == 1 ? queue.Jobs[0] : queue;
                     }
                 case "collection":
@@ -75,7 +79,7 @@ namespace Extractors
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         }
 
-        public async Task<JobList> GetReleaseAsAlbum(string mbid, int max, int offset, DownloadSettings config, bool fromReleaseGroup = false)
+        public async Task<JobList> GetReleaseAsAlbum(string mbid, int max, int offset, ExtractionSettings extraction, bool fromReleaseGroup = false)
         {
             var queue = new JobList();
             if (offset > 0 || max == 0)
@@ -104,14 +108,14 @@ namespace Extractors
                 Artist = artistCredit,
                 Album = albumTitle,
                 MinTrackCount = totalTracks,
-                MaxTrackCount = (!fromReleaseGroup || config.Extraction.SetAlbumMaxTrackCount) ? totalTracks : -1,
+                MaxTrackCount = (!fromReleaseGroup || extraction.SetAlbumMaxTrackCount) ? totalTracks : -1,
             };
 
             queue.Jobs.Add(new AlbumJob(query));
             return queue;
         }
 
-        public async Task<JobList> GetReleaseGroupAsAlbum(string mbid, int max, int offset, DownloadSettings config)
+        public async Task<JobList> GetReleaseGroupAsAlbum(string mbid, int max, int offset, ExtractionSettings extraction)
         {
             Logger.Info("Loading MusicBrainz release group...");
             var url = $"https://musicbrainz.org/ws/2/release-group/{mbid}?inc=releases&fmt=json";
@@ -133,7 +137,7 @@ namespace Extractors
 
             var releaseMbid = bestRelease.GetProperty("id").GetString();
             Logger.Info($"Found release '{bestRelease.GetProperty("title").GetString()}' ({releaseMbid}) in release group. Getting album info...");
-            return await GetReleaseAsAlbum(releaseMbid, max, offset, config, true);
+            return await GetReleaseAsAlbum(releaseMbid, max, offset, extraction, true);
         }
 
         public async Task<JobList> GetCollectionReleases(string mbid, int max, int offset)

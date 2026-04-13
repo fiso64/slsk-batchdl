@@ -6,7 +6,7 @@ using Settings;
 
 namespace Extractors
 {
-    public class ListExtractor : IExtractor
+    public class ListExtractor : IExtractor, IInputMatcher
     {
         string? listFilePath = null;
         readonly object fileLock = new object();
@@ -16,8 +16,12 @@ namespace Extractors
             return !input.IsInternetUrl();
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             listFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(listFilePath))

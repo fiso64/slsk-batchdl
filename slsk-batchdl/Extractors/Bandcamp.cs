@@ -8,8 +8,12 @@ using Settings;
 
 namespace Extractors
 {
-    public partial class BandcampExtractor : IExtractor
+    public partial class BandcampExtractor : IExtractor, IInputMatcher
     {
+        private readonly BandcampSettings _bandcamp;
+
+        public BandcampExtractor(BandcampSettings bandcamp) { _bandcamp = bandcamp; }
+
         [GeneratedRegex(@"band_id=(\d+)&")]
         private static partial Regex BandIdRegex();
 
@@ -19,8 +23,12 @@ namespace Extractors
             return input.IsInternetUrl() && input.Contains("bandcamp.com");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             var jobs = new List<Job>();  // temporary; always ends up with exactly one item
             bool isTrack = input.Contains("/track/");
             bool isAlbum = !isTrack && input.Contains("/album/");
@@ -32,10 +40,10 @@ namespace Extractors
                 Logger.Info("Retrieving bandcamp wishlist..");
                 HtmlDocument doc;
 
-                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
+                if (!string.IsNullOrEmpty(_bandcamp.HtmlFromFile))
                 {
                     doc = new HtmlDocument();
-                    doc.Load(config.Bandcamp.HtmlFromFile);
+                    doc.Load(_bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -77,9 +85,9 @@ namespace Extractors
                 using var httpClient = new HttpClient();
                 string response;
 
-                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
+                if (!string.IsNullOrEmpty(_bandcamp.HtmlFromFile))
                 {
-                    response = await File.ReadAllTextAsync(config.Bandcamp.HtmlFromFile);
+                    response = await File.ReadAllTextAsync(_bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -119,10 +127,10 @@ namespace Extractors
                 Logger.Info("Retrieving bandcamp item..");
                 HtmlDocument doc;
 
-                if (!string.IsNullOrEmpty(config.Bandcamp.HtmlFromFile))
+                if (!string.IsNullOrEmpty(_bandcamp.HtmlFromFile))
                 {
                     doc = new HtmlDocument();
-                    doc.Load(config.Bandcamp.HtmlFromFile);
+                    doc.Load(_bandcamp.HtmlFromFile);
                 }
                 else
                 {
@@ -138,13 +146,13 @@ namespace Extractors
                     var artist = nameSection.SelectSingleNode(".//h3/span/a").InnerText.UnHtmlString().Trim();
                     var query  = new AlbumQuery { Artist = artist, Album = name };
 
-                    if (config.Extraction.SetAlbumMinTrackCount || config.Extraction.SetAlbumMaxTrackCount)
+                    if (extraction.SetAlbumMinTrackCount || extraction.SetAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (config.Extraction.SetAlbumMinTrackCount) query.MinTrackCount = n;
-                        if (config.Extraction.SetAlbumMaxTrackCount) query.MaxTrackCount = n;
+                        if (extraction.SetAlbumMinTrackCount) query.MinTrackCount = n;
+                        if (extraction.SetAlbumMaxTrackCount) query.MaxTrackCount = n;
                     }
 
                     jobs.Add(new AlbumJob(query));

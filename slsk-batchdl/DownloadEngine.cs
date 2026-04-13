@@ -141,7 +141,7 @@ public class DownloadEngine
             IExtractor ex;
             try
             {
-                (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None);
+                (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None, ej.Config);
             }
             catch (Exception e)
             {
@@ -160,7 +160,7 @@ public class DownloadEngine
             await _extractorSemaphore.WaitAsync(ej.Cts!.Token);
             try
             {
-                extracted = await ex.GetTracks(ej.Input, ej.Config.Extraction.MaxTracks, ej.Config.Extraction.Offset, ej.Config.Extraction.Reverse, ej.Config);
+                extracted = await ex.GetTracks(ej.Input, ej.Config.Extraction);
             }
             catch (Exception e)
             {

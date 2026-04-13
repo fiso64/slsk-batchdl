@@ -5,7 +5,7 @@ using Settings;
 
 namespace Extractors
 {
-    public partial class CsvExtractor : IExtractor
+    public partial class CsvExtractor : IExtractor, IInputMatcher
     {
         [GeneratedRegex(@"\(.*?\)")]
         private static partial Regex ParenthesesRegex();
@@ -15,6 +15,10 @@ namespace Extractors
 
         [GeneratedRegex(@"\W+")]
         private static partial Regex NonWordRegex();
+
+        private readonly CsvSettings _csv;
+
+        public CsvExtractor(CsvSettings csv) { _csv = csv; }
 
         string? csvFilePath = null;
         int csvColumnCount = -1;
@@ -26,15 +30,19 @@ namespace Extractors
             return !input.IsInternetUrl() && input.EndsWith(".csv");
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             csvFilePath = Utils.ExpandVariables(input);
 
             if (!File.Exists(csvFilePath))
                 throw new FileNotFoundException($"CSV file '{csvFilePath}' not found");
 
-            var rows = await ParseCsvRows(csvFilePath, config.Csv.ArtistCol, config.Csv.TitleCol, config.Csv.LengthCol,
-                config.Csv.AlbumCol, config.Csv.DescCol, config.Csv.YtIdCol, config.Csv.TrackCountCol, config.Csv.TimeUnit, config.Csv.YtParse);
+            var rows = await ParseCsvRows(csvFilePath, _csv.ArtistCol, _csv.TitleCol, _csv.LengthCol,
+                _csv.AlbumCol, _csv.DescCol, _csv.YtIdCol, _csv.TrackCountCol, _csv.TimeUnit, _csv.YtParse);
 
             if (reverse)
                 rows.Reverse();

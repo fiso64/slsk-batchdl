@@ -6,18 +6,18 @@ using Settings;
 
 namespace Extractors
 {
-    public class SoulseekExtractor : IExtractor
+    public class SoulseekExtractor : IExtractor, IInputMatcher
     {
         public static bool InputMatches(string input)
         {
             return input.StartsWith("slsk://", StringComparison.OrdinalIgnoreCase);
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
             var uri = HttpUtility.UrlDecode(input);
 
-            if (input.EndsWith('/') || config.Extraction.IsAlbum)
+            if (input.EndsWith('/') || extraction.IsAlbum)
             {
                 // Direct-link album: the URI is the folder path
                 var query = new AlbumQuery { URI = uri, IsDirectLink = true };

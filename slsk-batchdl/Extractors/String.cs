@@ -4,16 +4,16 @@ using Settings;
 
 namespace Extractors
 {
-    public class StringExtractor : IExtractor
+    public class StringExtractor : IExtractor, IInputMatcher
     {
         public static bool InputMatches(string input)
         {
             return !input.IsInternetUrl();
         }
 
-        public Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
-            bool isAlbum = config.Extraction.IsAlbum;
+            bool isAlbum = extraction.IsAlbum;
 
             if (input.StartsWith("album://"))
             {

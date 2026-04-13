@@ -14,31 +14,39 @@ using Settings;
 
 namespace Extractors
 {
-    public class YouTubeExtractor : IExtractor
+    public class YouTubeExtractor : IExtractor, IInputMatcher
     {
+        private readonly YouTubeSettings _yt;
+
+        public YouTubeExtractor(YouTubeSettings yt) { _yt = yt; }
+
         public static bool InputMatches(string input)
         {
             input = input.ToLower();
             return input.IsInternetUrl() && (input.Contains("youtu.be") || input.Contains("youtube.com"));
         }
 
-        public async Task<Job> GetTracks(string input, int maxTracks, int offset, bool reverse, DownloadSettings config)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction)
         {
+            var maxTracks = extraction.MaxTracks;
+            var offset    = extraction.Offset;
+            var reverse   = extraction.Reverse;
+
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
-            YouTube.apiKey = config.YouTube.ApiKey ?? "";
+            YouTube.apiKey = _yt.ApiKey ?? "";
 
             string name;
             List<SongJob>? deleted = null;
             List<SongJob> songs = new();
 
-            if (config.YouTube.GetDeleted)
+            if (_yt.GetDeleted)
             {
                 Logger.Info("Getting deleted videos..");
                 var archive = new YouTube.YouTubeArchiveRetriever();
-                deleted = await archive.RetrieveDeleted(input, printFailed: config.YouTube.DeletedOnly);
+                deleted = await archive.RetrieveDeleted(input, printFailed: _yt.DeletedOnly);
             }
-            if (!config.YouTube.DeletedOnly)
+            if (!_yt.DeletedOnly)
             {
                 if (!string.IsNullOrEmpty(YouTube.apiKey))
                 {

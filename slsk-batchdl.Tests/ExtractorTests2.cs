@@ -3,6 +3,7 @@ using Models;
 using Jobs;
 using Enums;
 using Extractors;
+using Settings;
 
 namespace Tests.ExtractorTests2
 {
@@ -31,7 +32,7 @@ namespace Tests.ExtractorTests2
             var extractor = new ListExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
 
-            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempList, config.Extraction);
             var jobList = (JobList)result;
             var ej = (ExtractJob)jobList.Jobs[0];
 
@@ -48,7 +49,7 @@ namespace Tests.ExtractorTests2
             var extractor = new ListExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
 
-            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempList, config.Extraction);
             var jobList = (JobList)result;
             var ej = (ExtractJob)jobList.Jobs[0];
 
@@ -66,7 +67,7 @@ namespace Tests.ExtractorTests2
             var extractor = new ListExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
 
-            var result = await extractor.GetTracks(_tempList, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempList, config.Extraction);
             var jobList = (JobList)result;
             var ej = (ExtractJob)jobList.Jobs[0];
 
@@ -110,7 +111,7 @@ namespace Tests.ExtractorTests2
         {
             var extractor = new SoulseekExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
-            var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", 100, 0, false, config);
+            var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", config.Extraction);
 
             var slj = (SongJob)result;
             Assert.IsTrue(slj.Query.IsDirectLink);
@@ -121,7 +122,7 @@ namespace Tests.ExtractorTests2
         {
             var extractor = new SoulseekExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
-            var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", 100, 0, false, config);
+            var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", config.Extraction);
 
             Assert.IsInstanceOfType(result, typeof(AlbumJob));
         }
@@ -132,7 +133,7 @@ namespace Tests.ExtractorTests2
             var extractor = new SoulseekExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
             config.Extraction.IsAlbum = true;
-            var result = await extractor.GetTracks("slsk://someuser/Music/Song.mp3", 100, 0, false, config);
+            var result = await extractor.GetTracks("slsk://someuser/Music/Song.mp3", config.Extraction);
 
             Assert.IsInstanceOfType(result, typeof(AlbumJob));
         }
@@ -142,7 +143,7 @@ namespace Tests.ExtractorTests2
         {
             var extractor = new SoulseekExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
-            var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", 100, 0, false, config);
+            var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", config.Extraction);
 
             var song = (SongJob)result;
             Assert.IsNotNull(song.Candidates);
@@ -196,10 +197,10 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithArtistTitleColumns_ParsesCorrectly()
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
@@ -213,10 +214,10 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithAlbumColumn_ParsesAlbum()
         {
             File.WriteAllText(_tempCsv, "artist,title,album\nBand,Track,TheAlbum\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual("TheAlbum", songs[0].Query.Album);
@@ -226,10 +227,10 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_NoTitleColumn_CreatesAlbumType()
         {
             File.WriteAllText(_tempCsv, "artist,album\nBand,TheAlbum\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
 
             Assert.IsTrue(result is AlbumJob || result is AlbumAggregateJob);
         }
@@ -238,10 +239,11 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithOffset_SkipsTracks()
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\nArtist3,Song3\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
+            config.Extraction.Offset = 1;
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 1, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
@@ -252,10 +254,11 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithReverse_ReversesOrder()
         {
             File.WriteAllText(_tempCsv, "artist,title\nArtist1,Song1\nArtist2,Song2\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
+            config.Extraction.Reverse = true;
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 0, true, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual("Artist2", songs[0].Query.Artist);
@@ -266,10 +269,11 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_WithMaxTracks_LimitsResults()
         {
             File.WriteAllText(_tempCsv, "artist,title\nA,T1\nB,T2\nC,T3\nD,T4\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
+            config.Extraction.MaxTracks = 2;
 
-            var result = await extractor.GetTracks(_tempCsv, 2, 0, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(2, songs.Count);
@@ -279,11 +283,11 @@ namespace Tests.ExtractorTests2
         public async Task GetTracks_LengthInSeconds_ParsesCorrectly()
         {
             File.WriteAllText(_tempCsv, "artist,title,length\nArtist,Track,200\n");
-            var extractor = new CsvExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
+            var extractor = new CsvExtractor(config.Csv);
             config.Csv.TimeUnit = "s";
 
-            var result = await extractor.GetTracks(_tempCsv, 100, 0, false, config);
+            var result = await extractor.GetTracks(_tempCsv, config.Extraction);
             var songs = ((JobList)result).AllSongs().ToList();
 
             Assert.AreEqual(200, songs[0].Query.Length);
@@ -293,10 +297,12 @@ namespace Tests.ExtractorTests2
     [TestClass]
     public class ExtractorRegistryTests
     {
+        private static readonly DownloadSettings _dl = TestHelpers.CreateDefaultSettings().Download;
+
         [TestMethod]
         public void GetMatchingExtractor_CsvFile_ReturnsCsvExtractor()
         {
-            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("playlist.csv");
+            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("playlist.csv", InputType.None, _dl);
             Assert.AreEqual(InputType.CSV, type);
             Assert.IsInstanceOfType(extractor, typeof(CsvExtractor));
         }
@@ -304,7 +310,7 @@ namespace Tests.ExtractorTests2
         [TestMethod]
         public void GetMatchingExtractor_SlskUrl_ReturnsSoulseekExtractor()
         {
-            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("slsk://user/file.mp3");
+            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("slsk://user/file.mp3", InputType.None, _dl);
             Assert.AreEqual(InputType.Soulseek, type);
             Assert.IsInstanceOfType(extractor, typeof(SoulseekExtractor));
         }
@@ -312,7 +318,7 @@ namespace Tests.ExtractorTests2
         [TestMethod]
         public void GetMatchingExtractor_PlainString_ReturnsStringExtractor()
         {
-            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("Artist - Title");
+            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("Artist - Title", InputType.None, _dl);
             Assert.AreEqual(InputType.String, type);
             Assert.IsInstanceOfType(extractor, typeof(StringExtractor));
         }
@@ -321,13 +327,13 @@ namespace Tests.ExtractorTests2
         public void GetMatchingExtractor_EmptyInput_Throws()
         {
             Assert.ThrowsException<ArgumentException>(() =>
-                ExtractorRegistry.GetMatchingExtractor(""));
+                ExtractorRegistry.GetMatchingExtractor("", InputType.None, _dl));
         }
 
         [TestMethod]
         public void GetMatchingExtractor_ExplicitInputType_ReturnsCorrectExtractor()
         {
-            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("anything", InputType.Soulseek);
+            var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("anything", InputType.Soulseek, _dl);
             Assert.AreEqual(InputType.Soulseek, type);
             Assert.IsInstanceOfType(extractor, typeof(SoulseekExtractor));
         }

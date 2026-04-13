@@ -4,43 +4,64 @@ using Settings;
 
 namespace Extractors
 {
+    public interface IInputMatcher
+    {
+        static abstract bool InputMatches(string input);
+    }
+
     public interface IExtractor
     {
-        Task<Job> GetTracks(string input, int max, int offset, bool reverse, DownloadSettings config);
+        Task<Job> GetTracks(string input, ExtractionSettings extraction);
         Task RemoveTrackFromSource(SongJob job) => Task.CompletedTask;
     }
 
     public static class ExtractorRegistry
     {
-        static readonly List<(InputType, Func<string, bool>, Func<IExtractor>)> extractors = new()
+        private interface IEntry
         {
-            (InputType.CSV,         CsvExtractor.InputMatches,      () => new CsvExtractor()),
-            (InputType.YouTube,     YouTubeExtractor.InputMatches,  () => new YouTubeExtractor()),
-            (InputType.Spotify,     SpotifyExtractor.InputMatches,  () => new SpotifyExtractor()),
-            (InputType.Bandcamp,    BandcampExtractor.InputMatches, () => new BandcampExtractor()),
-            (InputType.MusicBrainz, MusicBrainzExtractor.InputMatches,() => new MusicBrainzExtractor()),
-            (InputType.Soulseek,    SoulseekExtractor.InputMatches, () => new SoulseekExtractor()),
-            (InputType.String,      StringExtractor.InputMatches,   () => new StringExtractor()),
-            (InputType.List,        ListExtractor.InputMatches,     () => new ListExtractor()),
-        };
+            InputType Type { get; }
+            bool InputMatches(string input);
+            IExtractor Create(DownloadSettings dl);
+        }
 
-        public static (InputType, IExtractor) GetMatchingExtractor(string input, InputType inputType = InputType.None)
+        private class Entry<T>(InputType type, Func<DownloadSettings, T> factory) : IEntry
+            where T : IExtractor, IInputMatcher
+        {
+            public InputType Type { get; } = type;
+            public bool InputMatches(string input) => T.InputMatches(input);
+            public IExtractor Create(DownloadSettings dl) => factory(dl);
+        }
+
+        // The order determines which extractor has priority when input matches multiple and no explicit inputType is provided
+        static readonly List<IEntry> extractors =
+        [
+            new Entry<CsvExtractor>        (InputType.CSV,         dl => new CsvExtractor(dl.Csv)),
+            new Entry<YouTubeExtractor>    (InputType.YouTube,     dl => new YouTubeExtractor(dl.YouTube)),
+            new Entry<SpotifyExtractor>    (InputType.Spotify,     dl => new SpotifyExtractor(dl.Spotify)),
+            new Entry<BandcampExtractor>   (InputType.Bandcamp,    dl => new BandcampExtractor(dl.Bandcamp)),
+            new Entry<MusicBrainzExtractor>(InputType.MusicBrainz, _ => new MusicBrainzExtractor()),
+            new Entry<SoulseekExtractor>   (InputType.Soulseek,    _ => new SoulseekExtractor()),
+            new Entry<StringExtractor>     (InputType.String,      _ => new StringExtractor()),
+            new Entry<ListExtractor>       (InputType.List,        _ => new ListExtractor()), // never reached without inputType=List hint
+        ];
+
+        public static (InputType, IExtractor) GetMatchingExtractor(string input, InputType inputType, DownloadSettings dl)
         {
             if (string.IsNullOrEmpty(input))
                 throw new ArgumentException("Input string can not be null or empty.");
 
             if (inputType != InputType.None)
             {
-                var (t, _, e) = extractors.First(x => x.Item1 == inputType);
-                return (t, e());
+                var entry = extractors.Find(e => e.Type == inputType);
+                if (entry != null)
+                    return (inputType, entry.Create(dl));
+                throw new ArgumentException($"No extractor for input type {inputType}");
             }
 
-            foreach ((var type, var inputMatches, var extractor) in extractors)
+            foreach (var entry in extractors)
             {
-                if (inputMatches(input))
-                {
-                    return (type, extractor());
-                }
+                if (entry.InputMatches(input))
+                    return (entry.Type, entry.Create(dl));
             }
 
             throw new ArgumentException($"No matching extractor for input '{input}'");
