@@ -27,7 +27,8 @@ public class Downloader
         this.progressReporter = progressReporter;
     }
 
-    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song, DownloadSettings config, CancellationToken? ct = null)
+    public async Task DownloadFile(FileCandidate candidate, string outputPath, SongJob song,
+        TransferSettings transfer, string? parentDir, CancellationToken? ct = null)
     {
         string fileKey = candidate.Username + '\\' + candidate.Filename;
 
@@ -63,7 +64,7 @@ public class Downloader
 
         await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        string incompleteOutputPath = config.Transfer.NoIncompleteExt ? outputPath : outputPath + ".incomplete";
+        string incompleteOutputPath = transfer.NoIncompleteExt ? outputPath : outputPath + ".incomplete";
 
         Logger.Debug($"Downloading: {song} to '{incompleteOutputPath}'");
 
@@ -124,13 +125,13 @@ public class Downloader
         catch
         {
             if (File.Exists(incompleteOutputPath))
-                try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, config.Output.ParentDir); } catch { }
+                try { Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, parentDir ?? ""); } catch { }
             downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
             throw;
         }
 
 
-        if (!config.Transfer.NoIncompleteExt)
+        if (!transfer.NoIncompleteExt)
         {
             try { Utils.Move(incompleteOutputPath, outputPath); }
             catch (IOException e) { Logger.Error($"Failed to rename .incomplete file. Error: {e}"); }

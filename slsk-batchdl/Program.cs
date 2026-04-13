@@ -27,7 +27,7 @@ internal static partial class Program
         {
             var diagnostic = new DiagnosticService(clientManager);
             try {
-                await diagnostic.PerformNoInputActions(rootSettings, cts.Token);
+                await diagnostic.PerformNoInputActions(rootSettings.PrintOption, rootSettings.Output.IndexFilePath, cts.Token);
             } catch (Exception ex) {
                 Logger.Fatal($"Diagnostic action failed: {ex.Message}");
             }
@@ -38,7 +38,7 @@ internal static partial class Program
         if (cliSettings.ProgressJson)
             reporter = new JsonStreamProgressReporter(Console.Out);
         else
-            reporter = new CliProgressReporter(rootSettings, cliSettings);
+            reporter = new CliProgressReporter(cliSettings);
 
         var engine = new DownloadEngine(engineSettings, clientManager, progressReporter: reporter);
         engine.Enqueue(new Jobs.ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);

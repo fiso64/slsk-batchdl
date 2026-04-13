@@ -25,13 +25,13 @@ namespace Services
         public M3uEditor?      indexEditor;
         public bool            checkFileExists;
 
-        public static TrackSkipperContext From(JobContext ctx, DownloadSettings config)
+        public static TrackSkipperContext From(JobContext ctx, SkipSettings skip, SearchSettings search)
         {
             FileConditions? cond = null;
-            if (config.Skip.SkipCheckPrefCond)
-                cond = config.Search.NecessaryCond.With(config.Search.PreferredCond);
-            else if (config.Skip.SkipCheckCond)
-                cond = config.Search.NecessaryCond;
+            if (skip.SkipCheckPrefCond)
+                cond = search.NecessaryCond.With(search.PreferredCond);
+            else if (skip.SkipCheckCond)
+                cond = search.NecessaryCond;
 
             return new TrackSkipperContext
             {

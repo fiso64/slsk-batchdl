@@ -43,16 +43,14 @@ public static class Printing
     private class BufferedProgressBar : IProgressBar
     {
         private Konsole.ProgressBar? _inner;
-        private readonly DownloadSettings _config;
         private int _lastCurrent;
         private string _lastItem = "";
         private bool _isQueued = false;
 
-        public BufferedProgressBar(DownloadSettings config)
+        public BufferedProgressBar()
         {
-            _config = config;
             if (!IsBuffering)
-                _inner = GetRealProgressBar(config);
+                _inner = GetRealProgressBar();
         }
 
         public int Y => _inner?.Y ?? Console.CursorTop;
@@ -82,7 +80,7 @@ public static class Printing
             lock (ConsoleLock)
             {
                 if (_inner == null)
-                    _inner = GetRealProgressBar(_config);
+                    _inner = GetRealProgressBar();
                 try { _inner?.Refresh(_lastCurrent, _lastItem); } catch { }
             }
         }
@@ -204,19 +202,20 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound, DownloadSettings config, Searcher searchService)
+    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound,
+        PrintOption printOption, SearchSettings search, Searcher searchService)
     {
         if (job is JobList slj)
         {
-            await searchService.SearchAndPrintResults(slj.Jobs.OfType<SongJob>().ToList(), config);
+            await searchService.SearchAndPrintResults(slj.Jobs.OfType<SongJob>().ToList(), printOption, search);
         }
         else if (job is AggregateJob ag)
         {
-            if (config.PrintOption.HasFlag(PrintOption.Json))
+            if (printOption.HasFlag(PrintOption.Json))
             {
                 JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == JobState.Pending));
             }
-            else if (config.PrintOption.HasFlag(PrintOption.Link))
+            else if (printOption.HasFlag(PrintOption.Link))
             {
                 var first = ag.Songs.FirstOrDefault(s => s.ChosenCandidate != null);
                 if (first?.ChosenCandidate != null)
@@ -225,39 +224,39 @@ public static class Printing
             else
             {
                 Console.WriteLine($"Results for aggregate {job.ToString(true)}:");
-                PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, false, config);
+                PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, false, printOption);
             }
         }
         else if (job is AlbumJob albumJob)
         {
-            if (config.PrintOption.HasFlag(PrintOption.Json))
+            if (printOption.HasFlag(PrintOption.Json))
             {
-                var foldersToPrint = config.PrintOption.HasFlag(PrintOption.Full)
+                var foldersToPrint = printOption.HasFlag(PrintOption.Full)
                     ? albumJob.Results
                     : albumJob.Results.Take(1).ToList();
                 JsonPrinter.PrintAlbumJson(foldersToPrint, albumJob);
             }
-            else if (config.PrintOption.HasFlag(PrintOption.Link))
+            else if (printOption.HasFlag(PrintOption.Link))
             {
                 if (albumJob.Results.Count > 0)
                     PrintAlbumLink(albumJob.Results[0]);
             }
             else
             {
-                if (!config.PrintOption.HasFlag(PrintOption.Full))
+                if (!printOption.HasFlag(PrintOption.Full))
                     Console.WriteLine($"Result 1 of {albumJob.Results.Count} for album {job.ToString(true)}:");
                 else
                     Console.WriteLine($"Results ({albumJob.Results.Count}) for album {job.ToString(true)}:");
 
                 if (albumJob.Results.Count > 0)
                 {
-                    if (!config.Search.NoBrowseFolder)
+                    if (!search.NoBrowseFolder)
                         Console.WriteLine("[Skipping full folder retrieval]");
 
                     foreach (var folder in albumJob.Results)
                     {
                         PrintAlbum(folder);
-                        if (!config.PrintOption.HasFlag(PrintOption.Full))
+                        if (!printOption.HasFlag(PrintOption.Full))
                             break;
                     }
                 }
@@ -304,16 +303,19 @@ public static class Printing
 
 
     public static void PrintTracksTbd(List<SongJob> toBeDownloaded, List<SongJob> existing, List<SongJob> notFound,
-        bool isNormal, DownloadSettings config, bool summary = true)
+        bool isNormal, PrintOption printOption, bool summary = true)
     {
-        if (isNormal && !config.PrintTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
+        bool printTracks  = printOption.HasFlag(PrintOption.Tracks);
+        bool printResults = (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
+        bool full         = printOption.HasFlag(PrintOption.Full);
+
+        if (isNormal && !printTracks && toBeDownloaded.Count == 1 && existing.Count + notFound.Count == 0)
             return;
 
         string notFoundLastTime = notFound.Count > 0 ? $"{notFound.Count} not found" : "";
         string alreadyExist     = existing.Count > 0 ? $"{existing.Count} already exist" : "";
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-        bool full       = config.PrintOption.HasFlag(PrintOption.Full);
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
 
         if (summary && (isNormal || skippedTracks.Length > 0))
@@ -321,24 +323,24 @@ public static class Printing
 
         if (toBeDownloaded.Count > 0)
         {
-            bool showAll = !isNormal || config.PrintTracks || config.PrintResults;
-            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: config.PrintTracks);
+            bool showAll = !isNormal || printTracks || printResults;
+            PrintTracks(toBeDownloaded, showAll ? int.MaxValue : 10, full, infoFirst: printTracks);
 
             if (full && (existing.Count > 0 || notFound.Count > 0))
                 Console.WriteLine("\n-----------------------------------------------\n");
         }
 
-        if (config.PrintTracks || config.PrintResults)
+        if (printTracks || printResults)
         {
             if (existing.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks already exist:");
-                PrintTracks(existing, fullInfo: full, infoFirst: config.PrintTracks);
+                PrintTracks(existing, fullInfo: full, infoFirst: printTracks);
             }
             if (notFound.Count > 0)
             {
                 Console.WriteLine($"\nThe following tracks were not found during a prior run:");
-                PrintTracks(notFound, fullInfo: full, infoFirst: config.PrintTracks);
+                PrintTracks(notFound, fullInfo: full, infoFirst: printTracks);
             }
         }
     }
@@ -544,12 +546,12 @@ public static class Printing
         }
     }
 
-    public static IProgressBar? GetProgressBar(DownloadSettings config)
+    public static IProgressBar? GetProgressBar()
     {
-        return new BufferedProgressBar(config);
+        return new BufferedProgressBar();
     }
 
-    private static Konsole.ProgressBar? GetRealProgressBar(DownloadSettings config)
+    private static Konsole.ProgressBar? GetRealProgressBar()
     {
         lock (ConsoleLock)
         {

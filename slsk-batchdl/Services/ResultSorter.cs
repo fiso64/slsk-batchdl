@@ -8,19 +8,19 @@ public static class ResultSorter
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
         IEnumerable<KeyValuePair<string, (SearchResponse, Soulseek.File)>> results,
         SongQuery query,
-        DownloadSettings config,
+        SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
         bool useLevenshtein = true,
         bool albumMode = false)
     {
-        return OrderedResults(results.Select(x => x.Value), query, config, userSuccessCounts, useInfer, useLevenshtein, albumMode);
+        return OrderedResults(results.Select(x => x.Value), query, search, userSuccessCounts, useInfer, useLevenshtein, albumMode);
     }
 
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
         IEnumerable<(SearchResponse, Soulseek.File)> results,
         SongQuery query,
-        DownloadSettings config,
+        SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
         bool useLevenshtein = true,
@@ -30,7 +30,7 @@ public static class ResultSorter
         useLevenshtein = albumMode ? false : useLevenshtein;
         useInfer       = albumMode ? false : useInfer;
 
-        var infQueriesAndCounts = GetInferredQueries(results, query, config, useInfer);
+        var infQueriesAndCounts = GetInferredQueries(results, query, search, useInfer);
         var random = new Random();
 
         (SongQuery, int) inferredQuery((SearchResponse response, Soulseek.File file) x)
@@ -45,23 +45,23 @@ public static class ResultSorter
         Func<(SearchResponse response, Soulseek.File file), SortingCriteria> getSortingCriteria =
             result => new SortingCriteria
             {
-                UserSuccessAboveDownrank    = userSuccessCounts.GetValueOrDefault(result.response.Username, 0) > config.Search.DownrankOn,
-                NecessaryConditionsMet      = config.Search.NecessaryCond.FileSatisfies(result.file, query, result.response),
-                PreferredUserConditionsMet  = config.Search.PreferredCond.BannedUsersSatisfies(result.response),
+                UserSuccessAboveDownrank    = userSuccessCounts.GetValueOrDefault(result.response.Username, 0) > search.DownrankOn,
+                NecessaryConditionsMet      = search.NecessaryCond.FileSatisfies(result.file, query, result.response),
+                PreferredUserConditionsMet  = search.PreferredCond.BannedUsersSatisfies(result.response),
                 HasValidLength              = (result.file.Length != null && result.file.Length > 0)
-                                              || config.Search.PreferredCond.AcceptNoLength == null
-                                              || config.Search.PreferredCond.AcceptNoLength.Value,
+                                              || search.PreferredCond.AcceptNoLength == null
+                                              || search.PreferredCond.AcceptNoLength.Value,
                 BracketCheckPassed          = !useBracketCheck || FileConditions.BracketCheck(query, inferredQuery((result.response, result.file)).Item1),
-                StrictTitleMatch            = config.Search.PreferredCond.StrictTitleSatisfies(result.file.Filename, query.Title),
-                AlbumModeStrictAlbumMatch   = !albumMode || config.Search.PreferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
-                StrictArtistMatch           = config.Search.PreferredCond.StrictArtistSatisfies(result.file.Filename, query.Title),
-                LengthToleranceMatch        = config.Search.PreferredCond.LengthToleranceSatisfies(result.file, query.Length),
-                FormatMatch                 = config.Search.PreferredCond.FormatSatisfies(result.file.Filename),
-                NonAlbumModeStrictAlbumMatch = albumMode || config.Search.PreferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
-                BitrateMatch                = config.Search.PreferredCond.BitrateSatisfies(result.file),
-                SampleRateMatch             = config.Search.PreferredCond.SampleRateSatisfies(result.file),
-                BitDepthMatch               = config.Search.PreferredCond.BitDepthSatisfies(result.file),
-                FileSatisfies               = config.Search.PreferredCond.FileSatisfies(result.file, query, result.response),
+                StrictTitleMatch            = search.PreferredCond.StrictTitleSatisfies(result.file.Filename, query.Title),
+                AlbumModeStrictAlbumMatch   = !albumMode || search.PreferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
+                StrictArtistMatch           = search.PreferredCond.StrictArtistSatisfies(result.file.Filename, query.Title),
+                LengthToleranceMatch        = search.PreferredCond.LengthToleranceSatisfies(result.file, query.Length),
+                FormatMatch                 = search.PreferredCond.FormatSatisfies(result.file.Filename),
+                NonAlbumModeStrictAlbumMatch = albumMode || search.PreferredCond.StrictAlbumSatisfies(result.file.Filename, query.Album),
+                BitrateMatch                = search.PreferredCond.BitrateSatisfies(result.file),
+                SampleRateMatch             = search.PreferredCond.SampleRateSatisfies(result.file),
+                BitDepthMatch               = search.PreferredCond.BitDepthSatisfies(result.file),
+                FileSatisfies               = search.PreferredCond.FileSatisfies(result.file, query, result.response),
                 HasFreeUploadSlot           = result.response.HasFreeUploadSlot,
                 NoQueue                     = result.response.QueueLength == 0,
                 UploadSpeedFast             = result.response.UploadSpeed / 1024 / 650,
@@ -77,19 +77,19 @@ public static class ResultSorter
 
         return results
             .Select(x => (response: x.Item1, file: x.Item2))
-            .Where(x => userSuccessCounts.GetValueOrDefault(x.response.Username, 0) > config.Search.IgnoreOn)
+            .Where(x => userSuccessCounts.GetValueOrDefault(x.response.Username, 0) > search.IgnoreOn)
             .OrderByDescending(x => getSortingCriteria(x));
     }
 
     private static Dictionary<string, (SongQuery, int)>? GetInferredQueries(
         IEnumerable<(SearchResponse, Soulseek.File)> results,
         SongQuery query,
-        DownloadSettings config,
+        SearchSettings search,
         bool useInfer)
     {
         if (!useInfer) return null;
 
-        var equivalentFiles = Searcher.EquivalentFiles(query, results, config, 1);
+        var equivalentFiles = Searcher.EquivalentFiles(query, results, search, 1);
 
         return equivalentFiles
             .SelectMany(t => t.candidates, (t, c) => new

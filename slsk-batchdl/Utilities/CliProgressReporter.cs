@@ -10,8 +10,7 @@ namespace Utilities
 {
     public class CliProgressReporter : IProgressReporter
     {
-        private readonly DownloadSettings _config;
-        private readonly CliSettings      _cli;
+        private readonly CliSettings _cli;
 
         private readonly ConcurrentDictionary<SongJob, BarData> _bars = new();
         private readonly ConcurrentDictionary<Job, ProgressBar?> _jobBars = new();
@@ -40,10 +39,9 @@ namespace Utilities
 
         public bool IsPaused { get; set; } = false;
 
-        public CliProgressReporter(DownloadSettings config, CliSettings cli)
+        public CliProgressReporter(CliSettings cli)
         {
-            _config = config;
-            _cli    = cli;
+            _cli = cli;
             _ = TickLoopAsync(_tickCts.Token);
         }
 
@@ -134,7 +132,7 @@ namespace Utilities
 
         public void ReportDownloadStart(SongJob song, FileCandidate candidate)
         {
-            var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar(_config) });
+            var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar() });
             d.StateLabel = "Queued";
             d.BaseText   = Printing.DisplayString(song.Query, candidate.File, candidate.Response, infoFirst: false);
             d.Pct        = 0;
@@ -191,7 +189,7 @@ namespace Utilities
 
         public void ReportJobStarted(Job job)
         {
-            var bar = Printing.GetProgressBar(_config);
+            var bar = Printing.GetProgressBar();
             _jobBars[job] = bar;
             string status = job is RetrieveFolderJob ? "retrieving folder" : "searching";
             _jobStatuses[job] = status;
@@ -235,7 +233,7 @@ namespace Utilities
                         ? Printing.DisplayString(song.Query, song.ResolvedTarget.File, song.ResolvedTarget.Response, customPath: shortName, showUser: false)
                         : shortName;
 
-                    var bar = Printing.GetProgressBar(_config);
+                    var bar = Printing.GetProgressBar();
                     var d   = new BarData { Bar = bar, BaseText = baseText, StateLabel = "Pending", Pct = 0 };
                     _bars[song] = d;
                     if (bar != null)
@@ -314,7 +312,7 @@ namespace Utilities
             }
 
             bool isFirst = !_bars.ContainsKey(song);
-            var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar(_config) });
+            var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar() });
             d.StateLabel = "Searching";
             d.BaseText   = $"[{song.DisplayId}] {song.ToString()}";
             Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: isFirst);

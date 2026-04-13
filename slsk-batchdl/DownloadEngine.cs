@@ -235,7 +235,10 @@ public class DownloadEngine
             Logger.SetConsoleLogLevel(config.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
 
             if (ctx?.PreprocessTracks == true)
-                Preprocessor.PreprocessJob(jl, config);
+            {
+                Preprocessor.PreprocessJob(jl, config.Preprocess);
+                ApplySearchSettings(jl, config.Search);
+            }
 
             jl.PrintLines();
 
@@ -253,11 +256,11 @@ public class DownloadEngine
 
                 if (ctx != null && config.Skip.SkipExisting)
                     foreach (var song in directSongs.Where(s => s.State == JobState.Pending))
-                        if (TrySetAlreadyExists(jl, song, TrackSkipperContext.From(ctx, config)))
+                        if (TrySetAlreadyExists(jl, song, TrackSkipperContext.From(ctx, config.Skip, config.Search)))
                             existing.Add(song);
 
                 Printing.PrintTracksTbd(directSongs.Where(s => s.State == JobState.Pending).ToList(),
-                    existing, notFound, isNormal: true, config);
+                    existing, notFound, isNormal: true, config.PrintOption);
             }
 
             if (config.PrintTracks)
@@ -269,7 +272,7 @@ public class DownloadEngine
             if (config.PrintResults && directSongs.Count > 0)
             {
                 await _clientManager.WaitUntilReadyAsync(jl.Cts!.Token);
-                await Printing.PrintResults(jl, existing, notFound, config, searcher!);
+                await Printing.PrintResults(jl, existing, notFound, config.PrintOption, config.Search, searcher!);
                 return;
             }
 
@@ -335,7 +338,10 @@ public class DownloadEngine
         Logger.SetConsoleLogLevel(config.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
 
         if (ctx.PreprocessTracks)
-            Preprocessor.PreprocessJob(job, config);
+        {
+            Preprocessor.PreprocessJob(job, config.Preprocess);
+            ApplySearchSettings(job, config.Search);
+        }
 
         job.PrintLines();
 
@@ -378,7 +384,7 @@ public class DownloadEngine
             if (job is AlbumJob albumJob)
             {
                 if (!albumJob.Query.IsDirectLink)
-                    await searcher!.SearchAlbum(albumJob, config, responseData, job.Cts!.Token);
+                    await searcher!.SearchAlbum(albumJob, config.Search, responseData, job.Cts!.Token);
                 else
                 {
                     try
@@ -395,12 +401,12 @@ public class DownloadEngine
             }
             else if (job is AggregateJob aggJob)
             {
-                await searcher!.SearchAggregate(aggJob, config, responseData, job.Cts!.Token);
+                await searcher!.SearchAggregate(aggJob, config.Search, responseData, job.Cts!.Token);
                 foundSomething = aggJob.Songs.Count > 0;
             }
             else if (job is AlbumAggregateJob aabJob)
             {
-                var newAlbumJobs = await searcher!.SearchAggregateAlbum(aabJob, config, responseData, job.Cts!.Token);
+                var newAlbumJobs = await searcher!.SearchAggregateAlbum(aabJob, config.Search, responseData, job.Cts!.Token);
 
                 job.State = JobState.Done;
                 foundSomething = newAlbumJobs.Count > 0;
@@ -449,7 +455,7 @@ public class DownloadEngine
 
             if (config.Skip.SkipExisting && job is AggregateJob foundAggJob)
             {
-                var skipCtx = TrackSkipperContext.From(ctx, job.Config);
+                var skipCtx = TrackSkipperContext.From(ctx, job.Config.Skip, job.Config.Search);
                 foreach (var song in foundAggJob.Songs)
                     TrySetAlreadyExists(foundAggJob, song, skipCtx);
             }
@@ -458,7 +464,7 @@ public class DownloadEngine
         if (config.PrintResults)
         {
             await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
-            await Printing.PrintResults(job, new(), new(), config, searcher!);
+            await Printing.PrintResults(job, new(), new(), config.PrintOption, config.Search, searcher!);
             return;
         }
 
@@ -483,7 +489,7 @@ public class DownloadEngine
 
                 case AggregateJob ag:
                     Printing.PrintTracksTbd(ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
-                        new(), new(), isNormal: false, config);
+                        new(), new(), isNormal: false, config.PrintOption);
                     await ProcessAggregateJob(ag, ctx);
                     break;
             }
@@ -504,7 +510,7 @@ public class DownloadEngine
     async Task ProcessSongJob(SongJob job, JobContext ctx)
     {
         var config = job.Config;
-        var organizer = new FileManager(job, config);
+        var organizer = new FileManager(job, config.Output, config.Extraction);
 
         // If ResolvedTarget is set, pre-populate Candidates so search is skipped.
         if (job.ResolvedTarget != null && job.Candidates == null)
@@ -523,7 +529,7 @@ public class DownloadEngine
     {
         var config = job.Config;
         var songs = job.Songs;
-        var organizer = new FileManager(job, config);
+        var organizer = new FileManager(job, config.Output, config.Extraction);
 
         var downloadTasks = songs.Select(async song =>
         {
@@ -540,7 +546,7 @@ public class DownloadEngine
     async Task ProcessAlbumJob(AlbumJob job, JobContext ctx)
     {
         var config = job.Config;
-        var organizer = new FileManager(job, config);
+        var organizer = new FileManager(job, config.Output, config.Extraction);
         List<SongJob>? chosenFiles = null;
         var retrievedFolders = new HashSet<string>();
         bool succeeded = false;
@@ -830,7 +836,7 @@ public class DownloadEngine
 
             if (!config.Search.FastSearch)
             {
-                await searcher!.SearchSong(song, config, responseData, cts.Token,
+                await searcher!.SearchSong(song, config.Search, responseData, cts.Token,
                     onSearch: () => _progressReporter.ReportSongSearching(song));
             }
             else
@@ -843,7 +849,7 @@ public class DownloadEngine
 
                 Task<(string path, FileCandidate? candidate)>? fastDownloadTask = null;
 
-                var searchTask = searcher!.SearchSong(song, config, responseData, searchCts.Token,
+                var searchTask = searcher!.SearchSong(song, config.Search, responseData, searchCts.Token,
                     onSearch: () => _progressReporter.ReportSongSearching(song),
                     onFastSearchCandidate: fc =>
                     {
@@ -852,7 +858,7 @@ public class DownloadEngine
                             Logger.Debug($"Fast-search: starting provisional download from {fc.Username}");
                             string outputPath = organizer.GetSavePath(fc.Filename);
                             fastDownloadTask = downloader!
-                                .DownloadFile(fc, outputPath, song, config, searchCts.Token)
+                                .DownloadFile(fc, outputPath, song, config.Transfer, config.Output.ParentDir, searchCts.Token)
                                 .ContinueWith(t =>
                                 {
                                     if (t.IsCompletedSuccessfully)
@@ -906,7 +912,7 @@ public class DownloadEngine
             {
                 song.State = JobState.Downloading;
                 // ReportDownloadStart is called inside DownloadFile (via Downloader).
-                await downloader!.DownloadFile(candidate, outputPath, song, config, cts.Token);
+                await downloader!.DownloadFile(candidate, outputPath, song, config.Transfer, config.Output.ParentDir, cts.Token);
                 _registry.UserSuccessCounts.AddOrUpdate(candidate.Username, 1, (_, c) => c + 1);
                 return (outputPath, candidate.File);
             }
@@ -963,7 +969,7 @@ public class DownloadEngine
     {
         if (job is not AlbumJob aj) return false;
 
-        var skipCtx = TrackSkipperContext.From(ctx, job.Config);
+        var skipCtx = TrackSkipperContext.From(ctx, job.Config.Skip, job.Config.Search);
         string? path = null;
 
         if (ctx.OutputDirSkipper != null)
@@ -1024,6 +1030,67 @@ public class DownloadEngine
 
 
     // ── album failure handling ────────────────────────────────────────────────
+
+    // Applies search-specific settings (ArtistMaybeWrong, folder track-count constraints)
+    // to every query in the job tree.  Separated from Preprocessor because these are
+    // search concerns, not text-transformation concerns.
+    static void ApplySearchSettings(Job job, SearchSettings search)
+    {
+        switch (job)
+        {
+            case JobList jl:
+                foreach (var s in jl.Jobs.OfType<SongJob>())  ApplySearchSettings(s, search);
+                foreach (var a in jl.Jobs.OfType<AlbumJob>()) ApplySearchSettings(a, search);
+                break;
+
+            case SongJob song:
+                if (search.ArtistMaybeWrong && !song.Query.ArtistMaybeWrong)
+                    song.Query = new SongQuery(song.Query) { ArtistMaybeWrong = true };
+                break;
+
+            case AlbumJob aj:
+                ApplySearchSettingsToAlbumQuery(aj, search);
+                break;
+
+            case AggregateJob ag:
+                foreach (var s in ag.Songs) ApplySearchSettings(s, search);
+                break;
+
+            case AlbumAggregateJob aaj:
+                ApplySearchSettingsToAlbumAggregateQuery(aaj, search);
+                break;
+        }
+    }
+
+    static void ApplySearchSettingsToAlbumQuery(AlbumJob aj, SearchSettings search)
+    {
+        var q   = aj.Query;
+        bool amw = q.ArtistMaybeWrong;
+        int  min = q.MinTrackCount;
+        int  max = q.MaxTrackCount;
+
+        if (search.ArtistMaybeWrong)                               amw = true;
+        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
+        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
+
+        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
+            aj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+    }
+
+    static void ApplySearchSettingsToAlbumAggregateQuery(AlbumAggregateJob aaj, SearchSettings search)
+    {
+        var q   = aaj.Query;
+        bool amw = q.ArtistMaybeWrong;
+        int  min = q.MinTrackCount;
+        int  max = q.MaxTrackCount;
+
+        if (search.ArtistMaybeWrong)                               amw = true;
+        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
+        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
+
+        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
+            aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+    }
 
     void HandleAlbumFail(AlbumJob job, AlbumFolder folder, bool deleteDownloaded, DownloadSettings config)
     {
