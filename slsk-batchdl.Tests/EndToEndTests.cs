@@ -1,7 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Text;
-using Jobs;
-using Services;
+using Sldl.Core.Jobs;
+using Sldl.Core.Services;
+using Sldl.Cli;
 
 namespace Tests.EndToEnd
 {
@@ -53,7 +54,7 @@ namespace Tests.EndToEnd
                 var configFile = ConfigManager.Load("none");
                 var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
-                var app = new DownloadEngine(engineSettings, clientManager, progressReporter: Utilities.NullProgressReporter.Instance);
+                var app = new DownloadEngine(engineSettings, clientManager);
                 app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
                 app.CompleteEnqueue();
                 await app.RunAsync(CancellationToken.None);
@@ -106,7 +107,7 @@ namespace Tests.EndToEnd
             var configFile = ConfigManager.Load("none");
             var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
             var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
-            var app = new DownloadEngine(engineSettings, clientManager, Utilities.NullProgressReporter.Instance);
+            var app = new DownloadEngine(engineSettings, clientManager);
             app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
             app.CompleteEnqueue();
 
@@ -153,7 +154,7 @@ namespace Tests.EndToEnd
             File.WriteAllBytes(Path.Combine(albumDir, "02. Track2.mp3"), TestHelpers.EmptyMp3Bytes);
 
             // Use the real CLI path: SoulseekClientManager created from config (not pre-injected).
-            // mockFilesDir triggers MockSoulseekClient creation inside SoulseekClientManager.
+            // mockFilesDir triggers LocalFilesSoulseekClient creation inside SoulseekClientManager.
             var testArgs = new string[]
             {
                 "--config",              "none",
@@ -168,8 +169,9 @@ namespace Tests.EndToEnd
 
             var configFile = ConfigManager.Load("none");
             var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
+
             var clientManager = new SoulseekClientManager(engineSettings);  // CLI path: no pre-injected client
-            var app           = new DownloadEngine(engineSettings, clientManager, Utilities.NullProgressReporter.Instance);
+            var app           = new DownloadEngine(engineSettings, clientManager);
             app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
             app.CompleteEnqueue();
 

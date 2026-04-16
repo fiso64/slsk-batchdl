@@ -1,10 +1,11 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Text;
-using Models;
-using Jobs;
-using Enums;
-using Services;
-using Settings;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 using Tests.ClientTests;
 
 namespace Tests.EndToEnd
@@ -53,7 +54,7 @@ namespace Tests.EndToEnd
 
                 var (eng, dl, _) = ConfigManager.Bind(ConfigManager.Load("none"), testArgs);
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, eng);
-                var app = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+                var app = new DownloadEngine(eng, clientManager);
                 app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();
                 await app.RunAsync(CancellationToken.None);

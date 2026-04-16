@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
+using Sldl.Core.Models;
 using Soulseek;
 using System.Collections.Concurrent;
 using File = Soulseek.File;
@@ -142,7 +142,7 @@ namespace Tests.ResultSorterTests
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "A", title: "T");
 
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(0, ordered.Count);
         }
@@ -157,7 +157,7 @@ namespace Tests.ResultSorterTests
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(1, ordered.Count);
             Assert.AreEqual("user1", ordered[0].response.Username);
@@ -179,7 +179,7 @@ namespace Tests.ResultSorterTests
             // "loser" has 0, which is not > 0
 
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(2, ordered.Count);
             Assert.AreEqual("winner", ordered[0].response.Username);
@@ -198,7 +198,7 @@ namespace Tests.ResultSorterTests
             // "baduser" has 0 which is not > 0
 
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(0, ordered.Count);
         }
@@ -216,7 +216,7 @@ namespace Tests.ResultSorterTests
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(2, ordered.Count);
             Assert.AreEqual("freeslot", ordered[0].response.Username);
@@ -236,7 +236,7 @@ namespace Tests.ResultSorterTests
             var counts = new ConcurrentDictionary<string, int>();
             var track = TestHelpers.CreateQuery(artist: "Artist", title: "Track");
 
-            var ordered = ResultSorter.OrderedResults(results, track, config, counts).ToList();
+            var ordered = ResultSorter.OrderedResults(results, track, config.Search, counts).ToList();
 
             Assert.AreEqual(2, ordered.Count);
             Assert.AreEqual("flacuser", ordered[0].response.Username);

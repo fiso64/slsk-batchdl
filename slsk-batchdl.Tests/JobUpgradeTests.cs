@@ -1,7 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
-using Enums;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
 using System.Collections.Generic;
 using System.Linq;
 

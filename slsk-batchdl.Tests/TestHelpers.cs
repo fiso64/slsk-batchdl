@@ -1,11 +1,11 @@
-using Models;
-using Jobs;
-using Services;
-using Enums;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core.Services;
+using Sldl.Core;
 using Soulseek;
 using File = Soulseek.File;
-using Settings;
-using Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 
 namespace Tests
 {

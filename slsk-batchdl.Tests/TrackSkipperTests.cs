@@ -1,8 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
-using Enums;
-using Services;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Services;
 
 namespace Tests.TrackSkipperTests
 {

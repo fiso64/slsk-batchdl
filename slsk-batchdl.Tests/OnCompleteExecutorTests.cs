@@ -1,6 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Enums;
+using Sldl.Core.Models;
+using Sldl.Core;
 using System.Reflection;
 
 namespace Tests.OnCompleteExecutorTests

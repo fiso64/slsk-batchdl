@@ -1,10 +1,10 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
-using Models;
-using Jobs;
-using Services;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core.Services;
 using Tests.ClientTests;
-using Settings;
+using Sldl.Core.Settings;
 
 namespace Tests.Unit
 {
@@ -63,7 +63,7 @@ namespace Tests.Unit
         private Searcher CreateSearcher(ISoulseekClient client, DownloadSettings config)
         {
             var registry = TestHelpers.CreateSessionRegistry();
-            return new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            return new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
         }
 
         [TestMethod]
@@ -78,7 +78,7 @@ namespace Tests.Unit
             var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
             var responseData = new ResponseData();
 
-            await searcher.SearchAlbum(job, config, responseData, CancellationToken.None);
+            await searcher.SearchAlbum(job, config.Search, responseData, CancellationToken.None);
 
             // We expect folders matching "ELO" AND "Time" (or at least "Time")
             // 1. User1: ELO\Time (10 tracks)
@@ -102,11 +102,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
-            var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
+            var results = await searcher.SearchAggregateAlbum(job, config.Search, responseData, CancellationToken.None);
 
             // Expected groups:
             // 1. Time Standard (10 tracks, lengths 181..190 - shared by User1, User6)
@@ -130,11 +130,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 2; // Only return if shared by 2+ peers
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
-            var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
+            var results = await searcher.SearchAggregateAlbum(job, config.Search, responseData, CancellationToken.None);
 
             // Only the "Standard Time" version (shared by User1 and User6) meets the threshold.
             Assert.AreEqual(1, results.Count, "High entropy filter (minShares=2) failed.");
@@ -164,11 +164,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
-            await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
+            await searcher.SearchAggregate(job, config.Search, responseData, CancellationToken.None);
 
             // Verified groups: 
             // 1. "Blue Sky" group (User1, User2)
@@ -198,11 +198,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
-            await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
+            await searcher.SearchAggregate(job, config.Search, responseData, CancellationToken.None);
 
             // Should all three group into one job after inference handles the name variations.
             Assert.AreEqual(1, job.Songs.Count, "Should group all name variations into a single SongJob.");
@@ -229,11 +229,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AggregateJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
             var responseData = new ResponseData();
 
-            await searcher.SearchAggregate(job, config, responseData, CancellationToken.None);
+            await searcher.SearchAggregate(job, config.Search, responseData, CancellationToken.None);
 
             // Version A has more shares (3) so it should be first, even though bitrate is lower.
             Assert.AreEqual(2, job.Songs.Count);
@@ -262,11 +262,11 @@ namespace Tests.Unit
             config.Search.MinSharesAggregate = 1;
 
             var registry = TestHelpers.CreateSessionRegistry();
-            var searcher = new Searcher(client, registry, registry, Utilities.NullProgressReporter.Instance, 10, 10);
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
             var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
             var responseData = new ResponseData();
 
-            var results = await searcher.SearchAggregateAlbum(job, config, responseData, CancellationToken.None);
+            var results = await searcher.SearchAggregateAlbum(job, config.Search, responseData, CancellationToken.None);
 
             // First result should be the one with 2 shares.
             Assert.AreEqual(2, results.Count);

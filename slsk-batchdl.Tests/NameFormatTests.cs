@@ -1,8 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
 using System.Reflection;
-using Settings;
+using Sldl.Core.Settings;
+using Sldl.Core.Services;
 
 namespace Tests.NameFormat
 {
@@ -56,7 +57,7 @@ namespace Tests.NameFormat
 
             var result = (string?)method!.Invoke(null, new object[] {
                 cfg.Output.NameFormat,
-                cfg,
+                cfg.Output.InvalidReplaceStr,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile),
             });
@@ -72,7 +73,7 @@ namespace Tests.NameFormat
 
             var result2 = (string?)method.Invoke(null, new object[] {
                 cfg.Output.NameFormat,
-                cfg,
+                cfg.Output.InvalidReplaceStr,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile2),
             });
@@ -88,7 +89,7 @@ namespace Tests.NameFormat
 
             var result3 = (string?)method.Invoke(null, new object[] {
                 cfg.Output.NameFormat,
-                cfg,
+                cfg.Output.InvalidReplaceStr,
                 ctx,
                 (Func<TagLib.File?>)(() => tagLibFile3),
             });

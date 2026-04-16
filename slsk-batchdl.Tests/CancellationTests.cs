@@ -1,9 +1,10 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
-using Jobs;
-using Enums;
-using Services;
-using Settings;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 
 namespace Tests.Cancellation
 {
@@ -37,7 +38,7 @@ namespace Tests.Cancellation
 
             var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
             var clientManager = TestHelpers.CreateMockClientManager(client, eng);
-            var engine = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+            var engine = new DownloadEngine(eng, clientManager);
             engine.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
             engine.CompleteEnqueue();
             return (engine, outputDir);

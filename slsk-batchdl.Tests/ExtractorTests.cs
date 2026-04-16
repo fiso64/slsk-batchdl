@@ -1,9 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
-using Enums;
-using Extractors;
-using Settings;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Extractors;
+using Sldl.Core.Settings;
 
 namespace Tests.Extractors
 {

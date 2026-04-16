@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
+using Sldl.Core.Models;
 using Soulseek;
 
 namespace Tests.FileConditionsTests

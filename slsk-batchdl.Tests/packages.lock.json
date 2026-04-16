@@ -227,6 +227,12 @@
         "type": "Project",
         "dependencies": {
           "Goblinfactory.Konsole": "[7.0.0.7-alpha, )",
+          "Sldl.Core": "[2.7.0-dev, )"
+        }
+      },
+      "Sldl.Core": {
+        "type": "Project",
+        "dependencies": {
           "Google.Apis.YouTube.v3": "[1.69.0.3680, )",
           "HtmlAgilityPack": "[1.11.72, )",
           "SmallestCSVParser": "[1.2.0, )",

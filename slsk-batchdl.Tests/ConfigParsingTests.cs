@@ -1,9 +1,10 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
-using Enums;
-using Services;
-using Settings;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 
 namespace Tests.ConfigParsingTests
 {
@@ -192,7 +193,8 @@ namespace Tests.ConfigParsingTests
             var songJob = new SongJob(query ?? new SongQuery { Title = "Some Song", Artist = "Some Artist" });
             var albumJob = (AlbumJob)((IUpgradeable)songJob).Upgrade(album: true, aggregate: aggregate).First();
             JobPreparer.PrepareSubtree(albumJob, startConfig);
-            Preprocessor.PreprocessAlbum(albumJob, albumJob.Config);
+            Preprocessor.PreprocessAlbum(albumJob, albumJob.Config.Preprocess);
+            JobPreparer.ApplySearchSettings(albumJob, albumJob.Config.Search);
             return albumJob;
         }
 
@@ -246,10 +248,10 @@ namespace Tests.ConfigParsingTests
     [TestClass]
     public class ConfigManagerBindingTests
     {
-        private static (Settings.EngineSettings eng, Settings.DownloadSettings dl, Settings.CliSettings cli)
+        private static (EngineSettings eng, DownloadSettings dl, CliSettings cli)
             Bind(params string[] args)
         {
-            var file = new Settings.ConfigFile("none", new Dictionary<string, Settings.ProfileEntry>());
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
             return ConfigManager.Bind(file, args);
         }
 
@@ -440,11 +442,11 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Profile_DefaultAppliedFirst()
         {
-            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            var profiles = new Dictionary<string, ProfileEntry>
             {
                 ["default"] = new(["--connect-timeout", "1000"], null),
             };
-            var file = new Settings.ConfigFile("none", profiles);
+            var file = new ConfigFile("none", profiles);
             var (eng, _, _) = ConfigManager.Bind(file, []);
             Assert.AreEqual(1000, eng.ConnectTimeout);
         }
@@ -452,11 +454,11 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Profile_CliOverridesDefault()
         {
-            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            var profiles = new Dictionary<string, ProfileEntry>
             {
                 ["default"] = new(["--connect-timeout", "1000"], null),
             };
-            var file = new Settings.ConfigFile("none", profiles);
+            var file = new ConfigFile("none", profiles);
             var (eng, _, _) = ConfigManager.Bind(file, ["--connect-timeout", "9000"]);
             Assert.AreEqual(9000, eng.ConnectTimeout);
         }
@@ -464,12 +466,12 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Profile_NamedAppliedBetweenDefaultAndCli()
         {
-            var profiles = new Dictionary<string, Settings.ProfileEntry>
+            var profiles = new Dictionary<string, ProfileEntry>
             {
                 ["default"] = new(["--connect-timeout", "1000"], null),
                 ["fast"]    = new(["--connect-timeout", "500"], null),
             };
-            var file = new Settings.ConfigFile("none", profiles);
+            var file = new ConfigFile("none", profiles);
             var (eng, _, _) = ConfigManager.Bind(file, [], profileName: "fast");
             Assert.AreEqual(500, eng.ConnectTimeout);
         }

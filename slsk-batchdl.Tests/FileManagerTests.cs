@@ -1,11 +1,12 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Models;
-using Jobs;
-using Enums;
+using Sldl.Core.Models;
+using Sldl.Core.Jobs;
+using Sldl.Core;
 using System.Reflection;
 using System.IO;
-using Services;
-using Settings;
+using Sldl.Core.Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 
 namespace Tests.FileManagerTests
 {
@@ -16,7 +17,7 @@ namespace Tests.FileManagerTests
         {
             config ??= TestHelpers.CreateDefaultSettings().Download;
             job ??= new JobList();
-            return new FileManager(job, config);
+            return new FileManager(job, config.Output, config.Extraction);
         }
 
         [TestMethod]
@@ -49,7 +50,7 @@ namespace Tests.FileManagerTests
             var config = TestHelpers.CreateDefaultSettings().Download;
             config.Output.ParentDir = "/music";
             var job = new AlbumJob(new AlbumQuery());
-            var manager = new FileManager(job, config);
+            var manager = new FileManager(job, config.Output, config.Extraction);
 
             manager.SetremoteBaseDir("Music\\Artist\\Album");
 
@@ -235,7 +236,7 @@ namespace Tests.FileManagerTests
         {
             // Setup
             var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            var manager = new FileManager(job, config);
+            var manager = new FileManager(job, config.Output, config.Extraction);
             manager.SetremoteBaseDir(@"Artist1\Album1"); // slsk-style path
 
             // File paths
@@ -257,7 +258,7 @@ namespace Tests.FileManagerTests
             // Setup
             var job = new JobList();
             job.ItemName = "MyPlaylist";
-            var manager = new FileManager(job, config);
+            var manager = new FileManager(job, config.Output, config.Extraction);
 
             // File paths
             string source = Path.Combine(testRoot, "temp_song.mp3");
@@ -278,7 +279,7 @@ namespace Tests.FileManagerTests
             // Setup
             var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             config.Output.NameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
-            var manager = new FileManager(job, config);
+            var manager = new FileManager(job, config.Output, config.Extraction);
             manager.SetremoteBaseDir(@"Artist1\Album1");
 
             // Create some "downloaded" files
@@ -341,7 +342,7 @@ namespace Tests.FileManagerTests
             var albumJob = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             albumJob.ItemName = aggJob.ItemName; // Inherited from AlbumAggregateJob
             
-            var manager = new FileManager(albumJob, config);
+            var manager = new FileManager(albumJob, config.Output, config.Extraction);
             manager.SetremoteBaseDir(@"User1\Artist1\Album1"); // Remote path
             
             string source = Path.Combine(testRoot, "track.mp3");
@@ -360,7 +361,7 @@ namespace Tests.FileManagerTests
             var job = new AggregateJob(new SongQuery { Artist = "Artist1" });
             job.ItemName = "Artist1"; // Set by JobList
             
-            var manager = new FileManager(job, config);
+            var manager = new FileManager(job, config.Output, config.Extraction);
             
             string source = Path.Combine(testRoot, "temp.mp3");
             File.WriteAllText(source, "data");

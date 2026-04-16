@@ -1,9 +1,10 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
-using Jobs;
-using Enums;
-using Services;
-using Settings;
+using Sldl.Core.Jobs;
+using Sldl.Core;
+using Sldl.Core.Services;
+using Sldl.Core.Settings;
+using Sldl.Cli;
 
 namespace Tests.FastSearch
 {
@@ -29,7 +30,7 @@ namespace Tests.FastSearch
 
             var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
             var clientManager = TestHelpers.CreateMockClientManager(client, eng);
-            var app           = new DownloadEngine(eng, clientManager, Utilities.NullProgressReporter.Instance);
+            var app           = new DownloadEngine(eng, clientManager);
             app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
             app.CompleteEnqueue();
             return (app, outputDir);
