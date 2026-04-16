@@ -1,0 +1,69 @@
+using System.Reflection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Sldl.Cli;
+using Sldl.Core;
+using Sldl.Core.Jobs;
+using Sldl.Core.Models;
+
+namespace Tests.ProgressReporterTests;
+
+[TestClass]
+public class CliProgressReporterTests
+{
+    [TestMethod]
+    public void StateChanged_FailedPreResolvedSong_DoesNotRenderAsSucceeded()
+    {
+        var reporter = new CliProgressReporter(new CliSettings());
+        try
+        {
+            var file = new Soulseek.File(1, @"Music\Artist\Song.flac", 100, ".flac");
+            var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, [file]);
+            var candidate = new FileCandidate(response, file);
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Song" })
+            {
+                ResolvedTarget = candidate,
+                State = JobState.Failed,
+                FailureReason = FailureReason.Cancelled,
+            };
+
+            InvokePrivate(reporter, "ReportDownloadStart", song, candidate);
+            var barData = GetBarData(reporter, song);
+
+            InvokePrivate(reporter, "ReportStateChanged", song);
+
+            Assert.AreEqual("Failed", GetField<string>(barData, "StateLabel"));
+            Assert.AreNotEqual(100, GetField<int>(barData, "Pct"));
+            StringAssert.Contains(GetField<string>(barData, "BaseText"), "Cancelled");
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
+    private static void InvokePrivate(object target, string name, params object[] args)
+    {
+        target.GetType()
+            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(target, args);
+    }
+
+    private static object GetBarData(CliProgressReporter reporter, SongJob song)
+    {
+        var bars = typeof(CliProgressReporter)
+            .GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(reporter)!;
+
+        object?[] args = [song, null];
+        var found = (bool)bars.GetType().GetMethod("TryGetValue")!.Invoke(bars, args)!;
+        Assert.IsTrue(found);
+        return args[1]!;
+    }
+
+    private static T GetField<T>(object target, string name)
+    {
+        return (T)target.GetType()
+            .GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+            .GetValue(target)!;
+    }
+}

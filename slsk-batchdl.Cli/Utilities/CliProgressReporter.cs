@@ -171,10 +171,9 @@ public class CliProgressReporter
 
     private void ReportStateChanged(SongJob song)
     {
-        var chosen = song.ChosenCandidate;
         if (_bars.TryGetValue(song, out var d) && d.Bar != null)
         {
-            bool succeeded = chosen != null || song.State == JobState.Done;
+            bool succeeded = song.State is JobState.Done or JobState.AlreadyExists;
             d.StateLabel = succeeded ? "Succeeded" : "Failed";
             if (succeeded)
                 d.Pct = 100;

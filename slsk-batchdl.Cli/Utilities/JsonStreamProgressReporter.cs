@@ -113,7 +113,7 @@ public class JsonStreamProgressReporter
 
     private void ReportStateChanged(SongJob song)
     {
-        var chosen = song.ChosenCandidate;
+        var chosen = song.State is JobState.Done or JobState.AlreadyExists ? song.ChosenCandidate : null;
         WriteEvent("track_state", new
         {
             artist        = song.Query.Artist,
