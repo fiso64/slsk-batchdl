@@ -21,6 +21,9 @@ internal static partial class Program
         var configFile = ConfigManager.Load(configPath);
         var (engineSettings, rootSettings, cliSettings) = ConfigManager.Bind(configFile, args);
 
+        if (!string.IsNullOrWhiteSpace(engineSettings.LogFilePath))
+            Logger.AddOrReplaceFile(engineSettings.LogFilePath);
+
         Logger.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
         
         var cts = new CancellationTokenSource();

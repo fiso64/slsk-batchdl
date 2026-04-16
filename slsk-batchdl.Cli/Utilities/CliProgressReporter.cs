@@ -22,6 +22,8 @@ public class CliProgressReporter
 
     static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
 
+    private bool PlainMode => _cli.NoProgress;
+
     sealed class BarData
     {
         public ProgressBar? Bar;
@@ -151,11 +153,34 @@ public class CliProgressReporter
         return "Requested";
     }
 
+    private static string SongDisplay(SongJob song)
+    {
+        var chosen = song.ChosenCandidate;
+        return chosen != null
+            ? Printing.DisplayString(song.Query, chosen.File, chosen.Response, infoFirst: false)
+            : $"[{song.DisplayId}] {song}";
+    }
+
+    private static string TerminalLabel(SongJob song)
+    {
+        if (song.State is JobState.Done or JobState.AlreadyExists)
+            return "Succeeded";
+
+        var reason = FailureReasonLabel(song.FailureReason);
+        return reason.Length > 0 ? $"Failed [{reason}]" : "Failed";
+    }
+
 
     // ── event handlers ───────────────────────────────────────────────────
 
     private void ReportDownloadStart(SongJob song, FileCandidate candidate)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"Downloading: {Printing.DisplayString(song.Query, candidate.File, candidate.Response, infoFirst: false)}");
+            return;
+        }
+
         var d = _bars.GetOrAdd(song, _ => new BarData { Bar = Printing.GetProgressBar() });
         d.StateLabel = "Queued";
         d.BaseText   = Printing.DisplayString(song.Query, candidate.File, candidate.Response, infoFirst: false);
@@ -165,12 +190,20 @@ public class CliProgressReporter
 
     private void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes)
     {
+        if (PlainMode) return;
+
         if (!_bars.TryGetValue(song, out var d)) return;
         d.Pct = totalBytes > 0 ? (int)(bytesTransferred * 100 / totalBytes) : 0;
     }
 
     private void ReportStateChanged(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"{TerminalLabel(song)}: {SongDisplay(song)}");
+            return;
+        }
+
         if (_bars.TryGetValue(song, out var d) && d.Bar != null)
         {
             bool succeeded = song.State is JobState.Done or JobState.AlreadyExists;
@@ -213,6 +246,14 @@ public class CliProgressReporter
 
     private void ReportJobStarted(Job job)
     {
+        if (PlainMode)
+        {
+            string plainStatus = job is RetrieveFolderJob ? "retrieving folder" : "searching";
+            _jobStatuses[job] = plainStatus;
+            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{plainStatus}: {job.ToString(true)}");
+            return;
+        }
+
         var bar = Printing.GetProgressBar();
         _jobBars[job] = bar;
         string status = job is RetrieveFolderJob ? "retrieving folder" : "searching";
@@ -222,7 +263,14 @@ public class CliProgressReporter
 
     private void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
     {
-        if (Console.IsOutputRedirected || _cli.NoProgress)
+        if (PlainMode)
+        {
+            _jobStatuses[job] = "downloading";
+            Logger.Info($"[{job.DisplayId}] AlbumJob: downloading: {job.ToString(true)}");
+            return;
+        }
+
+        if (Console.IsOutputRedirected)
         {
             Printing.WriteLine();
             Printing.PrintAlbum(folder);
@@ -270,6 +318,12 @@ public class CliProgressReporter
 
     private void ReportAlbumDownloadCompleted(AlbumJob job)
     {
+        if (PlainMode)
+        {
+            _jobStatuses.TryRemove(job, out _);
+            return;
+        }
+
         if (_albumBlocks.TryGetValue(job, out var block))
         {
             int total = block.Songs.Count;
@@ -293,12 +347,29 @@ public class CliProgressReporter
 
     private void ReportJobFolderRetrieving(Job job)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}retrieving folder: {job.ToString(true)}");
+            return;
+        }
+
         _jobBars.TryGetValue(job, out var bar);
         Printing.RefreshOrPrint(bar, 0, "Getting all files in folder..", print: true);
     }
 
     private void ReportJobCompleted(Job job, bool found, int lockedFiles)
     {
+        if (PlainMode)
+        {
+            string status = found
+                ? (job is RetrieveFolderJob ? "found additional files in" : "found results")
+                : (job is RetrieveFolderJob ? "no additional files found" : "no results found");
+            string lockedMsg = !found && lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
+            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}{lockedMsg}");
+            _jobStatuses.TryRemove(job, out _);
+            return;
+        }
+
         _jobBars.TryGetValue(job, out var bar);
         if (!found)
         {
@@ -327,6 +398,12 @@ public class CliProgressReporter
 
     private void ReportSongSearching(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"Searching: [{song.DisplayId}] {song}");
+            return;
+        }
+
         if (_bars.TryGetValue(song, out var existing))
         {
             existing.StateLabel = "Searching";
@@ -344,6 +421,12 @@ public class CliProgressReporter
 
     private void ReportSongNotFound(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"Not found: [{song.DisplayId}] {song}");
+            return;
+        }
+
         if (!_bars.TryGetValue(song, out var d)) return;
         d.StateLabel = "Not found";
         var reason = FailureReasonLabel(song.FailureReason);
@@ -353,6 +436,12 @@ public class CliProgressReporter
 
     private void ReportSongFailed(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"{TerminalLabel(song)}: {SongDisplay(song)}");
+            return;
+        }
+
         if (!_bars.TryGetValue(song, out var d)) return;
         d.StateLabel = "Failed";
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
@@ -360,6 +449,8 @@ public class CliProgressReporter
 
     private void ReportDownloadStateChanged(SongJob song, string stateLabel)
     {
+        if (PlainMode) return;
+
         if (!_bars.TryGetValue(song, out var d)) return;
         d.StateLabel = stateLabel;
         Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
@@ -367,6 +458,12 @@ public class CliProgressReporter
 
     private void ReportOnCompleteStart(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"OnComplete start: {song}");
+            return;
+        }
+
         if (!_bars.TryGetValue(song, out var d) || d.Bar == null) return;
         _savedState[song] = (d.Bar.Line1 ?? "", d.Bar.Current);
         Printing.RefreshOrPrint(d.Bar, d.Bar.Current, "  OnComplete:  " + $"{song}");
@@ -374,6 +471,12 @@ public class CliProgressReporter
 
     private void ReportOnCompleteEnd(SongJob song)
     {
+        if (PlainMode)
+        {
+            Logger.Info($"OnComplete end: {song}");
+            return;
+        }
+
         if (!_bars.TryGetValue(song, out var d) || d.Bar == null) return;
         if (_savedState.TryGetValue(song, out var saved))
             Printing.RefreshOrPrint(d.Bar, saved.pos, saved.text);
@@ -381,6 +484,13 @@ public class CliProgressReporter
 
     private void ReportJobStatus(Job job, string status)
     {
+        if (PlainMode)
+        {
+            _jobStatuses[job] = status;
+            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}");
+            return;
+        }
+
         _jobStatuses[job] = status;
         if (_jobBars.TryGetValue(job, out var bar) && bar != null)
         {

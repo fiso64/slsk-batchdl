@@ -11,6 +11,27 @@ namespace Tests.ProgressReporterTests;
 public class CliProgressReporterTests
 {
     [TestMethod]
+    public void DownloadStart_NoProgress_DoesNotCreateProgressBar()
+    {
+        var reporter = new CliProgressReporter(new CliSettings { NoProgress = true });
+        try
+        {
+            var file = new Soulseek.File(1, @"Music\Artist\Song.flac", 100, ".flac");
+            var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, [file]);
+            var candidate = new FileCandidate(response, file);
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Song" });
+
+            InvokePrivate(reporter, "ReportDownloadStart", song, candidate);
+
+            Assert.IsFalse(HasBarData(reporter, song));
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
+    [TestMethod]
     public void StateChanged_FailedPreResolvedSong_DoesNotRenderAsSucceeded()
     {
         var reporter = new CliProgressReporter(new CliSettings());
@@ -50,14 +71,25 @@ public class CliProgressReporterTests
 
     private static object GetBarData(CliProgressReporter reporter, SongJob song)
     {
+        Assert.IsTrue(TryGetBarData(reporter, song, out var barData));
+        return barData!;
+    }
+
+    private static bool HasBarData(CliProgressReporter reporter, SongJob song)
+    {
+        return TryGetBarData(reporter, song, out _);
+    }
+
+    private static bool TryGetBarData(CliProgressReporter reporter, SongJob song, out object? barData)
+    {
         var bars = typeof(CliProgressReporter)
             .GetField("_bars", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(reporter)!;
 
         object?[] args = [song, null];
         var found = (bool)bars.GetType().GetMethod("TryGetValue")!.Invoke(bars, args)!;
-        Assert.IsTrue(found);
-        return args[1]!;
+        barData = args[1];
+        return found;
     }
 
     private static T GetField<T>(object target, string name)
