@@ -14,7 +14,7 @@ namespace Tests.SearchDownloadTests
         {
             // Arrange
             var index = TestHelpers.CreateTestIndex();
-            var (engineSettings, rootSettings, _) = TestHelpers.CreateDefaultSettings();
+            var (engineSettings, rootSettings) = TestHelpers.CreateDefaultSettings();
             var client = new ClientTests.MockSoulseekClient(index);
             var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
             var registry = TestHelpers.CreateSessionRegistry();

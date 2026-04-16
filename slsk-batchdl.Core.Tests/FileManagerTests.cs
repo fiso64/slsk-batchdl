@@ -6,7 +6,6 @@ using System.Reflection;
 using System.IO;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
-using Sldl.Cli;
 
 namespace Tests.FileManagerTests
 {
@@ -220,8 +219,9 @@ namespace Tests.FileManagerTests
         {
             testRoot = Path.Combine(Path.GetTempPath(), "slsk-org-tests-" + Guid.NewGuid().ToString().Substring(0, 8));
             Directory.CreateDirectory(testRoot);
-            var configFile = ConfigManager.Load("none");
-            (_, config, _) = ConfigManager.Bind(configFile, ["--path", testRoot, "dummy_input"]);
+            config = TestHelpers.CreateDefaultSettings().Download;
+            config.Output.ParentDir = testRoot;
+            config.Output.FailedAlbumPath = Path.Join(testRoot, "failed");
         }
 
         [TestCleanup]

@@ -5,7 +5,6 @@ using Sldl.Core.Jobs;
 using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
-using Sldl.Cli;
 using Tests.ClientTests;
 
 namespace Tests.EndToEnd
@@ -37,22 +36,17 @@ namespace Tests.EndToEnd
 
                 var testClient = MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
 
-                var testArgs = new string[]
-                {
-                    "--config",      "none",
-                    "--input",       "Artist1 - Song1",
-                    "--aggregate",
-                    "--path",        outputDir,
-                    "--skip-existing",
-                    "--skip-mode-output-dir", "name",
-                    "--min-shares-aggregate", "1",
-                    "--user",        "test_user",
-                    "--pass",        "test_pass",
-                    "--no-write-index",
-                    "--no-write-playlist"
-                };
+                var eng = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var dl = new DownloadSettings();
+                dl.Extraction.Input = "Artist1 - Song1";
+                dl.Output.ParentDir = outputDir;
+                dl.Output.WriteIndex = false;
+                dl.Output.WritePlaylist = false;
+                dl.Skip.SkipExisting = true;
+                dl.Skip.SkipMode = SkipMode.Name;
+                dl.Search.IsAggregate = true;
+                dl.Search.MinSharesAggregate = 1;
 
-                var (eng, dl, _) = ConfigManager.Bind(ConfigManager.Load("none"), testArgs);
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, eng);
                 var app = new DownloadEngine(eng, clientManager);
                 app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);

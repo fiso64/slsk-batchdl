@@ -4,7 +4,6 @@ using Sldl.Core.Jobs;
 using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
-using Sldl.Cli;
 
 namespace Tests.FastSearch
 {
@@ -19,16 +18,18 @@ namespace Tests.FastSearch
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-fastsearch-" + Guid.NewGuid());
             System.IO.Directory.CreateDirectory(outputDir);
 
-            var args = new[]
-            {
-                "--config", "none",
-                "--input",  input,
-                "--path",   outputDir,
-                "--user",   "test_user",
-                "--pass",   "test_pass",
-            }.Concat(extraArgs ?? Array.Empty<string>()).ToArray();
+            var eng = new EngineSettings { Username = "test_user", Password = "test_pass" };
+            var dl = new DownloadSettings();
+            dl.Extraction.Input = input;
+            dl.Output.ParentDir = outputDir;
 
-            var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
+            extraArgs ??= Array.Empty<string>();
+            if (extraArgs.Contains("--fast-search"))
+                dl.Search.FastSearch = true;
+            var minSpeedIndex = Array.IndexOf(extraArgs, "--fast-search-min-up-speed");
+            if (minSpeedIndex >= 0 && minSpeedIndex + 1 < extraArgs.Length)
+                dl.Search.FastSearchMinUpSpeed = double.Parse(extraArgs[minSpeedIndex + 1]);
+
             var clientManager = TestHelpers.CreateMockClientManager(client, eng);
             var app           = new DownloadEngine(eng, clientManager);
             app.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);

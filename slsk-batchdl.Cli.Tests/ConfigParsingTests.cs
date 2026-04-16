@@ -11,10 +11,16 @@ namespace Tests.ConfigParsingTests
     [TestClass]
     public class DefaultValuesTests
     {
+        private static DownloadSettings Cfg()
+        {
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
+            return ConfigManager.Bind(file, ["some input"]).Download;
+        }
+
         [TestMethod]
         public void Defaults_NecessaryCondFormats_AreSet()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             CollectionAssert.IsSubsetOf(
                 new[] { "mp3", "flac", "ogg" },
                 config.Search.NecessaryCond.Formats);
@@ -23,7 +29,7 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Defaults_PreferredCondBitrate_IsSet()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             Assert.IsNotNull(config.Search.PreferredCond.MinBitrate);
             Assert.IsNotNull(config.Search.PreferredCond.MaxBitrate);
             Assert.IsTrue(config.Search.PreferredCond.MinBitrate > 0);
@@ -32,7 +38,7 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Defaults_PreferredCondLengthTolerance_IsSet()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             Assert.IsNotNull(config.Search.PreferredCond.LengthTolerance);
             Assert.IsTrue(config.Search.PreferredCond.LengthTolerance >= 0);
         }
@@ -40,7 +46,7 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Defaults_AlbumFalse_AggregateFalse()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             Assert.IsFalse(config.Extraction.IsAlbum);
             Assert.IsFalse(config.Search.IsAggregate);
         }
@@ -48,14 +54,14 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void Defaults_SkipExistingTrue()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             Assert.IsTrue(config.Skip.SkipExisting);
         }
 
         [TestMethod]
         public void Defaults_DoNotDownload_FalseByDefault()
         {
-            var config = TestHelpers.CreateDefaultSettings().Download;
+            var config = Cfg();
             Assert.IsFalse(config.DoNotDownload);
         }
     }

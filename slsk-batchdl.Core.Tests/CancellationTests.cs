@@ -4,7 +4,6 @@ using Sldl.Core.Jobs;
 using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
-using Sldl.Cli;
 
 namespace Tests.Cancellation
 {
@@ -27,16 +26,16 @@ namespace Tests.Cancellation
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-cancel-" + Guid.NewGuid());
             System.IO.Directory.CreateDirectory(outputDir);
 
-            var args = new[]
-            {
-                "--config", "none",
-                "--input",  input,
-                "--path",   outputDir,
-                "--user",   "u",
-                "--pass",   "p",
-            }.Concat(extra ?? Array.Empty<string>()).ToArray();
+            var eng = new EngineSettings { Username = "u", Password = "p" };
+            var dl = new DownloadSettings();
+            dl.Extraction.Input = input;
+            dl.Output.ParentDir = outputDir;
 
-            var (eng, dl, _)  = ConfigManager.Bind(ConfigManager.Load("none"), args);
+            extra ??= Array.Empty<string>();
+            var inputTypeIndex = Array.IndexOf(extra, "--input-type");
+            if (inputTypeIndex >= 0 && inputTypeIndex + 1 < extra.Length)
+                dl.Extraction.InputType = Enum.Parse<InputType>(extra[inputTypeIndex + 1], ignoreCase: true);
+
             var clientManager = TestHelpers.CreateMockClientManager(client, eng);
             var engine = new DownloadEngine(eng, clientManager);
             engine.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);

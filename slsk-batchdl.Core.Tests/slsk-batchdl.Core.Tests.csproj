@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../slsk-batchdl.Core/slsk-batchdl.Core.csproj" />
-    <ProjectReference Include="../slsk-batchdl.Cli/slsk-batchdl.Cli.csproj" />
   </ItemGroup>
 
 </Project> 

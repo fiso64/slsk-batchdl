@@ -2,7 +2,6 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Text;
 using Sldl.Core.Jobs;
 using Sldl.Core.Services;
-using Sldl.Cli;
 
 namespace Tests.EndToEnd
 {
@@ -38,21 +37,15 @@ namespace Tests.EndToEnd
             // Build the mock client the same way SoulseekClientManager does for --mock-files-dir
             var testClient = ClientTests.MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, albumDir);
 
-            var testArgs = new string[]
-            {
-                "--config",      "none",
-                "--input",       "TestArtist TestAlbum",
-                "--album",
-                "--path",        outputDir,
-                "--name-format", "{foldername}/{filename}",
-                "--user",        "test_user",
-                "--pass",        "test_pass",
-            };
-
             try
             {
-                var configFile = ConfigManager.Load("none");
-                var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Extraction.Input = "TestArtist TestAlbum";
+                rootSettings.Extraction.IsAlbum = true;
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.Output.NameFormat = "{foldername}/{filename}";
+
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
                 var app = new DownloadEngine(engineSettings, clientManager);
                 app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
@@ -92,20 +85,13 @@ namespace Tests.EndToEnd
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-batchdl-e2e", Guid.NewGuid().ToString());
             System.IO.Directory.CreateDirectory(outputDir);
 
-            var testArgs = new string[]
-            {
-                // Don't use any global configs during testing!
-                "--config", "none",
-                "--input", "testartist - testalbum",
-                "--album",
-                "--path", outputDir,
-                "--name-format", "{foldername}/{filename}",
-                "--user", "test_user",
-                "--pass", "test_pass",
-            };
+            var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+            var rootSettings = new DownloadSettings();
+            rootSettings.Extraction.Input = "testartist - testalbum";
+            rootSettings.Extraction.IsAlbum = true;
+            rootSettings.Output.ParentDir = outputDir;
+            rootSettings.Output.NameFormat = "{foldername}/{filename}";
 
-            var configFile = ConfigManager.Load("none");
-            var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
             var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
             var app = new DownloadEngine(engineSettings, clientManager);
             app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
@@ -141,47 +127,5 @@ namespace Tests.EndToEnd
             }
         }
 
-        [TestMethod]
-        public async Task AlbumDownload_CliPath_Completes()
-        {
-            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-cli-" + Guid.NewGuid());
-            var albumDir  = Path.Combine(musicRoot, "TestArtist", "TestAlbum");
-            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-cli-" + Guid.NewGuid());
-            Directory.CreateDirectory(albumDir);
-            Directory.CreateDirectory(outputDir);
-
-            File.WriteAllBytes(Path.Combine(albumDir, "01. Track1.mp3"), TestHelpers.EmptyMp3Bytes);
-            File.WriteAllBytes(Path.Combine(albumDir, "02. Track2.mp3"), TestHelpers.EmptyMp3Bytes);
-
-            // Use the real CLI path: SoulseekClientManager created from config (not pre-injected).
-            // mockFilesDir triggers LocalFilesSoulseekClient creation inside SoulseekClientManager.
-            var testArgs = new string[]
-            {
-                "--config",              "none",
-                "--input",               "TestArtist TestAlbum",
-                "--album",
-                "--path",                outputDir,
-                "--mock-files-dir",      musicRoot,
-                "--mock-files-no-read-tags",
-                "--user",                "test_user",
-                "--pass",                "test_pass",
-            };
-
-            var configFile = ConfigManager.Load("none");
-            var (engineSettings, rootSettings, _) = ConfigManager.Bind(configFile, testArgs);
-
-            var clientManager = new SoulseekClientManager(engineSettings);  // CLI path: no pre-injected client
-            var app           = new DownloadEngine(engineSettings, clientManager);
-            app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
-            app.CompleteEnqueue();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await app.RunAsync(cts.Token);
-
-            Assert.IsFalse(cts.IsCancellationRequested, "RunAsync timed out — connection was never initiated");
-
-            var files = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
-            Assert.IsTrue(files.Length >= 2, $"Expected >=2 downloaded files, got {files.Length}");
-        }
     }
 }

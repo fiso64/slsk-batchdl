@@ -25,7 +25,8 @@ slsk-batchdl/                       (solution root — unchanged)
 │   └── slsk-batchdl.Core.csproj
 ├── slsk-batchdl.Cli/               (renamed from slsk-batchdl/)
 │   └── slsk-batchdl.Cli.csproj
-├── slsk-batchdl.Tests/             (reference updated to Core)
+├── slsk-batchdl.Core.Tests/        (Core-only tests)
+├── slsk-batchdl.Cli.Tests/         (CLI/config tests)
 └── slsk-batchdl.HelpGenerator/     (unchanged)
 ```
 
@@ -108,11 +109,12 @@ slsk-batchdl/                       (solution root — unchanged)
 | `Utilities/Printing.cs` | — |
 | `Properties/PublishProfiles/*` | — |
 
-### Tests (`slsk-batchdl.Tests/`)
+### Tests
 
-- `<ProjectReference>` updated from `slsk-batchdl` → `slsk-batchdl.Core`
+- `slsk-batchdl.Core.Tests` references only `slsk-batchdl.Core`.
+- `slsk-batchdl.Cli.Tests` references `slsk-batchdl.Cli` and `slsk-batchdl.Core`.
 - `<Compile Include>` links for `MockSoulseekClient*.cs` removed from Core's csproj;
-  the mock files already live in the Tests folder and are only needed there
+  the mock files live in `slsk-batchdl.Core.Tests/TestClients` and are only needed there.
 
 ---
 
@@ -269,12 +271,12 @@ Console.ResetColor();
 
 The main project's csproj currently links mock files from the Tests folder:
 ```xml
-<Compile Include="../slsk-batchdl.Tests/TestClients/MockSoulseekClient*.cs" ... />
+<Compile Include="../slsk-batchdl.Core.Tests/TestClients/MockSoulseekClient*.cs" ... />
 ```
 
 This link is removed from `slsk-batchdl.Core.csproj`. The files already live in
-`slsk-batchdl.Tests/` and only need to be compiled there. If any Core internals need to be
-accessed from tests, add `[assembly: InternalsVisibleTo("slsk-batchdl.Tests")]` to Core.
+`slsk-batchdl.Core.Tests/` and only need to be compiled there. If any Core internals need to be
+accessed from tests, add `[assembly: InternalsVisibleTo("slsk-batchdl.Core.Tests")]` to Core.
 
 ---
 
@@ -324,7 +326,8 @@ Step 3 is now structurally complete.
 - `CliProgressReporter` and `JsonStreamProgressReporter` attach to `engine.Events`.
 - `Logger` no longer depends directly on CLI `Printing`.
 - Core no longer links `MockSoulseekClient` files from the test project.
-- Test project references point at the split projects.
+- Tests are split into `slsk-batchdl.Core.Tests` and `slsk-batchdl.Cli.Tests`; Core tests reference
+  only Core, while CLI/config tests reference the CLI project.
 - Test namespace/import fallout was cleaned up, including a test-only `GlobalUsings.cs`.
 - Search-setting application was moved into `JobPreparer.ApplySearchSettings` so both the engine
   and tests use the same preparation helper.
@@ -335,8 +338,10 @@ Step 3 is now structurally complete.
 ### Verification status
 
 - `dotnet build slsk-batchdl.sln --no-restore` succeeds with existing warnings only.
-- `dotnet test slsk-batchdl.Tests/slsk-batchdl.Tests.csproj --no-build` passes:
-  305 passed, 0 failed.
+- `dotnet test slsk-batchdl.Core.Tests/slsk-batchdl.Core.Tests.csproj --no-build` passes:
+  223 passed, 0 failed.
+- `dotnet test slsk-batchdl.Cli.Tests/slsk-batchdl.Cli.Tests.csproj --no-build` passes:
+  82 passed, 0 failed.
 - CLI smoke test succeeds:
   `dotnet slsk-batchdl.Cli/bin/Debug/net10.0/sldl.dll --help`
   prints `Usage: sldl <input> [OPTIONS]`, confirming the output assembly name remains `sldl`.

@@ -5,7 +5,6 @@ using Sldl.Core;
 using Soulseek;
 using File = Soulseek.File;
 using Sldl.Core.Settings;
-using Sldl.Cli;
 
 namespace Tests
 {
@@ -110,10 +109,14 @@ namespace Tests
             return new SongJob(new SongQuery { Artist = artist, Title = title, Album = album, Length = length });
         }
 
-        public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli) CreateDefaultSettings()
+        public static (EngineSettings Engine, DownloadSettings Download) CreateDefaultSettings()
         {
-            var configFile = ConfigManager.Load("none");
-            return ConfigManager.Bind(configFile, ["some input"]);
+            var engine = new EngineSettings();
+            var download = new DownloadSettings();
+            download.Extraction.Input = "some input";
+            download.Output.ParentDir = System.IO.Directory.GetCurrentDirectory();
+            download.Output.FailedAlbumPath = Path.Join(download.Output.ParentDir, "failed");
+            return (engine, download);
         }
 
         public static readonly byte[] EmptyMp3Bytes =
