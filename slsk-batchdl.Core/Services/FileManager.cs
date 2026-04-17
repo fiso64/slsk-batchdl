@@ -50,10 +50,16 @@ public partial class FileManager
 {
     readonly Job job;
     readonly HashSet<object> organized = new();
+    readonly object sync = new();
     public string? remoteBaseDir { get; private set; }
     public string? remoteImagesCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }
-    public bool downloadingAdditionalImages = false;
+    private bool downloadingAdditionalImagesValue = false;
+    public bool downloadingAdditionalImages
+    {
+        get { lock (sync) return downloadingAdditionalImagesValue; }
+        set { lock (sync) downloadingAdditionalImagesValue = value; }
+    }
     private readonly OutputSettings output;
     private readonly ExtractionSettings extraction;
 
@@ -71,96 +77,108 @@ public partial class FileManager
 
     public string GetSavePathNoExt(string sourceFname)
     {
-        string? rcd = downloadingAdditionalImages ? remoteImagesCommonDir : remoteBaseDir;
-        string parent = output.ParentDir;
-        string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
-
-        if (!string.IsNullOrEmpty(job.DefaultFolderName()))
-            parent = Path.Join(parent, job.DefaultFolderName());
-
-        if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
+        lock (sync)
         {
-            string dirname = defaultFolderName ?? Path.GetFileName(rcd);
-            string normFname = Utils.NormalizedPath(sourceFname);
-            string relpath = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
-            parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
-        }
+            string? rcd = downloadingAdditionalImagesValue ? remoteImagesCommonDir : remoteBaseDir;
+            string parent = output.ParentDir;
+            string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
-        return Path.Join(parent, name).CleanPath(output.InvalidReplaceStr);
+            if (!string.IsNullOrEmpty(job.DefaultFolderName()))
+                parent = Path.Join(parent, job.DefaultFolderName());
+
+            if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
+            {
+                string dirname = defaultFolderName ?? Path.GetFileName(rcd);
+                string normFname = Utils.NormalizedPath(sourceFname);
+                string relpath = normFname.StartsWith(rcd) ? Path.GetRelativePath(rcd, normFname) : "";
+                parent = Path.Join(parent, dirname, Path.GetDirectoryName(relpath) ?? "");
+            }
+
+            return Path.Join(parent, name).CleanPath(output.InvalidReplaceStr);
+        }
     }
 
     public void SetremoteBaseDir(string? dir)
     {
-        this.remoteBaseDir = dir != null ? Utils.NormalizedPath(dir) : null;
+        lock (sync)
+            this.remoteBaseDir = dir != null ? Utils.NormalizedPath(dir) : null;
     }
 
     public void SetRemoteCommonImagesDir(string? dir)
     {
-        this.remoteImagesCommonDir = dir != null ? Utils.NormalizedPath(dir) : null;
+        lock (sync)
+            this.remoteImagesCommonDir = dir != null ? Utils.NormalizedPath(dir) : null;
     }
 
     public void SetDefaultFolderName(string? name)
     {
-        this.defaultFolderName = name != null ? Utils.NormalizedPath(name) : null;
+        lock (sync)
+            this.defaultFolderName = name != null ? Utils.NormalizedPath(name) : null;
     }
 
     // Organizes all files in a completed album download.
     public void OrganizeAlbum(Job albumJob, List<SongJob> allFiles, List<SongJob>? additionalImages, bool remainingOnly = true)
     {
-        foreach (var file in allFiles.Where(f => !f.IsNotAudio))
+        lock (sync)
         {
-            if (remainingOnly && organized.Contains(file))
-                continue;
-            OrganizeSong(file);
-        }
+            foreach (var file in allFiles.Where(f => !f.IsNotAudio))
+            {
+                if (remainingOnly && organized.Contains(file))
+                    continue;
+                OrganizeSong(file);
+            }
 
-        var nonAudioToOrganize = string.IsNullOrEmpty(output.NameFormat)
-            ? additionalImages
-            : (IEnumerable<SongJob>)allFiles.Where(f => f.IsNotAudio);
+            var nonAudioToOrganize = string.IsNullOrEmpty(output.NameFormat)
+                ? additionalImages
+                : (IEnumerable<SongJob>)allFiles.Where(f => f.IsNotAudio);
 
-        if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
-            return;
+            if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
+                return;
 
-        string parent = Utils.GreatestCommonDirectory(
-            allFiles
-                .Where(f => !f.IsNotAudio && f.State == JobState.Done && f.DownloadPath?.Length > 0)
-                .Select(f => f.DownloadPath));
+            string parent = Utils.GreatestCommonDirectory(
+                allFiles
+                    .Where(f => !f.IsNotAudio && f.State == JobState.Done && f.DownloadPath?.Length > 0)
+                    .Select(f => f.DownloadPath));
 
-        foreach (var file in nonAudioToOrganize)
-        {
-            if (remainingOnly && organized.Contains(file))
-                continue;
-            OrganizeNonAudio(file, parent, additionalImages != null && additionalImages.Contains(file));
+            foreach (var file in nonAudioToOrganize)
+            {
+                if (remainingOnly && organized.Contains(file))
+                    continue;
+                OrganizeNonAudio(file, parent, additionalImages != null && additionalImages.Contains(file));
+            }
         }
     }
 
     public void OrganizeSong(SongJob song)
     {
-        if (string.IsNullOrEmpty(song.DownloadPath) || !Utils.IsMusicFile(song.DownloadPath))
-            return;
-
-        if (output.NameFormat.Length == 0)
+        lock (sync)
         {
+            if (string.IsNullOrEmpty(song.DownloadPath) || !Utils.IsMusicFile(song.DownloadPath))
+                return;
+
+            if (output.NameFormat.Length == 0)
+            {
+                organized.Add(song);
+                return;
+            }
+
+            string pathPart = ApplyNameFormat(output.NameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir) with
+            {
+                ExtractorName = extraction.InputType.ToString(),
+                InputSource   = extraction.Input ?? "",
+                OutputDir     = output.ParentDir ?? "",
+            });
+            string newFilePath = Path.Join(output.ParentDir, pathPart + Path.GetExtension(song.DownloadPath));
+
+            if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
+            {
+                try { Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, output.ParentDir); }
+                catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
+            }
+
+            song.DownloadPath = newFilePath;
             organized.Add(song);
-            return;
         }
-
-        string pathPart = ApplyNameFormat(output.NameFormat, FileManagerContext.FromSongJob(song, job, remoteBaseDir) with
-        {
-            ExtractorName = extraction.InputType.ToString(),
-            InputSource   = extraction.Input ?? "",
-            OutputDir     = output.ParentDir ?? "",
-        });
-        string newFilePath = Path.Join(output.ParentDir, pathPart + Path.GetExtension(song.DownloadPath));
-
-        if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
-        {
-            try { Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, output.ParentDir); }
-            catch (Exception ex) { Logger.Error($"Failed to move: {ex}"); return; }
-        }
-
-        song.DownloadPath = newFilePath;
-        organized.Add(song);
     }
 
     private void OrganizeNonAudio(SongJob file, string parent, bool isAdditionalImage)

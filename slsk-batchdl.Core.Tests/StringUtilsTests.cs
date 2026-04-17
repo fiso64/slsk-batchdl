@@ -74,5 +74,15 @@ namespace Tests.StringUtils
         {
             Assert.AreEqual(" Cafe Creme a la mode U", " Café Crème à la mode Ü".RemoveDiacritics());
         }
+
+        [TestMethod]
+        public void Levenshtein_ComputesEditDistance()
+        {
+            Assert.AreEqual(0, Utils.Levenshtein("", ""));
+            Assert.AreEqual(3, Utils.Levenshtein("", "abc"));
+            Assert.AreEqual(3, Utils.Levenshtein("kitten", "sitting"));
+            Assert.AreEqual(2, Utils.Levenshtein("flaw", "lawn"));
+            Assert.AreEqual(Utils.Levenshtein("Saturday", "Sunday"), Utils.Levenshtein("Sunday", "Saturday"));
+        }
     }
 }

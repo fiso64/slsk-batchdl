@@ -219,13 +219,61 @@ namespace Sldl.Core.Models;
             return StrictString(Utils.GetDirectoryNameSlsk(fname), alname, diacrRemove: true, ignoreCase: true, boundarySkipWs: true);
         }
 
+        // Equivalent to: replace '_' and Windows-invalid chars with spaces,
+        // optionally remove diacritics, trim, and collapse consecutive literal spaces.
+        // Kept as one pass because result sorting calls this for every candidate path.
         public static string StrictStringPreprocess(string str, bool diacrRemove = true)
         {
-            str = str.Replace('_', ' ').ReplaceInvalidChars(' ', true, false);
-            str = diacrRemove ? str.RemoveDiacritics() : str;
-            str = str.Trim().RemoveConsecutiveWs();
-            return str;
+            if (str.Length == 0)
+                return str;
+
+            // Equivalent to replacing '_' and Windows-invalid chars with spaces,
+            // optionally removing diacritics, trimming, and collapsing spaces.
+            // This runs for every sorted candidate path, so keep it single-pass.
+            char[] buffer = new char[str.Length];
+            int length = 0;
+            bool previousWasSpace = false;
+            bool hasOutput = false;
+
+            for (int i = 0; i < str.Length; i++)
+            {
+                char c = NormalizeStrictChar(str[i], diacrRemove);
+
+                if (!hasOutput && char.IsWhiteSpace(c))
+                    continue;
+
+                if (c == ' ')
+                {
+                    if (previousWasSpace)
+                        continue;
+
+                    previousWasSpace = true;
+                }
+                else
+                {
+                    previousWasSpace = false;
+                }
+
+                buffer[length++] = c;
+                hasOutput = true;
+            }
+
+            while (length > 0 && char.IsWhiteSpace(buffer[length - 1]))
+                length--;
+
+            return length == 0 ? string.Empty : new string(buffer, 0, length);
         }
+
+        private static char NormalizeStrictChar(char c, bool diacrRemove)
+        {
+            if (c == '_' || IsStrictInvalidChar(c))
+                return ' ';
+
+            return diacrRemove && c > 127 ? c.RemoveDiacritics() : c;
+        }
+
+        private static bool IsStrictInvalidChar(char c)
+            => c is ':' or '|' or '?' or '>' or '<' or '*' or '"';
 
         public static bool StrictString(string fname, string tname, bool diacrRemove = true, bool ignoreCase = true, bool boundarySkipWs = true)
         {

@@ -115,7 +115,7 @@ public partial class Searcher
                 var f = r.Files.First();
                 var candidate = new FileCandidate(r, f);
                 if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= search.FastSearchMinUpSpeed
-                    && FileConditions.BracketCheck(song.Query, InferSongQuery(f.Filename, song.Query))
+                    && ResultSorter.CheapBracketCheck(song.Query, f.Filename)
                     && search.PreferredCond.FileSatisfies(f, song.Query, r))
                 {
                     onFastSearchCandidate(candidate);

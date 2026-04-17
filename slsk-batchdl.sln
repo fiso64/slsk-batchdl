@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "slsk-batchdl.Core.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "slsk-batchdl.Cli.Tests", "slsk-batchdl.Cli.Tests\slsk-batchdl.Cli.Tests.csproj", "{B532607F-03D5-4908-B5C0-B45BC5058CBB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "slsk-batchdl.Benchmarks", "slsk-batchdl.Benchmarks\slsk-batchdl.Benchmarks.csproj", "{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -83,6 +85,18 @@ Global
 		{B532607F-03D5-4908-B5C0-B45BC5058CBB}.Release|x64.Build.0 = Release|Any CPU
 		{B532607F-03D5-4908-B5C0-B45BC5058CBB}.Release|x86.ActiveCfg = Release|Any CPU
 		{B532607F-03D5-4908-B5C0-B45BC5058CBB}.Release|x86.Build.0 = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|x64.Build.0 = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Debug|x86.Build.0 = Debug|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|x64.ActiveCfg = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|x64.Build.0 = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|x86.ActiveCfg = Release|Any CPU
+		{EA62D4FE-0A14-484B-AA93-7BDD32EA3B03}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

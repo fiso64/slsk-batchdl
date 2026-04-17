@@ -93,10 +93,11 @@ namespace Sldl.Core.Models;
         {
             unchecked
             {
+                var comparer = _ignoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
                 int hash = 17;
-                hash = hash * 23 + (_ignoreCase ? a.Title.ToLower()  : a.Title).GetHashCode();
-                hash = hash * 23 + (_ignoreCase ? a.Artist.ToLower() : a.Artist).GetHashCode();
-                hash = hash * 23 + (_ignoreCase ? a.Album.ToLower()  : a.Album).GetHashCode();
+                hash = hash * 23 + comparer.GetHashCode(a.Title);
+                hash = hash * 23 + comparer.GetHashCode(a.Artist);
+                hash = hash * 23 + comparer.GetHashCode(a.Album);
                 return hash;
             }
         }

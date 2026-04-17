@@ -276,6 +276,16 @@ namespace Tests.FileConditionsTests
             var fc = new FileConditions { StrictAlbum = true };
             Assert.IsFalse(fc.StrictAlbumSatisfies("Music\\Artist\\Other Album\\01 - Song.mp3", "Great Album"));
         }
+
+        [TestMethod]
+        public void StrictStringPreprocess_ReplacesInvalidCharsAndCollapsesSpaces()
+        {
+            string input = "  A__B:C|D?E<F>G*H\"I/J\\K  Ä  ";
+
+            string result = FileConditions.StrictStringPreprocess(input);
+
+            Assert.AreEqual("A B C D E F G H I/J\\K A", result);
+        }
     }
 
     [TestClass]

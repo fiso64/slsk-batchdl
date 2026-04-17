@@ -494,7 +494,12 @@ public static partial class Utils
         return s.Contains(other, StringComparison.OrdinalIgnoreCase);
     }
 
-    static readonly HashSet<char> boundarySet = new("-|.\\/_—()[],:?!;@#:*=+{}|'\"$^&`~%<>—–-".ToCharArray());
+    private static bool IsBoundaryChar(char c)
+        => c is '-' or '|' or '.' or '\\' or '/' or '_' or '—'
+            or '(' or ')' or '[' or ']' or ',' or ':' or '?' or '!' or ';'
+            or '@' or '#' or '*' or '=' or '+' or '{' or '}' or '\''
+            or '"' or '$' or '^' or '&' or '`' or '~' or '%' or '<'
+            or '>' or '–';
 
     public static bool ContainsWithBoundary(this string str, string? value, bool ignoreCase = false)
     {
@@ -508,8 +513,8 @@ public static partial class Utils
         int index = 0;
         while ((index = str.IndexOf(value, index, comp)) != -1)
         {
-            bool hasLeftBoundary = index == 0 || str[index - 1] == ' ' || boundarySet.Contains(str[index - 1]);
-            bool hasRightBoundary = index + value.Length >= str.Length || str[index + value.Length] == ' ' || boundarySet.Contains(str[index + value.Length]);
+            bool hasLeftBoundary = index == 0 || str[index - 1] == ' ' || IsBoundaryChar(str[index - 1]);
+            bool hasRightBoundary = index + value.Length >= str.Length || str[index + value.Length] == ' ' || IsBoundaryChar(str[index + value.Length]);
 
             if (hasLeftBoundary && hasRightBoundary)
                 return true;
@@ -536,13 +541,13 @@ public static partial class Utils
             while (leftIndex >= 0 && str[leftIndex] == ' ')
                 leftIndex--;
 
-            bool hasLeftBoundary = leftIndex < 0 || acceptLeftDigit && leftIndex < index - 1 && char.IsDigit(str[leftIndex]) || boundarySet.Contains(str[leftIndex]);
+            bool hasLeftBoundary = leftIndex < 0 || acceptLeftDigit && leftIndex < index - 1 && char.IsDigit(str[leftIndex]) || IsBoundaryChar(str[leftIndex]);
 
             int rightIndex = index + value.Length;
             while (rightIndex < str.Length && str[rightIndex] == ' ')
                 rightIndex++;
 
-            bool hasRightBoundary = rightIndex >= str.Length || boundarySet.Contains(str[rightIndex]);
+            bool hasRightBoundary = rightIndex >= str.Length || IsBoundaryChar(str[rightIndex]);
 
             if (hasLeftBoundary && hasRightBoundary)
                 return true;
@@ -644,26 +649,30 @@ public static partial class Utils
         if (target.Length == 0)
             return source.Length;
 
-        var distance = new int[source.Length + 1, target.Length + 1];
+        if (source.Length > target.Length)
+            (source, target) = (target, source);
 
+        var previousRow = new int[source.Length + 1];
         for (var i = 0; i <= source.Length; i++)
-            distance[i, 0] = i;
+            previousRow[i] = i;
 
-        for (var j = 0; j <= target.Length; j++)
-            distance[0, j] = j;
-
-        for (var i = 1; i <= source.Length; i++)
+        for (var j = 1; j <= target.Length; j++)
         {
-            for (var j = 1; j <= target.Length; j++)
+            int previousDiagonal = previousRow[0];
+            previousRow[0] = j;
+
+            for (var i = 1; i <= source.Length; i++)
             {
-                var cost = (target[j - 1] == source[i - 1]) ? 0 : 1;
-                distance[i, j] = Math.Min(
-                    Math.Min(distance[i - 1, j] + 1, distance[i, j - 1] + 1),
-                    distance[i - 1, j - 1] + cost);
+                int deletion = previousRow[i] + 1;
+                int insertion = previousRow[i - 1] + 1;
+                int substitution = previousDiagonal + (source[i - 1] == target[j - 1] ? 0 : 1);
+
+                previousDiagonal = previousRow[i];
+                previousRow[i] = Math.Min(Math.Min(deletion, insertion), substitution);
             }
         }
 
-        return distance[source.Length, target.Length];
+        return previousRow[source.Length];
     }
 
     public static string GreatestCommonPath(IEnumerable<string> paths)
