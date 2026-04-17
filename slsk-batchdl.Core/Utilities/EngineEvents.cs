@@ -20,6 +20,7 @@ public class EngineEvents
     // ── Job-level ────────────────────────────────────────────────────────────
     public event Action<Job>?              JobStarted;
     public event Action<Job, AlbumFolder>? AlbumDownloadStarted;
+    public event Action<Job, AlbumFolder>? AlbumTrackDownloadStarted;
     public event Action<Job>?              AlbumDownloadCompleted;
     public event Action<Job>?              JobFolderRetrieving;
     public event Action<Job, bool, int>?   JobCompleted;     // job, found, lockedFileCount
@@ -51,6 +52,7 @@ public class EngineEvents
 
     internal void RaiseJobStarted(Job job)                            => JobStarted?.Invoke(job);
     internal void RaiseAlbumDownloadStarted(Job job, AlbumFolder f)   => AlbumDownloadStarted?.Invoke(job, f);
+    internal void RaiseAlbumTrackDownloadStarted(Job job, AlbumFolder f) => AlbumTrackDownloadStarted?.Invoke(job, f);
     internal void RaiseAlbumDownloadCompleted(Job job)                => AlbumDownloadCompleted?.Invoke(job);
     internal void RaiseJobFolderRetrieving(Job job)                   => JobFolderRetrieving?.Invoke(job);
     internal void RaiseJobCompleted(Job job, bool found, int locked)  => JobCompleted?.Invoke(job, found, locked);

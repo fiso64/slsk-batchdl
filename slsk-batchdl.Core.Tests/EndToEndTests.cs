@@ -127,5 +127,90 @@ namespace Tests.EndToEnd
             }
         }
 
+        [TestMethod]
+        public async Task InteractiveAlbumSelection_FromList_IsSerialized()
+        {
+            Console.ResetColor();
+            Console.OutputEncoding = Encoding.UTF8;
+            Logger.SetupExceptionHandling();
+            Logger.AddConsole();
+            Logger.SetConsoleLogLevel(Logger.LogLevel.Error);
+
+            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-interactive-" + Guid.NewGuid());
+            var albumOneDir = Path.Combine(musicRoot, "Artist One", "Album One");
+            var albumTwoDir = Path.Combine(musicRoot, "Artist Two", "Album Two");
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-interactive-" + Guid.NewGuid());
+            var listPath = Path.Combine(Path.GetTempPath(), "slsk-list-" + Guid.NewGuid() + ".txt");
+
+            System.IO.Directory.CreateDirectory(albumOneDir);
+            System.IO.Directory.CreateDirectory(albumTwoDir);
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            System.IO.File.WriteAllBytes(Path.Combine(albumOneDir, "01. Artist One - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+            System.IO.File.WriteAllBytes(Path.Combine(albumTwoDir, "01. Artist Two - Track Two.mp3"), TestHelpers.EmptyMp3Bytes);
+            System.IO.File.WriteAllText(listPath,
+                "a:\"Artist One - Album One\"" + Environment.NewLine +
+                "a:\"Artist Two - Album Two\"");
+
+            var testClient = ClientTests.MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Extraction.Input = listPath;
+                rootSettings.Extraction.InputType = InputType.List;
+                rootSettings.Search.NoBrowseFolder = true;
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.Output.NameFormat = "{foldername}/{filename}";
+
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var app = new DownloadEngine(engineSettings, clientManager);
+
+                var activePickers = 0;
+                var maxActivePickers = 0;
+                var pickerCalls = 0;
+
+                app.SelectAlbumVersion = async job =>
+                {
+                    var active = Interlocked.Increment(ref activePickers);
+                    int observed;
+                    do
+                    {
+                        observed = maxActivePickers;
+                        if (active <= observed) break;
+                    }
+                    while (Interlocked.CompareExchange(ref maxActivePickers, active, observed) != observed);
+
+                    try
+                    {
+                        await Task.Delay(150);
+                        Interlocked.Increment(ref pickerCalls);
+                        return job.Results.FirstOrDefault();
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref activePickers);
+                    }
+                };
+
+                app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
+                app.CompleteEnqueue();
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await app.RunAsync(cts.Token);
+
+                Assert.IsFalse(cts.IsCancellationRequested, "RunAsync timed out");
+                Assert.AreEqual(2, pickerCalls, "Both list album jobs should reach the interactive picker");
+                Assert.AreEqual(1, maxActivePickers, "Interactive album prompts must not overlap");
+            }
+            finally
+            {
+                if (System.IO.File.Exists(listPath)) System.IO.File.Delete(listPath);
+                if (System.IO.Directory.Exists(musicRoot)) System.IO.Directory.Delete(musicRoot, true);
+                if (System.IO.Directory.Exists(outputDir)) System.IO.Directory.Delete(outputDir, true);
+            }
+        }
+
     }
 }

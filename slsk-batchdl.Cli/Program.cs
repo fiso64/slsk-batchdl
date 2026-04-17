@@ -74,14 +74,27 @@ internal static partial class Program
                     retrieveFolderCallback: async (f) => await engine.ProcessFolderRetrieval(f, job),
                     filterStr: filterStr);
 
-                var result = await interactive.Run();
-                filterStr = result.FilterStr;
+                InteractiveModeManager.RunResult result;
+                Printing.SetBuffering(true);
+                try
+                {
+                    result = await interactive.Run();
+                    filterStr = result.FilterStr;
+                }
+                finally
+                {
+                    Printing.SetBuffering(false);
+                    Printing.Flush();
+                }
 
                 if (result.Index == -1 || result.Index == -2 || result.Folder == null)
                     return null;
 
                 if (result.ExitInteractiveMode)
+                {
                     cliSettings.InteractiveMode = false;
+                    engine.SelectAlbumVersion = null;
+                }
 
                 return result.Folder;
             };

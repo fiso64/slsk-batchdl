@@ -61,6 +61,7 @@ public class CliProgressReporter
         events.ExtractionFailed       += ReportExtractionFailed;
         events.JobStarted             += ReportJobStarted;
         events.AlbumDownloadStarted   += (job, folder) => ReportAlbumDownloadStarted((AlbumJob)job, folder);
+        events.AlbumTrackDownloadStarted += (job, folder) => ReportAlbumTrackDownloadStarted((AlbumJob)job, folder);
         events.AlbumDownloadCompleted += job => ReportAlbumDownloadCompleted((AlbumJob)job);
         events.JobFolderRetrieving    += ReportJobFolderRetrieving;
         events.JobCompleted           += ReportJobCompleted;
@@ -130,6 +131,62 @@ public class CliProgressReporter
         AggregateJob        => "AggregateJob: ",
         _                   => ""
     };
+
+    private static string ProfileSuffix(Job job)
+    {
+        var profiles = job.Config?.AppliedAutoProfiles;
+        return profiles?.Count > 0 ? $" [{string.Join(", ", profiles)}]" : "";
+    }
+
+    private static void WriteJobLineWithProfileSuffix(Job job, string text, ConsoleColor mainColor = ConsoleColor.Gray)
+    {
+        string suffix = ProfileSuffix(job);
+        if (suffix.Length == 0)
+        {
+            Logger.Info(text, mainColor);
+            return;
+        }
+
+        Logger.LogNonConsole(Logger.LogLevel.Info, text + suffix);
+        Printing.Write(text, mainColor);
+        Printing.WriteLine(suffix, ConsoleColor.DarkGray);
+    }
+
+    private static void RefreshOrPrintJobLineWithProfileSuffix(ProgressBar? progress, int current, Job job, string text, bool print = false, bool refreshIfOffscreen = false)
+    {
+        string suffix = ProfileSuffix(job);
+        if (suffix.Length == 0)
+        {
+            Printing.RefreshOrPrint(progress, current, text, print, refreshIfOffscreen);
+            return;
+        }
+
+        if (Printing.IsBuffering)
+        {
+            Printing.Enqueue(() => RefreshOrPrintJobLineWithProfileSuffix(progress, current, job, text, print, refreshIfOffscreen));
+            return;
+        }
+
+        lock (Printing.ConsoleLock)
+        {
+            if (progress != null && !Console.IsOutputRedirected && (refreshIfOffscreen || progress.Y >= Console.WindowTop))
+            {
+                progress.Refresh(current, text);
+
+                if (print)
+                {
+                    Logger.LogNonConsole(Logger.LogLevel.Info, text + suffix);
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine(suffix);
+                    Console.ResetColor();
+                }
+            }
+            else if ((progress == null || Console.IsOutputRedirected) && print)
+            {
+                WriteJobLineWithProfileSuffix(job, text);
+            }
+        }
+    }
 
     static string FailureReasonLabel(FailureReason reason) => reason switch
     {
@@ -231,7 +288,7 @@ public class CliProgressReporter
             lock (Printing.ConsoleLock)
             {
                 Printing.WriteLine();
-                Logger.Info($"[{job.DisplayId}] ExtractJob: Input ({job.InputType}): {job.Input}");
+                WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] ExtractJob: Input ({job.InputType}): {job.Input}");
             }
         }
     }
@@ -250,7 +307,7 @@ public class CliProgressReporter
         {
             string plainStatus = job is RetrieveFolderJob ? "retrieving folder" : "searching";
             _jobStatuses[job] = plainStatus;
-            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{plainStatus}: {job.ToString(true)}");
+            WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{plainStatus}: {job.ToString(true)}");
             return;
         }
 
@@ -258,7 +315,7 @@ public class CliProgressReporter
         _jobBars[job] = bar;
         string status = job is RetrieveFolderJob ? "retrieving folder" : "searching";
         _jobStatuses[job] = status;
-        Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}", print: true);
+        RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}", print: true);
     }
 
     private void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
@@ -266,7 +323,7 @@ public class CliProgressReporter
         if (PlainMode)
         {
             _jobStatuses[job] = "downloading";
-            Logger.Info($"[{job.DisplayId}] AlbumJob: downloading: {job.ToString(true)}");
+            WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] AlbumJob: downloading: {job.ToString(true)}");
             return;
         }
 
@@ -288,7 +345,7 @@ public class CliProgressReporter
             if (_jobBars.TryGetValue(job, out var headerBar) && headerBar != null)
             {
                 _jobStatuses[job] = "downloading";
-                try { headerBar.Refresh(0, AlbumHeaderText(job, 0, total, "downloading")); } catch { }
+                try { RefreshOrPrintJobLineWithProfileSuffix(headerBar, 0, job, AlbumHeaderText(job, 0, total, "downloading"), print: true); } catch { }
             }
 
             Printing.PrintAlbumHeader(folder);
@@ -314,6 +371,26 @@ public class CliProgressReporter
 
             _albumBlocks[job] = block;
         }
+    }
+
+    private void ReportAlbumTrackDownloadStarted(AlbumJob job, AlbumFolder folder)
+    {
+        if (_albumBlocks.ContainsKey(job))
+            return;
+
+        string folderName = string.IsNullOrWhiteSpace(folder.FolderPath)
+            ? job.ToString(true)
+            : folder.FolderPath;
+
+        if (PlainMode)
+        {
+            WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] AlbumJob: downloading tracks: {job.ToString(true)} - {folderName}");
+            return;
+        }
+
+        Printing.WriteLine();
+        WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] AlbumJob: downloading tracks: {job.ToString(true)}");
+        Printing.WriteLine($"Folder: {folderName}", ConsoleColor.DarkGray);
     }
 
     private void ReportAlbumDownloadCompleted(AlbumJob job)
@@ -349,7 +426,7 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
-            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}retrieving folder: {job.ToString(true)}");
+            WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}retrieving folder: {job.ToString(true)}");
             return;
         }
 
@@ -365,7 +442,7 @@ public class CliProgressReporter
                 ? (job is RetrieveFolderJob ? "found additional files in" : "found results")
                 : (job is RetrieveFolderJob ? "no additional files found" : "no results found");
             string lockedMsg = !found && lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
-            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}{lockedMsg}");
+            WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}{lockedMsg}");
             _jobStatuses.TryRemove(job, out _);
             return;
         }
@@ -376,7 +453,7 @@ public class CliProgressReporter
             string lockedMsg = lockedFiles > 0 ? $" (Found {lockedFiles} locked files)" : "";
             string prefix    = job is RetrieveFolderJob ? "no additional files found" : "no results found";
             _jobStatuses[job] = prefix;
-            Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}{lockedMsg}", print: true);
+            RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}{lockedMsg}", print: true);
             _jobBars.TryRemove(job, out _);
             _jobStatuses.TryRemove(job, out _);
             if (job is AlbumJob aj) _albumBlocks.TryRemove(aj, out _);
@@ -389,7 +466,7 @@ public class CliProgressReporter
             {
                 string prefix = job is RetrieveFolderJob ? "found additional files in" : "found results";
                 _jobStatuses[job] = prefix;
-                Printing.RefreshOrPrint(bar, 0, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}", print: true);
+                RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{prefix}: {job.ToString(true)}", print: true);
             }
             _jobBars.TryRemove(job, out _);
             _jobStatuses.TryRemove(job, out _);

@@ -110,10 +110,7 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
         _defaultProfile?.Download.ApplyTo(settings);
 
         foreach (var profile in matchingAutoProfiles)
-        {
-            job.AddPrintLine($"Applying auto profile: {profile.Name}");
             profile.Download.ApplyTo(settings);
-        }
 
         foreach (var profile in _namedProfiles)
             profile.Download.ApplyTo(settings);

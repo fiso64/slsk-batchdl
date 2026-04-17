@@ -72,8 +72,8 @@ public class InteractiveModeManager
             string retrieveAll1 = canRetrieve ? "| [r]            " : "";
             string retrieveAll2 = canRetrieve ? "| Load All Files " : "";
             Console.WriteLine();
-        Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | {retrieveAll1}| [s]  | [Esc/q] | [h]", ConsoleColor.Green);
-        Printing.WriteLine($" Prev   | Next     | Accept  | {retrieveAll2}| Skip | Quit    | Help", ConsoleColor.Green);
+        Printing.WriteLine($" [Up/p] | [Down/n] | [Enter] | {retrieveAll1}| [s]  | [Esc/q] | [h]", ConsoleColor.Green, force: true);
+        Printing.WriteLine($" Prev   | Next     | Accept  | {retrieveAll2}| Skip | Quit    | Help", ConsoleColor.Green, force: true);
 
         Console.WriteLine();
         savedPos = Console.CursorTop;
@@ -87,12 +87,12 @@ public class InteractiveModeManager
 
             if (filterStr != null)
             {
-                Printing.Write($"Filter: ", ConsoleColor.White);
-                Printing.Write($"{filterStr}\n", ConsoleColor.Cyan);
+                Printing.Write($"Filter: ", ConsoleColor.White, force: true);
+                Printing.Write($"{filterStr}\n", ConsoleColor.Cyan, force: true);
                 Console.WriteLine();
             }
 
-            Printing.WriteLine($"[{aidx + 1} / {filterList.Count}]", ConsoleColor.DarkGray);
+            Printing.WriteLine($"[{aidx + 1} / {filterList.Count}]", ConsoleColor.DarkGray, force: true);
             Printing.PrintAlbum(folder, indices: true);
             Console.WriteLine();
 
@@ -128,10 +128,7 @@ public class InteractiveModeManager
                 case "c":
                     if (ConsoleInputManager.OnCancelRequested != null)
                     {
-                        Printing.SetBuffering(true);
                         await ConsoleInputManager.OnCancelRequested();
-                        Printing.SetBuffering(false);
-                        Printing.Flush();
                         ClearOutput(savedPos);
                     }
                     goto Loop;

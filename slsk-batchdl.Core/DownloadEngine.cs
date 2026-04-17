@@ -78,6 +78,7 @@ public class DownloadEngine
     // Limits simultaneous extractor runs to avoid API rate limits.
     // Search concurrency is handled inside Searcher (concurrencySemaphore).
     private readonly SemaphoreSlim _extractorSemaphore;
+    private readonly SemaphoreSlim _albumSelectionSemaphore = new(1, 1);
 
     // ── job channel ──────────────────────────────────────────────────────────
 
@@ -104,6 +105,25 @@ public class DownloadEngine
         _clientManager = clientManager;
         _jobSettingsResolver = jobSettingsResolver ?? DefaultJobSettingsResolver.Instance;
         _extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
+    }
+
+    private async Task<(bool WasInteractive, AlbumFolder? Folder)> SelectAlbumVersionAsync(AlbumJob job)
+    {
+        if (SelectAlbumVersion == null)
+            return (false, null);
+
+        await _albumSelectionSemaphore.WaitAsync(job.Cts?.Token ?? appCts.Token);
+        try
+        {
+            var selector = SelectAlbumVersion;
+            return selector == null
+                ? (false, null)
+                : (true, await selector(job));
+        }
+        finally
+        {
+            _albumSelectionSemaphore.Release();
+        }
     }
 
 
@@ -597,9 +617,10 @@ public class DownloadEngine
 
             AlbumFolder chosenFolder;
 
-            if (SelectAlbumVersion != null)
+            var selected = await SelectAlbumVersionAsync(job);
+            if (selected.WasInteractive)
             {
-                chosenFolder = await SelectAlbumVersion(job);
+                chosenFolder = selected.Folder!;
                 if (chosenFolder == null) { index = -1; break; }  // skip or quit
                 config = job.Config;  // callback may have mutated job.Config (e.g. exit interactive mode)
                 retrieveCurrent = true;
@@ -659,6 +680,7 @@ public class DownloadEngine
 
             try
             {
+                Events.RaiseAlbumTrackDownloadStarted(job, chosenFolder);
                 await RunAlbumDownloads(chosenFolder, cts);
 
                 if (!config.Search.NoBrowseFolder && retrieveCurrent && !retrievedFolders.Contains(chosenFolder.FolderPath))
@@ -1264,7 +1286,7 @@ public class DownloadEngine
         while (imageFolders.Count > 0)
         {
             int imgIdx = 0;
-            bool wasInteractive = SelectAlbumVersion != null;
+            bool wasInteractive = false;
             List<SongJob> imgs;
 
             if (SelectAlbumVersion != null)
@@ -1277,7 +1299,9 @@ public class DownloadEngine
 
                 var syntheticJob = new AlbumJob(job.Query) { Results = syntheticFolders, Config = config };
                 _contexts[syntheticJob.Id] = new JobContext();
-                var pickedFolder = await SelectAlbumVersion(syntheticJob);
+                var selectedImages = await SelectAlbumVersionAsync(syntheticJob);
+                wasInteractive = selectedImages.WasInteractive;
+                var pickedFolder = selectedImages.Folder;
                 if (pickedFolder == null) break;
                 imgIdx = syntheticFolders.IndexOf(pickedFolder);
                 if (imgIdx == -1) break;
