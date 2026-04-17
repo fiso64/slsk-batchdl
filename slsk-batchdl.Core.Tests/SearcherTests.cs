@@ -173,6 +173,54 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchAlbum_MergesChildDirectoriesIntoAlbumFolder()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\02. Twilight.mp3", length: 209),
+                    TestHelpers.CreateSlFile(@"ELO\Time\Scans\Time booklet.jpg"),
+                ]),
+            };
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count, "Child directories should merge into the parent album folder.");
+            Assert.AreEqual(@"ELO\Time", job.Results[0].FolderPath);
+            Assert.IsTrue(job.Results[0].Files.Any(f => f.ResolvedTarget!.Filename.EndsWith(@"Scans\Time booklet.jpg")),
+                "Merged album folder should retain non-audio files from child directories.");
+        }
+
+        [TestMethod]
+        public async Task SearchAlbum_DiscSubfoldersCollapseToAlbumFolder()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\Disc 1\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\Disc 2\01. Twilight.mp3", length: 209),
+                ]),
+            };
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count, "Disc folders should be treated as one album folder.");
+            Assert.AreEqual(@"ELO\Time", job.Results[0].FolderPath);
+            Assert.AreEqual(2, job.Results[0].Files.Count(f => !f.IsNotAudio));
+        }
+
+        [TestMethod]
         public async Task AggregateAlbum_DiscographySearch_IdentifiesAllUniqueAlbums()
         {
             var index = CreateSophisticatedIndex();
@@ -351,6 +399,37 @@ namespace Tests.Unit
             Assert.AreEqual(2, results.Count);
             Assert.AreEqual(2, results[0].Results.Count);
             Assert.AreEqual(1, results[1].Results.Count);
+        }
+
+        [TestMethod]
+        public async Task AggregateAlbum_SingleTrackAlbumsWithDifferentTitles_DoNotMergeByLengthOnly()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Blue Sky\01. ELO - Blue Sky.mp3", length: 180),
+                ]),
+                new("User2", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Telephone Line\01. ELO - Telephone Line.mp3", length: 180),
+                ]),
+            };
+
+            var client = CreateMockClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.MinSharesAggregate = 1;
+
+            var registry = TestHelpers.CreateSessionRegistry();
+            var searcher = new Searcher(client, registry, registry, new EngineEvents(), 10, 10);
+            var job = new AlbumAggregateJob(new AlbumQuery { Artist = "ELO" });
+            var responseData = new ResponseData();
+
+            var results = await searcher.SearchAggregateAlbum(job, config.Search, responseData, CancellationToken.None);
+
+            Assert.AreEqual(2, results.Count, "Single-track album versions should not merge just because lengths match.");
+            Assert.IsTrue(results.Any(r => r.Results[0].Files.Any(f => f.Query.Title.Contains("Blue Sky"))));
+            Assert.IsTrue(results.Any(r => r.Results[0].Files.Any(f => f.Query.Title.Contains("Telephone Line"))));
         }
     }
 }

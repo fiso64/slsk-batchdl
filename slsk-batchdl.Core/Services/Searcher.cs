@@ -38,6 +38,61 @@ public partial class Searcher
     }
 
 
+    // ── raw search job ──────────────────────────────────────────────────────
+
+    public async Task Search(SearchJob job, SearchSettings search, ResponseData responseData, CancellationToken ct, Action? onSearch = null)
+    {
+        var session = new SearchSession();
+        job.Session = session;
+        job.State = JobState.Searching;
+
+        try
+        {
+            SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf)
+            {
+                if (job.Intent == SearchIntent.Album)
+                {
+                    return new SearchOptions(
+                        minimumResponseFileCount: 1,
+                        minimumPeerUploadSpeed: 1,
+                        removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
+                        searchTimeout: timeout,
+                        responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
+                        fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, job.Query, null));
+                }
+
+                return new SearchOptions(
+                    minimumResponseFileCount: 1,
+                    minimumPeerUploadSpeed: 1,
+                    searchTimeout: timeout,
+                    removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
+                    responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
+                    fileFilter: f => nec.FileSatisfies(f, job.Query, null) || job.IncludeFullResults);
+            }
+
+            await concurrencySemaphore.WaitAsync(ct);
+            try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct, onSearch); }
+            finally { concurrencySemaphore.Release(); }
+
+            responseData.lockedFilesCount += session.LockedFileCount;
+            job.State = JobState.Done;
+        }
+        catch (OperationCanceledException)
+        {
+            job.State = JobState.Failed;
+            job.FailureReason = FailureReason.Cancelled;
+            throw;
+        }
+        catch (Exception e)
+        {
+            job.State = JobState.Failed;
+            job.FailureReason = FailureReason.Other;
+            job.FailureMessage = e.Message;
+            throw;
+        }
+    }
+
+
     // ── song search ─────────────────────────────────────────────────────────
 
     // Populates song.Candidates (ordered best-first).
@@ -47,16 +102,12 @@ public partial class Searcher
         CancellationToken ct, Action? onSearch = null,
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
-        var results = new SlDictionary();
-        searchRegistry.Searches.TryAdd(song, new SearchInfo(results));
+        var session = new SearchSession();
+        searchRegistry.Searches.TryAdd(song, new SearchInfo(session.Results));
 
         void responseHandler(SearchResponse r)
         {
-            if (r.Files.Count == 0) return;
-            responseData.lockedFilesCount += r.LockedFileCount;
-
-            foreach (var file in r.Files)
-                results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
+            session.AddResponse(r);
 
             if (onFastSearchCandidate != null && search.FastSearch
                 && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > search.DownrankOn)
@@ -83,25 +134,27 @@ public partial class Searcher
 
         events.RaiseSongSearching(song);
         await concurrencySemaphore.WaitAsync(ct);
-        try { await RunSearches(song.Query, results, getOpts, responseHandler, search, ct, onSearch); }
+        try { await RunSearches(song.Query, session.Results, getOpts, responseHandler, search, ct, onSearch); }
         finally { concurrencySemaphore.Release(); }
 
         searchRegistry.Searches.TryRemove(song, out _);
 
-        Logger.Debug($"{results.Count} results found: {song}");
-        events.RaiseSearchCompleted(song, results.Count);
+        responseData.lockedFilesCount += session.LockedFileCount;
 
-        if (!results.IsEmpty)
+        Logger.Debug($"{session.Results.Count} results found: {song}");
+        events.RaiseSearchCompleted(song, session.Results.Count);
+
+        if (!session.Results.IsEmpty)
         {
-            Logger.Debug(string.Join("\n", results.Select(r => $"  {r.Value.Item1.Username}: {r.Value.Item2.Filename}")));
+            Logger.Debug(string.Join("\n", session.Results.Select(r => $"  {r.Value.Item1.Username}: {r.Value.Item2.Filename}")));
         }
 
-        responseData.lockedFilesCount += results.Values
-            .Select(x => x.Item1).Distinct()
-            .Sum(r => 0); // already counted per-response above
-
-        var ordered = ResultSorter.OrderedResults(results, song.Query, search, userStats.UserSuccessCounts, useInfer: true);
-        song.Candidates = [.. ordered.Select(x => new FileCandidate(x.response, x.file))];
+        song.Candidates = SearchResultProjector.SortedTrackCandidates(
+            session.Snapshot(),
+            song.Query,
+            search,
+            userStats.UserSuccessCounts,
+            useInfer: true);
     }
 
 
@@ -110,17 +163,8 @@ public partial class Searcher
     // Populates job.Results with candidate AlbumFolders found on the network.
     public async Task SearchAlbum(AlbumJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var results = new ConcurrentDictionary<string, (SearchResponse, Soulseek.File)>();
-        // For folder-matching (Album), use only the album name. For the network search keyword
-        // (Title), fall back to the song-title hint when no album name is known.
-        var query = new SongQuery
-        {
-            Artist = job.Query.Artist,
-            Title = job.Query.Album.Length > 0 ? job.Query.Album : job.Query.SearchHint,
-            Album = job.Query.Album,
-            ArtistMaybeWrong = job.Query.ArtistMaybeWrong,
-            IsDirectLink = job.Query.IsDirectLink,
-        };
+        var session = new SearchSession();
+        var query = SearchResultProjector.AlbumBridgeQuery(job.Query);
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
             new SearchOptions(
@@ -131,20 +175,12 @@ public partial class Searcher
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
                 fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, query, null));
 
-        void handler(SlResponse r)
-        {
-            responseData.lockedFilesCount += r.LockedFileCount;
-            if (r.Files.Count > 0)
-                foreach (var file in r.Files)
-                    results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
-        }
-
-        using var cts = new CancellationTokenSource();
-        await concurrencySemaphore.WaitAsync(cts.Token);
-        try { await RunSearches(query, results, getOpts, handler, search, cts.Token); }
+        await concurrencySemaphore.WaitAsync(ct);
+        try { await RunSearches(query, session.Results, getOpts, session.AddResponse, search, ct); }
         finally { concurrencySemaphore.Release(); }
 
-        job.Results = BuildAlbumFolders(results, job.Query, search);  // was job.FoundFolders
+        responseData.lockedFilesCount += session.LockedFileCount;
+        job.Results = SearchResultProjector.AlbumFolders(session.Snapshot(), job.Query, search);
     }
 
     // Populates job.Results from a direct slsk:// link (no network search).
@@ -179,7 +215,7 @@ public partial class Searcher
     // Populates job.Songs: one SongJob per distinct inferred track version found.
     public async Task SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var results = new SlDictionary();
+        var session = new SearchSession();
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
             new(
@@ -190,39 +226,12 @@ public partial class Searcher
                 responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
                 fileFilter: f => nec.FileSatisfies(f, job.Query, null));
 
-        void handler(SlResponse r)
-        {
-            responseData.lockedFilesCount += r.LockedFileCount;
-            if (r.Files.Count > 0)
-                foreach (var file in r.Files)
-                    results.TryAdd(r.Username + "\\" + file.Filename, (r, file));
-        }
-
-        using var cts = new CancellationTokenSource();
-        await concurrencySemaphore.WaitAsync(cts.Token);
-        try { await RunSearches(job.Query, results, getOpts, handler, search, cts.Token); }
+        await concurrencySemaphore.WaitAsync(ct);
+        try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct); }
         finally { concurrencySemaphore.Release(); }
 
-        var equivalentFiles = EquivalentFiles(job.Query, results.Select(x => x.Value), search)
-            .Select(x => (x.query, ResultSorter.OrderedResults(x.candidates.Select(c => (c.Response, c.File)), x.query, search, userStats.UserSuccessCounts, false, false, false)))
-            .ToList();
-
-        if (!search.Relax)
-        {
-            equivalentFiles = equivalentFiles
-                .Where(x => FileConditions.StrictString(x.query.Title, job.Query.Title, ignoreCase: true)
-                    && (FileConditions.StrictString(x.query.Artist, job.Query.Artist, ignoreCase: true, boundarySkipWs: false)
-                        || FileConditions.StrictString(x.query.Title, job.Query.Artist, ignoreCase: true, boundarySkipWs: false)
-                            && x.query.Title.ContainsInBrackets(job.Query.Artist, ignoreCase: true)))
-                .ToList();
-        }
-
-        job.Songs = equivalentFiles.Select(x =>
-        {
-            var s = new SongJob(x.query);
-            s.Candidates = x.Item2.Select(r => new FileCandidate(r.response, r.file)).ToList();
-            return s;
-        }).ToList();
+        responseData.lockedFilesCount += session.LockedFileCount;
+        job.Songs = SearchResultProjector.AggregateTracks(session.Snapshot(), job.Query, search, userStats.UserSuccessCounts);
     }
 
     // Returns new AlbumJobs (one per distinct album version found on the network).
@@ -230,68 +239,7 @@ public partial class Searcher
     {
         var tempJob = new AlbumJob(job.Query);
         await SearchAlbum(tempJob, search, responseData, ct);
-        var albums = tempJob.Results;
-
-        int maxDiff = search.AggregateLengthTol;
-
-        bool LengthsAreSimilar(int[] s1, int[] s2)
-        {
-            if (s1.Length != s2.Length) return false;
-            for (int i = 0; i < s1.Length; i++)
-                if (Math.Abs(s1[i] - s2[i]) > maxDiff) return false;
-            return true;
-        }
-
-        // Group albums by similar track lengths (and single-track disambiguation).
-        var byLength = new List<(int[] lengths, List<AlbumFolder> versions, HashSet<string> users)>();
-
-        foreach (var folder in albums)
-        {
-            if (folder.Files.Count == 0) continue;
-            var sortedLengths = folder.Files
-                .Where(f => !f.IsNotAudio)
-                .Select(f => f.ResolvedTarget!.File.Length ?? -1)
-                .OrderBy(x => x).ToArray();
-
-            bool matched = false;
-            for (int i = 0; i < byLength.Count; i++)
-            {
-                if (!LengthsAreSimilar(sortedLengths, byLength[i].lengths)) continue;
-
-                if (sortedLengths.Length == 1)
-                {
-                    var rep1 = byLength[i].versions[0].Files.FirstOrDefault(f => !f.IsNotAudio);
-                    var rep2 = folder.Files.FirstOrDefault(f => !f.IsNotAudio);
-                    if (rep1 != null && rep2 != null)
-                    {
-                        var q1 = InferSongQuery(rep1.ResolvedTarget!.Filename, new SongQuery());
-                        var q2 = InferSongQuery(rep2.ResolvedTarget!.Filename, new SongQuery());
-                        if (!(q2.Artist.ContainsIgnoreCase(q1.Artist) || q1.Artist.ContainsIgnoreCase(q2.Artist))
-                            || !(q2.Title.ContainsIgnoreCase(q1.Title) || q1.Title.ContainsIgnoreCase(q2.Title)))
-                            continue;
-                    }
-                }
-
-                byLength[i].versions.Add(folder);
-                byLength[i].users.Add(folder.Username);
-                matched = true;
-                break;
-            }
-
-            if (!matched)
-                byLength.Add((sortedLengths, new List<AlbumFolder> { folder }, new HashSet<string> { folder.Username }));
-        }
-
-        return byLength
-            .Where(x => x.users.Count >= search.MinSharesAggregate)
-            .OrderByDescending(x => x.users.Count)
-            .Select(x =>
-            {
-                var newJob = new AlbumJob(job.Query);
-                newJob.Results = x.versions;
-                return newJob;
-            })
-            .ToList();
+        return SearchResultProjector.AggregateAlbums(tempJob.Results, job.Query, search);
     }
 
 
@@ -366,33 +314,22 @@ public partial class Searcher
     {
         foreach (var song in songs)
         {
-            var results = new SlDictionary();
+            var searchJob = new SearchJob(song.Query, includeFull);
+            await Search(searchJob, search, new ResponseData(), CancellationToken.None);
 
-            SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
-                new SearchOptions(
-                    minimumResponseFileCount: 1,
-                    minimumPeerUploadSpeed: 1,
-                    searchTimeout: search.SearchTimeout,
-                    removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
-                    responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                    fileFilter: f => nec.FileSatisfies(f, song.Query, null) || includeFull);
-
-            void responseHandler(SearchResponse r)
-            {
-                if (r.Files.Count > 0)
-                    foreach (var file in r.Files)
-                        results.TryAdd(r.Username + '\\' + file.Filename, (r, file));
-            }
-
-            await RunSearches(song.Query, results, getOpts, responseHandler, search);
-
-            if (results.IsEmpty)
+            if (searchJob.ResultCount == 0)
             {
                 displayResults(song, null);
             }
             else
             {
-                var orderedResults = ResultSorter.OrderedResults(results, song.Query, search, userStats.UserSuccessCounts, useInfer: true);
+                var orderedResults = searchJob.GetOrCreateProjection("print-results:ordered-track", snapshot =>
+                    ResultSorter.OrderedResults(
+                        snapshot.Select(x => (x.Response, x.File)),
+                        song.Query,
+                        search,
+                        userStats.UserSuccessCounts,
+                        useInfer: true).ToList());
                 displayResults(song, orderedResults);
             }
         }
@@ -745,107 +682,6 @@ public partial class Searcher
                 str = str.Replace(banned[0], string.Concat("*", banned[0].AsSpan(1)));
         }
         return str.Trim();
-    }
-
-    [GeneratedRegex(@"^(?i)(dis[c|k]|cd)\s*\d{1,2}$")]
-    private static partial Regex DiscPatternRegex();
-
-    // Builds AlbumFolders from raw search results for album searches.
-    private static List<AlbumFolder> BuildAlbumFolders(
-        ConcurrentDictionary<string, (SearchResponse, Soulseek.File)> results,
-        AlbumQuery query, SearchSettings search)
-    {
-        bool canMatchDisc = !DiscPatternRegex().IsMatch(query.Album) && !DiscPatternRegex().IsMatch(query.Artist);
-
-        // Build directory buckets ordered by first-appearance in ResultSorter output.
-        var bridgeQuery = new SongQuery
-        {
-            Artist = query.Artist,
-            Title = query.Album.Length > 0 ? query.Album : query.SearchHint,
-            Album = query.Album,
-            ArtistMaybeWrong = query.ArtistMaybeWrong,
-        };
-        // Use a placeholder SongQuery-based sort to preserve ordering.
-        var orderedResults = ResultSorter.OrderedResults(results, bridgeQuery, search,
-            new System.Collections.Concurrent.ConcurrentDictionary<string, int>(), false, false, albumMode: true);
-
-        // Key = "username\folderpath" (for uniqueness across users); value stores them separately.
-        var dirStructure = new Dictionary<string, (string username, string folderPath, List<(SlResponse r, SlFile f)> list, int idx)>();
-        int idx = 0;
-
-        foreach (var (response, file) in orderedResults)
-        {
-            string username = response.Username;
-            string folderPath = file.Filename[..file.Filename.LastIndexOf('\\')];
-            string dirName = folderPath[(folderPath.LastIndexOf('\\') + 1)..];
-
-            if (canMatchDisc && DiscPatternRegex().IsMatch(dirName))
-                folderPath = folderPath[..folderPath.LastIndexOf('\\')];
-
-            string key = username + '\\' + folderPath;
-            if (!dirStructure.TryGetValue(key, out (string username, string folderPath, List<(SlResponse r, SlFile f)> list, int idx) value))
-                dirStructure[key] = (username, folderPath, new List<(SlResponse, SlFile)> { (response, file) }, idx);
-            else
-                value.list.Add((response, file));
-
-            idx++;
-        }
-
-        // Merge child directories (e.g., Artist/Album/Scans) into parent (Artist/Album).
-        var sortedKeys = dirStructure.Keys.OrderBy(k => k).ToList();
-        var toRemove = new HashSet<string>();
-
-        for (int i = 0; i < sortedKeys.Count; i++)
-        {
-            var key = sortedKeys[i];
-            if (toRemove.Contains(key)) continue;
-            for (int j = i + 1; j < sortedKeys.Count; j++)
-            {
-                var key2 = sortedKeys[j];
-                if (toRemove.Contains(key2)) continue;
-                if ((key2 + '\\').StartsWith(key + '\\'))
-                {
-                    if (dirStructure[key].idx <= dirStructure[key2].idx)
-                    { dirStructure[key].list.AddRange(dirStructure[key2].list); toRemove.Add(key2); }
-                    else
-                    { dirStructure[key2].list.AddRange(dirStructure[key].list); toRemove.Add(key); key = key2; }
-                }
-                else if (!(key2 + '\\').StartsWith(key)) break;
-            }
-        }
-        foreach (var k in toRemove) dirStructure.Remove(k);
-
-        int min = query.MinTrackCount;
-        int max = query.MaxTrackCount;
-        // If album was searched with a title hint, we can't enforce min count yet (folder may be partial).
-        // For now, leave min/max enforcement to DownloadEngine after CompleteFolder.
-
-        var folders = new List<AlbumFolder>();
-
-        foreach (var (_, (username, folderPath, list, _)) in dirStructure)
-        {
-            int musicCount = list.Count(x => Utils.IsMusicFile(x.f.Filename));
-            if (musicCount == 0) continue;
-            if (max != -1 && musicCount > max) continue;
-            if (min > 0 && musicCount < min) continue;
-
-            var files = list
-                .OrderBy(x => !Utils.IsMusicFile(x.f.Filename))
-                .ThenBy(x => x.f.Filename)
-                .Select(x =>
-                {
-                    var info = InferSongQuery(x.f.Filename, new SongQuery { Artist = query.Artist, Album = query.Album });
-                    return new SongJob(info) { ResolvedTarget = new FileCandidate(x.r, x.f) };
-                })
-                .ToList();
-
-            if (!search.NecessaryFolderCond.RequiredTrackTitlesSatisfy(files))
-                continue;
-
-            folders.Add(new AlbumFolder(username, folderPath, files));
-        }
-
-        return folders;
     }
 
     // copyright is joke
