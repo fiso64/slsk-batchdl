@@ -365,12 +365,22 @@ The current `ConfigManager` still treats profiles as CLI token lists. Before the
 decouple profiles from CLI arguments so Core can apply profiles without knowing about argv,
 short flags, or CLI-only settings.
 
+Current runtime gap: auto-profile evaluation exists in `ConfigManager.UpdateProfiles`, and tests
+cover it directly, but normal CLI execution does not wire it into `JobPreparer.ApplyProfiles`.
+`JobPreparer.ApplyProfiles` is a static hook that is read while preparing jobs but is never assigned
+by `Program.cs`, so per-job auto-profiles are effectively not applied in the real CLI path today.
+This step should fix that by replacing the hook with an instance resolver rather than by wiring the
+static hook back up.
+
 ### Goal
 
 - Core owns typed profile application.
 - CLI only parses `sldl.conf` and command-line args into typed profiles.
 - GUI can build the same typed profiles directly from UI state.
 - Auto-profiles still work per job, but no longer require rebinding raw CLI tokens.
+- Server/GUI can run multiple engines/jobs without any static mutable profile state.
+- Preserve existing intended precedence: auto-profiles are weaker than explicit named profiles,
+  and CLI options remain strongest.
 
 ### Proposed Core model
 
@@ -386,8 +396,24 @@ public sealed record SettingsProfile
 }
 ```
 
-Patch objects represent only explicitly configured values, e.g. nullable scalars and nullable
-collections:
+Patch objects represent only explicitly configured values. Plain nullable properties are not enough
+for every setting because some options need to distinguish "unset" from "explicitly set null", and
+some options have append/replace/clear semantics. Use a small optional wrapper for scalar fields and
+explicit operations for collection-like settings:
+
+```csharp
+public readonly record struct SettingValue<T>(bool IsSet, T? Value);
+
+public enum CollectionPatchMode
+{
+    Unset,
+    Replace,
+    Append,
+    Clear,
+}
+```
+
+Example shape:
 
 ```csharp
 public sealed record DownloadSettingsPatch
@@ -398,7 +424,42 @@ public sealed record DownloadSettingsPatch
 }
 ```
 
+Important special cases the patch model must preserve:
+
+- `--on-complete`: replace or append.
+- `--regex`: replace or append.
+- `--cond` / `--pref`: merge parsed file/folder conditions.
+- `--album-art-only`: set album-art-only defaults and clear necessary/preferred file conditions.
+- `--no-listen`: explicitly set a nullable engine setting to `null`.
+- `--write-index`, `--no-write-index`, `--index-path`: set `HasConfiguredIndex`.
+- `--fails-to-downrank` / `--fails-to-ignore`: store the negated threshold values.
+
 Add a `SettingsPatchApplier` that applies patches to cloned settings instances.
+
+Cloning is required, not optional. `DownloadSettings` has init-only top-level references, but the
+nested settings objects, conditions, arrays, and lists are mutable. `JobPreparer` also mutates
+`job.Config.Search.*` when applying extractor hints. The resolver/preparer contract must prevent
+job-specific mutations from leaking into siblings, later jobs, or concurrent server submissions.
+Deep-clone at least:
+
+- all nested settings objects;
+- `FileConditions` and `FolderConditions`;
+- arrays such as formats and banned users;
+- lists such as `Output.OnComplete`;
+- regex replacement lists.
+
+### Engine settings in profiles
+
+`SettingsProfile` may contain an `EngineSettingsPatch`, but engine settings are lifetime settings
+for a `DownloadEngine`. They cannot vary per job once the engine has been constructed.
+
+Rules:
+
+- Engine patches are allowed only in non-conditional profiles applied before engine construction:
+  built-in defaults, config `[default]`, explicit named profiles, and the CLI profile.
+- Conditional auto-profiles must not affect `EngineSettings`.
+- If a conditional auto-profile contains engine settings, fail loudly (preferred) or warn and ignore
+  them. Do not silently apply only part of the profile.
 
 ### Job settings resolver
 
@@ -411,9 +472,19 @@ public interface IJobSettingsResolver
 }
 ```
 
-`JobPreparer` should call the resolver while assigning `job.Config`. The default resolver returns
-the inherited settings unchanged. The CLI creates a profile-backed resolver and passes it to the
-engine/preparer.
+`JobPreparer` should call the resolver while assigning `job.Config`. The CLI creates a
+profile-backed resolver and passes it to the engine/preparer. The resolver should be an instance
+dependency of `DownloadEngine` or an instance `JobPreparer`, not static state.
+
+Default behavior should preserve today's non-profile behavior while still avoiding mutation leaks.
+That can be either:
+
+- a default resolver that deep-clones inherited settings; or
+- `JobPreparer` deep-clones before applying extractor hints even when the resolver returns the same
+  instance.
+
+The key invariant: one job's extractor hints/profile resolution must not mutate another job's
+effective settings.
 
 ### Auto-profile conditions
 
@@ -443,13 +514,75 @@ context.Values["no-progress"] = cli.NoProgress;
 The GUI can provide GUI-specific values later, or omit CLI-only values. Unknown condition
 variables should fail loudly rather than silently evaluating to false.
 
+Current condition variables to preserve:
+
+- `input-type`
+- `download-mode`
+- `interactive`
+- `album`
+- `aggregate`
+
+Add host-supplied variables through `ProfileContext.Values`, so CLI-only values like `interactive`
+do not require Core to reference `CliSettings`.
+
+### Profile precedence
+
+Apply profile patches in this order:
+
+1. Built-in defaults.
+2. Config `[default]` profile.
+3. Matching conditional auto-profiles, in config-file order.
+4. Explicit named profiles from `--profile`, in requested order.
+5. CLI profile.
+
+This preserves the current intended/tested behavior:
+
+- auto-profiles override config defaults;
+- explicit named profiles override auto-profiles;
+- CLI options override everything.
+
+Precedence is granular per option. A later profile only changes fields explicitly set in its patch;
+unset patch fields leave earlier values intact.
+
+### Core normalization vs host defaults
+
+Do not move the current CLI `PostProcess` wholesale into Core. Split it into:
+
+- Core semantic normalization/invariants that apply for every host.
+- Host defaults/path policy that differs between CLI, Server, and GUI.
+
+Core normalization should include behavior like:
+
+- enforce `Search.IgnoreOn <= Search.DownrankOn`;
+- `YouTube.DeletedOnly` implies `YouTube.GetDeleted`;
+- album-art-only implications that are independent of host;
+- validation of settings combinations.
+
+Host defaults/path policy should stay outside Core normalization:
+
+- CLI may resolve a missing output parent directory to `Directory.GetCurrentDirectory()`.
+- Server should use a configured storage root, job workspace, or request-specific base path instead
+  of process cwd.
+- GUI can choose its own default output location.
+
+Path expansion/full-path conversion can be host-owned or supplied through a small host policy object
+so Core does not accidentally bake CLI cwd behavior into daemon/server operation.
+
 ### Migration shape
 
-1. Add Core patch/profile/resolver types.
-2. Change CLI config-file parsing so profiles become `SettingsProfile` objects instead of token
-   lists.
-3. Change CLI argument parsing so command-line options produce a special `<cli>` profile plus
-   `CliSettings`.
-4. Apply profiles in this order: built-in defaults, config default profile, explicit named
-   profiles, matching auto-profiles, CLI profile.
-5. Remove token rebinding from auto-profile application.
+1. Add Core patch/profile/resolver types and deep-clone support.
+2. Add Core `SettingsPatchApplier`, profile condition evaluator, and profile-backed
+   `IJobSettingsResolver`.
+3. Replace static `JobPreparer.ApplyProfiles` with an instance resolver path used by
+   `DownloadEngine`.
+4. Split settings finalization into Core normalization and host defaults/path policy.
+5. Change CLI config-file parsing so profiles become typed profile patches instead of token lists.
+6. Change CLI argument parsing so command-line options produce:
+   - a special `<cli>` Core profile;
+   - a CLI-only settings patch/profile for `CliSettings`.
+7. Apply engine patches before engine construction using only non-conditional profiles and the CLI
+   profile.
+8. Pass a profile-backed job settings resolver to the engine so auto-profiles are evaluated per job.
+9. Remove token rebinding from auto-profile application.
+10. Update tests to cover both the Core resolver and the actual CLI/engine integration path, not
+    only `ConfigManager.UpdateProfiles` directly.

@@ -6,6 +6,16 @@ public static class ConsoleInputManager
 {
     private static readonly Channel<ConsoleKeyInfo> _keyChannel = Channel.CreateUnbounded<ConsoleKeyInfo>();
 
+    public enum CancelPromptAction
+    {
+        Abort,
+        CancelAll,
+        CancelJob,
+        Invalid,
+    }
+
+    public readonly record struct CancelPromptResult(CancelPromptAction Action, int? JobId = null, string? Input = null);
+
     public static bool GlobalCancelEnabled { get; set; } = true;
     public static Func<Task>? OnCancelRequested { get; set; }
     public static CliProgressReporter? Reporter { get; set; }
@@ -52,5 +62,68 @@ public static class ConsoleInputManager
     public static async ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct = default)
     {
         return await _keyChannel.Reader.ReadAsync(ct);
+    }
+
+    public static CancelPromptResult ReadCancelPromptResult()
+    {
+        var input = ReadCancelPromptInput();
+
+        if (input == null)
+            return new(CancelPromptAction.Abort);
+
+        input = input.Trim();
+
+        if (input.Length == 0 ||
+            input.Equals("y", StringComparison.OrdinalIgnoreCase) ||
+            input.Equals("a", StringComparison.OrdinalIgnoreCase) ||
+            input.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(CancelPromptAction.CancelAll);
+        }
+
+        if (input.Equals("n", StringComparison.OrdinalIgnoreCase))
+            return new(CancelPromptAction.Abort);
+
+        return int.TryParse(input, out int id)
+            ? new(CancelPromptAction.CancelJob, id, input)
+            : new(CancelPromptAction.Invalid, Input: input);
+    }
+
+    private static string? ReadCancelPromptInput()
+    {
+        var input = new System.Text.StringBuilder();
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+
+            if (key.Key == ConsoleKey.Escape)
+            {
+                Console.WriteLine();
+                return null;
+            }
+
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return input.ToString();
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (input.Length == 0)
+                    continue;
+
+                input.Length--;
+                Console.Write("\b \b");
+                continue;
+            }
+
+            if (!char.IsControl(key.KeyChar))
+            {
+                input.Append(key.KeyChar);
+                Console.Write(key.KeyChar);
+            }
+        }
     }
 }

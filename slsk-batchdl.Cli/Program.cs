@@ -92,19 +92,23 @@ internal static partial class Program
             lock (Printing.ConsoleLock)
             {
                 Console.WriteLine();
-                Printing.Write("Cancel Job ID (or 'all', Enter to abort): ", ConsoleColor.Yellow, force: true);
+                Printing.Write("Cancel job ID or all jobs? id/[A]ll/n=Esc: ", ConsoleColor.Yellow, force: true);
             }
 
-            string? input = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(input)) return;
+            var result = ConsoleInputManager.ReadCancelPromptResult();
 
-            if (input.Equals("all", StringComparison.OrdinalIgnoreCase))
+            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
+                return;
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
             {
+                Logger.Info("Cancelling all jobs...");
+                engine.Cancel();
                 cts.Cancel();
                 return;
             }
 
-            if (int.TryParse(input, out int id))
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
             {
                 var jobToCancel = engine.GetJob(id);
                 if (jobToCancel != null)
@@ -119,7 +123,7 @@ internal static partial class Program
             }
             else
             {
-                Logger.Error($"Invalid input '{input}'.");
+                Logger.Error($"Invalid input '{result.Input}'.");
             }
         };
 
@@ -129,8 +133,13 @@ internal static partial class Program
         {
             await engine.RunAsync(cts.Token);
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
         finally
         {
+            engine.Cancel();
+            cts.Cancel();
             Printing.SetBuffering(false);
             Printing.Flush();
         }
