@@ -107,6 +107,18 @@ public static class ConditionParser
                         throw new Exception($"Input error: '{condition}' is a folder condition and has no effect here");
                     }
                     break;
+                case "requiredtracktitle":
+                case "foldertracktitle":
+                case "tracktitle":
+                    if (folderOut != null)
+                    {
+                        folderOut.RequiredTrackTitle = value;
+                    }
+                    else
+                    {
+                        throw new Exception($"Input error: '{condition}' is a folder condition and has no effect here");
+                    }
+                    break;
                 default:
                     throw new Exception($"Input error: Unknown condition '{condition}'");
             }

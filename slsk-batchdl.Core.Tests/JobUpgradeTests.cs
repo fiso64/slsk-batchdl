@@ -13,14 +13,17 @@ namespace Tests.Jobs
         [TestMethod]
         public void SongJob_UpgradeToAlbum_ReturnsAlbumJob()
         {
-            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" }) { ItemNumber = 5, LineNumber = 10 };
+            var song = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Title" }) { ItemNumber = 5, LineNumber = 10 };
             var results = ((IUpgradeable)song).Upgrade(album: true, aggregate: false).ToList();
 
             Assert.AreEqual(1, results.Count);
             Assert.IsInstanceOfType(results[0], typeof(AlbumJob));
             var album = (AlbumJob)results[0];
             Assert.AreEqual("Artist", album.Query.Artist);
-            Assert.AreEqual("Title", album.Query.Album);
+            Assert.AreEqual("Album", album.Query.Album);
+            Assert.AreEqual("", album.Query.SearchHint);
+            Assert.IsNotNull(album.ExtractorFolderCond);
+            Assert.AreEqual("Title", album.ExtractorFolderCond.RequiredTrackTitle);
             Assert.AreEqual(5, album.ItemNumber);
             Assert.AreEqual(10, album.LineNumber);
         }

@@ -67,6 +67,56 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public void SongUpgrade_ToAlbum_UsesSourceAlbumAndRequiresSourceTrackInFolder()
+        {
+            var song = new SongJob(new SongQuery
+            {
+                Artist = "Electric Light Orchestra",
+                Album = "Time",
+                Title = "Twilight",
+                Length = 209,
+            });
+
+            var upgraded = song.Upgrade(album: true, aggregate: false).Single();
+            var album = (AlbumJob)upgraded;
+
+            Assert.AreEqual("Electric Light Orchestra", album.Query.Artist);
+            Assert.AreEqual("Time", album.Query.Album);
+            Assert.AreEqual("", album.Query.SearchHint);
+            Assert.IsNotNull(album.ExtractorFolderCond);
+            Assert.AreEqual("Twilight", album.ExtractorFolderCond.RequiredTrackTitle);
+        }
+
+        [TestMethod]
+        public async Task SearchAlbum_RequiredTrackTitle_FiltersFoldersWithoutSourceTrack()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\02. Twilight.mp3", length: 209),
+                    TestHelpers.CreateSlFile(@"ELO\Time\03. Yours Truly 2095.mp3", length: 201),
+                ]),
+                new("User2", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\03. Yours Truly 2095.mp3", length: 201),
+                ]),
+            };
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.NecessaryFolderCond.RequiredTrackTitle = "Twilight";
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count);
+            Assert.AreEqual("User1", job.Results[0].Username);
+        }
+
+        [TestMethod]
         public async Task SearchAlbum_LargeResult_GroupsByFolderAndFiltersIncomplete()
         {
             var index = CreateSophisticatedIndex();

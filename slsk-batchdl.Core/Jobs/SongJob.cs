@@ -89,6 +89,8 @@ namespace Sldl.Core.Jobs;
             {
                 var newJob = new AlbumAggregateJob(AlbumQuery.FromSongQuery(Query));
                 newJob.CopySharedFieldsFrom(this);
+                if (Query.Title.Length > 0)
+                    newJob.ExtractorFolderCond = new FolderConditions { RequiredTrackTitle = Query.Title };
                 newJob.ItemName ??= newJob.ToString(noInfo: true);
                 yield return newJob;
             }
@@ -96,6 +98,8 @@ namespace Sldl.Core.Jobs;
             {
                 var newJob = new AlbumJob(AlbumQuery.FromSongQuery(Query));
                 newJob.CopySharedFieldsFrom(this);
+                if (Query.Title.Length > 0)
+                    newJob.ExtractorFolderCond = new FolderConditions { RequiredTrackTitle = Query.Title };
                 yield return newJob;
             }
             else if (aggregate)

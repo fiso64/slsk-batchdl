@@ -839,6 +839,9 @@ public partial class Searcher
                 })
                 .ToList();
 
+            if (!search.NecessaryFolderCond.RequiredTrackTitleSatisfies(files))
+                continue;
+
             folders.Add(new AlbumFolder(username, folderPath, files));
         }
 
