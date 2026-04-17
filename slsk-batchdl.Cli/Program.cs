@@ -51,12 +51,12 @@ internal static partial class Program
             cliReporter = new CliProgressReporter(cliSettings);
             cliReporter.Attach(engine.Events);
         }
+        engine.Events.EngineCompleted += queue => Printing.PrintComplete(queue);
 
         engine.DisplayTracksTbd      = (pending, existing, notFound, isNormal, printOption) =>
             Printing.PrintTracksTbd(pending, existing, notFound, isNormal, printOption);
         engine.DisplayResultsCallback = async (job, existing, notFound, printOption, search, searcher) =>
             await Printing.PrintResults(job, existing, notFound, printOption, search, searcher);
-        engine.DisplayComplete        = queue => Printing.PrintComplete(queue);
 
         engine.Enqueue(new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);
         engine.CompleteEnqueue();

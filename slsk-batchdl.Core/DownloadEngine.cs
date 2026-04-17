@@ -41,6 +41,22 @@ public class DownloadEngine
 
     private JobContext Ctx(Job job) => _contexts[job.Id];
 
+    private void RegisterJob(Job job, Job? parent)
+    {
+        bool firstRegistration = _jobById.TryAdd(job.Id, job);
+        _jobByDisplayId[job.DisplayId] = job;
+
+        if (!firstRegistration)
+            return;
+
+        job.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(Job.State))
+                Events.RaiseJobStateChanged(job, job.State);
+        };
+        Events.RaiseJobRegistered(job, parent);
+    }
+
     // ── public state (read by Searcher / Downloader) ─────────────────────────
 
     public ISoulseekClient? Client => _clientManager.Client;
@@ -66,12 +82,6 @@ public class DownloadEngine
     /// If null, the engine still exits early (no download) but outputs nothing.
     /// </summary>
     public Func<Job, List<SongJob>, List<SongJob>, PrintOption, SearchSettings, Searcher, Task>? DisplayResultsCallback { get; set; }
-
-    /// <summary>
-    /// Called after all jobs complete, to display a summary.
-    /// If null, no summary is printed.
-    /// </summary>
-    public Action<JobList>? DisplayComplete { get; set; }
 
     // ── concurrency semaphores ────────────────────────────────────────────────
 
@@ -155,7 +165,7 @@ public class DownloadEngine
         }
 
         if (Queue.Jobs.Count > 0 && !Queue.Jobs[^1].Config!.DoNotDownload)
-            DisplayComplete?.Invoke(Queue);
+            Events.RaiseEngineCompleted(Queue);
 
         Logger.Debug("Exiting");
         appCts.Cancel();
@@ -164,10 +174,9 @@ public class DownloadEngine
 
     // ── recursive job processor ───────────────────────────────────────────────
 
-    async Task ProcessJob(Job job, IExtractor? extractor = null, CancellationToken parentToken = default)
+    async Task ProcessJob(Job job, IExtractor? extractor = null, CancellationToken parentToken = default, Job? parentJob = null)
     {
-        _jobById[job.Id] = job;
-        _jobByDisplayId[job.DisplayId] = job;
+        RegisterJob(job, parentJob);
 
         // Create a per-job CTS linked to both the engine-wide appCts and the parent job's token
         // (if any). Cancelling this job propagates to all descendants; cancelling the parent
@@ -240,6 +249,8 @@ public class DownloadEngine
                 }
             }
 
+            Events.RaiseJobResultCreated(ej, extracted);
+
             // Propagate provenance from ExtractJob to the extracted result.
             extracted.LineNumber = ej.LineNumber;
             extracted.ItemNumber = ej.ItemNumber;
@@ -263,7 +274,7 @@ public class DownloadEngine
             // Pass parentToken (not ej.Cts.Token): the Result is a sibling of the ExtractJob in
             // the CTS hierarchy. Cancelling the ExtractJob after extraction completes has no effect
             // on the already-running Result; the Result can be cancelled independently.
-            await ProcessJob(extracted, ex, parentToken);
+            await ProcessJob(extracted, ex, parentToken, parentJob);
             return;
         }
 
@@ -272,8 +283,6 @@ public class DownloadEngine
         {
             var ctx = _contexts.TryGetValue(jl.Id, out var c) ? c : null;
             var config = jl.Config!;
-
-            Logger.SetConsoleLogLevel(config.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
 
             if (ctx?.PreprocessTracks == true)
             {
@@ -329,7 +338,7 @@ public class DownloadEngine
                 await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
                 {
                     bool wasInitial = child is SongJob s && s.State == JobState.Pending;
-                    await ProcessJob(child, extractor, jl.Cts!.Token);
+                    await ProcessJob(child, extractor, jl.Cts!.Token, jl);
 
                     if (wasInitial && child is SongJob song)
                     {
@@ -362,7 +371,7 @@ public class DownloadEngine
             }
             else
             {
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token)));
+                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token, jl)));
             }
 
             return;
@@ -376,8 +385,6 @@ public class DownloadEngine
     {
         var ctx = Ctx(job);
         var config = job.Config;
-
-        Logger.SetConsoleLogLevel(config.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
 
         if (ctx.PreprocessTracks)
         {
@@ -474,7 +481,7 @@ public class DownloadEngine
                         PlaylistEditor = ctx.PlaylistEditor,
                         PreprocessTracks = false,
                     };
-                    await ProcessJob(albumList, null, job.Cts!.Token);
+                    await ProcessJob(albumList, null, job.Cts!.Token, job);
                 }
                 return;
             }
@@ -1187,9 +1194,11 @@ public class DownloadEngine
     {
         var rfJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
 
-        _jobById[rfJob.Id] = rfJob;
-        _jobByDisplayId[rfJob.DisplayId] = rfJob;
+        RegisterJob(rfJob, parentJob);
         rfJob.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, parentJob.Cts!.Token);
+
+        if (parentJob is AlbumJob albumJob)
+            Events.RaiseRetrieveFolderJobStarted(albumJob, rfJob);
 
         Events.RaiseJobStarted(rfJob);
 

@@ -261,11 +261,11 @@ namespace Sldl.Core.Extractors;
                 new AuthorizationCodeTokenRequest(_clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")));
 
             Logger.Debug($"Spotify: Got token");
-            Console.WriteLine("spotify-token=" + tokenResponse.AccessToken);
+            Logger.Info("spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
-            Console.WriteLine();
-            Console.WriteLine("spotify-refresh=" + tokenResponse.RefreshToken);
-            Console.WriteLine();
+            Logger.Info("");
+            Logger.Info("spotify-refresh=" + tokenResponse.RefreshToken);
+            Logger.Info("");
             _clientRefreshToken = tokenResponse.RefreshToken;
             _client             = new SpotifyClient(tokenResponse.AccessToken);
             loggedIn            = true;

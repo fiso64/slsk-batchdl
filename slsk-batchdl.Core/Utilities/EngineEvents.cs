@@ -12,6 +12,13 @@ namespace Sldl.Core;
 /// </summary>
 public class EngineEvents
 {
+    // ── Graph / lifecycle ───────────────────────────────────────────────────
+    public event Action<Job, Job?>?             JobRegistered;       // job, parent (if any)
+    public event Action<Job, JobState>?         JobStateChanged;     // job, new state
+    public event Action<ExtractJob, Job>?       JobResultCreated;    // extract job, extracted/upgraded result
+    public event Action<AlbumJob, RetrieveFolderJob>? RetrieveFolderJobStarted;
+    public event Action<JobList>?              EngineCompleted;
+
     // ── Extraction ───────────────────────────────────────────────────────────
     public event Action<ExtractJob>?         ExtractionStarted;
     public event Action<ExtractJob, Job>?    ExtractionCompleted;
@@ -46,6 +53,12 @@ public class EngineEvents
     public event Action<int, int, int>?           OverallProgress; // done, failed, total
 
     // ── Internal raise methods (same assembly only) ──────────────────────────
+    internal void RaiseJobRegistered(Job job, Job? parent)              => JobRegistered?.Invoke(job, parent);
+    internal void RaiseJobStateChanged(Job job, JobState state)         => JobStateChanged?.Invoke(job, state);
+    internal void RaiseJobResultCreated(ExtractJob job, Job result)     => JobResultCreated?.Invoke(job, result);
+    internal void RaiseRetrieveFolderJobStarted(AlbumJob parent, RetrieveFolderJob job) => RetrieveFolderJobStarted?.Invoke(parent, job);
+    internal void RaiseEngineCompleted(JobList queue)                   => EngineCompleted?.Invoke(queue);
+
     internal void RaiseExtractionStarted(ExtractJob job)              => ExtractionStarted?.Invoke(job);
     internal void RaiseExtractionCompleted(ExtractJob job, Job result) => ExtractionCompleted?.Invoke(job, result);
     internal void RaiseExtractionFailed(ExtractJob job, string reason) => ExtractionFailed?.Invoke(job, reason);

@@ -149,12 +149,6 @@ namespace Sldl.Core.Extractors;
                         break;
                 }
 
-                if (songsDict.Count >= 200 && !Console.IsOutputRedirected)
-                {
-                    Console.SetCursorPosition(0, Console.CursorTop);
-                    Console.Write($"Loaded: {songs.Count}");
-                }
-
                 playlistItemsRequest.PageToken = playlistItemsResponse.NextPageToken;
                 if (playlistItemsRequest.PageToken == null || count >= max + offset)
                     playlistItemsRequest = null;
@@ -162,7 +156,8 @@ namespace Sldl.Core.Extractors;
                     playlistItemsRequest.MaxResults = Math.Min(offset + max - count, 100);
             }
 
-            Console.WriteLine();
+            if (songsDict.Count >= 200)
+                Logger.Info($"Loaded: {songs.Count}");
             return (playlistName, songs);
         }
 
@@ -503,20 +498,6 @@ namespace Sldl.Core.Extractors;
 
                 int workerCount = 4;
                 var workers = new List<Task>();
-                var consoleLock = new object();
-
-                void updateInfo()
-                {
-                    lock (consoleLock)
-                    {
-                        if (!Console.IsOutputRedirected)
-                        {
-                            string info = "Deleted metadata total/archived/retrieved: ";
-                            Console.SetCursorPosition(0, Console.CursorTop);
-                            Console.Write($"{info}{totalCount}/{archivedCount}/{songs.Count}");
-                        }
-                    }
-                }
 
                 var process = new Process
                 {
@@ -536,7 +517,6 @@ namespace Sldl.Core.Extractors;
                     {
                         deletedVideoUrls.Add(e.Data);
                         Interlocked.Increment(ref totalCount);
-                        updateInfo();
                     }
                 };
                 process.Exited += (sender, e) => { deletedVideoUrls.CompleteAdding(); };
@@ -577,7 +557,6 @@ namespace Sldl.Core.Extractors;
                                 noArchive.Add(videoUrl);
                             }
 
-                            updateInfo();
                         }
                     }));
                 }
@@ -585,7 +564,7 @@ namespace Sldl.Core.Extractors;
                 await Task.WhenAll(workers);
                 process.WaitForExit();
                 deletedVideoUrls.CompleteAdding();
-                Console.WriteLine();
+                Logger.Info($"Deleted metadata total/archived/retrieved: {totalCount}/{archivedCount}/{songs.Count}");
 
                 if (printFailed)
                 {
@@ -593,13 +572,13 @@ namespace Sldl.Core.Extractors;
                     {
                         Logger.Info("No archived version found for the following:");
                         foreach (var x in noArchive) Logger.Info($"  {x}");
-                        Console.WriteLine();
+                        Logger.Info("");
                     }
                     if (songs.Count < archivedCount)
                     {
                         Logger.Info("Failed to parse archived version for the following:");
                         foreach (var x in failRetrieve) Logger.Info($"  {x}");
-                        Console.WriteLine();
+                        Logger.Info("");
                     }
                 }
 
