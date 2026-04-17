@@ -84,7 +84,7 @@ namespace Tests.Unit
             Assert.AreEqual("Time", album.Query.Album);
             Assert.AreEqual("", album.Query.SearchHint);
             Assert.IsNotNull(album.ExtractorFolderCond);
-            Assert.AreEqual("Twilight", album.ExtractorFolderCond.RequiredTrackTitle);
+            CollectionAssert.AreEqual(new[] { "Twilight" }, album.ExtractorFolderCond.RequiredTrackTitles);
         }
 
         [TestMethod]
@@ -106,7 +106,7 @@ namespace Tests.Unit
             };
             var client = new MockSoulseekClient(index);
             var config = TestHelpers.CreateDefaultSettings().Download;
-            config.Search.NecessaryFolderCond.RequiredTrackTitle = "Twilight";
+            config.Search.NecessaryFolderCond.RequiredTrackTitles = ["Twilight"];
             var searcher = CreateSearcher(client, config);
             var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
 
@@ -114,6 +114,35 @@ namespace Tests.Unit
 
             Assert.AreEqual(1, job.Results.Count);
             Assert.AreEqual("User1", job.Results[0].Username);
+        }
+
+        [TestMethod]
+        public async Task SearchAlbum_RequiredTrackTitles_RequiresEverySourceTrack()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\02. Twilight.mp3", length: 209),
+                ]),
+                new("User2", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.mp3", length: 60),
+                    TestHelpers.CreateSlFile(@"ELO\Time\02. Twilight.mp3", length: 209),
+                    TestHelpers.CreateSlFile(@"ELO\Time\03. Yours Truly 2095.mp3", length: 201),
+                ]),
+            };
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.NecessaryFolderCond.RequiredTrackTitles = ["Twilight", "Yours Truly 2095"];
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count);
+            Assert.AreEqual("User2", job.Results[0].Username);
         }
 
         [TestMethod]

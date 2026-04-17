@@ -23,7 +23,8 @@ namespace Tests.Jobs
             Assert.AreEqual("Album", album.Query.Album);
             Assert.AreEqual("", album.Query.SearchHint);
             Assert.IsNotNull(album.ExtractorFolderCond);
-            Assert.AreEqual("Title", album.ExtractorFolderCond.RequiredTrackTitle);
+            CollectionAssert.AreEqual(new[] { "Title" }, album.ExtractorFolderCond.RequiredTrackTitles);
+            Assert.AreEqual(1, album.UpgradeSources.Count);
             Assert.AreEqual(5, album.ItemNumber);
             Assert.AreEqual(10, album.LineNumber);
         }
@@ -57,6 +58,106 @@ namespace Tests.Jobs
             Assert.AreEqual(2, resultList.Jobs.Count);
             Assert.IsInstanceOfType(resultList.Jobs[0], typeof(AlbumJob));
             Assert.IsInstanceOfType(resultList.Jobs[1], typeof(AlbumJob));
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DeduplicatesSongUpgradedAlbumsAndMergesRequiredTracks()
+        {
+            var list = new JobList("My List");
+            list.Add(new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 1" }));
+            list.Add(new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 2" }));
+            list.Add(new SongJob(new SongQuery { Artist = "Artist", Album = "Other Album", Title = "Other Track" }));
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
+            var album = (AlbumJob)resultList.Jobs[0];
+            Assert.AreEqual("Album", album.Query.Album);
+            CollectionAssert.AreEqual(new[] { "Track 1", "Track 2" }, album.ExtractorFolderCond!.RequiredTrackTitles);
+            Assert.AreEqual(2, album.UpgradeSources.Count);
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DoesNotMergeDifferentArtists()
+        {
+            var list = new JobList("My List");
+            list.Add(new SongJob(new SongQuery { Artist = "Artist 1", Album = "Album", Title = "Track 1" }));
+            list.Add(new SongJob(new SongQuery { Artist = "Artist 2", Album = "Album", Title = "Track 2" }));
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DoesNotMergeExplicitAlbumJobs()
+        {
+            var list = new JobList("My List");
+            list.Add(new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" }));
+            list.Add(new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" }));
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
+            Assert.IsTrue(resultList.Jobs.OfType<AlbumJob>().All(a => a.UpgradeSources.Count == 0));
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DoesNotMergeSongUpgradeWithExplicitAlbumJob()
+        {
+            var list = new JobList("My List");
+            list.Add(new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track" }));
+            list.Add(new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" }));
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
+            Assert.AreEqual(1, resultList.Jobs.OfType<AlbumJob>().Count(a => a.UpgradeSources.Count == 1));
+            Assert.AreEqual(1, resultList.Jobs.OfType<AlbumJob>().Count(a => a.UpgradeSources.Count == 0));
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DoesNotMergeSongUpgradesWithDifferentTrackCountConditions()
+        {
+            var first = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 1" })
+            {
+                ExtractorFolderCond = new FolderConditions { MinTrackCount = 5, MaxTrackCount = 5 }
+            };
+            var second = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 2" })
+            {
+                ExtractorFolderCond = new FolderConditions { MinTrackCount = 6, MaxTrackCount = 6 }
+            };
+            var third = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 3" })
+            {
+                ExtractorFolderCond = new FolderConditions { MinTrackCount = 5, MaxTrackCount = 5 }
+            };
+            var list = new JobList("My List", new Job[] { first, second, third });
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
+            var fiveTrackAlbum = resultList.Jobs.OfType<AlbumJob>().Single(a => a.ExtractorFolderCond!.MinTrackCount == 5);
+            CollectionAssert.AreEqual(new[] { "Track 1", "Track 3" }, fiveTrackAlbum.ExtractorFolderCond!.RequiredTrackTitles);
+            var sixTrackAlbum = resultList.Jobs.OfType<AlbumJob>().Single(a => a.ExtractorFolderCond!.MinTrackCount == 6);
+            CollectionAssert.AreEqual(new[] { "Track 2" }, sixTrackAlbum.ExtractorFolderCond!.RequiredTrackTitles);
+        }
+
+        [TestMethod]
+        public void JobList_UpgradeToAlbum_DoesNotMergeSongUpgradesWithDifferentFileConditions()
+        {
+            var first = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 1" })
+            {
+                ExtractorCond = new FileConditions { Formats = ["flac"] }
+            };
+            var second = new SongJob(new SongQuery { Artist = "Artist", Album = "Album", Title = "Track 2" })
+            {
+                ExtractorCond = new FileConditions { Formats = ["mp3"] }
+            };
+            var list = new JobList("My List", new Job[] { first, second });
+
+            var resultList = (JobList)((IUpgradeable)list).Upgrade(album: true, aggregate: false).Single();
+
+            Assert.AreEqual(2, resultList.Jobs.Count);
         }
 
         [TestMethod]

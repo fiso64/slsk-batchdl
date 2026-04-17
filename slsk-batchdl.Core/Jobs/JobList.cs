@@ -96,6 +96,7 @@ namespace Sldl.Core.Jobs;
                         albumList.Add(job);
                     }
                 }
+                DeduplicateSongUpgradedAlbums(albumList);
                 yield return albumList;
             }
             else
@@ -113,5 +114,98 @@ namespace Sldl.Core.Jobs;
                     }
                 }
             }
+        }
+
+        private static void DeduplicateSongUpgradedAlbums(JobList list)
+        {
+            var keep = new List<Job>();
+            var albumsByKey = new Dictionary<string, List<AlbumJob>>();
+
+            foreach (var job in list.Jobs)
+            {
+                if (job is not AlbumJob album || album.UpgradeSources.Count == 0)
+                {
+                    keep.Add(job);
+                    continue;
+                }
+
+                string? key = AlbumDedupKey(album.Query);
+                AlbumJob? existing = key != null && albumsByKey.TryGetValue(key, out var candidates)
+                    ? candidates.FirstOrDefault(candidate => CanMergeSongUpgradedAlbums(candidate, album))
+                    : null;
+
+                if (key == null || existing == null)
+                {
+                    keep.Add(job);
+                    if (key != null)
+                    {
+                        if (!albumsByKey.TryGetValue(key, out var albums))
+                            albumsByKey[key] = albums = new List<AlbumJob>();
+                        albums.Add(album);
+                    }
+                    continue;
+                }
+
+                MergeSongUpgradedAlbum(existing, album);
+            }
+
+            list.Jobs.Clear();
+            list.Jobs.AddRange(keep);
+        }
+
+        private static string? AlbumDedupKey(AlbumQuery query)
+        {
+            if (query.IsDirectLink)
+                return query.URI.Length > 0 ? "uri:" + query.URI.Trim().ToUpperInvariant() : null;
+
+            if (query.Album.Length == 0)
+                return null;
+
+            return "album:" + query.Artist.Trim().ToUpperInvariant() + "\n" + query.Album.Trim().ToUpperInvariant();
+        }
+
+        private static bool CanMergeSongUpgradedAlbums(AlbumJob a, AlbumJob b)
+            => a.UpgradeSources.Count > 0
+            && b.UpgradeSources.Count > 0
+            && AlbumQueriesAreEquivalent(a.Query, b.Query)
+            && ConditionsEqual(a.ExtractorCond, b.ExtractorCond)
+            && ConditionsEqual(a.ExtractorPrefCond, b.ExtractorPrefCond)
+            && FolderConditionsEqual(a.ExtractorFolderCond, b.ExtractorFolderCond, ignoreRequiredTrackTitles: true)
+            && FolderConditionsEqual(a.ExtractorPrefFolderCond, b.ExtractorPrefFolderCond, ignoreRequiredTrackTitles: false)
+            && a.EnablesIndexByDefault == b.EnablesIndexByDefault
+            && a.CanBeSkippedOverride == b.CanBeSkippedOverride;
+
+        private static bool AlbumQueriesAreEquivalent(AlbumQuery a, AlbumQuery b)
+            => a.Artist == b.Artist
+            && a.Album == b.Album
+            && a.SearchHint == b.SearchHint
+            && a.URI == b.URI
+            && a.ArtistMaybeWrong == b.ArtistMaybeWrong
+            && a.IsDirectLink == b.IsDirectLink
+            && a.MinTrackCount == b.MinTrackCount
+            && a.MaxTrackCount == b.MaxTrackCount;
+
+        private static bool ConditionsEqual(FileConditions? a, FileConditions? b)
+            => a == null ? b == null : a.Equals(b);
+
+        private static bool FolderConditionsEqual(FolderConditions? a, FolderConditions? b, bool ignoreRequiredTrackTitles)
+        {
+            if (a == null || b == null)
+                return FolderConditionsIsEmpty(a) && FolderConditionsIsEmpty(b);
+
+            return a.MinTrackCount == b.MinTrackCount
+                && a.MaxTrackCount == b.MaxTrackCount
+                && (ignoreRequiredTrackTitles || a.RequiredTrackTitles.SequenceEqual(b.RequiredTrackTitles));
+        }
+
+        private static bool FolderConditionsIsEmpty(FolderConditions? c)
+            => c == null || (c.MinTrackCount == -1 && c.MaxTrackCount == -1 && c.RequiredTrackTitles.Count == 0);
+
+        private static void MergeSongUpgradedAlbum(AlbumJob target, AlbumJob duplicate)
+        {
+            target.UpgradeSources.AddRange(duplicate.UpgradeSources.Select(s => new SongQuery(s)));
+            target.ExtractorFolderCond ??= new FolderConditions();
+            if (duplicate.ExtractorFolderCond != null)
+                target.ExtractorFolderCond.AddRequiredTrackTitles(duplicate.ExtractorFolderCond.RequiredTrackTitles);
         }
     }

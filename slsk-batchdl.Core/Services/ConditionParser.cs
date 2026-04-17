@@ -112,7 +112,7 @@ public static class ConditionParser
                 case "tracktitle":
                     if (folderOut != null)
                     {
-                        folderOut.RequiredTrackTitle = value;
+                        folderOut.AddRequiredTrackTitle(value);
                     }
                     else
                     {

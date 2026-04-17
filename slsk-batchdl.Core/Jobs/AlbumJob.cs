@@ -18,6 +18,10 @@ namespace Sldl.Core.Jobs;
         // Populated after search. Each element is one candidate folder version.
         public List<AlbumFolder> Results { get; set; } = new();
 
+        // Non-empty only for album jobs produced by upgrading song jobs. Used to safely
+        // deduplicate playlist tracks from the same album without merging explicit album jobs.
+        public List<SongQuery> UpgradeSources { get; } = new();
+
         // Set by the engine after the user/callback selects a folder.
         // When pre-set (e.g. direct link), the search phase is skipped.
         private AlbumFolder? _resolvedTarget;

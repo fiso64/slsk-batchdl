@@ -6,7 +6,7 @@ namespace Sldl.Core.Models;
     {
         public int MinTrackCount { get; set; } = -1;  // -1 = no constraint
         public int MaxTrackCount { get; set; } = -1;  // -1 = no constraint
-        public string RequiredTrackTitle { get; set; } = "";
+        public List<string> RequiredTrackTitles { get; set; } = [];
 
         public FolderConditions() { }
 
@@ -14,7 +14,7 @@ namespace Sldl.Core.Models;
         {
             MinTrackCount = other.MinTrackCount;
             MaxTrackCount = other.MaxTrackCount;
-            RequiredTrackTitle = other.RequiredTrackTitle;
+            RequiredTrackTitles = [.. other.RequiredTrackTitles];
         }
 
         public FolderConditions AddConditions(FolderConditions mod)
@@ -31,10 +31,10 @@ namespace Sldl.Core.Models;
                 undo.MaxTrackCount = MaxTrackCount;
                 MaxTrackCount      = mod.MaxTrackCount;
             }
-            if (mod.RequiredTrackTitle.Length > 0)
+            if (mod.RequiredTrackTitles.Count > 0)
             {
-                undo.RequiredTrackTitle = RequiredTrackTitle;
-                RequiredTrackTitle      = mod.RequiredTrackTitle;
+                undo.RequiredTrackTitles = [.. RequiredTrackTitles];
+                AddRequiredTrackTitles(mod.RequiredTrackTitles);
             }
 
             return undo;
@@ -48,13 +48,26 @@ namespace Sldl.Core.Models;
             return true;
         }
 
-        public bool RequiredTrackTitleSatisfies(IEnumerable<SongJob> files)
+        public void AddRequiredTrackTitle(string title)
         {
-            if (RequiredTrackTitle.Length == 0)
+            if (title.Length > 0 && !RequiredTrackTitles.Contains(title))
+                RequiredTrackTitles.Add(title);
+        }
+
+        public void AddRequiredTrackTitles(IEnumerable<string> titles)
+        {
+            foreach (var title in titles)
+                AddRequiredTrackTitle(title);
+        }
+
+        public bool RequiredTrackTitlesSatisfy(IEnumerable<SongJob> files)
+        {
+            if (RequiredTrackTitles.Count == 0)
                 return true;
 
+            var fileList = files.ToList();
             var cond = new FileConditions { StrictTitle = true };
-            return files.Any(file => file.ResolvedTarget != null
-                && cond.StrictTitleSatisfies(file.ResolvedTarget.Filename, RequiredTrackTitle));
+            return RequiredTrackTitles.All(title => fileList.Any(file => file.ResolvedTarget != null
+                && cond.StrictTitleSatisfies(file.ResolvedTarget.Filename, title)));
         }
     }

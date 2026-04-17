@@ -29,7 +29,10 @@ namespace Sldl.Core.Jobs;
                 var newJob = new AlbumAggregateJob(newQuery);
                 newJob.CopySharedFieldsFrom(this);
                 if (Query.Title.Length > 0)
-                    newJob.ExtractorFolderCond = new FolderConditions { RequiredTrackTitle = Query.Title };
+                {
+                    newJob.ExtractorFolderCond = newJob.ExtractorFolderCond != null ? new FolderConditions(newJob.ExtractorFolderCond) : new FolderConditions();
+                    newJob.ExtractorFolderCond.AddRequiredTrackTitle(Query.Title);
+                }
                 newJob.ItemName ??= newJob.ToString(noInfo: true);
                 yield return newJob;
             }
