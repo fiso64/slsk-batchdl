@@ -32,8 +32,7 @@ public class DownloadSettings
     /// Set by ConfigManager's special-case handler for --print and its shortcuts.
     public PrintOption PrintOption { get; set; } = PrintOption.None;
 
-    /// Tracks which auto-profiles are currently applied. Used by ConfigManager.UpdateProfiles
-    /// to detect when a re-evaluation is needed.
+    /// Tracks which auto-profiles were applied by the job settings resolver.
     public HashSet<string> AppliedAutoProfiles { get; set; } = [];
 
     // ── Computed properties ───────────────────────────────────────────────────

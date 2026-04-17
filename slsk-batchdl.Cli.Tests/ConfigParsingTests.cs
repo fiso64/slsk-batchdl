@@ -483,6 +483,18 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void Profile_NameExtractedFromCliArgs()
+        {
+            var profiles = new Dictionary<string, ProfileEntry>
+            {
+                ["fast"] = new(["--connect-timeout", "500"], null),
+            };
+            var file = new ConfigFile("none", profiles);
+            var (eng, _, _) = ConfigManager.Bind(file, ["--profile", "fast"]);
+            Assert.AreEqual(500, eng.ConnectTimeout);
+        }
+
+        [TestMethod]
         public void UnknownFlag_Throws()
         {
             Assert.ThrowsException<Exception>(() => Bind("--not-a-real-flag"));

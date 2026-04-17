@@ -40,7 +40,8 @@ internal static partial class Program
             return;
         }
 
-        var engine = new DownloadEngine(engineSettings, clientManager);
+        var jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(configFile, args, cliSettings);
+        var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
 
         CliProgressReporter? cliReporter = null;
         if (cliSettings.ProgressJson)

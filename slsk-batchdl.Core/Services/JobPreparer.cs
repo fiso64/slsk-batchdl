@@ -13,23 +13,18 @@ namespace Sldl.Core.Services;
 /// </summary>
 public static class JobPreparer
 {
-    /// <summary>
-    /// Optional hook for applying auto-profiles per job. Receives the inherited config and
-    /// the job being prepared; returns the (possibly modified) config to assign to that job.
-    /// Set by the CLI after constructing the engine when per-job profile resolution is needed.
-    /// </summary>
-    public static Func<DownloadSettings, Job, DownloadSettings>? ApplyProfiles { get; set; }
-
     public static Dictionary<Guid, JobContext> PrepareJobs(
         JobList queue,
-        DownloadSettings startConfig)
+        DownloadSettings startConfig,
+        IJobSettingsResolver? resolver = null)
     {
         var contexts = new Dictionary<Guid, JobContext>();
         var editors  = new Dictionary<(string path, M3uOption option), M3uEditor>();
         var skippers = new Dictionary<(string dir, SkipMode mode, bool checkCond), TrackSkipper>();
+        resolver ??= DefaultJobSettingsResolver.Instance;
 
         foreach (var job in queue.Jobs)
-            PrepareJob(job, queue, startConfig, contexts, editors, skippers);
+            PrepareJob(job, queue, startConfig, contexts, editors, skippers, resolver);
 
         return contexts;
     }
@@ -38,16 +33,18 @@ public static class JobPreparer
     // Returns only the newly created contexts (caller merges them into the main dict).
     public static Dictionary<Guid, JobContext> PrepareSubtree(
         Job root,
-        DownloadSettings parentConfig)
+        DownloadSettings parentConfig,
+        IJobSettingsResolver? resolver = null)
     {
         var newContexts = new Dictionary<Guid, JobContext>();
         var editors     = new Dictionary<(string path, M3uOption option), M3uEditor>();
         var skippers    = new Dictionary<(string dir, SkipMode mode, bool checkCond), TrackSkipper>();
+        resolver ??= DefaultJobSettingsResolver.Instance;
 
         // Use a synthetic owner list so index/playlist paths are scoped correctly when
         // root is a bare leaf job (not a JobList).
         var ownerList = root as JobList ?? new JobList();
-        PrepareJob(root, ownerList, parentConfig, newContexts, editors, skippers);
+        PrepareJob(root, ownerList, parentConfig, newContexts, editors, skippers, resolver);
         return newContexts;
     }
 
@@ -115,13 +112,12 @@ public static class JobPreparer
         DownloadSettings parentConfig,
         Dictionary<Guid, JobContext> contexts,
         Dictionary<(string, M3uOption), M3uEditor> editors,
-        Dictionary<(string, SkipMode, bool), TrackSkipper> skippers)
+        Dictionary<(string, SkipMode, bool), TrackSkipper> skippers,
+        IJobSettingsResolver resolver)
     {
         var ctx = new JobContext();
 
-        job.Config = ApplyProfiles != null
-            ? ApplyProfiles(parentConfig, job)
-            : parentConfig;
+        job.Config = resolver.Resolve(parentConfig, job);
 
         ctx.EnablesIndexByDefault = job.EnablesIndexByDefault;
 
@@ -157,7 +153,7 @@ public static class JobPreparer
         if (job is JobList childList)
         {
             foreach (var child in childList.Jobs)
-                PrepareJob(child, childList, job.Config, contexts, editors, skippers);
+                PrepareJob(child, childList, job.Config, contexts, editors, skippers, resolver);
         }
     }
 

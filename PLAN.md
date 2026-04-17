@@ -361,16 +361,12 @@ Step 3 is now structurally complete.
 
 ## Next step: Typed profiles and job settings resolver
 
-The current `ConfigManager` still treats profiles as CLI token lists. Before the GUI rewrite,
-decouple profiles from CLI arguments so Core can apply profiles without knowing about argv,
-short flags, or CLI-only settings.
+`ConfigManager` now parses config-file profiles and CLI args into typed profile operations. Core
+owns profile application through an instance `IJobSettingsResolver`, so per-job auto-profiles are
+applied by the normal CLI runtime without static mutable profile state or CLI token rebinding.
 
-Current runtime gap: auto-profile evaluation exists in `ConfigManager.UpdateProfiles`, and tests
-cover it directly, but normal CLI execution does not wire it into `JobPreparer.ApplyProfiles`.
-`JobPreparer.ApplyProfiles` is a static hook that is read while preparing jobs but is never assigned
-by `Program.cs`, so per-job auto-profiles are effectively not applied in the real CLI path today.
-This step should fix that by replacing the hook with an instance resolver rather than by wiring the
-static hook back up.
+The old `ConfigManager.UpdateProfiles` path and `JobPreparer.ApplyProfiles` static hook have been
+removed. Tests now cover the resolver/runtime path directly.
 
 ### Goal
 
@@ -584,5 +580,4 @@ so Core does not accidentally bake CLI cwd behavior into daemon/server operation
    profile.
 8. Pass a profile-backed job settings resolver to the engine so auto-profiles are evaluated per job.
 9. Remove token rebinding from auto-profile application.
-10. Update tests to cover both the Core resolver and the actual CLI/engine integration path, not
-    only `ConfigManager.UpdateProfiles` directly.
+10. Update tests to cover both the Core resolver and the actual CLI/engine integration path.

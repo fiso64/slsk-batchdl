@@ -7,7 +7,7 @@
 - **Field storage** — 130+ public fields, all mutable, all strung together in one class
 - **CLI argument parsing** — an 800-line `switch/case` in `ProcessArgs()`
 - **Config file parsing** — `ParseConfig()` reads `.conf` files and converts them to arg lists
-- **Profile management** — `configProfiles`, `appliedProfiles`, `UpdateProfiles()`, `ProfileConditionSatisfied()`, expression parser
+- **Profile management** — `configProfiles`, `appliedProfiles`, static profile hooks, expression parser
 - **Condition parsing** — `ParseConditions()` is a 110-line switch/case that belongs nowhere near Config
 - **Post-processing** — `PostProcessArgs()` expands variables, resolves defaults, sets derived fields
 - **Computed properties** — `DoNotDownload`, `NeedLogin`, `DeleteAlbumOnFail`, etc.
@@ -234,14 +234,10 @@ public static class ConfigManager
     public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli)
         Bind(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null);
 
-    // Re-evaluates auto-profiles against the given job.
-    // Reconstructs from scratch (default → auto-profiles → named → CLI) if anything changed.
-    public static DownloadSettings UpdateProfiles(
-        DownloadSettings current, ConfigFile file, IReadOnlyList<string> cliArgs,
-        string? profileName, Job job);
-
-    // Evaluates a profile-cond expression against variables derived from the job and settings.
-    public static bool ProfileConditionSatisfied(string cond, DownloadSettings settings, Job? job);
+    // Builds the per-job resolver used by DownloadEngine/JobPreparer.
+    public static IJobSettingsResolver CreateJobSettingsResolver(
+        ConfigFile file, IReadOnlyList<string> cliArgs, CliSettings cli,
+        string? profileName = null);
 }
 ```
 
@@ -276,10 +272,9 @@ public static class ConditionParser
 
 `Job.Config` currently holds a `Config` instance. After the refactor it holds `DownloadSettings`.
 `JobPreparer.PrepareJob` currently does `job.Config = parentConfig.Copy()`. With mutable settings,
-sharing a reference isn't safe — but since `ConfigManager.UpdateProfiles` rebuilds from scratch
-when profiles change, and unchanged jobs receive the same reference as their parent, `Copy()` can
-be replaced by passing the same reference, with a fresh `DownloadSettings` created only when
-`UpdateProfiles` detects a profile change.
+sharing a reference isn't safe, so `JobPreparer` receives an `IJobSettingsResolver` and asks it for
+a fresh per-job `DownloadSettings` snapshot. The profile-backed resolver rebuilds from base
+defaults with precedence `default -> auto-profiles -> named -> CLI`.
 
 `EngineSettings` is not on `Job` at all — it belongs to `DownloadEngine` only.
 
@@ -330,11 +325,11 @@ string\.IsNullOrWhitespace  ← already correct
 |---------|-------------|
 | `Config` class (1600 lines) | `EngineSettings` + `DownloadSettings` + sub-objects |
 | `Config(string[] args)` constructor | `ConfigManager.Bind(file, args)` |
-| `Config.Copy()` | Pass same reference; `ConfigManager.UpdateProfiles` rebuilds when needed |
+| `Config.Copy()` | `IJobSettingsResolver.Resolve()` creates per-job snapshots |
 | `Config.ProcessArgs()` (800-line switch) | `ConfigManager.ApplyTokens` — same pattern, right place |
 | `Config.ParseConfig()` | `ConfigManager.Load()` |
-| `Config.UpdateProfiles()` / `ApplyProfiles()` | `ConfigManager.UpdateProfiles()` |
-| `Config.ProfileConditionSatisfied()` + expression parser | `ConfigManager.ProfileConditionSatisfied()` |
+| `Config.UpdateProfiles()` / `ApplyProfiles()` | `IJobSettingsResolver` / `ProfileJobSettingsResolver` |
+| `Config.ProfileConditionSatisfied()` + expression parser | `ProfileConditionEvaluator.Satisfied()` |
 | `Config.ParseConditions()` | `ConditionParser.ParseFileConditions()` |
 | `Config.PostProcessArgs()` | Path expansion + constraint enforcement in `ConfigManager.PostProcess()` |
 | `Config.InputError()` / `InputWarning()` | Throw at call site; `Logger.Warn` for warnings |
@@ -353,7 +348,7 @@ string\.IsNullOrWhitespace  ← already correct
 | ~~3~~ | ~~Write `ConditionParser`. Replace `Config.ParseConditions` calls.~~ ✅ |
 | ~~4~~ | ~~**Clean up attribute experiment.** Remove `[Option]`/`[Positional]` attributes from all settings classes. Delete `OptionAttribute.cs` and `CommandLineBinder.cs`. Rewrite `ConfigManager.ApplyTokens` as a clean explicit switch/case covering all flags. Remove the 12 binder tests that tested the now-deleted infrastructure.~~ ✅ |
 | ~~5~~ | ~~`ConfigManager` is already written. Verify `ApplyTokens` is complete and correct. Add tests for the binding.~~ ✅ |
-| ~~6~~ | ~~Update `Job.Config` to `DownloadSettings`. Update `JobPreparer` — drop `Copy()`, pass references, call `ConfigManager.UpdateProfiles`. Add `WillWriteIndex` to `ConfigManager`. Thread `CliSettings?` through `UpdateProfiles`/`ProfileConditionSatisfied`/`GetVarValue` to fix `interactive` profile condition (was hard-coded `false`). Remove now-redundant `interactiveMode` mutation from `InteractiveModeManager`.~~ ✅ ⚠️ **Build broken** — `DownloadEngine` and `OnCompleteExecutor` still reference old `Config` fields; resolved in step 7. |
+| ~~6~~ | ~~Update `Job.Config` to `DownloadSettings`. Update `JobPreparer` — drop `Copy()`, use an instance `IJobSettingsResolver`, and add `WillWriteIndex` to `ConfigManager`. Thread `CliSettings` through resolver context so `interactive` profile conditions are evaluated from CLI state. Remove now-redundant `interactiveMode` mutation from `InteractiveModeManager`.~~ ✅ ⚠️ **Build broken** — `DownloadEngine` and `OnCompleteExecutor` still reference old `Config` fields; resolved in step 7. |
 | ~~7~~ | ~~Update all callsites (extractors, `Preprocessor`, `FileManager`, `Searcher`, `Downloader`, `DownloadEngine`). Use Python rename script for the ~170 mechanical field renames. Fix null string patterns found during migration. **Resolves step 6 build breakage.**~~ ✅ |
 | ~~8~~ | ~~Add `Channel<(ExtractJob, DownloadSettings)>` to `DownloadEngine`. Expose `Enqueue`/`CompleteEnqueue`. Update `RunAsync`.~~ ✅ |
 | ~~9~~ | ~~Delete `Config.cs` and `ConfigTests.cs` (old tests for the deleted class).~~ ✅ |

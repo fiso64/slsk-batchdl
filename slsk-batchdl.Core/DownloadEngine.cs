@@ -25,6 +25,7 @@ public class DownloadEngine
 
     private readonly EngineSettings engineSettings;
     private readonly SoulseekClientManager _clientManager;
+    private readonly IJobSettingsResolver _jobSettingsResolver;
 
     public EngineEvents Events { get; } = new();
 
@@ -97,10 +98,11 @@ public class DownloadEngine
 
     // ── construction ─────────────────────────────────────────────────────────
 
-    public DownloadEngine(EngineSettings settings, SoulseekClientManager clientManager)
+    public DownloadEngine(EngineSettings settings, SoulseekClientManager clientManager, IJobSettingsResolver? jobSettingsResolver = null)
     {
         engineSettings = settings;
         _clientManager = clientManager;
+        _jobSettingsResolver = jobSettingsResolver ?? DefaultJobSettingsResolver.Instance;
         _extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
     }
 
@@ -115,7 +117,7 @@ public class DownloadEngine
         {
             Queue.Jobs.Add(extractJob);
 
-            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(extractJob, settings))
+            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(extractJob, settings, _jobSettingsResolver))
                 _contexts[id] = ctx;
 
             if (settings.NeedLogin && !servicesInitialized)
@@ -234,7 +236,7 @@ public class DownloadEngine
                 Events.RaiseTrackListReady(allSongs);
 
             // Prepare contexts for the extracted subtree, inheriting from the ExtractJob's context.
-            var newContexts = JobPreparer.PrepareSubtree(extracted, ej.Config);
+            var newContexts = JobPreparer.PrepareSubtree(extracted, ej.Config, _jobSettingsResolver);
             foreach (var (id, ctx) in newContexts)
                 _contexts[id] = ctx;
 

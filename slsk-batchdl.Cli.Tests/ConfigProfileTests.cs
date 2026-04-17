@@ -1,17 +1,47 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Sldl.Core;
 using Sldl.Core.Models;
 using Sldl.Core.Jobs;
-using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
 using Sldl.Cli;
 
 namespace Tests.ConfigTests
 {
+    internal static class ProfileTestHelpers
+    {
+        public static (ConfigFile File, DownloadSettings Root, CliSettings Cli, string[] Args) Bind(
+            string path,
+            string content,
+            params string[] extraArgs)
+        {
+            File.WriteAllText(path, content);
+            var file = ConfigManager.Load(path);
+            var args = new[] { "test-input" }.Concat(extraArgs).ToArray();
+            var (_, root, cli) = ConfigManager.Bind(file, args);
+            return (file, root, cli, args);
+        }
+
+        public static DownloadSettings Resolve(ConfigFile file, DownloadSettings root, CliSettings cli, string[] args, Job job)
+        {
+            var resolver = ConfigManager.CreateJobSettingsResolver(file, args, cli);
+            return resolver.Resolve(root, job);
+        }
+
+        public static ProfileContext Context(CliSettings cli)
+        {
+            var context = new ProfileContext();
+            context.Values["interactive"] = cli.InteractiveMode;
+            context.Values["progress-json"] = cli.ProgressJson;
+            context.Values["no-progress"] = cli.NoProgress;
+            return context;
+        }
+    }
+
     [TestClass]
     public class AutoProfileTests
     {
-        private string testConfigPath;
+        private string testConfigPath = null!;
 
         [TestInitialize]
         public void Setup()
@@ -26,26 +56,16 @@ namespace Tests.ConfigTests
                 File.Delete(testConfigPath);
         }
 
-        private (ConfigFile file, DownloadSettings dl, string[] args) Bind(string content, params string[] extraArgs)
-        {
-            File.WriteAllText(testConfigPath, content);
-            var file = ConfigManager.Load(testConfigPath);
-            var args = new[] { "test-input" }.Concat(extraArgs).ToArray();
-            var (_, dl, _) = ConfigManager.Bind(file, args, ExtractProfileName(args));
-            return (file, dl, args);
-        }
+        private (ConfigFile File, DownloadSettings Root, CliSettings Cli, string[] Args) Bind(
+            string content,
+            params string[] extraArgs)
+            => ProfileTestHelpers.Bind(testConfigPath, content, extraArgs);
 
-        private static string? ExtractProfileName(string[] args)
-        {
-            int i = Array.IndexOf(args, "--profile");
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
-        }
-
-        private static DownloadSettings Update(ConfigFile file, DownloadSettings current, string[] args, Job job, CliSettings? cli = null)
-            => ConfigManager.UpdateProfiles(current, file, args, ExtractProfileName(args), job, cli);
+        private static DownloadSettings Resolve(ConfigFile file, DownloadSettings root, CliSettings cli, string[] args, Job job)
+            => ProfileTestHelpers.Resolve(file, root, cli, args, job);
 
         [TestMethod]
-        public void UpdateProfiles_WithMultipleProfiles_AppliesCorrectSettings()
+        public void Resolver_WithMultipleProfiles_AppliesCorrectSettings()
         {
             string content =
                 "max-stale-time = 5\n" +
@@ -63,18 +83,18 @@ namespace Tests.ConfigTests
                 "[profile-no-cond]\n" +
                 "format = opus";
 
-            var (file, dl, args) = Bind(content, "--input-type", "youtube");
-            var job = new AlbumJob(new AlbumQuery());
-
-            var result = Update(file, dl, args, job);
+            var (file, root, cli, args) = Bind(content, "--input-type", "youtube");
+            var result = Resolve(file, root, cli, args, new AlbumJob(new AlbumQuery()));
 
             Assert.AreEqual(10, result.Search.MaxStaleTime);
             Assert.IsFalse(result.Search.FastSearch);
+            Assert.IsNotNull(result.Search.NecessaryCond.Formats);
             Assert.AreEqual("flac", result.Search.NecessaryCond.Formats[0]);
+            CollectionAssert.AreEquivalent(new[] { "profile-true-1", "profile-true-2" }, result.AppliedAutoProfiles.ToList());
         }
 
         [TestMethod]
-        public void UpdateProfiles_WithInteractiveAndAlbum_AppliesCorrectStaleTime()
+        public void Resolver_WithInteractiveAndAlbum_AppliesCorrectStaleTime()
         {
             string content =
                 "[no-stale]\n" +
@@ -84,18 +104,16 @@ namespace Tests.ConfigTests
                 "profile-cond = input-type == \"youtube\"\n" +
                 "yt-dlp = true";
 
-            var (file, dl, args) = Bind(content);
+            var (file, root, _, args) = Bind(content, "--interactive");
             var cli = new CliSettings { InteractiveMode = true };
-            var job = new AlbumJob(new AlbumQuery());
-
-            var result = Update(file, dl, args, job, cli);
+            var result = Resolve(file, root, cli, args, new AlbumJob(new AlbumQuery()));
 
             Assert.AreEqual(999999, result.Search.MaxStaleTime);
             Assert.IsFalse(result.YtDlp.UseYtdlp);
         }
 
         [TestMethod]
-        public void UpdateProfiles_WithYouTubeInput_EnablesYtDlp()
+        public void Resolver_WithYouTubeInput_EnablesYtDlp()
         {
             string content =
                 "[no-stale]\n" +
@@ -105,18 +123,47 @@ namespace Tests.ConfigTests
                 "profile-cond = input-type == \"youtube\"\n" +
                 "yt-dlp = true";
 
-            var (file, dl, args) = Bind(content, "--input-type", "youtube");
+            var (file, root, _, args) = Bind(content, "--input-type", "youtube", "--interactive");
             var cli = new CliSettings { InteractiveMode = true };
-            var job = new SongJob(new SongQuery { Title = "test" });
-
-            var result = Update(file, dl, args, job, cli);
+            var result = Resolve(file, root, cli, args, new SongJob(new SongQuery { Title = "test" }));
 
             Assert.AreNotEqual(999999, result.Search.MaxStaleTime);
             Assert.IsTrue(result.YtDlp.UseYtdlp);
         }
 
         [TestMethod]
-        public void UpdateProfiles_DoesNotDuplicateAppendableArgs()
+        public void JobPreparer_WithResolver_AppliesAutoProfileInRuntimePath()
+        {
+            string content =
+                "[album-auto]\n" +
+                "profile-cond = download-mode == \"album\"\n" +
+                "max-stale-time = 4242";
+
+            var (file, root, cli, args) = Bind(content);
+            var resolver = ConfigManager.CreateJobSettingsResolver(file, args, cli);
+            var job = new AlbumJob(new AlbumQuery());
+
+            JobPreparer.PrepareSubtree(job, root, resolver);
+
+            Assert.AreEqual(4242, job.Config.Search.MaxStaleTime);
+            CollectionAssert.Contains(job.Config.AppliedAutoProfiles.ToList(), "album-auto");
+        }
+
+        [TestMethod]
+        public void AutoProfile_WithEngineSetting_Throws()
+        {
+            string content =
+                "[bad-auto]\n" +
+                "profile-cond = download-mode == \"album\"\n" +
+                "connect-timeout = 1000";
+
+            var (file, root, cli, args) = Bind(content);
+
+            Assert.ThrowsException<Exception>(() => ConfigManager.CreateJobSettingsResolver(file, args, cli));
+        }
+
+        [TestMethod]
+        public void Resolver_DoesNotDuplicateAppendableArgs()
         {
             string content =
                 "on-complete = + action_default\n" +
@@ -124,19 +171,12 @@ namespace Tests.ConfigTests
                 "profile-cond = interactive\n" +
                 "fast-search = true";
 
-            var (file, dl, args) = Bind(content, "--on-complete", "+ action_cli");
+            var (file, root, _, args) = Bind(content, "--interactive", "--on-complete", "+ action_cli");
             var cli = new CliSettings { InteractiveMode = true };
-
-            Assert.IsNotNull(dl.Output.OnComplete);
-            Assert.AreEqual(2, dl.Output.OnComplete.Count);
-            Assert.AreEqual("action_default", dl.Output.OnComplete[0]);
-            Assert.AreEqual("action_cli", dl.Output.OnComplete[1]);
-
-            var job = new SongJob(new SongQuery { Title = "test" });
-            var result = Update(file, dl, args, job, cli);
+            var result = Resolve(file, root, cli, args, new SongJob(new SongQuery { Title = "test" }));
 
             Assert.IsTrue(result.Search.FastSearch);
-            Assert.AreEqual(2, result.Output.OnComplete!.Count, "on-complete should not have duplicates");
+            Assert.AreEqual(2, result.Output.OnComplete!.Count);
             Assert.AreEqual("action_default", result.Output.OnComplete[0]);
             Assert.AreEqual("action_cli", result.Output.OnComplete[1]);
         }
@@ -145,7 +185,7 @@ namespace Tests.ConfigTests
     [TestClass]
     public class ProfilePriorityOrderTests
     {
-        private string testConfigPath;
+        private string testConfigPath = null!;
 
         [TestInitialize]
         public void Setup()
@@ -159,47 +199,36 @@ namespace Tests.ConfigTests
             if (File.Exists(testConfigPath)) File.Delete(testConfigPath);
         }
 
-        private (ConfigFile file, DownloadSettings dl, string[] args) Bind(string content, params string[] extraArgs)
-        {
-            File.WriteAllText(testConfigPath, content);
-            var file = ConfigManager.Load(testConfigPath);
-            var args = new[] { "test-input" }.Concat(extraArgs).ToArray();
-            var (_, dl, _) = ConfigManager.Bind(file, args, ExtractProfileName(args));
-            return (file, dl, args);
-        }
+        private (ConfigFile File, DownloadSettings Root, CliSettings Cli, string[] Args) Bind(
+            string content,
+            params string[] extraArgs)
+            => ProfileTestHelpers.Bind(testConfigPath, content, extraArgs);
 
-        private static string? ExtractProfileName(string[] args)
-        {
-            int i = Array.IndexOf(args, "--profile");
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
-        }
-
-        private static DownloadSettings Update(ConfigFile file, DownloadSettings current, string[] args, CliSettings? cli = null)
-        {
-            var job = new SongJob(new SongQuery { Title = "test" });
-            return ConfigManager.UpdateProfiles(current, file, args, ExtractProfileName(args), job, cli);
-        }
+        private static DownloadSettings Resolve(ConfigFile file, DownloadSettings root, CliSettings cli, string[] args)
+            => ProfileTestHelpers.Resolve(file, root, cli, args, new SongJob(new SongQuery { Title = "test" }));
 
         [TestMethod]
         public void Priority_DefaultAppliesWhenNoAutoProfileMatches()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "max-stale-time = 1\n" +
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = false });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = false }, args);
 
             Assert.AreEqual(1, result.Search.MaxStaleTime);
+            Assert.AreEqual(0, result.AppliedAutoProfiles.Count);
         }
 
         [TestMethod]
         public void Priority_AutoProfileOverridesDefault()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "max-stale-time = 1\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 2");
+                "[auto]\nprofile-cond = interactive\nmax-stale-time = 2",
+                "--interactive");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(2, result.Search.MaxStaleTime);
         }
@@ -207,13 +236,13 @@ namespace Tests.ConfigTests
         [TestMethod]
         public void Priority_ManualProfileOverridesAutoProfile()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "max-stale-time = 1\n" +
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2\n" +
                 "[manual]\nmax-stale-time = 3",
-                "--profile", "manual");
+                "--interactive", "--profile", "manual");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(3, result.Search.MaxStaleTime);
         }
@@ -221,13 +250,13 @@ namespace Tests.ConfigTests
         [TestMethod]
         public void Priority_CliArgsOverrideManualProfile()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "max-stale-time = 1\n" +
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2\n" +
                 "[manual]\nmax-stale-time = 3",
-                "--profile", "manual", "--max-stale-time", "4");
+                "--interactive", "--profile", "manual", "--max-stale-time", "4");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(4, result.Search.MaxStaleTime);
         }
@@ -235,11 +264,11 @@ namespace Tests.ConfigTests
         [TestMethod]
         public void Priority_CliArgsOverrideAutoProfile()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 2",
-                "--max-stale-time", "4");
+                "--interactive", "--max-stale-time", "4");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(4, result.Search.MaxStaleTime);
         }
@@ -247,26 +276,26 @@ namespace Tests.ConfigTests
         [TestMethod]
         public void Priority_MultipleAutoProfilesApplyInOrder()
         {
-            // Both conditions satisfied; second profile wins for the shared setting.
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[first]\nprofile-cond = interactive\nmax-stale-time = 10\n" +
                 "[second]\nprofile-cond = album\nmax-stale-time = 20",
-                "--album");
+                "--interactive", "--album");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(20, result.Search.MaxStaleTime);
+            CollectionAssert.AreEqual(new[] { "first", "second" }, result.AppliedAutoProfiles.ToList());
         }
 
         [TestMethod]
         public void Priority_TwoAutoProfiles_EachSetsDistinctSetting()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[first]\nprofile-cond = interactive\nmax-stale-time = 10\n" +
                 "[second]\nprofile-cond = album\nfast-search = true",
-                "--album");
+                "--interactive", "--album");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(10, result.Search.MaxStaleTime);
             Assert.IsTrue(result.Search.FastSearch);
@@ -275,12 +304,11 @@ namespace Tests.ConfigTests
         [TestMethod]
         public void Priority_RuntimeFields_PreservedOnResult()
         {
-            // Values passed via CLI args must survive the UpdateProfiles rebuild.
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[auto]\nprofile-cond = interactive\nmax-stale-time = 10",
-                "--input-type", "youtube", "--album", "--aggregate");
+                "--interactive", "--input-type", "youtube", "--album", "--aggregate");
 
-            var result = Update(file, dl, args, new CliSettings { InteractiveMode = true });
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.AreEqual(InputType.YouTube, result.Extraction.InputType);
             Assert.IsTrue(result.Extraction.IsAlbum);
@@ -289,14 +317,14 @@ namespace Tests.ConfigTests
     }
 
     [TestClass]
-    public class ProfileConditionFlipTests
+    public class ProfileResolveVariationTests
     {
-        private string testConfigPath;
+        private string testConfigPath = null!;
 
         [TestInitialize]
         public void Setup()
         {
-            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf_flip.conf");
+            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf_variation.conf");
         }
 
         [TestCleanup]
@@ -305,148 +333,72 @@ namespace Tests.ConfigTests
             if (File.Exists(testConfigPath)) File.Delete(testConfigPath);
         }
 
-        private (ConfigFile file, DownloadSettings dl, string[] args) Bind(string content)
-        {
-            File.WriteAllText(testConfigPath, content);
-            var file = ConfigManager.Load(testConfigPath);
-            var args = new[] { "test-input" };
-            var (_, dl, _) = ConfigManager.Bind(file, args);
-            return (file, dl, args);
-        }
-
-        private static DownloadSettings Update(ConfigFile file, DownloadSettings current, string[] args, bool interactiveMode)
-        {
-            var cli = new CliSettings { InteractiveMode = interactiveMode };
-            var job = new SongJob(new SongQuery { Title = "test" });
-            return ConfigManager.UpdateProfiles(current, file, args, null, job, cli);
-        }
+        private (ConfigFile File, DownloadSettings Root, CliSettings Cli, string[] Args) Bind(string content)
+            => ProfileTestHelpers.Bind(testConfigPath, content);
 
         [TestMethod]
-        public void ConditionFlip_TrueToFalse_RemovesProfileSetting()
+        public void Resolve_DifferentJobTypes_ReevaluatesAutoProfiles()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, cli, args) = Bind(
                 "max-stale-time = 5\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
+                "[album-auto]\nprofile-cond = download-mode == \"album\"\nmax-stale-time = 10");
+            var resolver = ConfigManager.CreateJobSettingsResolver(file, args, cli);
 
-            var first = Update(file, dl, args, interactiveMode: true);
-            Assert.AreEqual(10, first.Search.MaxStaleTime, "precondition: auto-profile applied");
+            var album = resolver.Resolve(root, new AlbumJob(new AlbumQuery()));
+            var song = resolver.Resolve(root, new SongJob(new SongQuery { Title = "test" }));
 
-            var second = Update(file, first, args, interactiveMode: false);
-            Assert.AreEqual(5, second.Search.MaxStaleTime, "default value restored after condition becomes false");
+            Assert.AreEqual(10, album.Search.MaxStaleTime);
+            CollectionAssert.Contains(album.AppliedAutoProfiles.ToList(), "album-auto");
+            Assert.AreEqual(5, song.Search.MaxStaleTime);
+            Assert.AreEqual(0, song.AppliedAutoProfiles.Count);
         }
 
         [TestMethod]
-        public void ConditionFlip_FalseToTrue_AppliesProfile()
+        public void Resolve_AppendableAutoProfile_DoesNotLeakBetweenJobs()
         {
-            var (file, dl, args) = Bind(
-                "max-stale-time = 5\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
-
-            var first = Update(file, dl, args, interactiveMode: false);
-            Assert.AreEqual(5, first.Search.MaxStaleTime, "precondition: auto-profile not applied");
-
-            var second = Update(file, first, args, interactiveMode: true);
-            Assert.AreEqual(10, second.Search.MaxStaleTime, "auto-profile applies after condition becomes true");
-        }
-
-        [TestMethod]
-        public void ConditionFlip_Unchanged_ReturnsSameInstance()
-        {
-            var (file, dl, args) = Bind(
-                "max-stale-time = 5\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
-
-            var first = Update(file, dl, args, interactiveMode: true);
-            var second = Update(file, first, args, interactiveMode: true);
-
-            Assert.IsTrue(ReferenceEquals(first, second), "no rebuild when conditions are unchanged");
-        }
-
-        [TestMethod]
-        public void ConditionFlip_Unchanged_False_ReturnsSameInstance()
-        {
-            var (file, dl, args) = Bind(
-                "max-stale-time = 5\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
-
-            var first = Update(file, dl, args, interactiveMode: false);
-            var second = Update(file, first, args, interactiveMode: false);
-
-            Assert.IsTrue(ReferenceEquals(first, second));
-        }
-
-        [TestMethod]
-        public void ConditionFlip_TrueToFalse_AppendableArgRebuilt()
-        {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = ProfileTestHelpers.Bind(
+                testConfigPath,
                 "on-complete = + action_default\n" +
-                "[auto]\nprofile-cond = interactive\non-complete = + action_profile");
+                "[auto]\nprofile-cond = interactive\non-complete = + action_profile",
+                "--interactive");
+            var resolver = ConfigManager.CreateJobSettingsResolver(file, args, new CliSettings { InteractiveMode = true });
 
-            var first = Update(file, dl, args, interactiveMode: true);
-            CollectionAssert.Contains(first.Output.OnComplete, "action_profile");
+            var first = resolver.Resolve(root, new SongJob(new SongQuery { Title = "a" }));
+            first.Output.OnComplete!.Add("mutated");
+            var second = resolver.Resolve(root, new SongJob(new SongQuery { Title = "b" }));
 
-            var second = Update(file, first, args, interactiveMode: false);
-            CollectionAssert.DoesNotContain(second.Output.OnComplete, "action_profile");
             CollectionAssert.Contains(second.Output.OnComplete, "action_default");
-        }
-
-        [TestMethod]
-        public void ConditionFlip_FalseToTrue_AppendableArgAdded()
-        {
-            var (file, dl, args) = Bind(
-                "on-complete = + action_default\n" +
-                "[auto]\nprofile-cond = interactive\non-complete = + action_profile");
-
-            var first = Update(file, dl, args, interactiveMode: false);
-            CollectionAssert.DoesNotContain(first.Output.OnComplete, "action_profile");
-
-            var second = Update(file, first, args, interactiveMode: true);
             CollectionAssert.Contains(second.Output.OnComplete, "action_profile");
-            CollectionAssert.Contains(second.Output.OnComplete, "action_default");
-            Assert.AreEqual(2, second.Output.OnComplete!.Count, "no duplicates on flip to true");
+            CollectionAssert.DoesNotContain(second.Output.OnComplete, "mutated");
+            Assert.AreEqual(2, second.Output.OnComplete!.Count);
         }
 
         [TestMethod]
-        public void ConditionFlip_MultipleProfiles_ActiveProfileSettingRetained()
+        public void Resolve_MultipleProfiles_ActiveProfileSettingRetainedWhenAnotherDoesNotMatch()
         {
-            // Profile A always applies (interactive). Profile B flips when job type changes.
-            // When B stops applying, A's setting must still be present.
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = ProfileTestHelpers.Bind(
+                testConfigPath,
                 "max-stale-time = 1\n" +
                 "[profile-a]\nprofile-cond = interactive\nmax-stale-time = 10\n" +
-                "[profile-b]\nprofile-cond = download-mode == \"album\"\nfast-search = true");
-            var cli = new CliSettings { InteractiveMode = true };
+                "[profile-b]\nprofile-cond = download-mode == \"album\"\nfast-search = true",
+                "--interactive");
+            var resolver = ConfigManager.CreateJobSettingsResolver(file, args, new CliSettings { InteractiveMode = true });
 
-            var first = ConfigManager.UpdateProfiles(dl, file, args, null, new AlbumJob(new AlbumQuery()), cli);
-            Assert.AreEqual(10, first.Search.MaxStaleTime);
-            Assert.IsTrue(first.Search.FastSearch);
+            var album = resolver.Resolve(root, new AlbumJob(new AlbumQuery()));
+            var song = resolver.Resolve(root, new SongJob(new SongQuery { Title = "test" }));
 
-            var second = ConfigManager.UpdateProfiles(first, file, args, null, new SongJob(new SongQuery { Title = "test" }), cli);
-            Assert.AreEqual(10, second.Search.MaxStaleTime, "profile-a still applies after profile-b flips off");
-        }
-
-        [TestMethod]
-        public void ConditionFlip_TrueToFalseToTrue_CorrectOnEachCall()
-        {
-            var (file, dl, args) = Bind(
-                "max-stale-time = 5\n" +
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
-
-            var r1 = Update(file, dl, args, interactiveMode: true);
-            Assert.AreEqual(10, r1.Search.MaxStaleTime);
-
-            var r2 = Update(file, r1, args, interactiveMode: false);
-            Assert.AreEqual(5, r2.Search.MaxStaleTime);
-
-            var r3 = Update(file, r2, args, interactiveMode: true);
-            Assert.AreEqual(10, r3.Search.MaxStaleTime);
+            Assert.AreEqual(10, album.Search.MaxStaleTime);
+            Assert.IsTrue(album.Search.FastSearch);
+            Assert.AreEqual(10, song.Search.MaxStaleTime);
+            Assert.IsFalse(song.Search.FastSearch);
+            CollectionAssert.AreEqual(new[] { "profile-a" }, song.AppliedAutoProfiles.ToList());
         }
     }
 
     [TestClass]
     public class ProfileEdgeCaseTests
     {
-        private string testConfigPath;
+        private string testConfigPath = null!;
 
         [TestInitialize]
         public void Setup()
@@ -460,132 +412,86 @@ namespace Tests.ConfigTests
             if (File.Exists(testConfigPath)) File.Delete(testConfigPath);
         }
 
-        private (ConfigFile file, DownloadSettings dl, string[] args) Bind(string content, params string[] extraArgs)
-        {
-            File.WriteAllText(testConfigPath, content);
-            var file = ConfigManager.Load(testConfigPath);
-            var args = new[] { "test-input" }.Concat(extraArgs).ToArray();
-            var (_, dl, _) = ConfigManager.Bind(file, args, ExtractProfileName(args));
-            return (file, dl, args);
-        }
+        private (ConfigFile File, DownloadSettings Root, CliSettings Cli, string[] Args) Bind(
+            string content,
+            params string[] extraArgs)
+            => ProfileTestHelpers.Bind(testConfigPath, content, extraArgs);
 
-        private static string? ExtractProfileName(string[] args)
-        {
-            int i = Array.IndexOf(args, "--profile");
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
-        }
-
-        private static DownloadSettings Update(ConfigFile file, DownloadSettings current, string[] args, bool interactiveMode = false)
-        {
-            var cli = new CliSettings { InteractiveMode = interactiveMode };
-            var job = new SongJob(new SongQuery { Title = "test" });
-            return ConfigManager.UpdateProfiles(current, file, args, ExtractProfileName(args), job, cli);
-        }
+        private static DownloadSettings Resolve(ConfigFile file, DownloadSettings root, CliSettings cli, string[] args)
+            => ProfileTestHelpers.Resolve(file, root, cli, args, new SongJob(new SongQuery { Title = "test" }));
 
         [TestMethod]
         public void EdgeCase_DefaultSectionProfileCondIsIgnored()
         {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[default]\nprofile-cond = interactive\nmax-stale-time = 99");
+
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
             Assert.IsFalse(file.HasAutoProfiles);
-            var result = Update(file, dl, args, interactiveMode: true);
-            Assert.IsTrue(ReferenceEquals(dl, result), "no update should occur when there are no auto-profiles");
+            Assert.AreEqual(99, result.Search.MaxStaleTime);
+            Assert.AreEqual(0, result.AppliedAutoProfiles.Count);
         }
 
         [TestMethod]
-        public void EdgeCase_DefaultSectionAlwaysApplied_EvenWithProfileCond()
+        public void EdgeCase_ProfileWithoutCondNotConsideredForAutoResolve()
         {
-            var (file, dl, args) = Bind(
-                "[default]\nprofile-cond = interactive\nmax-stale-time = 99");
-
-            Assert.AreEqual(99, dl.Search.MaxStaleTime, "[default] settings are applied even when profile-cond is present (and ignored)");
-        }
-
-        [TestMethod]
-        public void EdgeCase_ProfileWithoutCondNotConsideredForAutoUpdate()
-        {
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
+                "max-stale-time = 1\n" +
                 "[manual-only]\nmax-stale-time = 5");
 
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
+
             Assert.IsFalse(file.HasAutoProfiles);
-            var result = Update(file, dl, args, interactiveMode: true);
-            Assert.IsTrue(ReferenceEquals(dl, result));
+            Assert.AreEqual(1, result.Search.MaxStaleTime);
         }
 
         [TestMethod]
-        public void EdgeCase_NoAutoProfiles_UpdateProfilesAlwaysReturnsCurrent()
+        public void EdgeCase_ManualProfileNotAppliedUnlessSelected()
         {
-            var (file, dl, args) = Bind("max-stale-time = 5");
-
-            Assert.IsFalse(file.HasAutoProfiles);
-            var result = Update(file, dl, args);
-            Assert.IsTrue(ReferenceEquals(dl, result));
-        }
-
-        [TestMethod]
-        public void EdgeCase_ManualProfileNotAppliedByUpdateProfiles_WhenNotInCliArgs()
-        {
-            // [named] is an auto-profile (has profile-cond). [extra] is manual-only (no cond).
-            // UpdateProfiles should apply [named] but never touch [extra].
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "max-stale-time = 1\n" +
                 "[named]\nprofile-cond = interactive\nmax-stale-time = 2\n" +
-                "[extra]\nmax-stale-time = 99");
+                "[extra]\nmax-stale-time = 99",
+                "--interactive");
 
-            var result = Update(file, dl, args, interactiveMode: true);
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
 
-            Assert.AreEqual(2, result.Search.MaxStaleTime, "[extra] manual profile must not auto-apply");
+            Assert.AreEqual(2, result.Search.MaxStaleTime);
         }
 
         [TestMethod]
         public void EdgeCase_UnknownManualProfileInCliArgs_DoesNotCrash()
         {
-            File.WriteAllText(testConfigPath,
-                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10");
-            var file = ConfigManager.Load(testConfigPath);
-            var args = new[] { "test-input", "--profile", "nonexistent" };
-            var (_, dl, _) = ConfigManager.Bind(file, args, "nonexistent");
+            var (file, root, _, args) = Bind(
+                "[auto]\nprofile-cond = interactive\nmax-stale-time = 10",
+                "--interactive", "--profile", "nonexistent");
 
-            // Should not throw — just logs a warning
-            var result = Update(file, dl, args, interactiveMode: true);
+            var result = Resolve(file, root, new CliSettings { InteractiveMode = true }, args);
+
             Assert.AreEqual(10, result.Search.MaxStaleTime);
         }
 
         [TestMethod]
         public void EdgeCase_MultipleManualProfilesAppliedInOrder()
         {
-            // Named profiles are applied at Bind time, in order.
-            var (file, dl, args) = Bind(
+            var (file, root, _, args) = Bind(
                 "[p1]\nmax-stale-time = 10\n" +
                 "[p2]\nfast-search = true",
                 "--profile", "p1,p2");
 
-            Assert.AreEqual(10, dl.Search.MaxStaleTime);
-            Assert.IsTrue(dl.Search.FastSearch);
-        }
+            var result = Resolve(file, root, new CliSettings(), args);
 
-        [TestMethod]
-        public void EdgeCase_AutoProfile_AppendableArgNotDoubledOnNoOpSecondCall()
-        {
-            var (file, dl, args) = Bind(
-                "on-complete = + action_default\n" +
-                "[auto]\nprofile-cond = interactive\non-complete = + action_profile");
-
-            var first = Update(file, dl, args, interactiveMode: true);
-            Assert.AreEqual(2, first.Output.OnComplete!.Count);
-
-            var second = Update(file, first, args, interactiveMode: true);
-            Assert.IsTrue(ReferenceEquals(first, second), "same condition → same instance");
-            Assert.AreEqual(2, second.Output.OnComplete!.Count, "no duplication on no-op call");
+            Assert.AreEqual(10, result.Search.MaxStaleTime);
+            Assert.IsTrue(result.Search.FastSearch);
         }
     }
 
     [TestClass]
     public class ProfileConditionTests
     {
-        private DownloadSettings dl;
-        private CliSettings cli;
+        private DownloadSettings dl = null!;
+        private CliSettings cli = null!;
 
         [TestInitialize]
         public void Setup()
@@ -597,35 +503,42 @@ namespace Tests.ConfigTests
             cli = new CliSettings { InteractiveMode = true };
         }
 
+        private bool Satisfied(string condition, Job? job = null)
+            => ProfileConditionEvaluator.Satisfied(condition, dl, job, ProfileTestHelpers.Context(cli));
+
         [TestMethod]
-        public void ProfileConditionSatisfied_WithSimpleConditions_EvaluatesCorrectly()
+        public void ProfileConditionEvaluator_WithSimpleConditions_EvaluatesCorrectly()
         {
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("input-type == \"youtube\"", dl, null, cli));
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("download-mode == \"album\"", dl, null, cli));
-            Assert.IsFalse(ConfigManager.ProfileConditionSatisfied("aggregate", dl, null, cli));
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("interactive", dl, null, cli));
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("album", dl, null, cli));
-            Assert.IsFalse(ConfigManager.ProfileConditionSatisfied("!interactive", dl, null, cli));
+            Assert.IsTrue(Satisfied("input-type == \"youtube\""));
+            Assert.IsTrue(Satisfied("download-mode == \"album\""));
+            Assert.IsFalse(Satisfied("aggregate"));
+            Assert.IsTrue(Satisfied("interactive"));
+            Assert.IsTrue(Satisfied("album"));
+            Assert.IsFalse(Satisfied("!interactive"));
         }
 
         [TestMethod]
-        public void ProfileConditionSatisfied_WithComplexConditions_EvaluatesCorrectly()
+        public void ProfileConditionEvaluator_WithComplexConditions_EvaluatesCorrectly()
         {
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("album && input-type == \"youtube\"", dl, null, cli));
-            Assert.IsFalse(ConfigManager.ProfileConditionSatisfied("album && input-type != \"youtube\"", dl, null, cli));
-            Assert.IsFalse(ConfigManager.ProfileConditionSatisfied("(interactive && aggregate)", dl, null, cli));
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied("album && (interactive || aggregate)", dl, null, cli));
+            Assert.IsTrue(Satisfied("album && input-type == \"youtube\""));
+            Assert.IsFalse(Satisfied("album && input-type != \"youtube\""));
+            Assert.IsFalse(Satisfied("(interactive && aggregate)"));
+            Assert.IsTrue(Satisfied("album && (interactive || aggregate)"));
         }
 
         [TestMethod]
-        public void ProfileConditionSatisfied_WithComplexOrConditions_EvaluatesCorrectly()
+        public void ProfileConditionEvaluator_WithComplexOrConditions_EvaluatesCorrectly()
         {
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied(
-                "input-type == \"spotify\" || aggregate || input-type == \"csv\" || interactive && album", dl, null, cli));
-            Assert.IsTrue(ConfigManager.ProfileConditionSatisfied(
-                "input-type!=\"youtube\"||(album&&!interactive||(aggregate||interactive))", dl, null, cli));
-            Assert.IsFalse(ConfigManager.ProfileConditionSatisfied(
-                "input-type!=\"youtube\"||(album&&!interactive||(aggregate||!interactive))", dl, null, cli));
+            Assert.IsTrue(Satisfied("input-type == \"spotify\" || aggregate || input-type == \"csv\" || interactive && album"));
+            Assert.IsTrue(Satisfied("input-type!=\"youtube\"||(album&&!interactive||(aggregate||interactive))"));
+            Assert.IsFalse(Satisfied("input-type!=\"youtube\"||(album&&!interactive||(aggregate||!interactive))"));
+        }
+
+        [TestMethod]
+        public void ProfileConditionEvaluator_UsesJobDownloadModeWhenJobIsAvailable()
+        {
+            Assert.IsTrue(Satisfied("download-mode == \"song\"", new SongJob(new SongQuery { Title = "test" })));
+            Assert.IsFalse(Satisfied("download-mode == \"album\"", new SongJob(new SongQuery { Title = "test" })));
         }
     }
 }

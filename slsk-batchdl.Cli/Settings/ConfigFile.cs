@@ -1,3 +1,5 @@
+using Sldl.Core.Settings;
+
 namespace Sldl.Cli;
 
 /// Parsed representation of a sldl.conf file.
@@ -7,5 +9,28 @@ public record ConfigFile(
     bool HasAutoProfiles = false
 );
 
-/// One profile's token list and optional auto-apply condition expression.
-public record ProfileEntry(List<string> Tokens, string? Condition);
+/// One profile's typed Core patch plus optional CLI-only settings patch.
+public record ProfileEntry(SettingsProfile Profile, CliSettingsPatch Cli, List<string> Tokens)
+{
+    public string? Condition => Profile.Condition;
+
+    public ProfileEntry(List<string> tokens, string? condition)
+        : this(new SettingsProfile { Condition = condition }, new CliSettingsPatch(), tokens)
+    {
+    }
+}
+
+public sealed class CliSettingsPatch
+{
+    private readonly List<Action<CliSettings>> _operations = [];
+
+    public bool HasOperations => _operations.Count > 0;
+
+    public void Add(Action<CliSettings> operation) => _operations.Add(operation);
+
+    public void ApplyTo(CliSettings settings)
+    {
+        foreach (var operation in _operations)
+            operation(settings);
+    }
+}
