@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Sldl.Core.Models;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
@@ -13,8 +14,9 @@ public enum SearchIntent
 
 public class SearchJob : Job
 {
-    private readonly object _projectionCacheLock = new();
-    private readonly Dictionary<string, (int Revision, bool IsComplete, object Value)> _projectionCache = new();
+    private readonly Lock _projectionCacheLock = new();
+    private readonly Dictionary<string, (int Revision, bool IsComplete, object Value)> _projectionCache = [];
+    private readonly Dictionary<string, object> _incrementalProjectionStates = [];
 
     public SearchIntent Intent { get; }
     public SongQuery Query { get; }
@@ -55,103 +57,178 @@ public class SearchJob : Job
         CancellationToken ct = default)
         => Session.ReadRawResultsAsync(afterSequence, ct);
 
-    public T GetOrCreateProjection<T>(
-        string key,
-        Func<IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)>, T> factory)
-    {
-        int revision = Revision;
-        bool isComplete = IsComplete;
-        lock (_projectionCacheLock)
-        {
-            if (_projectionCache.TryGetValue(key, out var cached)
-                && cached.Revision == revision
-                && cached.IsComplete == isComplete
-                && cached.Value is T value)
-            {
-                return value;
-            }
-
-            var created = factory(Snapshot());
-            _projectionCache[key] = (revision, isComplete, created!);
-            return created;
-        }
-    }
-
     public SearchProjectionSnapshot<FileCandidate> GetSortedTrackCandidates(
         SearchSettings search,
-        ConcurrentDictionary<string, int> userSuccessCounts,
-        bool useInfer = true,
-        bool useLevenshtein = true)
-        => GetProjection(
-            $"sorted-track:{useInfer}:{useLevenshtein}",
-            snapshot => SearchResultProjector.SortedTrackCandidates(
-                snapshot.Select(x => (x.Response, x.File)),
-                Query,
-                search,
-                userSuccessCounts,
-                useInfer,
-                useLevenshtein));
+        ConcurrentDictionary<string, int> userSuccessCounts)
+    {
+        var state = GetOrCreateIncrementalProjectionState(
+            ProjectionKey("sorted-track", search, userSuccessCounts),
+            () => new IncrementalRawProjectionState<IncrementalResultSorter, FileCandidate>(
+                new IncrementalResultSorter(
+                    Query,
+                    search,
+                    userSuccessCounts,
+                    useInfer: false,
+                    useLevenshtein: false),
+                (projector, results) => projector.AddRange(results),
+                projector => projector.Snapshot()
+                    .Select(x => new FileCandidate(x.Response, x.File))
+                    .ToList()));
+
+        return state.Snapshot(this);
+    }
 
     public SearchProjectionSnapshot<AlbumFolder> GetAlbumFolders(SearchSettings search)
     {
         if (AlbumQuery == null)
             throw new InvalidOperationException("Album folder projection requires an album search job.");
 
-        return GetProjection(
-            "album-folders",
-            snapshot => SearchResultProjector.AlbumFolders(
-                snapshot.Select(x => (x.Response, x.File)),
-                AlbumQuery,
-                search));
+        var state = GetOrCreateIncrementalProjectionState(
+            ProjectionKey("album-folders", search),
+            () => new IncrementalRawProjectionState<IncrementalAlbumFolderProjector, AlbumFolder>(
+                new IncrementalAlbumFolderProjector(AlbumQuery, search),
+                (projector, results) => projector.AddRange(results),
+                projector => projector.Snapshot()));
+
+        return state.Snapshot(this);
     }
 
     public SearchProjectionSnapshot<SongJob> GetAggregateTracks(
         SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts)
-        => GetProjection(
-            "aggregate-tracks",
-            snapshot => SearchResultProjector.AggregateTracks(
-                snapshot.Select(x => (x.Response, x.File)),
-                Query,
-                search,
-                userSuccessCounts));
+    {
+        var state = GetOrCreateIncrementalProjectionState(
+            ProjectionKey("aggregate-tracks", search, userSuccessCounts),
+            () => new IncrementalRawProjectionState<IncrementalAggregateTrackProjector, SongJob>(
+                new IncrementalAggregateTrackProjector(Query, search, userSuccessCounts),
+                (projector, results) => projector.AddRange(results),
+                projector => projector.Snapshot()));
+
+        return state.Snapshot(this);
+    }
 
     public SearchProjectionSnapshot<AlbumJob> GetAggregateAlbums(SearchSettings search)
     {
         if (AlbumQuery == null)
             throw new InvalidOperationException("Album aggregate projection requires an album search job.");
 
-        return GetProjection(
-            "aggregate-albums",
-            snapshot =>
-            {
-                var folders = SearchResultProjector.AlbumFolders(
-                    snapshot.Select(x => (x.Response, x.File)),
-                    AlbumQuery,
-                    search);
-                return SearchResultProjector.AggregateAlbums(folders, AlbumQuery, search);
-            });
+        var state = GetOrCreateIncrementalProjectionState(
+            ProjectionKey("aggregate-albums", search),
+            () => new IncrementalAlbumAggregateProjectionState(AlbumQuery, search));
+
+        return state.Snapshot(this);
     }
 
-    private SearchProjectionSnapshot<T> GetProjection<T>(
+    private TState GetOrCreateIncrementalProjectionState<TState>(
         string key,
-        Func<IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)>, List<T>> factory)
+        Func<TState> factory)
+        where TState : class
     {
-        int revision = Revision;
-        bool isComplete = IsComplete;
         lock (_projectionCacheLock)
         {
-            if (_projectionCache.TryGetValue(key, out var cached)
-                && cached.Revision == revision
-                && cached.IsComplete == isComplete
-                && cached.Value is SearchProjectionSnapshot<T> value)
-            {
-                return value;
-            }
+            if (_incrementalProjectionStates.TryGetValue(key, out var cached)
+                && cached is TState cachedState)
+                return cachedState;
 
-            var created = new SearchProjectionSnapshot<T>(revision, factory(Snapshot()), isComplete);
-            _projectionCache[key] = (revision, isComplete, created);
+            var created = factory();
+            _incrementalProjectionStates[key] = created;
             return created;
+        }
+    }
+
+    private static List<(Soulseek.SearchResponse Response, Soulseek.File File)> RawPairs(IReadOnlyList<SearchRawResult> rawResults)
+        => rawResults
+            .Select(x => (x.Response, x.File))
+            .ToList();
+
+    private static string ProjectionKey(string name, params object[] dependencies)
+        => name + ":" + string.Join(':', dependencies.Select(RuntimeHelpers.GetHashCode));
+
+    private sealed class IncrementalRawProjectionState<TProjector, TItem>
+    {
+        private readonly Lock gate = new();
+        private readonly TProjector projector;
+        private readonly Func<TProjector, IEnumerable<(Soulseek.SearchResponse Response, Soulseek.File File)>, int> addRange;
+        private readonly Func<TProjector, List<TItem>> snapshot;
+        private long lastSequence;
+        private SearchProjectionSnapshot<TItem>? cachedSnapshot;
+
+        public IncrementalRawProjectionState(
+            TProjector projector,
+            Func<TProjector, IEnumerable<(Soulseek.SearchResponse Response, Soulseek.File File)>, int> addRange,
+            Func<TProjector, List<TItem>> snapshot)
+        {
+            this.projector = projector;
+            this.addRange = addRange;
+            this.snapshot = snapshot;
+        }
+
+        public SearchProjectionSnapshot<TItem> Snapshot(SearchJob job)
+        {
+            lock (gate)
+            {
+                var newResults = job.RawSnapshot(lastSequence);
+                if (newResults.Count > 0)
+                {
+                    addRange(projector, RawPairs(newResults));
+                    lastSequence = newResults[^1].Sequence;
+                    cachedSnapshot = null;
+                }
+
+                int revision = job.Revision;
+                bool isComplete = job.IsComplete;
+                if (cachedSnapshot != null
+                    && cachedSnapshot.Revision == revision
+                    && cachedSnapshot.IsComplete == isComplete)
+                {
+                    return cachedSnapshot;
+                }
+
+                cachedSnapshot = new SearchProjectionSnapshot<TItem>(revision, snapshot(projector), isComplete);
+                return cachedSnapshot;
+            }
+        }
+    }
+
+    private sealed class IncrementalAlbumAggregateProjectionState
+    {
+        private readonly Lock gate = new();
+        private readonly IncrementalAlbumFolderProjector albumProjector;
+        private readonly IncrementalAlbumAggregateProjector aggregateProjector;
+        private long lastSequence;
+        private SearchProjectionSnapshot<AlbumJob>? cachedSnapshot;
+
+        public IncrementalAlbumAggregateProjectionState(AlbumQuery query, SearchSettings search)
+        {
+            albumProjector = new IncrementalAlbumFolderProjector(query, search);
+            aggregateProjector = new IncrementalAlbumAggregateProjector(query, search);
+        }
+
+        public SearchProjectionSnapshot<AlbumJob> Snapshot(SearchJob job)
+        {
+            lock (gate)
+            {
+                var newResults = job.RawSnapshot(lastSequence);
+                if (newResults.Count > 0)
+                {
+                    var changes = albumProjector.AddRangeAndGetChanges(RawPairs(newResults));
+                    aggregateProjector.ApplyChanges(changes);
+                    lastSequence = newResults[^1].Sequence;
+                    cachedSnapshot = null;
+                }
+
+                int revision = job.Revision;
+                bool isComplete = job.IsComplete;
+                if (cachedSnapshot != null
+                    && cachedSnapshot.Revision == revision
+                    && cachedSnapshot.IsComplete == isComplete)
+                {
+                    return cachedSnapshot;
+                }
+
+                cachedSnapshot = new SearchProjectionSnapshot<AlbumJob>(revision, aggregateProjector.Snapshot(), isComplete);
+                return cachedSnapshot;
+            }
         }
     }
 

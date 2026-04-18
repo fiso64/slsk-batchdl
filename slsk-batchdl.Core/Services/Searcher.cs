@@ -326,13 +326,10 @@ public partial class Searcher
             }
             else
             {
-                var orderedResults = searchJob.GetOrCreateProjection("print-results:ordered-track", snapshot =>
-                    ResultSorter.OrderedResults(
-                        snapshot.Select(x => (x.Response, x.File)),
-                        song.Query,
-                        search,
-                        userStats.UserSuccessCounts,
-                        useInfer: true).ToList());
+                var orderedResults = searchJob
+                    .GetSortedTrackCandidates(search, userStats.UserSuccessCounts)
+                    .Items
+                    .Select(x => (x.Response, x.File));
                 displayResults(song, orderedResults);
             }
         }

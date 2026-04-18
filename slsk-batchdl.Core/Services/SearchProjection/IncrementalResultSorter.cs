@@ -17,7 +17,9 @@ public sealed class IncrementalResultSorter
         SongQuery query,
         SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
-        bool albumMode = false)
+        bool albumMode = false,
+        bool useInfer = false,
+        bool useLevenshtein = false)
     {
         keyContext = ResultSorter.CreateSortKeyContext(
             [],
@@ -25,8 +27,8 @@ public sealed class IncrementalResultSorter
             search,
             userSuccessCounts,
             useBracketCheck: !albumMode,
-            useInfer: false,
-            useLevenshtein: false,
+            useInfer,
+            useLevenshtein,
             albumMode);
     }
 

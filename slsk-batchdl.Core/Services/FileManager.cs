@@ -50,7 +50,7 @@ public partial class FileManager
 {
     readonly Job job;
     readonly HashSet<object> organized = new();
-    readonly object sync = new();
+    readonly Lock sync = new();
     public string? remoteBaseDir { get; private set; }
     public string? remoteImagesCommonDir { get; private set; }
     public string? defaultFolderName { get; private set; }

@@ -17,7 +17,7 @@ public class IntervalProgressReporter
     private int downloadedCount = 0;
     private int failedCount = 0;
     private readonly int totalCount = 0;
-    private readonly object _reportLock = new();
+    private readonly Lock _reportLock = new();
 
     public IntervalProgressReporter(TimeSpan interval, int countInterval, IEnumerable<SongJob> songs)
     {

@@ -34,7 +34,7 @@ public class EngineSettings
 
     public int ConcurrentSearches { get; set; } = 2;
 
-    public int ConcurrentExtractors { get; set; } = 2;
+    public int ConcurrentExtractors { get; set; } = 4;
 
     public int SearchesPerTime { get; set; } = 34;
 

@@ -28,7 +28,7 @@ namespace Tests.Unit
         }
 
         [TestMethod]
-        public async Task SearchJob_ProjectionCache_ReusesSameRevisionAndInvalidatesOnNewRawResult()
+        public async Task SearchJob_TypedProjectionCache_ReusesSameRevisionAndInvalidatesOnNewRawResult()
         {
             var index = new List<SearchResponse>
             {
@@ -41,36 +41,24 @@ namespace Tests.Unit
             var registry = TestHelpers.CreateSessionRegistry();
             var searcher = new Searcher(new ClientTests.MockSoulseekClient(index), registry, registry, new EngineEvents(), 10, 10);
             var job = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track" });
-            var factoryCalls = 0;
 
             await searcher.Search(job, config.Search, new ResponseData(), CancellationToken.None);
 
-            var first = job.GetOrCreateProjection("count", snapshot =>
-            {
-                factoryCalls++;
-                return snapshot.Count;
-            });
-            var second = job.GetOrCreateProjection("count", snapshot =>
-            {
-                factoryCalls++;
-                return snapshot.Count;
-            });
+            var userSuccessCounts = new ConcurrentDictionary<string, int>();
+            var first = job.GetSortedTrackCandidates(config.Search, userSuccessCounts);
+            var second = job.GetSortedTrackCandidates(config.Search, userSuccessCounts);
 
             job.Session.AddResponse(new SearchResponse("User2", 1, true, 100, 0,
             [
                 TestHelpers.CreateSlFile(@"Music\Artist\Track Alt.mp3", length: 181),
             ]));
 
-            var third = job.GetOrCreateProjection("count", snapshot =>
-            {
-                factoryCalls++;
-                return snapshot.Count;
-            });
+            var third = job.GetSortedTrackCandidates(config.Search, userSuccessCounts);
 
-            Assert.AreEqual(1, first);
-            Assert.AreEqual(1, second);
-            Assert.AreEqual(2, third);
-            Assert.AreEqual(2, factoryCalls, "Projection should be cached until the raw result revision changes.");
+            Assert.AreSame(first, second);
+            Assert.AreEqual(1, first.Items.Count);
+            Assert.AreEqual(2, third.Items.Count);
+            Assert.AreNotSame(first, third);
         }
 
         [TestMethod]
@@ -178,6 +166,65 @@ namespace Tests.Unit
             Assert.AreEqual("User1", folders.Items[0].Username);
             Assert.AreEqual(@"ELO\Time", folders.Items[0].FolderPath);
             Assert.AreEqual(2, folders.Items[0].SearchAudioFileCount);
+        }
+
+        [TestMethod]
+        public void SearchJob_TypedAggregateProjection_UpdatesIncrementally()
+        {
+            var job = new SearchJob(new SongQuery { Artist = "ELO", Title = "Blue Sky" });
+            job.Session.AddResponse(new SearchResponse("User1", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\ELO - Blue Sky.mp3", length: 180),
+            ]));
+
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            search.MinSharesAggregate = 1;
+            var userSuccessCounts = new ConcurrentDictionary<string, int>();
+            var first = job.GetAggregateTracks(search, userSuccessCounts);
+            var second = job.GetAggregateTracks(search, userSuccessCounts);
+
+            job.Session.AddResponse(new SearchResponse("User2", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\ELO - Blue Sky.flac", length: 180),
+            ]));
+            var updated = job.GetAggregateTracks(search, userSuccessCounts);
+
+            Assert.AreSame(first, second);
+            Assert.AreEqual(1, first.Items.Count);
+            Assert.AreEqual(1, first.Items[0].Candidates!.Count);
+            Assert.AreEqual(1, updated.Items.Count);
+            Assert.AreEqual(2, updated.Items[0].Candidates!.Count);
+            Assert.AreNotSame(first, updated);
+        }
+
+        [TestMethod]
+        public void SearchJob_TypedAlbumAggregateProjection_UpdatesIncrementally()
+        {
+            var job = new SearchJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
+            job.Session.AddResponse(new SearchResponse("User1", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"ELO\Time\01. Prologue.flac", length: 60),
+                TestHelpers.CreateSlFile(@"ELO\Time\02. Twilight.flac", length: 209),
+            ]));
+
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            search.MinSharesAggregate = 1;
+            var first = job.GetAggregateAlbums(search);
+            var second = job.GetAggregateAlbums(search);
+
+            job.Session.AddResponse(new SearchResponse("User2", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"Shared\ELO\Time\01. Prologue.flac", length: 60),
+                TestHelpers.CreateSlFile(@"Shared\ELO\Time\02. Twilight.flac", length: 209),
+            ]));
+            var updated = job.GetAggregateAlbums(search);
+
+            Assert.AreSame(first, second);
+            Assert.AreEqual(1, first.Items.Count);
+            Assert.AreEqual(1, first.Items[0].Results.Count);
+            Assert.AreEqual(1, updated.Items.Count);
+            Assert.AreEqual(2, updated.Items[0].Results.Count);
+            Assert.AreNotSame(first, updated);
         }
     }
 }

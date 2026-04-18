@@ -13,7 +13,7 @@ namespace Sldl.Cli;
 public class JsonStreamProgressReporter
 {
     private readonly TextWriter _writer;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly JsonSerializerOptions _jsonOptions;
     private DateTime _lastDownloadProgressReport = DateTime.MinValue;
     private readonly TimeSpan _downloadProgressThrottle = TimeSpan.FromMilliseconds(500);

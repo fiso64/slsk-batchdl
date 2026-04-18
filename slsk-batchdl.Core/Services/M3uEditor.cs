@@ -35,7 +35,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
     readonly JobList queue;
     readonly Dictionary<string, IndexEntry> previousRunData = new(); // key → IndexEntry
 
-    private readonly object locker = new();
+    private readonly Lock locker = new();
     private readonly Dictionary<Guid, string?> jobDownloadPaths = new();
 
     public void NotifyJobDownloadPath(Guid jobId, string? path)

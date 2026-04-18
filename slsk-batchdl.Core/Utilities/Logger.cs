@@ -1,3 +1,4 @@
+
 namespace Sldl.Core;
 
 public static class Logger
@@ -27,7 +28,7 @@ public static class Logger
 
     private static readonly List<OutputConfig> OutputConfigs = new();
 
-    private static readonly object LockObject = new();
+    private static readonly Lock LockObject = new();
 
     public static void SetupExceptionHandling()
     {

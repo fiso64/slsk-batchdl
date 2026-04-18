@@ -8,7 +8,7 @@ namespace Sldl.Core.Services;
 
 public sealed class SearchSession
 {
-    private readonly object rawResultsLock = new();
+    private readonly Lock rawResultsLock = new();
     private readonly List<SearchRawResult> rawResults = [];
     private int _revision;
     private int _lockedFileCount;

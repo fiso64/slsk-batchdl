@@ -72,7 +72,7 @@ public sealed class IncrementalAlbumAggregateProjector
             .Select(x =>
             {
                 var newJob = new AlbumJob(query);
-                newJob.Results = x.Versions;
+                newJob.Results = x.Versions.ToList();
                 return newJob;
             })
             .ToList();
