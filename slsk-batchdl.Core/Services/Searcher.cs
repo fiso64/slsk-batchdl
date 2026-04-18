@@ -42,8 +42,7 @@ public partial class Searcher
 
     public async Task Search(SearchJob job, SearchSettings search, ResponseData responseData, CancellationToken ct, Action? onSearch = null)
     {
-        var session = new SearchSession();
-        job.Session = session;
+        var session = job.Session;
         job.State = JobState.Searching;
 
         try
@@ -89,6 +88,10 @@ public partial class Searcher
             job.FailureReason = FailureReason.Other;
             job.FailureMessage = e.Message;
             throw;
+        }
+        finally
+        {
+            session.Complete();
         }
     }
 
