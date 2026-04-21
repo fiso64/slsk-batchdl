@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using Sldl.Core.Jobs;
 using Sldl.Core.Models;
 using Sldl.Core.Services;
+using Sldl.Core.Settings;
 
 namespace Tests.Unit
 {
@@ -225,6 +226,35 @@ namespace Tests.Unit
             Assert.AreEqual(1, updated.Items.Count);
             Assert.AreEqual(2, updated.Items[0].Results.Count);
             Assert.AreNotSame(first, updated);
+        }
+
+        [TestMethod]
+        public async Task DownloadEngine_CanRunSearchJobAsRootJob()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", length: 180),
+                ]),
+            };
+
+            var (engineSettings, downloadSettings) = TestHelpers.CreateDefaultSettings();
+            engineSettings.Username = "test_user";
+            engineSettings.Password = "test_pass";
+
+            var clientManager = TestHelpers.CreateMockClientManager(new ClientTests.MockSoulseekClient(index), engineSettings);
+            var engine = new DownloadEngine(engineSettings, clientManager);
+            var job = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track" });
+
+            engine.Enqueue(job, downloadSettings);
+            engine.CompleteEnqueue();
+
+            await engine.RunAsync(CancellationToken.None);
+
+            Assert.AreEqual(JobState.Done, job.State);
+            Assert.IsTrue(job.IsComplete);
+            Assert.AreEqual(1, job.ResultCount);
         }
     }
 }

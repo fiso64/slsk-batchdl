@@ -9,6 +9,7 @@ namespace Sldl.Core.Jobs;
     {
         public string     Input     { get; }
         public InputType? InputType { get; set; }
+        public bool AutoProcessResult { get; set; } = true;
 
         // Set by the engine after extraction. Null until the engine processes this job.
         public Job? Result { get; set; }

@@ -128,7 +128,7 @@ namespace Tests.EndToEnd
         }
 
         [TestMethod]
-        public async Task InteractiveAlbumSelection_FromList_IsSerialized()
+        public async Task PreselectedAlbumJob_SkipsSearchAndDownloadsResolvedFolder()
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
@@ -136,21 +136,14 @@ namespace Tests.EndToEnd
             Logger.AddConsole();
             Logger.SetConsoleLogLevel(Logger.LogLevel.Error);
 
-            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-interactive-" + Guid.NewGuid());
-            var albumOneDir = Path.Combine(musicRoot, "Artist One", "Album One");
-            var albumTwoDir = Path.Combine(musicRoot, "Artist Two", "Album Two");
-            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-interactive-" + Guid.NewGuid());
-            var listPath = Path.Combine(Path.GetTempPath(), "slsk-list-" + Guid.NewGuid() + ".txt");
+            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-music-" + Guid.NewGuid());
+            var albumDir  = Path.Combine(musicRoot, "Artist", "Chosen Album");
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-preselected-out-" + Guid.NewGuid());
+            Directory.CreateDirectory(albumDir);
+            Directory.CreateDirectory(outputDir);
 
-            System.IO.Directory.CreateDirectory(albumOneDir);
-            System.IO.Directory.CreateDirectory(albumTwoDir);
-            System.IO.Directory.CreateDirectory(outputDir);
-
-            System.IO.File.WriteAllBytes(Path.Combine(albumOneDir, "01. Artist One - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
-            System.IO.File.WriteAllBytes(Path.Combine(albumTwoDir, "01. Artist Two - Track Two.mp3"), TestHelpers.EmptyMp3Bytes);
-            System.IO.File.WriteAllText(listPath,
-                "a:\"Artist One - Album One\"" + Environment.NewLine +
-                "a:\"Artist Two - Album Two\"");
+            File.WriteAllBytes(Path.Combine(albumDir, "01. Artist - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+            File.WriteAllBytes(Path.Combine(albumDir, "02. Artist - Track Two.mp3"), TestHelpers.EmptyMp3Bytes);
 
             var testClient = ClientTests.MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
 
@@ -158,57 +151,164 @@ namespace Tests.EndToEnd
             {
                 var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
                 var rootSettings = new DownloadSettings();
-                rootSettings.Extraction.Input = listPath;
-                rootSettings.Extraction.InputType = InputType.List;
-                rootSettings.Search.NoBrowseFolder = true;
                 rootSettings.Output.ParentDir = outputDir;
                 rootSettings.Output.NameFormat = "{foldername}/{filename}";
+                rootSettings.Search.NoBrowseFolder = true;
 
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
-                var app = new DownloadEngine(engineSettings, clientManager);
+                var registry = TestHelpers.CreateSessionRegistry();
+                var searcher = new Searcher(testClient, registry, registry, new EngineEvents(), 10, 10);
+                var seedJob = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Chosen Album" });
+                await searcher.SearchAlbum(seedJob, rootSettings.Search, new ResponseData(), CancellationToken.None);
+                var selected = seedJob.Results.Single();
 
-                var activePickers = 0;
-                var maxActivePickers = 0;
-                var pickerCalls = 0;
-
-                app.SelectAlbumVersion = async job =>
+                var concreteJob = new AlbumJob(new AlbumQuery { Artist = "Wrong Artist", Album = "Wrong Album" })
                 {
-                    var active = Interlocked.Increment(ref activePickers);
-                    int observed;
-                    do
-                    {
-                        observed = maxActivePickers;
-                        if (active <= observed) break;
-                    }
-                    while (Interlocked.CompareExchange(ref maxActivePickers, active, observed) != observed);
-
-                    try
-                    {
-                        await Task.Delay(150);
-                        Interlocked.Increment(ref pickerCalls);
-                        return job.Results.FirstOrDefault();
-                    }
-                    finally
-                    {
-                        Interlocked.Decrement(ref activePickers);
-                    }
+                    ResolvedTarget = selected,
+                    AllowBrowseResolvedTarget = false,
+                    Results = [selected],
                 };
 
-                app.Enqueue(new ExtractJob(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType), rootSettings);
+                var app = new DownloadEngine(engineSettings, clientManager);
+                app.Enqueue(concreteJob, rootSettings);
                 app.CompleteEnqueue();
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                await app.RunAsync(cts.Token);
+                await app.RunAsync(CancellationToken.None);
 
-                Assert.IsFalse(cts.IsCancellationRequested, "RunAsync timed out");
-                Assert.AreEqual(2, pickerCalls, "Both list album jobs should reach the interactive picker");
-                Assert.AreEqual(1, maxActivePickers, "Interactive album prompts must not overlap");
+                Assert.AreEqual(JobState.Done, concreteJob.State);
+                var downloadedFiles = Directory.GetFiles(Path.Combine(outputDir, "Chosen Album"), "*", SearchOption.AllDirectories);
+                Assert.AreEqual(2, downloadedFiles.Length);
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("01. Artist - Track One.mp3")));
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("02. Artist - Track Two.mp3")));
             }
             finally
             {
-                if (System.IO.File.Exists(listPath)) System.IO.File.Delete(listPath);
-                if (System.IO.Directory.Exists(musicRoot)) System.IO.Directory.Delete(musicRoot, true);
-                if (System.IO.Directory.Exists(outputDir)) System.IO.Directory.Delete(outputDir, true);
+                if (Directory.Exists(musicRoot)) Directory.Delete(musicRoot, true);
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task PreselectedSongJob_SkipsSearchAndDownloadsResolvedFile()
+        {
+            Console.ResetColor();
+            Console.OutputEncoding = Encoding.UTF8;
+            Logger.SetupExceptionHandling();
+            Logger.AddConsole();
+            Logger.SetConsoleLogLevel(Logger.LogLevel.Error);
+
+            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-song-music-" + Guid.NewGuid());
+            var songDir   = Path.Combine(musicRoot, "Artist");
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-preselected-song-out-" + Guid.NewGuid());
+            Directory.CreateDirectory(songDir);
+            Directory.CreateDirectory(outputDir);
+
+            File.WriteAllBytes(Path.Combine(songDir, "Artist - Real Track.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            var testClient = ClientTests.MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.Output.NameFormat = "{filename}";
+
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var registry = TestHelpers.CreateSessionRegistry();
+                var searcher = new Searcher(testClient, registry, registry, new EngineEvents(), 10, 10);
+                var seedSong = new SongJob(new SongQuery { Artist = "Artist", Title = "Real Track" });
+                await searcher.SearchSong(seedSong, rootSettings.Search, new ResponseData(), CancellationToken.None);
+                var selected = seedSong.Candidates!.Single();
+
+                var concreteJob = new SongJob(new SongQuery { Artist = "Wrong Artist", Title = "Wrong Track" })
+                {
+                    ResolvedTarget = selected,
+                };
+
+                var app = new DownloadEngine(engineSettings, clientManager);
+                app.Enqueue(concreteJob, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobState.Done, concreteJob.State);
+                var downloadedFiles = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
+                Assert.AreEqual(1, downloadedFiles.Length);
+                Assert.IsTrue(downloadedFiles.Any(f => f.EndsWith("Artist - Real Track.mp3")));
+            }
+            finally
+            {
+                if (Directory.Exists(musicRoot)) Directory.Delete(musicRoot, true);
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task PrintResults_SongJob_SearchesWithoutDownloading()
+        {
+            var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-print-song-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.PrintOption = PrintOption.Results;
+
+                var songJob = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong" });
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var app = new DownloadEngine(engineSettings, clientManager);
+                app.Enqueue(songJob, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobState.Done, songJob.State);
+                Assert.IsTrue(songJob.Candidates?.Count > 0, "Print-results mode should populate song candidates.");
+                Assert.AreEqual(0, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
+                    "Print-results mode should not download files.");
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir))
+                    Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task PrintResults_AlbumJob_SearchesWithoutDownloading()
+        {
+            var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-print-album-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.PrintOption = PrintOption.Results;
+                rootSettings.Extraction.IsAlbum = true;
+
+                var albumJob = new AlbumJob(new AlbumQuery { Artist = "testartist", Album = "testalbum" });
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var app = new DownloadEngine(engineSettings, clientManager);
+                app.Enqueue(albumJob, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.IsTrue(albumJob.Results.Count > 0, "Print-results mode should populate album search results.");
+                Assert.AreEqual(0, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
+                    "Print-results mode should not download album files.");
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir))
+                    Directory.Delete(outputDir, true);
             }
         }
 

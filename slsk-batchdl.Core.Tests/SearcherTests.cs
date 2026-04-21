@@ -370,6 +370,30 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchAlbum_MatchesSearchJobAlbumProjection()
+        {
+            var index = CreateSophisticatedIndex();
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, config);
+            var albumQuery = new AlbumQuery { Artist = "ELO", Album = "Time" };
+            var albumJob = new AlbumJob(albumQuery);
+            var searchJob = new SearchJob(albumQuery);
+
+            await searcher.SearchAlbum(albumJob, config.Search, new ResponseData(), CancellationToken.None);
+            await searcher.Search(searchJob, config.Search, new ResponseData(), CancellationToken.None);
+
+            var projected = searchJob.GetAlbumFolders(config.Search).Items;
+
+            CollectionAssert.AreEqual(
+                albumJob.Results.Select(x => x.Username + "\\" + x.FolderPath).ToList(),
+                projected.Select(x => x.Username + "\\" + x.FolderPath).ToList());
+            CollectionAssert.AreEqual(
+                albumJob.Results.Select(x => x.SearchAudioFileCount).ToList(),
+                projected.Select(x => x.SearchAudioFileCount).ToList());
+        }
+
+        [TestMethod]
         public async Task AggregateAlbum_DiscographySearch_IdentifiesAllUniqueAlbums()
         {
             var index = CreateSophisticatedIndex();

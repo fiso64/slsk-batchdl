@@ -31,6 +31,11 @@ namespace Sldl.Core.Jobs;
             set { if (!ReferenceEquals(_resolvedTarget, value)) { _resolvedTarget = value; OnPropertyChanged(); } }
         }
 
+        // When a folder is explicitly selected up front (for example from an interactive
+        // SearchJob flow), this controls whether the engine may still browse the selected
+        // folder for additional files during album download.
+        public bool AllowBrowseResolvedTarget { get; set; } = true;
+
         // Set by the engine when the download phase completes.
         private string? _downloadPath;
         public string? DownloadPath

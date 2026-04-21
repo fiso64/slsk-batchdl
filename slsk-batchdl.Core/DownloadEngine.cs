@@ -38,6 +38,10 @@ public class DownloadEngine
 
     public Job? GetJob(Guid id) => _jobById.TryGetValue(id, out var job) ? job : null;
     public Job? GetJob(int displayId) => _jobByDisplayId.TryGetValue(displayId, out var job) ? job : null;
+    public IReadOnlyList<Job> GetJobsByWorkflow(Guid workflowId) => _jobById.Values
+        .Where(job => job.WorkflowId == workflowId)
+        .OrderBy(job => job.DisplayId)
+        .ToList();
 
     private JobContext Ctx(Job job) => _contexts[job.Id];
 
@@ -65,38 +69,19 @@ public class DownloadEngine
     // Session state (Decoupled)
     private readonly SessionRegistry _registry = new();
 
-
-    // ── injectable CLI callbacks ──────────────────────────────────────────────
-
-    public Func<AlbumJob, Task<AlbumFolder?>>? SelectAlbumVersion { get; set; }
-
-    /// <summary>
-    /// Called when tracks-to-be-downloaded have been determined (before download starts).
-    /// Parameters: pending songs, already-existing songs, not-found songs, isNormal flag, printOption.
-    /// If null, nothing is displayed.
-    /// </summary>
-    public Action<List<SongJob>, List<SongJob>, List<SongJob>, bool, PrintOption>? DisplayTracksTbd { get; set; }
-
-    /// <summary>
-    /// Called to display search results (--print results mode). Should search and display.
-    /// If null, the engine still exits early (no download) but outputs nothing.
-    /// </summary>
-    public Func<Job, List<SongJob>, List<SongJob>, PrintOption, SearchSettings, Searcher, Task>? DisplayResultsCallback { get; set; }
-
     // ── concurrency semaphores ────────────────────────────────────────────────
 
     // Limits simultaneous extractor runs to avoid API rate limits.
     // Search concurrency is handled inside Searcher (concurrencySemaphore).
     private readonly SemaphoreSlim _extractorSemaphore;
-    private readonly SemaphoreSlim _albumSelectionSemaphore = new(1, 1);
 
     // ── job channel ──────────────────────────────────────────────────────────
 
-    private readonly Channel<(ExtractJob Job, DownloadSettings Settings)> _jobChannel =
-        Channel.CreateUnbounded<(ExtractJob, DownloadSettings)>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<(Job Job, DownloadSettings Settings)> _jobChannel =
+        Channel.CreateUnbounded<(Job, DownloadSettings)>(new UnboundedChannelOptions { SingleReader = true });
 
     /// <summary>Enqueues a job for processing. Call <see cref="CompleteEnqueue"/> when done adding jobs.</summary>
-    public void Enqueue(ExtractJob job, DownloadSettings settings) =>
+    public void Enqueue(Job job, DownloadSettings settings) =>
         _jobChannel.Writer.TryWrite((job, settings));
 
     /// <summary>Signals that no more jobs will be enqueued. <see cref="RunAsync"/> will drain and exit.</summary>
@@ -106,6 +91,23 @@ public class DownloadEngine
 
     private readonly CancellationTokenSource appCts = new();
     public void Cancel() => appCts.Cancel();
+    public int CancelWorkflow(Guid workflowId)
+    {
+        var jobs = GetJobsByWorkflow(workflowId);
+        int cancelled = 0;
+
+        foreach (var job in jobs)
+        {
+            var cts = job.Cts;
+            if (cts == null || cts.IsCancellationRequested)
+                continue;
+
+            job.Cancel();
+            cancelled++;
+        }
+
+        return cancelled;
+    }
 
     // ── construction ─────────────────────────────────────────────────────────
 
@@ -117,37 +119,19 @@ public class DownloadEngine
         _extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
     }
 
-    private async Task<(bool WasInteractive, AlbumFolder? Folder)> SelectAlbumVersionAsync(AlbumJob job)
-    {
-        if (SelectAlbumVersion == null)
-            return (false, null);
-
-        await _albumSelectionSemaphore.WaitAsync(job.Cts?.Token ?? appCts.Token);
-        try
-        {
-            var selector = SelectAlbumVersion;
-            return selector == null
-                ? (false, null)
-                : (true, await selector(job));
-        }
-        finally
-        {
-            _albumSelectionSemaphore.Release();
-        }
-    }
-
 
     // ── top-level entry point ─────────────────────────────────────────────────
 
     public async Task RunAsync(CancellationToken ct)
     {
         bool servicesInitialized = false;
+        var rootTasks = new List<Task>();
 
-        await foreach (var (extractJob, settings) in _jobChannel.Reader.ReadAllAsync(ct))
+        await foreach (var (rootJob, settings) in _jobChannel.Reader.ReadAllAsync(ct))
         {
-            Queue.Jobs.Add(extractJob);
+            Queue.Jobs.Add(rootJob);
 
-            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(extractJob, settings, _jobSettingsResolver))
+            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(rootJob, settings, _jobSettingsResolver))
                 _contexts[id] = ctx;
 
             if (settings.NeedLogin && !servicesInitialized)
@@ -161,8 +145,10 @@ public class DownloadEngine
                 servicesInitialized = true;
             }
 
-            await ProcessJob(extractJob);
+            rootTasks.Add(ProcessJob(rootJob));
         }
+
+        await Task.WhenAll(rootTasks);
 
         if (Queue.Jobs.Count > 0 && !Queue.Jobs[^1].Config!.DoNotDownload)
             Events.RaiseEngineCompleted(Queue);
@@ -177,6 +163,16 @@ public class DownloadEngine
     async Task ProcessJob(Job job, IExtractor? extractor = null, CancellationToken parentToken = default, Job? parentJob = null)
     {
         RegisterJob(job, parentJob);
+        bool executionCompletedRaised = false;
+
+        void RaiseJobExecutionCompleted()
+        {
+            if (executionCompletedRaised)
+                return;
+
+            executionCompletedRaised = true;
+            Events.RaiseJobExecutionCompleted(job);
+        }
 
         // Create a per-job CTS linked to both the engine-wide appCts and the parent job's token
         // (if any). Cancelling this job propagates to all descendants; cancelling the parent
@@ -184,201 +180,213 @@ public class DownloadEngine
         // recursing into its Result so that the Result is a sibling, not a child, in the hierarchy.
         job.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, parentToken);
 
-        // ── ExtractJob: run extractor, set Result, recurse ───────────────────
-        if (job is ExtractJob ej)
+        try
         {
-            InputType inputType;
-            IExtractor ex;
-            try
+            // ── ExtractJob: run extractor, set Result, recurse ───────────────────
+            if (job is ExtractJob ej)
             {
-                (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None, ej.Config);
-            }
-            catch (Exception e)
-            {
-                ej.State = JobState.Failed;
-                ej.FailureReason = FailureReason.ExtractionFailed;
-                ej.FailureMessage = e.Message;
-                Events.RaiseExtractionFailed(ej, e.Message);
-                return;
-            }
-
-            ej.InputType = inputType;
-            ej.State = JobState.Extracting;
-            Events.RaiseExtractionStarted(ej);
-
-            Job extracted;
-            await _extractorSemaphore.WaitAsync(ej.Cts!.Token);
-            try
-            {
-                extracted = await ex.GetTracks(ej.Input, ej.Config.Extraction);
-            }
-            catch (Exception e)
-            {
-                ej.State = JobState.Failed;
-                ej.FailureReason = FailureReason.ExtractionFailed;
-                ej.FailureMessage = e.Message;
-                Events.RaiseExtractionFailed(ej, e.Message);
-                return;
-            }
-            finally
-            {
-                _extractorSemaphore.Release();
-            }
-
-            ej.Result = extracted;
-            ej.State = JobState.Done;
-            Events.RaiseExtractionCompleted(ej, extracted);
-
-            Logger.Debug("Got tracks");
-
-            // Post-extraction transforms — album/aggregate upgrades and name assignment
-            if (extracted is IUpgradeable upgradeable)
-            {
-                var upgraded = upgradeable.Upgrade(ej.Config.Extraction.IsAlbum, ej.Config.Search.IsAggregate).ToList();
-
-                if (upgraded.Count == 1)
+                InputType inputType;
+                IExtractor ex;
+                try
                 {
-                    ej.Result = upgraded[0];
-                    extracted = ej.Result;
+                    (inputType, ex) = ExtractorRegistry.GetMatchingExtractor(ej.Input, ej.InputType ?? InputType.None, ej.Config);
+                }
+                catch (Exception e)
+                {
+                    ej.State = JobState.Failed;
+                    ej.FailureReason = FailureReason.ExtractionFailed;
+                    ej.FailureMessage = e.Message;
+                    Events.RaiseExtractionFailed(ej, e.Message);
+                    return;
+                }
+
+                ej.InputType = inputType;
+                ej.State = JobState.Extracting;
+                Events.RaiseExtractionStarted(ej);
+
+                Job extracted;
+                await _extractorSemaphore.WaitAsync(ej.Cts!.Token);
+                try
+                {
+                    extracted = await ex.GetTracks(ej.Input, ej.Config.Extraction);
+                }
+                catch (Exception e)
+                {
+                    ej.State = JobState.Failed;
+                    ej.FailureReason = FailureReason.ExtractionFailed;
+                    ej.FailureMessage = e.Message;
+                    Events.RaiseExtractionFailed(ej, e.Message);
+                    return;
+                }
+                finally
+                {
+                    _extractorSemaphore.Release();
+                }
+
+                ej.Result = extracted;
+                ej.State = JobState.Done;
+                Events.RaiseExtractionCompleted(ej, extracted);
+
+                Logger.Debug("Got tracks");
+
+                // Post-extraction transforms — album/aggregate upgrades and name assignment
+                if (extracted is IUpgradeable upgradeable)
+                {
+                    var upgraded = upgradeable.Upgrade(ej.Config.Extraction.IsAlbum, ej.Config.Search.IsAggregate).ToList();
+
+                    if (upgraded.Count == 1)
+                    {
+                        ej.Result = upgraded[0];
+                        extracted = ej.Result;
+                    }
+                    else
+                    {
+                        ej.Result = new JobList(extracted.ItemName, upgraded);
+                        extracted = ej.Result;
+                        ((Job)extracted).CopySharedFieldsFrom(upgradeable as Job ?? extracted);
+                    }
+                }
+
+                AssignWorkflowId(extracted, ej.WorkflowId);
+
+                Events.RaiseJobResultCreated(ej, extracted);
+                // ExtractJob completion moment:
+                // - extraction work is finished
+                // - the result job now exists
+                // - the ExtractJob itself is complete
+                // Any later automatic processing of the result job is separate execution.
+                RaiseJobExecutionCompleted();
+
+                // Propagate provenance from ExtractJob to the extracted result.
+                extracted.LineNumber = ej.LineNumber;
+                extracted.ItemNumber = ej.ItemNumber;
+                // For a single-song JobList, also stamp the inner song (used by RemoveTrackFromSource).
+                if (extracted is JobList ejl && ejl.Jobs.Count == 1 && ejl.Jobs[0] is SongJob innerSong)
+                {
+                    innerSong.LineNumber = ej.LineNumber;
+                    innerSong.ItemNumber = ej.ItemNumber;
+                }
+
+                // Report the initial track list.
+                var allSongs = (extracted is JobList jlr ? jlr.AllSongs() : extracted is SongJob sjs ? new[] { sjs }.AsEnumerable() : Enumerable.Empty<SongJob>()).ToList();
+                if (allSongs.Count > 0)
+                    Events.RaiseTrackListReady(allSongs);
+
+                // Prepare contexts for the extracted subtree, inheriting from the ExtractJob's context.
+                var newContexts = JobPreparer.PrepareSubtree(extracted, ej.Config, _jobSettingsResolver);
+                foreach (var (id, ctx) in newContexts)
+                    _contexts[id] = ctx;
+
+                if (!ej.AutoProcessResult)
+                    return;
+
+                // Pass parentToken (not ej.Cts.Token): the Result is a sibling of the ExtractJob in
+                // the CTS hierarchy. Cancelling the ExtractJob after extraction completes has no effect
+                // on the already-running Result; the Result can be cancelled independently.
+                await ProcessJob(extracted, ex, parentToken, parentJob);
+                return;
+            }
+
+            // ── JobList: list-level setup, fan-out, list-level cleanup ──────────
+            if (job is JobList jl)
+            {
+                var ctx = _contexts.TryGetValue(jl.Id, out var c) ? c : null;
+                var config = jl.Config!;
+
+                if (ctx?.PreprocessTracks == true)
+                {
+                    Preprocessor.PreprocessJob(jl, config.Preprocess);
+                    JobPreparer.ApplySearchSettings(jl, config.Search);
+                }
+
+                jl.PrintLines();
+
+                // ── skip checks for direct SongJob children ──────────────────────
+                var directSongs = jl.Jobs.OfType<SongJob>().ToList();
+                var existing = new List<SongJob>();
+                var notFound = new List<SongJob>();
+
+                if (directSongs.Count > 0 && !config.PrintResults)
+                {
+                    if (ctx != null && config.Skip.SkipNotFound)
+                        foreach (var song in directSongs)
+                            if (TrySetNotFoundLastTime(song, ctx.IndexEditor))
+                                notFound.Add(song);
+
+                    if (ctx != null && config.Skip.SkipExisting)
+                        foreach (var song in directSongs.Where(s => s.State == JobState.Pending))
+                            if (TrySetAlreadyExists(jl, song, TrackSkipperContext.From(ctx, config.Skip, config.Search)))
+                                existing.Add(song);
+
+                    Events.RaiseTrackBatchResolved(jl,
+                        directSongs.Where(s => s.State == JobState.Pending).ToList(),
+                        existing,
+                        notFound);
+                }
+
+                if (config.PrintTracks)
+                {
+                    jl.PrintLines();
+                    return;
+                }
+
+                ctx?.IndexEditor?.Update();
+                ctx?.PlaylistEditor?.Update();
+
+                // ── fan-out ───────────────────────────────────────────────────────
+                if (directSongs.Count > 0)
+                {
+                    var intervalReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, directSongs);
+
+                    await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
+                    {
+                        bool wasInitial = child is SongJob s && s.State == JobState.Pending;
+                        await ProcessJob(child, extractor, jl.Cts!.Token, jl);
+
+                        if (wasInitial && child is SongJob song)
+                        {
+                            ctx?.IndexEditor?.Update();
+                            ctx?.PlaylistEditor?.Update();
+                            intervalReporter.MaybeReport(song.State);
+                            int dl = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
+                            int fl = directSongs.Count(s => s.State == JobState.Failed);
+                            Events.RaiseOverallProgress(dl, fl, directSongs.Count);
+
+                            if (config.Extraction.RemoveTracksFromSource && extractor != null && song.State == JobState.Done)
+                            {
+                                try { await extractor.RemoveTrackFromSource(song); }
+                                catch (Exception ex) { Logger.Error($"Error removing track from source: {ex.Message}"); }
+                            }
+                        }
+                    }));
+
+                    int dlFinal = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
+                    int flFinal = directSongs.Count(s => s.State == JobState.Failed);
+                    Events.RaiseListProgress(jl, dlFinal, flFinal, directSongs.Count);
+
+                    // If all succeeded, also call whole-list removal (e.g. list.txt removes the source file).
+                    if (config.Extraction.RemoveTracksFromSource && extractor != null
+                        && directSongs.All(s => s.State == JobState.Done || s.State == JobState.AlreadyExists))
+                    {
+                        try { await extractor.RemoveTrackFromSource(new SongJob(new SongQuery { Title = jl.ItemName ?? "" })); }
+                        catch { /* list-level removal is best-effort */ }
+                    }
                 }
                 else
                 {
-                    ej.Result = new JobList(extracted.ItemName, upgraded);
-                    extracted = ej.Result;
-                    ((Job)extracted).CopySharedFieldsFrom(upgradeable as Job ?? extracted);
+                    await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token, jl)));
                 }
+
+                return;
             }
 
-            Events.RaiseJobResultCreated(ej, extracted);
-
-            // Propagate provenance from ExtractJob to the extracted result.
-            extracted.LineNumber = ej.LineNumber;
-            extracted.ItemNumber = ej.ItemNumber;
-            // For a single-song JobList, also stamp the inner song (used by RemoveTrackFromSource).
-            if (extracted is JobList ejl && ejl.Jobs.Count == 1 && ejl.Jobs[0] is SongJob innerSong)
-            {
-                innerSong.LineNumber = ej.LineNumber;
-                innerSong.ItemNumber = ej.ItemNumber;
-            }
-
-            // Report the initial track list.
-            var allSongs = (extracted is JobList jlr ? jlr.AllSongs() : extracted is SongJob sjs ? new[] { sjs }.AsEnumerable() : Enumerable.Empty<SongJob>()).ToList();
-            if (allSongs.Count > 0)
-                Events.RaiseTrackListReady(allSongs);
-
-            // Prepare contexts for the extracted subtree, inheriting from the ExtractJob's context.
-            var newContexts = JobPreparer.PrepareSubtree(extracted, ej.Config, _jobSettingsResolver);
-            foreach (var (id, ctx) in newContexts)
-                _contexts[id] = ctx;
-
-            // Pass parentToken (not ej.Cts.Token): the Result is a sibling of the ExtractJob in
-            // the CTS hierarchy. Cancelling the ExtractJob after extraction completes has no effect
-            // on the already-running Result; the Result can be cancelled independently.
-            await ProcessJob(extracted, ex, parentToken, parentJob);
-            return;
+            // ── Leaf jobs: skip checks, search, download ─────────────────────────
+            await ProcessLeafJob(job);
         }
-
-        // ── JobList: list-level setup, fan-out, list-level cleanup ──────────
-        if (job is JobList jl)
+        finally
         {
-            var ctx = _contexts.TryGetValue(jl.Id, out var c) ? c : null;
-            var config = jl.Config!;
-
-            if (ctx?.PreprocessTracks == true)
-            {
-                Preprocessor.PreprocessJob(jl, config.Preprocess);
-                JobPreparer.ApplySearchSettings(jl, config.Search);
-            }
-
-            jl.PrintLines();
-
-            // ── skip checks for direct SongJob children ──────────────────────
-            var directSongs = jl.Jobs.OfType<SongJob>().ToList();
-            var existing = new List<SongJob>();
-            var notFound = new List<SongJob>();
-
-            if (directSongs.Count > 0 && !config.PrintResults)
-            {
-                if (ctx != null && config.Skip.SkipNotFound)
-                    foreach (var song in directSongs)
-                        if (TrySetNotFoundLastTime(song, ctx.IndexEditor))
-                            notFound.Add(song);
-
-                if (ctx != null && config.Skip.SkipExisting)
-                    foreach (var song in directSongs.Where(s => s.State == JobState.Pending))
-                        if (TrySetAlreadyExists(jl, song, TrackSkipperContext.From(ctx, config.Skip, config.Search)))
-                            existing.Add(song);
-
-                DisplayTracksTbd?.Invoke(directSongs.Where(s => s.State == JobState.Pending).ToList(),
-                    existing, notFound, true, config.PrintOption);
-            }
-
-            if (config.PrintTracks)
-            {
-                jl.PrintLines();
-                return;
-            }
-
-            if (config.PrintResults && directSongs.Count > 0)
-            {
-                await _clientManager.WaitUntilReadyAsync(jl.Cts!.Token);
-                if (DisplayResultsCallback != null)
-                    await DisplayResultsCallback(jl, existing, notFound, config.PrintOption, config.Search, searcher!);
-                return;
-            }
-
-            ctx?.IndexEditor?.Update();
-            ctx?.PlaylistEditor?.Update();
-
-            // ── fan-out ───────────────────────────────────────────────────────
-            if (directSongs.Count > 0)
-            {
-                var intervalReporter = new IntervalProgressReporter(TimeSpan.FromSeconds(30), 5, directSongs);
-
-                await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
-                {
-                    bool wasInitial = child is SongJob s && s.State == JobState.Pending;
-                    await ProcessJob(child, extractor, jl.Cts!.Token, jl);
-
-                    if (wasInitial && child is SongJob song)
-                    {
-                        ctx?.IndexEditor?.Update();
-                        ctx?.PlaylistEditor?.Update();
-                        intervalReporter.MaybeReport(song.State);
-                        int dl = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
-                        int fl = directSongs.Count(s => s.State == JobState.Failed);
-                        Events.RaiseOverallProgress(dl, fl, directSongs.Count);
-
-                        if (config.Extraction.RemoveTracksFromSource && extractor != null && song.State == JobState.Done)
-                        {
-                            try { await extractor.RemoveTrackFromSource(song); }
-                            catch (Exception ex) { Logger.Error($"Error removing track from source: {ex.Message}"); }
-                        }
-                    }
-                }));
-
-                int dlFinal = directSongs.Count(s => s.State == JobState.Done || s.State == JobState.AlreadyExists);
-                int flFinal = directSongs.Count(s => s.State == JobState.Failed);
-                Events.RaiseListProgress(jl, dlFinal, flFinal, directSongs.Count);
-
-                // If all succeeded, also call whole-list removal (e.g. list.txt removes the source file).
-                if (config.Extraction.RemoveTracksFromSource && extractor != null
-                    && directSongs.All(s => s.State == JobState.Done || s.State == JobState.AlreadyExists))
-                {
-                    try { await extractor.RemoveTrackFromSource(new SongJob(new SongQuery { Title = jl.ItemName ?? "" })); }
-                    catch { /* list-level removal is best-effort */ }
-                }
-            }
-            else
-            {
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token, jl)));
-            }
-
-            return;
+            RaiseJobExecutionCompleted();
         }
-
-        // ── Leaf jobs: skip checks, search, download ─────────────────────────
-        await ProcessLeafJob(job);
     }
 
     async Task ProcessLeafJob(Job job)
@@ -421,6 +429,32 @@ public class DownloadEngine
 
         // ── source search ─────────────────────────────────────────────────────
 
+        if (job is SearchJob searchJob)
+        {
+            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
+
+            Events.RaiseJobStarted(job);
+
+            var responseData = new ResponseData();
+            await searcher!.Search(searchJob, config.Search, responseData, job.Cts!.Token);
+            Events.RaiseJobCompleted(job, searchJob.ResultCount > 0, responseData.lockedFilesCount);
+            return;
+        }
+
+        if (job is SongJob printSong && config.PrintResults)
+        {
+            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
+            await searcher!.SearchSong(printSong, config.Search, new ResponseData(), job.Cts!.Token);
+            if (printSong.Candidates?.Count > 0)
+                printSong.State = JobState.Done;
+            else
+            {
+                printSong.State = JobState.Failed;
+                printSong.FailureReason = FailureReason.NoSuitableFileFound;
+            }
+            return;
+        }
+
         if (job is AlbumJob or AggregateJob or AlbumAggregateJob)
         {
             await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
@@ -432,7 +466,13 @@ public class DownloadEngine
 
             if (job is AlbumJob albumJob)
             {
-                if (!albumJob.Query.IsDirectLink)
+                if (albumJob.ResolvedTarget != null)
+                {
+                    if (albumJob.Results.Count == 0)
+                        albumJob.Results = [albumJob.ResolvedTarget];
+                    foundSomething = true;
+                }
+                else if (!albumJob.Query.IsDirectLink)
                     await searcher!.SearchAlbum(albumJob, config.Search, responseData, job.Cts!.Token);
                 else
                 {
@@ -511,12 +551,7 @@ public class DownloadEngine
         }
 
         if (config.PrintResults)
-        {
-            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
-            if (DisplayResultsCallback != null)
-                await DisplayResultsCallback(job, new(), new(), config.PrintOption, config.Search, searcher!);
             return;
-        }
 
         // ── download ─────────────────────────────────────────────────────────
 
@@ -538,8 +573,10 @@ public class DownloadEngine
                     break;
 
                 case AggregateJob ag:
-                    DisplayTracksTbd?.Invoke(ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
-                        new(), new(), false, config.PrintOption);
+                    Events.RaiseTrackBatchResolved(ag,
+                        ag.Songs.Where(s => s.State == JobState.Pending).ToList(),
+                        [],
+                        []);
                     await ProcessAggregateJob(ag, ctx);
                     break;
             }
@@ -618,20 +655,15 @@ public class DownloadEngine
 
         while (job.Results.Count > 0 && !config.Output.AlbumArtOnly)
         {
-            bool wasInteractive = false;
-            bool retrieveCurrent = true;
+            bool wasPreselected = job.ResolvedTarget != null;
+            bool retrieveCurrent = wasPreselected ? job.AllowBrowseResolvedTarget : true;
             index = 0;
 
             AlbumFolder chosenFolder;
 
-            var selected = await SelectAlbumVersionAsync(job);
-            if (selected.WasInteractive)
+            if (wasPreselected)
             {
-                chosenFolder = selected.Folder!;
-                if (chosenFolder == null) { index = -1; break; }  // skip or quit
-                config = job.Config;  // callback may have mutated job.Config (e.g. exit interactive mode)
-                retrieveCurrent = true;
-                wasInteractive = true;
+                chosenFolder = job.ResolvedTarget!;
                 index = job.Results.Contains(chosenFolder) ? job.Results.IndexOf(chosenFolder) : 0;
             }
             else
@@ -680,7 +712,7 @@ public class DownloadEngine
 
             organizer.SetremoteBaseDir(chosenFolder.FolderPath);
 
-            if (!wasInteractive)
+            if (!wasPreselected)
                 Events.RaiseAlbumDownloadStarted(job, chosenFolder);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
@@ -716,11 +748,21 @@ public class DownloadEngine
                     job.FailureReason = FailureReason.Cancelled;
                     break;
                 }
+
+                if (wasPreselected)
+                    break;
             }
 
             if (!succeeded)
             {
                 organizer.SetremoteBaseDir(null);
+                if (wasPreselected)
+                {
+                    job.State = JobState.Failed;
+                    job.FailureReason = FailureReason.AllDownloadsFailed;
+                    break;
+                }
+
                 job.Results.RemoveAt(index);
             }
         }
@@ -1144,17 +1186,37 @@ public class DownloadEngine
             aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
     }
 
+    static void AssignWorkflowId(Job job, Guid workflowId)
+    {
+        job.WorkflowId = workflowId;
+
+        switch (job)
+        {
+            case JobList jl:
+                foreach (var child in jl.Jobs)
+                    AssignWorkflowId(child, workflowId);
+                break;
+
+            case AggregateJob ag:
+                foreach (var song in ag.Songs)
+                    AssignWorkflowId(song, workflowId);
+                break;
+        }
+    }
+
     void HandleAlbumFail(AlbumJob job, AlbumFolder folder, bool deleteDownloaded, DownloadSettings config)
     {
+        var failedAlbumPath = config.Output.FailedAlbumPath;
+
         if (deleteDownloaded)
         {
             Events.RaiseJobStatus(job, "deleting files");
             Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Deleting album files");
         }
-        else if (config.Output.FailedAlbumPath.Length > 0)
+        else if (!string.IsNullOrEmpty(failedAlbumPath))
         {
-            Events.RaiseJobStatus(job, $"moving to {config.Output.FailedAlbumPath}");
-            Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Moving album files to {config.Output.FailedAlbumPath}");
+            Events.RaiseJobStatus(job, $"moving to {failedAlbumPath}");
+            Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Moving album files to {failedAlbumPath}");
         }
 
         foreach (var af in folder.Files)
@@ -1166,9 +1228,9 @@ public class DownloadEngine
                 {
                     File.Delete(af.DownloadPath);
                 }
-                else if (config.Output.FailedAlbumPath.Length > 0)
+                else if (!string.IsNullOrEmpty(failedAlbumPath))
                 {
-                    var newPath = Path.Join(config.Output.FailedAlbumPath, Path.GetRelativePath(config.Output.ParentDir, af.DownloadPath));
+                    var newPath = Path.Join(failedAlbumPath, Path.GetRelativePath(config.Output.ParentDir, af.DownloadPath));
                     Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
                     Utils.Move(af.DownloadPath, newPath);
                 }
@@ -1183,8 +1245,8 @@ public class DownloadEngine
 
         if (deleteDownloaded)
             Events.RaiseJobStatus(job, "deleted files");
-        else if (config.Output.FailedAlbumPath.Length > 0)
-            Events.RaiseJobStatus(job, $"moved to {config.Output.FailedAlbumPath}");
+        else if (!string.IsNullOrEmpty(failedAlbumPath))
+            Events.RaiseJobStatus(job, $"moved to {failedAlbumPath}");
     }
 
 
@@ -1294,50 +1356,21 @@ public class DownloadEngine
 
         while (imageFolders.Count > 0)
         {
-            int imgIdx = 0;
-            bool wasInteractive = false;
-            List<SongJob> imgs;
-
-            if (SelectAlbumVersion != null)
-            {
-                // Wrap image folders as synthetic AlbumFolders for interactive picker.
-                var syntheticFolders = imageFolders.Select((ls, idx) => new AlbumFolder(
-                    ls[0].ResolvedTarget!.Response.Username,
-                    Utils.GreatestCommonDirectorySlsk(ls.Select(af => af.ResolvedTarget!.Filename)),
-                    ls)).ToList();
-
-                var syntheticJob = new AlbumJob(job.Query) { Results = syntheticFolders, Config = config };
-                _contexts[syntheticJob.Id] = new JobContext();
-                var selectedImages = await SelectAlbumVersionAsync(syntheticJob);
-                wasInteractive = selectedImages.WasInteractive;
-                var pickedFolder = selectedImages.Folder;
-                if (pickedFolder == null) break;
-                imgIdx = syntheticFolders.IndexOf(pickedFolder);
-                if (imgIdx == -1) break;
-                imgs = imageFolders[imgIdx];
-            }
-            else
-            {
-                imgs = imageFolders[0];
-            }
-
-            imageFolders.RemoveAt(imgIdx);
+            var imgs = imageFolders[0];
+            imageFolders.RemoveAt(0);
 
             if (imgs.All(af => af.State == JobState.Done || af.State == JobState.AlreadyExists)
-                || (!wasInteractive && !needsDownload(imgs)))
+                || !needsDownload(imgs))
             {
                 Logger.Info("Image requirements already satisfied.");
                 return result;
             }
 
-            if (!wasInteractive)
-            {
-                var syntheticFolder = new AlbumFolder(
-                    imgs[0].ResolvedTarget!.Response.Username,
-                    Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)),
-                    imgs);
-                Events.RaiseAlbumDownloadStarted(job, syntheticFolder);
-            }
+            var syntheticFolder = new AlbumFolder(
+                imgs[0].ResolvedTarget!.Response.Username,
+                Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)),
+                imgs);
+            Events.RaiseAlbumDownloadStarted(job, syntheticFolder);
 
             fileManager.downloadingAdditionalImages = true;
             fileManager.SetRemoteCommonImagesDir(Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.ResolvedTarget!.Filename)));

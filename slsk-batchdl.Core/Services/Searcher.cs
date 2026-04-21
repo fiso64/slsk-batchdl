@@ -166,24 +166,9 @@ public partial class Searcher
     // Populates job.Results with candidate AlbumFolders found on the network.
     public async Task SearchAlbum(AlbumJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var session = new SearchSession();
-        var query = SearchResultProjector.AlbumBridgeQuery(job.Query);
-
-        SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
-            new SearchOptions(
-                minimumResponseFileCount: 1,
-                minimumPeerUploadSpeed: 1,
-                removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
-                searchTimeout: timeout,
-                responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, query, null));
-
-        await concurrencySemaphore.WaitAsync(ct);
-        try { await RunSearches(query, session.Results, getOpts, session.AddResponse, search, ct); }
-        finally { concurrencySemaphore.Release(); }
-
-        responseData.lockedFilesCount += session.LockedFileCount;
-        job.Results = SearchResultProjector.AlbumFolders(session.Snapshot(), job.Query, search);
+        var searchJob = new SearchJob(job.Query);
+        await Search(searchJob, search, responseData, ct);
+        job.Results = searchJob.GetAlbumFolders(search).Items.ToList();
     }
 
     // Populates job.Results from a direct slsk:// link (no network search).
@@ -302,39 +287,6 @@ public partial class Searcher
         }
         return newFiles;
     }
-
-
-    // ── print-mode helper ────────────────────────────────────────────────────
-
-    // Called when config.PrintResults = true.
-    // displayResults: receives (song, orderedResults) where orderedResults is null when no results found.
-    // The callback is responsible for all output formatting.
-    public async Task SearchAndPrintResults(
-        IEnumerable<SongJob> songs,
-        SearchSettings search,
-        bool includeFull,
-        Action<SongJob, IEnumerable<(SearchResponse response, SlFile file)>?> displayResults)
-    {
-        foreach (var song in songs)
-        {
-            var searchJob = new SearchJob(song.Query, includeFull);
-            await Search(searchJob, search, new ResponseData(), CancellationToken.None);
-
-            if (searchJob.ResultCount == 0)
-            {
-                displayResults(song, null);
-            }
-            else
-            {
-                var orderedResults = searchJob
-                    .GetSortedTrackCandidates(search, userStats.UserSuccessCounts)
-                    .Items
-                    .Select(x => (x.Response, x.File));
-                displayResults(song, orderedResults);
-            }
-        }
-    }
-
 
     // ── query inference ───────────────────────────────────────────────────────
 

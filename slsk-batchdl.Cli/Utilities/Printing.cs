@@ -205,43 +205,26 @@ public static class Printing
     }
 
 
-    public static async Task PrintResults(Job job, List<SongJob> existing, List<SongJob> notFound,
-        PrintOption printOption, SearchSettings search, Searcher searchService)
+    public static void PrintResults(Job job, PrintOption printOption, SearchSettings search)
     {
         if (job is JobList slj)
         {
-            bool printFull  = printOption.HasFlag(PrintOption.Full);
             bool nonVerbose = (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
-
-            await searchService.SearchAndPrintResults(slj.Jobs.OfType<SongJob>().ToList(), search, includeFull: printFull,
-                displayResults: (song, orderedResults) =>
-                {
-                    if (!nonVerbose) Console.WriteLine($"Results for {song}:");
-
-                    if (orderedResults == null)
-                    {
-                        if (printOption.HasFlag(PrintOption.Json))
-                            JsonPrinter.PrintTrackResultJson(song.Query, []);
-                        if (!nonVerbose)
-                            WriteLine("No results", ConsoleColor.Yellow);
-                    }
-                    else
-                    {
-                        if (!nonVerbose) Console.WriteLine();
-
-                        if (printOption.HasFlag(PrintOption.Json))
-                            JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, printFull);
-                        else if (printOption.HasFlag(PrintOption.Link))
-                            PrintLink(orderedResults.First().response.Username, orderedResults.First().file.Filename);
-                        else
-                            PrintTrackResults(orderedResults, song.Query, printFull, search.NecessaryCond, search.PreferredCond);
-                    }
-
-                    if (!nonVerbose) Console.WriteLine();
-                });
+            foreach (var song in slj.Jobs.OfType<SongJob>())
+            {
+                PrintSongResults(song, printOption, search);
+                if (!nonVerbose)
+                    Console.WriteLine();
+            }
+        }
+        else if (job is SongJob songJob)
+        {
+            PrintSongResults(songJob, printOption, search);
         }
         else if (job is AggregateJob ag)
         {
+            var existing = ag.Songs.Where(s => s.State == JobState.AlreadyExists).ToList();
+            var notFound = ag.Songs.Where(s => s.FailureReason == FailureReason.NoSuitableFileFound).ToList();
             if (printOption.HasFlag(PrintOption.Json))
             {
                 JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.State == JobState.Pending));
@@ -296,6 +279,79 @@ public static class Printing
         else
         {
             Console.WriteLine("No results.");
+        }
+    }
+
+    private static void PrintSongResults(SongJob song, PrintOption printOption, SearchSettings search)
+    {
+        bool printFull = printOption.HasFlag(PrintOption.Full);
+        bool nonVerbose = (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
+        var orderedResults = song.Candidates?
+            .Select(candidate => (candidate.Response, candidate.File))
+            .ToList();
+
+        if (!nonVerbose)
+            Console.WriteLine($"Results for {song}:");
+
+        if (orderedResults == null || orderedResults.Count == 0)
+        {
+            if (printOption.HasFlag(PrintOption.Json))
+                JsonPrinter.PrintTrackResultJson(song.Query, []);
+            if (!nonVerbose)
+                WriteLine("No results", ConsoleColor.Yellow);
+            return;
+        }
+
+        if (!nonVerbose)
+            Console.WriteLine();
+
+        if (printOption.HasFlag(PrintOption.Json))
+            JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, printFull);
+        else if (printOption.HasFlag(PrintOption.Link))
+            PrintLink(orderedResults.First().Response.Username, orderedResults.First().File.Filename);
+        else
+            PrintTrackResults(orderedResults.Select(x => (x.Response, x.File)), song.Query, printFull, search.NecessaryCond, search.PreferredCond);
+    }
+
+    public static void PrintPlannedOutput(JobList queue)
+    {
+        foreach (var job in queue.Jobs)
+            PrintPlannedOutput(job);
+    }
+
+    private static void PrintPlannedOutput(Job job)
+    {
+        switch (job)
+        {
+            case ExtractJob extractJob when extractJob.Result != null:
+                PrintPlannedOutput(extractJob.Result);
+                break;
+
+            case JobList jobList:
+                var directSongs = jobList.Jobs.OfType<SongJob>().ToList();
+                if (directSongs.Count > 0)
+                {
+                    if (jobList.Config!.PrintTracks)
+                    {
+                        var existing = directSongs.Where(s => s.State == JobState.AlreadyExists).ToList();
+                        var notFound = directSongs.Where(s => s.FailureReason == FailureReason.NoSuitableFileFound).ToList();
+                        PrintTracksTbd(directSongs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, true, jobList.Config.PrintOption);
+                    }
+                    else if (jobList.Config!.PrintResults)
+                    {
+                        PrintResults(jobList, jobList.Config.PrintOption, jobList.Config.Search);
+                    }
+                    break;
+                }
+
+                foreach (var child in jobList.Jobs)
+                    PrintPlannedOutput(child);
+                break;
+
+            default:
+                if (job.Config?.PrintResults == true)
+                    PrintResults(job, job.Config.PrintOption, job.Config.Search);
+                break;
         }
     }
 

@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
 using Sldl.Core.Jobs;
+using Sldl.Core.Models;
 using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
@@ -244,6 +245,103 @@ namespace Tests.Cancellation
                 // Clean up.
                 engine.Cancel();
                 await IgnoreCancellation(runTask);
+            }
+            finally
+            {
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, recursive: true);
+            }
+        }
+
+        [TestMethod]
+        public async Task GetJobsByWorkflow_ReturnsRegisteredWorkflowJobs()
+        {
+            var workflowId = Guid.NewGuid();
+            var otherWorkflowId = Guid.NewGuid();
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-workflow-" + Guid.NewGuid());
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+
+                var clientManager = TestHelpers.CreateMockClientManager(
+                    new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex()),
+                    eng);
+                var engine = new DownloadEngine(eng, clientManager);
+
+                var first = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong" }) { WorkflowId = workflowId };
+                var second = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong2" }) { WorkflowId = workflowId };
+                var third = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong" }) { WorkflowId = otherWorkflowId };
+
+                engine.Enqueue(first, dl);
+                engine.Enqueue(second, dl);
+                engine.Enqueue(third, dl);
+                engine.CompleteEnqueue();
+
+                await engine.RunAsync(CancellationToken.None);
+
+                var workflowJobs = engine.GetJobsByWorkflow(workflowId);
+                CollectionAssert.AreEqual(
+                    new[] { first, second },
+                    workflowJobs.ToArray(),
+                    "GetJobsByWorkflow should return the registered jobs in display order for that workflow.");
+            }
+            finally
+            {
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, recursive: true);
+            }
+        }
+
+        [TestMethod]
+        public async Task CancelWorkflow_CancelsOnlyMatchingWorkflowJobs()
+        {
+            var workflowId = Guid.NewGuid();
+            var otherWorkflowId = Guid.NewGuid();
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-workflow-cancel-" + Guid.NewGuid());
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+
+                var clientManager = TestHelpers.CreateMockClientManager(
+                    new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex(), searchDelayMs: SearchDelay),
+                    eng);
+                var engine = new DownloadEngine(eng, clientManager);
+
+                var first = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong" }) { WorkflowId = workflowId };
+                var second = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong2" }) { WorkflowId = workflowId };
+                var third = new SongJob(new SongQuery { Artist = "testartist", Title = "testsong" }) { WorkflowId = otherWorkflowId };
+
+                engine.Enqueue(first, dl);
+                engine.Enqueue(second, dl);
+                engine.Enqueue(third, dl);
+                engine.CompleteEnqueue();
+
+                var runTask = engine.RunAsync(CancellationToken.None);
+
+                await WaitForAsync(() => first.State == JobState.Searching
+                    && second.State == JobState.Searching
+                    && third.State == JobState.Searching);
+
+                var cancelled = engine.CancelWorkflow(workflowId);
+
+                Assert.AreEqual(2, cancelled, "CancelWorkflow should cancel the active jobs in the matching workflow.");
+                Assert.IsTrue(first.Cts!.IsCancellationRequested, "First workflow job should be cancelled.");
+                Assert.IsTrue(second.Cts!.IsCancellationRequested, "Second workflow job should be cancelled.");
+                Assert.IsFalse(third.Cts!.IsCancellationRequested, "Jobs in other workflows must remain active.");
+
+                await IgnoreCancellation(runTask);
+
+                Assert.AreEqual(JobState.Failed, first.State, "Cancelled workflow jobs should fail as cancelled.");
+                Assert.AreEqual(JobState.Failed, second.State, "Cancelled workflow jobs should fail as cancelled.");
+                Assert.AreEqual(JobState.Done, third.State, "The unrelated workflow job should still complete.");
             }
             finally
             {

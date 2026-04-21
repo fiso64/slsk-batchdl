@@ -1,20 +1,43 @@
-# Search Jobs and Search Sessions
+# Interactive Search And Selection
 
-## Direction
+## Core Decisions
 
-- Add a reusable internal search-session primitive that collects raw Soulseek result files, emits live raw-result events, tracks revision/counts, supports cancellation, and exposes snapshots.
-- Keep existing download jobs (`SongJob`, `AlbumJob`, `AggregateJob`, etc.) as the user-facing job model. They should use the shared search-session primitive internally, not necessarily create visible child `SearchJob` nodes.
-- Add a first-class `SearchJob` later as a thin user-visible wrapper around the same search-session primitive. This is for GUI/server live search and CLI `--print results`.
-- Keep expensive interpretation separate from search execution. Sorting, album grouping, equivalent-track grouping, and aggregate-album grouping should be explicit projections over a raw result snapshot.
-- Let clients request projections on demand, with paging/options where useful. Do not sort or group every incoming result unconditionally.
-- Use revision-based projection caching so repeated GUI refreshes do not redo work when raw results have not changed.
-- Preserve fast-search as a lightweight live-result consumer. It should inspect incoming raw results cheaply and opportunistically, while final candidates still come from the normal projection after search completion.
+- `SearchJob` is the shared primitive for interactive result discovery.
+  - CLI and future GUI/server flows should search first, present results, then start concrete download jobs from explicit user selection.
+  - This keeps local CLI, thin CLI, and GUI on the same model.
 
-## Migration
+- `AlbumJob` remains the concrete album download primitive.
+  - Non-interactive mode stays in-engine and may continue to auto-pick and auto-fallback between album candidates.
+  - Interactive mode submits `AlbumJob` with `ResolvedTarget` prefilled instead of asking the engine to pause for selection.
 
-1. Extract raw result collection from `Searcher.RunSearches` into an internal `SearchRun`/`SearchSession`.
-2. Extract projection helpers for sorted track candidates, album folders, aggregate tracks, and aggregate albums.
-3. Refactor existing `Searcher.SearchSong`, `SearchAlbum`, `SearchAggregate`, and `SearchAggregateAlbum` to use the session plus projections without changing public behavior.
-4. Add first-class `SearchJob` for live raw results and on-demand projections.
-5. Move CLI `--print results` onto `SearchJob` after the existing paths are stable.
+- Remove `SelectAlbumVersion` completely.
+  - It is the wrong abstraction for server/thin-client use.
+  - We do not want a running engine job to block on a UI callback.
 
+- Keep `RetrieveFolderJob` as the real folder-expansion path.
+  - Interactive `r` should literally run a retrieve-folder job.
+  - This preserves existing behavior, visibility, progress, and cancellation in both CLI and future GUI/server views.
+
+- Interactive retry is a client-side loop over normal jobs.
+  - Flow: search -> choose -> download.
+  - If the chosen album job fails or is cancelled, prompt again and exclude the failed folder by `username + folder path`.
+  - Global cancel still cancels everything; interactive `s` remains the explicit skip action.
+
+- Preserve interactive state that is purely presentation.
+  - Filter text should survive retries.
+  - Rendering logic should be client-owned and ideally agnostic to local vs remote execution.
+
+## Why
+
+- This avoids callback-shaped Core tech debt.
+- It keeps album download behavior in Core while leaving UI orchestration in the client.
+- It gives CLI and GUI the same mental model without forcing non-interactive auto mode through a client-style path.
+- It reuses the existing job/event model instead of inventing hidden special cases.
+
+## Immediate Work
+
+1. Remove `SelectAlbumVersion` from Core and CLI.
+2. Implement CLI interactive album mode on top of `SearchJob`, album projections, and `RetrieveFolderJob`.
+3. Start concrete `AlbumJob`s from selected album folders.
+4. Re-prompt after selected album failure/cancel, excluding the attempted folder.
+5. Add tests around album projection equivalence and interactive retry semantics where practical.

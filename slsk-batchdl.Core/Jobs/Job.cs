@@ -17,6 +17,10 @@ namespace Sldl.Core.Jobs;
         public Guid Id { get; } = Guid.NewGuid();
         public int DisplayId { get; } = Interlocked.Increment(ref _nextDisplayId);
 
+        // Stable logical grouping for sequentially-related jobs.
+        // Multiple executable jobs can share one workflow without sharing job identity.
+        public Guid WorkflowId { get; set; } = Guid.NewGuid();
+
         // Set by the engine immediately before processing begins.
         // Linked to appCts (and the parent job's Cts if any) so that cancelling a parent
         // propagates to all descendants. Cancelling this only affects this job and its children.
@@ -113,5 +117,6 @@ namespace Sldl.Core.Jobs;
             ItemNumber            = src.ItemNumber;
             LineNumber            = src.LineNumber;
             CanBeSkippedOverride  = src.CanBeSkippedOverride;
+            WorkflowId            = src.WorkflowId;
         }
     }

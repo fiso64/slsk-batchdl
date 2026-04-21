@@ -123,13 +123,8 @@ public class CliProgressReporter
 
     private static string GetJobTypePrefix(Job job) => job switch
     {
-        AlbumJob            => "AlbumJob: ",
-        ExtractJob          => "ExtractJob: ",
-        SongJob             => "SongJob: ",
-        RetrieveFolderJob   => "RetrieveFolderJob: ",
-        JobList             => "JobList: ",
-        AggregateJob        => "AggregateJob: ",
-        _                   => ""
+        RetrieveFolderJob => "RetrieveFolderJob: ",
+        _                 => job.GetType().Name + ": "
     };
 
     private static string ProfileSuffix(Job job)
@@ -137,6 +132,9 @@ public class CliProgressReporter
         var profiles = job.Config?.AppliedAutoProfiles;
         return profiles?.Count > 0 ? $" [{string.Join(", ", profiles)}]" : "";
     }
+
+    private static string TextWithProfileSuffix(Job job, string text)
+        => text + ProfileSuffix(job);
 
     private static void WriteJobLineWithProfileSuffix(Job job, string text, ConsoleColor mainColor = ConsoleColor.Gray)
     {
@@ -154,38 +152,8 @@ public class CliProgressReporter
 
     private static void RefreshOrPrintJobLineWithProfileSuffix(ProgressBar? progress, int current, Job job, string text, bool print = false, bool refreshIfOffscreen = false)
     {
-        string suffix = ProfileSuffix(job);
-        if (suffix.Length == 0)
-        {
-            Printing.RefreshOrPrint(progress, current, text, print, refreshIfOffscreen);
-            return;
-        }
-
-        if (Printing.IsBuffering)
-        {
-            Printing.Enqueue(() => RefreshOrPrintJobLineWithProfileSuffix(progress, current, job, text, print, refreshIfOffscreen));
-            return;
-        }
-
-        lock (Printing.ConsoleLock)
-        {
-            if (progress != null && !Console.IsOutputRedirected && (refreshIfOffscreen || progress.Y >= Console.WindowTop))
-            {
-                progress.Refresh(current, text);
-
-                if (print)
-                {
-                    Logger.LogNonConsole(Logger.LogLevel.Info, text + suffix);
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine(suffix);
-                    Console.ResetColor();
-                }
-            }
-            else if ((progress == null || Console.IsOutputRedirected) && print)
-            {
-                WriteJobLineWithProfileSuffix(job, text);
-            }
-        }
+        var textWithSuffix = TextWithProfileSuffix(job, text);
+        Printing.RefreshOrPrint(progress, current, textWithSuffix, print, refreshIfOffscreen);
     }
 
     static string FailureReasonLabel(FailureReason reason) => reason switch

@@ -43,6 +43,7 @@ namespace Tests.Eventing
                 var registered = new List<(Job Job, Job? Parent)>();
                 var stateChanges = new List<(Job Job, JobState State)>();
                 var createdResults = new List<(ExtractJob ExtractJob, Job Result)>();
+                var executionCompleted = new List<Job>();
                 JobList? completedQueue = null;
                 object gate = new();
 
@@ -57,6 +58,10 @@ namespace Tests.Eventing
                 engine.Events.JobResultCreated += (extractJob, result) =>
                 {
                     lock (gate) createdResults.Add((extractJob, result));
+                };
+                engine.Events.JobExecutionCompleted += job =>
+                {
+                    lock (gate) executionCompleted.Add(job);
                 };
                 engine.Events.EngineCompleted += queue => completedQueue = queue;
 
@@ -97,12 +102,60 @@ namespace Tests.Eventing
                     "JobStateChanged should report Done for the root ExtractJob.");
                 Assert.IsTrue(childSongs.All(song => stateChanges.Any(e => ReferenceEquals(e.Job, song) && e.State == JobState.Failed)),
                     "JobStateChanged should report the terminal state for child SongJobs.");
+                Assert.IsTrue(executionCompleted.Contains(rootExtract), "Root ExtractJob should raise JobExecutionCompleted.");
+                Assert.IsTrue(executionCompleted.Contains(rootList), "Root JobList should raise JobExecutionCompleted.");
+                Assert.IsTrue(childSongs.All(executionCompleted.Contains), "Leaf song jobs should raise JobExecutionCompleted.");
             }
             finally
             {
                 if (File.Exists(listFile)) File.Delete(listFile);
                 if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
             }
+        }
+
+        [TestMethod]
+        public async Task EngineEvents_ReportTrackBatchResolved_ForDirectSongLists()
+        {
+            var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+            var downloadSettings = new DownloadSettings
+            {
+                PrintOption = PrintOption.Tracks,
+                Preprocess = new PreprocessSettings { ParseTitleTemplate = "" },
+            };
+
+            var list = new JobList("test list", new Job[]
+            {
+                new SongJob(new SongQuery { Artist = "Artist One", Title = "Track One", Album = "" }),
+                new SongJob(new SongQuery { Artist = "Artist Two", Title = "Track Two", Album = "" }),
+            });
+
+            var client = new ClientTests.MockSoulseekClient(new List<Soulseek.SearchResponse>());
+            var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
+            var engine = new DownloadEngine(engineSettings, clientManager);
+
+            Job? owner = null;
+            IReadOnlyList<SongJob>? pending = null;
+            IReadOnlyList<SongJob>? existing = null;
+            IReadOnlyList<SongJob>? notFound = null;
+
+            engine.Events.TrackBatchResolved += (job, batchPending, batchExisting, batchNotFound) =>
+            {
+                owner = job;
+                pending = batchPending;
+                existing = batchExisting;
+                notFound = batchNotFound;
+            };
+
+            engine.Enqueue(list, downloadSettings);
+            engine.CompleteEnqueue();
+
+            await engine.RunAsync(CancellationToken.None);
+
+            Assert.AreSame(list, owner, "TrackBatchResolved should identify the owning job.");
+            Assert.IsNotNull(pending, "TrackBatchResolved should publish the pending songs.");
+            Assert.AreEqual(2, pending!.Count);
+            Assert.AreEqual(0, existing!.Count);
+            Assert.AreEqual(0, notFound!.Count);
         }
     }
 }

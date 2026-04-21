@@ -52,52 +52,25 @@ internal static partial class Program
             cliReporter.Attach(engine.Events);
         }
         engine.Events.EngineCompleted += queue => Printing.PrintComplete(queue);
-
-        engine.DisplayTracksTbd      = (pending, existing, notFound, isNormal, printOption) =>
-            Printing.PrintTracksTbd(pending, existing, notFound, isNormal, printOption);
-        engine.DisplayResultsCallback = async (job, existing, notFound, printOption, search, searcher) =>
-            await Printing.PrintResults(job, existing, notFound, printOption, search, searcher);
-
-        engine.Enqueue(new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);
-        engine.CompleteEnqueue();
+        engine.Events.TrackBatchResolved += (job, pending, existing, notFound) =>
+            Printing.PrintTracksTbd(
+                pending.ToList(),
+                existing.ToList(),
+                notFound.ToList(),
+                job is JobList,
+                job.Config.PrintOption);
 
         if (cliSettings.InteractiveMode)
         {
-            string? filterStr = null;
-            engine.SelectAlbumVersion = async (job) =>
-            {
-                var retrievedFolders = new HashSet<string>();
-                var interactive = new InteractiveModeManager(
-                    job, engine.Queue, job.Results,
-                    canRetrieve: true,
-                    retrievedFolders: retrievedFolders,
-                    retrieveFolderCallback: async (f) => await engine.ProcessFolderRetrieval(f, job),
-                    filterStr: filterStr);
-
-                InteractiveModeManager.RunResult result;
-                Printing.SetBuffering(true);
-                try
-                {
-                    result = await interactive.Run();
-                    filterStr = result.FilterStr;
-                }
-                finally
-                {
-                    Printing.SetBuffering(false);
-                    Printing.Flush();
-                }
-
-                if (result.Index == -1 || result.Index == -2 || result.Folder == null)
-                    return null;
-
-                if (result.ExitInteractiveMode)
-                {
-                    cliSettings.InteractiveMode = false;
-                    engine.SelectAlbumVersion = null;
-                }
-
-                return result.Folder;
-            };
+            var interactiveCoordinator = new InteractiveCliCoordinator(engine, cliSettings, cts.Token);
+            interactiveCoordinator.Start(
+                new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType),
+                rootSettings);
+        }
+        else
+        {
+            engine.Enqueue(new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);
+            engine.CompleteEnqueue();
         }
 
         ConsoleInputManager.Reporter = cliReporter;
@@ -146,6 +119,9 @@ internal static partial class Program
         try
         {
             await engine.RunAsync(cts.Token);
+
+            if (rootSettings.DoNotDownload)
+                Printing.PrintPlannedOutput(engine.Queue);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
