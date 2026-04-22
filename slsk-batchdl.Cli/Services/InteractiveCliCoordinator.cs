@@ -2,12 +2,15 @@ using Sldl.Core;
 using Sldl.Core.Jobs;
 using Sldl.Core.Models;
 using Sldl.Core.Settings;
+using Sldl.Server;
+using Soulseek;
 
 namespace Sldl.Cli;
 
 internal sealed class InteractiveCliCoordinator
 {
     private readonly DownloadEngine _engine;
+    private readonly ICliBackend _backend;
     private readonly CliSettings _cliSettings;
     private readonly CancellationToken _appToken;
     private readonly Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? _promptOverride;
@@ -24,9 +27,20 @@ internal sealed class InteractiveCliCoordinator
         DownloadEngine engine,
         CliSettings cliSettings,
         CancellationToken appToken,
+        Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? promptOverride)
+        : this(engine, cliSettings, appToken, null, promptOverride)
+    {
+    }
+
+    public InteractiveCliCoordinator(
+        DownloadEngine engine,
+        CliSettings cliSettings,
+        CancellationToken appToken,
+        ICliBackend? backend = null,
         Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? promptOverride = null)
     {
         _engine = engine;
+        _backend = backend ?? new LocalCliBackend(engine);
         _cliSettings = cliSettings;
         _appToken = appToken;
         _promptOverride = promptOverride;
@@ -98,11 +112,15 @@ internal sealed class InteractiveCliCoordinator
         if (searchJob.State != JobState.Done || searchJob.AlbumQuery == null)
             return;
 
-        var folders = searchJob.GetAlbumFolders(searchJob.Config.Search).Items.ToList();
+        var projection = _backend.GetAlbumProjectionAsync(searchJob.Id, includeFiles: true, _appToken).GetAwaiter().GetResult();
+        var folders = projection?.Items
+            .Select(ToAlbumFolder)
+            .ToList()
+            ?? [];
         if (folders.Count == 0)
             return;
 
-        var session = new InteractiveAlbumSession(searchJob, searchJob.AlbumQuery, folders);
+        var session = new InteractiveAlbumSession(searchJob.Id, searchJob, searchJob.AlbumQuery, folders);
         var selected = PromptForAlbumSelectionAsync(session).GetAwaiter().GetResult();
         if (selected == null)
             return;
@@ -130,16 +148,16 @@ internal sealed class InteractiveCliCoordinator
 
     private void EnqueueInteractiveAlbumJob(InteractiveAlbumSession session, AlbumFolder selected, DownloadSettings settings)
     {
-        var albumJob = new AlbumJob(session.Query)
-        {
-            Results = session.Folders,
-            ResolvedTarget = selected,
-            AllowBrowseResolvedTarget = true,
-        };
-        albumJob.CopySharedFieldsFrom(session.PromptJob);
+        var summary = _backend.StartAlbumDownloadAsync(
+            session.SourceSearchJobId,
+            new StartAlbumDownloadRequestDto(new AlbumFolderRefDto(selected.Username, selected.FolderPath), AllowBrowseResolvedTarget: true),
+            _appToken).GetAwaiter().GetResult();
 
-        _interactiveAlbumSessions[albumJob.Id] = session;
-        EnqueueRoot(albumJob, settings);
+        if (summary == null)
+            throw new InvalidOperationException("Failed to start interactive album download.");
+
+        RegisterExternalRoot(summary.JobId);
+        _interactiveAlbumSessions[summary.JobId] = session;
     }
 
     private async Task<AlbumFolder?> PromptForAlbumSelectionAsync(InteractiveAlbumSession session)
@@ -177,7 +195,10 @@ internal sealed class InteractiveCliCoordinator
                         availableFolders,
                         canRetrieve: true,
                         retrievedFolders: session.RetrievedFolders,
-                        retrieveFolderCallback: async folder => await _engine.ProcessFolderRetrieval(folder, session.PromptJob),
+                        retrieveFolderCallback: async folder => await _backend.RetrieveFolderAndWaitAsync(
+                            session.SourceSearchJobId,
+                            new RetrieveFolderRequestDto(new AlbumFolderRefDto(folder.Username, folder.FolderPath)),
+                            _appToken),
                         filterStr: session.FilterStr);
 
                     result = await interactive.Run();
@@ -211,16 +232,21 @@ internal sealed class InteractiveCliCoordinator
 
     private void EnqueueRoot(Job job, DownloadSettings settings)
     {
+        RegisterExternalRoot(job.Id);
+
+        _engine.Enqueue(job, settings);
+    }
+
+    private void RegisterExternalRoot(Guid jobId)
+    {
         lock (_gate)
         {
             if (_enqueueCompleted)
                 throw new InvalidOperationException("Cannot enqueue more jobs after completion was signaled.");
 
-            _rootJobIds.Add(job.Id);
+            _rootJobIds.Add(jobId);
             _pendingRootJobs++;
         }
-
-        _engine.Enqueue(job, settings);
     }
 
     private bool IsRootJob(Guid jobId)
@@ -270,6 +296,7 @@ internal sealed class InteractiveCliCoordinator
 
     private sealed class InteractiveAlbumSession
     {
+        public Guid SourceSearchJobId { get; }
         public Job PromptJob { get; }
         public AlbumQuery Query { get; }
         public List<AlbumFolder> Folders { get; }
@@ -277,12 +304,58 @@ internal sealed class InteractiveCliCoordinator
         public HashSet<string> RetrievedFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string? FilterStr { get; set; }
 
-        public InteractiveAlbumSession(Job promptJob, AlbumQuery query, List<AlbumFolder> folders)
+        public InteractiveAlbumSession(Guid sourceSearchJobId, Job promptJob, AlbumQuery query, List<AlbumFolder> folders)
         {
+            SourceSearchJobId = sourceSearchJobId;
             PromptJob = promptJob;
             Query = query;
             Folders = folders;
         }
+    }
+
+    private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
+        => new(
+            folder.Username,
+            folder.FolderPath,
+            () => folder.Files?.Select(ToSongJob).ToList() ?? [],
+            folder.SearchFileCount,
+            folder.SearchAudioFileCount,
+            folder.SearchSortedAudioLengths.ToArray(),
+            folder.SearchRepresentativeAudioFilename);
+
+    private static SongJob ToSongJob(SongJobPayloadDto song)
+    {
+        var job = new SongJob(new SongQuery
+        {
+            Artist = song.Query.Artist,
+            Title = song.Query.Title,
+            Album = song.Query.Album,
+            URI = song.Query.Uri,
+            Length = song.Query.Length,
+            ArtistMaybeWrong = song.Query.ArtistMaybeWrong,
+            IsDirectLink = song.Query.IsDirectLink,
+        })
+        {
+            DownloadPath = song.DownloadPath,
+        };
+
+        if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
+            && !string.IsNullOrWhiteSpace(song.ResolvedFilename))
+        {
+            // Interactive album prompts still reason about per-file selection using
+            // SongJob.ResolvedTarget. Reconstruct the minimal candidate identity here
+            // so the prompt can stay backend-agnostic.
+            job.ResolvedTarget = new FileCandidate(
+                new SearchResponse(song.ResolvedUsername, -1, false, -1, -1, null),
+                new Soulseek.File(
+                    0,
+                    song.ResolvedFilename,
+                    0,
+                    Path.GetExtension(song.ResolvedFilename),
+                    attributeList: []));
+        }
+
+        return job;
     }
 }
 

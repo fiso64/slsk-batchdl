@@ -57,7 +57,7 @@ public partial class Searcher
                         removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
                         searchTimeout: timeout,
                         responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                        fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, job.Query, null));
+                        fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, job.FileMatchQuery, null));
                 }
 
                 return new SearchOptions(
@@ -70,7 +70,7 @@ public partial class Searcher
             }
 
             await concurrencySemaphore.WaitAsync(ct);
-            try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct, onSearch); }
+            try { await RunSearches(job.NetworkQuery, session.Results, getOpts, session.AddResponse, search, ct, onSearch); }
             finally { concurrencySemaphore.Release(); }
 
             responseData.lockedFilesCount += session.LockedFileCount;

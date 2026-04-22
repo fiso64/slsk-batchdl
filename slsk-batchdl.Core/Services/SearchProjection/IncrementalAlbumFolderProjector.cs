@@ -22,7 +22,7 @@ public sealed class IncrementalAlbumFolderProjector
         this.query = query;
         this.search = search;
         sorter = new IncrementalResultSorter(
-            SearchResultProjector.AlbumBridgeQuery(query),
+            SearchResultProjector.AlbumFileMatchQuery(query),
             search,
             userSuccessCounts ?? new ConcurrentDictionary<string, int>(),
             albumMode: true);

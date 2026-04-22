@@ -394,6 +394,82 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchAlbum_DoesNotRequireAlbumNameInBasenames()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"Artist\Album\01. Track One.mp3", length: 180),
+                    TestHelpers.CreateSlFile(@"Artist\Album\02. Track Two.mp3", length: 181),
+                ]),
+            };
+
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count);
+            Assert.AreEqual(@"Artist\Album", job.Results[0].FolderPath);
+            Assert.AreEqual(2, job.Results[0].SearchAudioFileCount);
+        }
+
+        [TestMethod]
+        public async Task SearchAlbum_StrictTitle_IsNoOpWithoutSearchHint()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"Artist\Album\01. Track One.mp3", length: 180),
+                    TestHelpers.CreateSlFile(@"Artist\Album\02. Track Two.mp3", length: 181),
+                ]),
+            };
+
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.NecessaryCond.StrictTitle = true;
+            config.Search.PreferredCond.StrictTitle = true;
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count, "StrictTitle should not require album names to appear in basenames for normal album searches.");
+        }
+
+        [TestMethod]
+        public async Task SearchAlbum_StrictTitle_UsesSearchHintWhenPresent()
+        {
+            var index = new List<SearchResponse>
+            {
+                new("User1", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"Artist\Album\01. Blue Sky.mp3", length: 180),
+                ]),
+                new("User2", 1, true, 100, 0,
+                [
+                    TestHelpers.CreateSlFile(@"Artist\Album\01. Other Song.mp3", length: 180),
+                ]),
+            };
+
+            var client = new MockSoulseekClient(index);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            config.Search.NecessaryCond.StrictTitle = true;
+            config.Search.PreferredCond.StrictTitle = true;
+            var searcher = CreateSearcher(client, config);
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album", SearchHint = "Blue Sky" });
+
+            await searcher.SearchAlbum(job, config.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(1, job.Results.Count);
+            Assert.AreEqual("User1", job.Results[0].Username);
+        }
+
+        [TestMethod]
         public async Task AggregateAlbum_DiscographySearch_IdentifiesAllUniqueAlbums()
         {
             var index = CreateSophisticatedIndex();

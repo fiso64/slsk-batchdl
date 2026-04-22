@@ -32,6 +32,19 @@ public class SearchJob : Job
     public override SongQuery QueryTrack => Query;
     protected override bool DefaultCanBeSkipped => false;
 
+    // Track searches use Query directly. Album searches keep the original AlbumQuery and expose
+    // two explicit SongQuery projections so it is clear which one drives network search terms
+    // versus filename-level matching/sorting.
+    public SongQuery NetworkQuery
+        => Intent == SearchIntent.Album
+            ? SearchResultProjector.AlbumNetworkQuery(AlbumQuery!)
+            : Query;
+
+    public SongQuery FileMatchQuery
+        => Intent == SearchIntent.Album
+            ? SearchResultProjector.AlbumFileMatchQuery(AlbumQuery!)
+            : Query;
+
     public SearchJob(SongQuery query, bool includeFullResults = false)
     {
         Intent = SearchIntent.Track;
@@ -43,7 +56,7 @@ public class SearchJob : Job
     {
         Intent = SearchIntent.Album;
         AlbumQuery = query;
-        Query = SearchResultProjector.AlbumBridgeQuery(query);
+        Query = SearchResultProjector.AlbumNetworkQuery(query);
     }
 
     public IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)> Snapshot()

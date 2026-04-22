@@ -2,6 +2,7 @@ using Sldl.Core;
 using Sldl.Core.Jobs;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
+using Sldl.Server;
 
 namespace Sldl.Cli;
 
@@ -42,6 +43,7 @@ internal static partial class Program
 
         var jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(configFile, args, cliSettings);
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
+        var backend = new LocalCliBackend(engine, rootSettings);
 
         CliProgressReporter? cliReporter = null;
         if (cliSettings.ProgressJson)
@@ -62,14 +64,22 @@ internal static partial class Program
 
         if (cliSettings.InteractiveMode)
         {
-            var interactiveCoordinator = new InteractiveCliCoordinator(engine, cliSettings, cts.Token);
+            var interactiveCoordinator = new InteractiveCliCoordinator(engine, cliSettings, cts.Token, backend);
             interactiveCoordinator.Start(
                 new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType),
                 rootSettings);
         }
         else
         {
-            engine.Enqueue(new ExtractJob(rootSettings.Extraction.Input, rootSettings.Extraction.InputType), rootSettings);
+            await backend.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "extract",
+                        Input = rootSettings.Extraction.Input,
+                        InputType = rootSettings.Extraction.InputType.ToString(),
+                    }),
+                cts.Token);
             engine.CompleteEnqueue();
         }
 
@@ -97,11 +107,9 @@ internal static partial class Program
 
             if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
             {
-                var jobToCancel = engine.GetJob(id);
-                if (jobToCancel != null)
+                if (await backend.CancelJobByDisplayIdAsync(id, cts.Token))
                 {
                     Logger.Info($"Cancelling job [{id}]...");
-                    jobToCancel.Cancel();
                 }
                 else
                 {

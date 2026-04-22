@@ -75,10 +75,10 @@ public static partial class SearchResultProjector
         SearchSettings search,
         ConcurrentDictionary<string, int>? userSuccessCounts = null)
     {
-        var bridgeQuery = AlbumBridgeQuery(query);
+        var sortQuery = AlbumFileMatchQuery(query);
         var orderedResults = ResultSorter.OrderedResults(
             rawResults.Select(x => (x.Response, x.File)),
-            bridgeQuery,
+            sortQuery,
             search,
             userSuccessCounts ?? new ConcurrentDictionary<string, int>(),
             useInfer: false,
@@ -299,11 +299,27 @@ public static partial class SearchResultProjector
                 .OrderBy(x => x)
                 .ToArray();
 
-    public static SongQuery AlbumBridgeQuery(AlbumQuery query)
+    // Album search is still file-based under the hood, so we project the album query into:
+    // 1. a network search query (Artist + Album, or SearchHint when Album is empty)
+    // 2. a file-match/sort query used by StrictTitle and album-mode sorting
+    public static SongQuery AlbumNetworkQuery(AlbumQuery query)
         => new()
         {
             Artist = query.Artist,
             Title = query.Album.Length > 0 ? query.Album : query.SearchHint,
+            Album = query.Album,
+            ArtistMaybeWrong = query.ArtistMaybeWrong,
+            IsDirectLink = query.IsDirectLink,
+        };
+
+    // Album search still uses Artist + Album (or SearchHint when Album is empty) for
+    // the network query, but filename-level StrictTitle logic should only ever apply to
+    // the optional song-title hint, never to the album name itself.
+    public static SongQuery AlbumFileMatchQuery(AlbumQuery query)
+        => new()
+        {
+            Artist = query.Artist,
+            Title = query.SearchHint,
             Album = query.Album,
             ArtistMaybeWrong = query.ArtistMaybeWrong,
             IsDirectLink = query.IsDirectLink,

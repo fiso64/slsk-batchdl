@@ -44,11 +44,6 @@
           "Unosquare.Swan.Lite": "3.1.0"
         }
       },
-      "Goblinfactory.Konsole": {
-        "type": "Transitive",
-        "resolved": "7.0.0.7-alpha",
-        "contentHash": "psWW4ikGQk6EBs9L0GsglxMDPeiUitPW5HSIAcIFNhURwcdBRb9ZVBWxiWrsujVN40kaxmwH/CT0Lm2yxanj+A=="
-      },
       "Google.Apis": {
         "type": "Transitive",
         "resolved": "1.69.0",
@@ -221,14 +216,6 @@
         "contentHash": "oIJpcxpgSUaPxg73iYj1a0hckbCbOHOrE1OzeCH9lNf6oRjJp2awOyPaWvf1qRm6kYFJ88FktdMeT+lGyNUcvA==",
         "dependencies": {
           "AngleSharp": "1.4.0"
-        }
-      },
-      "sldl": {
-        "type": "Project",
-        "dependencies": {
-          "Goblinfactory.Konsole": "[7.0.0.7-alpha, )",
-          "Sldl.Core": "[2.7.0-dev, )",
-          "Sldl.Server": "[2.7.0-dev, )"
         }
       },
       "Sldl.Core": {

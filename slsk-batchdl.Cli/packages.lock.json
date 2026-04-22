@@ -136,6 +136,12 @@
           "TagLibSharp": "[2.3.0, )",
           "YoutubeExplode": "[6.5.7, )"
         }
+      },
+      "Sldl.Server": {
+        "type": "Project",
+        "dependencies": {
+          "Sldl.Core": "[2.7.0-dev, )"
+        }
       }
     }
   }

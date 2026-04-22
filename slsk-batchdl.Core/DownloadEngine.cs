@@ -68,6 +68,7 @@ public class DownloadEngine
 
     // Session state (Decoupled)
     private readonly SessionRegistry _registry = new();
+    public ConcurrentDictionary<string, int> UserSuccessCounts => _registry.UserSuccessCounts;
 
     // ── concurrency semaphores ────────────────────────────────────────────────
 
@@ -438,6 +439,31 @@ public class DownloadEngine
             var responseData = new ResponseData();
             await searcher!.Search(searchJob, config.Search, responseData, job.Cts!.Token);
             Events.RaiseJobCompleted(job, searchJob.ResultCount > 0, responseData.lockedFilesCount);
+            return;
+        }
+
+        if (job is RetrieveFolderJob retrieveFolderJob)
+        {
+            await _clientManager.WaitUntilReadyAsync(job.Cts!.Token);
+
+            Events.RaiseJobStarted(job);
+
+            int newFilesFound = 0;
+            try
+            {
+                newFilesFound = await searcher!.CompleteFolder(retrieveFolderJob.TargetFolder, job.Cts!.Token);
+                retrieveFolderJob.NewFilesFoundCount = newFilesFound;
+                retrieveFolderJob.State = JobState.Done;
+                Events.RaiseJobCompleted(job, newFilesFound > 0, 0);
+            }
+            catch (OperationCanceledException)
+            {
+                retrieveFolderJob.State = JobState.Failed;
+                retrieveFolderJob.FailureReason = FailureReason.Cancelled;
+                Events.RaiseJobStatus(retrieveFolderJob, "cancelled");
+                Events.RaiseJobCompleted(job, false, 0);
+            }
+
             return;
         }
 
@@ -1268,6 +1294,7 @@ public class DownloadEngine
         try
         {
             count = await searcher!.CompleteFolder(rfJob.TargetFolder, rfJob.Cts.Token);
+            rfJob.NewFilesFoundCount = count;
             rfJob.State = JobState.Done;
             return count;
         }

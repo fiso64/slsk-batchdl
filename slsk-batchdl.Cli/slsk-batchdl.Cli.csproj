@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../slsk-batchdl.Core/slsk-batchdl.Core.csproj" />
+    <ProjectReference Include="../slsk-batchdl.Server/slsk-batchdl.Server.csproj" />
   </ItemGroup>
 
   <!-- Trimming configuration.

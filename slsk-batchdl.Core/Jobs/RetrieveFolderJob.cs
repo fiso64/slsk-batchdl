@@ -5,6 +5,7 @@ namespace Sldl.Core.Jobs;
     public class RetrieveFolderJob : Job
     {
         public AlbumFolder TargetFolder { get; set; }
+        public int NewFilesFoundCount { get; set; }
 
         public RetrieveFolderJob(AlbumFolder targetFolder)
         {

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Sldl.Server</AssemblyName>
+    <RootNamespace>Sldl.Server</RootNamespace>
+    <VersionPrefix>2.7.0</VersionPrefix>
+    <VersionSuffix>dev</VersionSuffix>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\slsk-batchdl.Core\slsk-batchdl.Core.csproj" />
+  </ItemGroup>
+
+</Project>

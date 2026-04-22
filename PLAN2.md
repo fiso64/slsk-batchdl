@@ -97,6 +97,7 @@ These follow-up routes should use the source search job as the continuity anchor
 - `RetrieveFolderJob` stays a real job.
   - It should be visible and cancellable.
   - It should appear inside the owning search/album view, not as a root workflow item.
+  - The job/result model should preserve retrieval outcome such as "new files found count" so local and remote clients do not have to infer it by diffing folder state.
 
 - Interactive retry remains a client-side loop over normal jobs.
   - If a chosen album job fails or is cancelled, prompt again.
@@ -205,6 +206,7 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
   - Maintain an in-memory progress/update accumulator.
   - Flush batched progress updates on a timer rather than broadcasting every raw engine event.
   - This is especially important for download progress.
+  - A first low-frequency job/workflow event stream is fine before this, but progress-heavy events should not be wired directly without batching.
 
 - Search projections should be revision-aware.
   - HTTP projection endpoints should return a full snapshot plus revision metadata.
@@ -224,6 +226,66 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
   - Optional browse/restriction APIs are host-policy conveniences, not a reason to forbid explicit paths.
   - A personal daemon can allow arbitrary paths; a shared daemon may later restrict them to configured roots.
 
+## Important Open Issue
+
+- Daemon resilience must be designed explicitly.
+  - A per-job infrastructure failure inside `DownloadEngine.RunAsync` must not tear down the whole server host.
+  - Current Core behavior can still let login/setup failures escape the long-lived engine loop and stop the daemon.
+  - Short term, the server should reject clearly unsupported submissions early (for example login-requiring jobs when no login is configured).
+  - Longer term, the daemon needs a more robust strategy so job failures and host lifetime are properly isolated.
+
+### Preferred daemon resilience direction
+
+- Add an engine supervisor layer above `DownloadEngine`.
+  - The hosted service should supervise the engine instead of simply awaiting one `RunAsync` call.
+  - The supervisor owns:
+    - the stable submission queue
+    - the current engine instance
+    - engine recreation/restart logic
+    - mapping engine failures into workflow/job failure state
+
+- Distinguish clearly between:
+  - job/workflow failure
+  - engine-instance failure
+  - host shutdown
+
+- If an engine instance fails at runtime:
+  - keep the daemon process alive
+  - mark affected in-flight jobs/workflows as infrastructure-failed
+  - create a fresh engine instance
+  - continue accepting new submissions
+
+- Do not try to transparently resume interrupted in-flight jobs in the first implementation.
+  - Failing them explicitly is simpler and more honest.
+  - Clients can inspect the state and resubmit if desired.
+
+- Avoid relying on host-level background-service exception behavior as the main resilience strategy.
+  - Catch and recover inside the supervisor loop.
+  - Host shutdown should be reserved for truly fatal daemon startup/configuration failures.
+
+- The server state-store boundary should stay under review.
+  - Right now the server can still rely on live Core job objects for some on-demand reads such as search projections.
+  - This is acceptable for the early server slices, but it is not the final separation-of-concerns shape.
+  - The same currently applies to search revision notifications: the server can subscribe directly to retained `SearchJob.Session` objects to emit `search.updated`.
+  - Longer term, decide more explicitly which responsibilities belong to:
+    - retained live Core objects
+    - server-owned factual snapshots
+    - server-owned projection/cache state
+  - The goal is to avoid accidental over-coupling between the daemon API layer and the in-process Core object graph.
+
+- Server-side profile discovery/resolution still needs a proper home.
+  - This is not a blocker for `sldl daemon`.
+  - CLI can still launch/bootstrap the server and supply startup config.
+  - The missing piece is server-owned runtime profile resolution for submitted jobs.
+  - Right now the concrete config/profile parsing code still lives in the CLI project, and the server does not yet own a real named profile catalog to expose/apply for remote submissions.
+  - The server should not quietly depend on CLI config parsing long-term when a client submits `profileNames`.
+  - Decide whether profile loading moves into Core/shared infrastructure or the server gets its own explicit profile source.
+
+- Keep protocol expectations explicit around local/mock file identity.
+  - In `MockFilesDir` / local-files mode, folder paths can currently surface as absolute local paths rather than remote-style relative paths.
+  - This is acceptable for internal tests, but the client-facing protocol should stay deliberate about what path identity means in local vs remote modes.
+  - Do not accidentally let local test fixtures define the public API shape.
+
 ## First Implementation Slice
 
 1. Add `slsk-batchdl.Server` as a long-lived daemon host.
@@ -242,3 +304,6 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
 6. Build a shared CLI backend abstraction so local and remote CLI use the same rendering/orchestration layer.
    - local backend: in-process adapter from `EngineEvents` / engine state to client DTOs
    - remote backend: HTTP + SignalR adapter to the same DTOs/events
+   - It is fine to migrate this incrementally.
+   - For the first slice, a local backend can expose server-shaped job/workflow/search DTOs and events even if progress rendering still listens to `EngineEvents`.
+   - Client-backend convenience helpers are acceptable when they compose real protocol/job primitives rather than inventing a second hidden execution path (for example, "retrieve folder and wait" on top of a real `RetrieveFolderJob`).
