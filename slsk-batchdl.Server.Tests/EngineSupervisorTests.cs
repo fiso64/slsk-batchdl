@@ -8,6 +8,8 @@ namespace Tests.Server;
 [TestClass]
 public class EngineSupervisorTests
 {
+    private static string ToSoulseekPath(string path) => path.Replace('/', '\\');
+
     [TestMethod]
     public async Task StartSongDownloadAsync_ReusesWorkflowAndSetsVisualParent()
     {
@@ -106,7 +108,7 @@ public class EngineSupervisorTests
             Assert.IsNotNull(albums);
             Assert.AreEqual(1, albums.Items.Count);
             Assert.AreEqual("local", albums.Items[0].Username);
-            Assert.AreEqual(albumDir, albums.Items[0].FolderPath);
+            Assert.AreEqual(ToSoulseekPath(albumDir), albums.Items[0].FolderPath);
 
             var downloadSummary = await supervisor.StartAlbumDownloadAsync(
                 searchSummary.JobId,

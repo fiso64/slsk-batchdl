@@ -315,6 +315,8 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
   - In `MockFilesDir` / local-files mode, folder paths can currently surface as absolute local paths rather than remote-style relative paths.
   - This is acceptable for internal tests, but the client-facing protocol should stay deliberate about what path identity means in local vs remote modes.
   - Do not accidentally let local test fixtures define the public API shape.
+  - In particular, Soulseek search/file identities are backslash-separated regardless of host OS.
+  - Tests and client code must not use `System.IO.Path` semantics on Soulseek-side identity strings unless they normalize them deliberately.
 
 ## First Implementation Slice
 

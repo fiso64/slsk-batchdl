@@ -10,6 +10,15 @@ namespace Tests.EndToEnd;
 [TestClass]
 public class CliEndToEndTests
 {
+    private static string? GetSoulseekFileName(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return path;
+
+        var lastSlash = path.LastIndexOfAny(['\\', '/']);
+        return lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
+    }
+
     [TestMethod]
     public async Task AlbumDownload_CliPath_Completes()
     {
@@ -240,7 +249,7 @@ public class CliEndToEndTests
                     expectedDownloadedTrack = remaining.Files
                         .Select(file => file.ResolvedTarget?.Filename)
                         .Where(filename => !string.IsNullOrEmpty(filename))
-                        .Select(Path.GetFileName)
+                        .Select(GetSoulseekFileName)
                         .FirstOrDefault();
                     return Task.FromResult(new InteractiveModeManager.RunResult(
                         0,
