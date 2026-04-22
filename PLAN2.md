@@ -1,5 +1,35 @@
 # Server / Thin Client Plan
 
+## Current Status
+
+Implemented so far:
+- `slsk-batchdl.Server` exists as a long-lived daemon host.
+- An `EngineSupervisor` sits above `DownloadEngine` and owns the stable submission queue and engine lifetime.
+- `EngineStateStore` tracks canonical jobs/workflows plus server-owned presentation hints.
+- HTTP endpoints exist for:
+  - server info/status
+  - jobs list/detail/cancel
+  - workflows list/detail/cancel
+  - search raw results / projections
+  - search follow-up actions (`retrieve-folder`, `downloads/song`, `downloads/album`)
+- SignalR event streaming exists at `/api/events` with typed server envelopes.
+- Local CLI now has a real in-process backend (`ICliBackend` + `LocalCliBackend`) and much of the CLI has been migrated onto the shared client-facing DTO/event model.
+- `RetrieveFolderJob` is a real queued job path in Core and preserves retrieval outcome (`NewFilesFoundCount`).
+- Search/album semantics were clarified so album network search terms and file-match terms are explicitly distinct.
+
+Still open / not finished yet:
+- No `RemoteCliBackend` yet.
+- No server-owned profile catalog / `GET /api/profiles` yet.
+- SignalR progress batching/coalescing is still pending.
+- The server/state-store boundary still relies on retained live Core objects for some reads and search-session subscriptions.
+- The typed submission/profile surface is usable but not yet final.
+
+Immediate next likely steps:
+1. Server-owned runtime profile discovery/resolution (`GET /api/profiles` and submission-time profile application).
+2. `RemoteCliBackend` over HTTP + SignalR.
+3. Progress batching for live event streaming.
+4. `sldl daemon` and thin-client mode on top of the above.
+
 ## Core Model
 
 - Add a long-lived `slsk-batchdl.Server` host around one persistent `DownloadEngine`.
@@ -305,5 +335,6 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
    - local backend: in-process adapter from `EngineEvents` / engine state to client DTOs
    - remote backend: HTTP + SignalR adapter to the same DTOs/events
    - It is fine to migrate this incrementally.
-   - For the first slice, a local backend can expose server-shaped job/workflow/search DTOs and events even if progress rendering still listens to `EngineEvents`.
    - Client-backend convenience helpers are acceptable when they compose real protocol/job primitives rather than inventing a second hidden execution path (for example, "retrieve folder and wait" on top of a real `RetrieveFolderJob`).
+   - Migrate JSON progress mode first if that gives a cleaner proof of the shared event surface, but the end state should also move the rich terminal progress renderer onto the same backend events.
+   - The shared client-facing DTO model needs enough resolved-file metadata to support faithful rendering, not just ids and names. In particular, album/track UI may need resolved file attributes and response metadata rather than reconstructing fake placeholder files client-side.

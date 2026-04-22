@@ -64,8 +64,9 @@ public class CliProgressReporterTests
 
     private static void InvokePrivate(object target, string name, params object[] args)
     {
+        var argTypes = args.Select(a => a.GetType()).ToArray();
         target.GetType()
-            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic, binder: null, types: argTypes, modifiers: null)!
             .Invoke(target, args);
     }
 

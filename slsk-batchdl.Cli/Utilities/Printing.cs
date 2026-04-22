@@ -128,6 +128,7 @@ public static class Printing
     public static void PrintTracks(IEnumerable<SongJob> songs, int number = int.MaxValue, bool fullInfo = false,
         bool pathsOnly = false, bool showAncestors = true, bool infoFirst = false, bool showUser = true, bool indices = false)
     {
+        Console.ResetColor();
         var songList = songs.ToList();
         if (songList.Count == 0)
             return;
@@ -436,6 +437,7 @@ public static class Printing
     public static void PrintTrackResults(IEnumerable<(SearchResponse, Soulseek.File)> orderedResults, SongQuery query,
         bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
     {
+        Console.ResetColor();
         int count = 0;
         foreach (var (response, file) in orderedResults)
         {
@@ -470,6 +472,7 @@ public static class Printing
 
         lock (ConsoleLock)
         {
+            Console.ResetColor();
             var firstResponse = folder.Files[0].ResolvedTarget!.Response;
             string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
             string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
@@ -492,6 +495,7 @@ public static class Printing
     {
         if (folder.Files.Count == 0) return 0;
 
+        Console.ResetColor();
         PrintAlbumHeader(folder);
 
         string ancestor = Utils.GreatestCommonDirectorySlsk(folder.Files.Select(f => f.ResolvedTarget!.Filename));

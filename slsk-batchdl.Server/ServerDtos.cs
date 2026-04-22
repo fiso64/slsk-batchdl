@@ -166,6 +166,107 @@ public sealed record SearchUpdatedDto(
     int ResultCount,
     bool IsComplete);
 
+public sealed record ExtractionStartedEventDto(
+    JobSummaryDto Summary,
+    string Input,
+    string? InputType);
+
+public sealed record ExtractionFailedEventDto(
+    JobSummaryDto Summary,
+    string Reason);
+
+public sealed record JobStartedEventDto(
+    JobSummaryDto Summary);
+
+public sealed record JobCompletedEventDto(
+    JobSummaryDto Summary,
+    bool Found,
+    int LockedFileCount);
+
+public sealed record JobStatusEventDto(
+    JobSummaryDto Summary,
+    string Status);
+
+public sealed record SongSearchingEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query);
+
+public sealed record SongNotFoundEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query,
+    string? FailureReason);
+
+public sealed record SongFailedEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query,
+    string? FailureReason);
+
+public sealed record DownloadStartedEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query,
+    FileCandidateDto Candidate);
+
+public sealed record DownloadProgressEventDto(
+    Guid JobId,
+    long BytesTransferred,
+    long TotalBytes);
+
+public sealed record DownloadStateChangedEventDto(
+    Guid JobId,
+    string State);
+
+public sealed record SongStateChangedEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query,
+    string State,
+    string? FailureReason,
+    string? DownloadPath,
+    FileCandidateDto? ChosenCandidate);
+
+public sealed record AlbumDownloadStartedEventDto(
+    JobSummaryDto Summary,
+    AlbumFolderDto Folder);
+
+public sealed record AlbumTrackDownloadStartedEventDto(
+    JobSummaryDto Summary,
+    AlbumFolderDto Folder);
+
+public sealed record AlbumDownloadCompletedEventDto(
+    JobSummaryDto Summary);
+
+public sealed record JobFolderRetrievingEventDto(
+    JobSummaryDto Summary);
+
+public sealed record OnCompleteStartedEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query);
+
+public sealed record OnCompleteEndedEventDto(
+    Guid JobId,
+    int DisplayId,
+    Guid WorkflowId,
+    SongQueryDto Query);
+
+public sealed record TrackBatchResolvedEventDto(
+    JobSummaryDto Summary,
+    bool IsNormal,
+    PrintOption PrintOption,
+    IReadOnlyList<SongJobPayloadDto> Pending,
+    IReadOnlyList<SongJobPayloadDto> Existing,
+    IReadOnlyList<SongJobPayloadDto> NotFound);
+
 public sealed record ExtractJobPayloadDto(
     string Input,
     string? InputType,
@@ -184,7 +285,18 @@ public sealed record SongJobPayloadDto(
     int? CandidateCount,
     string? DownloadPath,
     string? ResolvedUsername = null,
-    string? ResolvedFilename = null);
+    string? ResolvedFilename = null,
+    bool? ResolvedHasFreeUploadSlot = null,
+    int? ResolvedUploadSpeed = null,
+    long? ResolvedSize = null,
+    string? ResolvedExtension = null,
+    IReadOnlyList<FileAttributeDto>? ResolvedAttributes = null,
+    Guid? JobId = null,
+    int? DisplayId = null);
+
+public sealed record FileAttributeDto(
+    string Type,
+    int Value);
 
 public sealed record AlbumJobPayloadDto(
     AlbumQueryDto Query,

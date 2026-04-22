@@ -92,6 +92,7 @@ public class InteractiveModeManager
                 Console.WriteLine();
             }
 
+            Console.ResetColor();
             Printing.WriteLine($"[{aidx + 1} / {filterList.Count}]", ConsoleColor.DarkGray, force: true);
             Printing.PrintAlbum(folder, indices: true);
             Console.WriteLine();

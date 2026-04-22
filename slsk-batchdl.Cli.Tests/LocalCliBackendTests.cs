@@ -150,6 +150,69 @@ public class LocalCliBackendTests
         }
     }
 
+    [TestMethod]
+    public async Task LocalCliBackend_PublishesSharedProgressEvents_ForSongDownload()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-cli-backend-progress-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-cli-backend-progress-out-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        try
+        {
+            var engineSettings = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            };
+            var downloadSettings = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{filename}",
+                    FailedAlbumPath = Path.Combine(outputDir, "failed"),
+                },
+            };
+
+            var clientManager = new SoulseekClientManager(engineSettings);
+            var engine = new DownloadEngine(engineSettings, clientManager);
+            var backend = new LocalCliBackend(engine, downloadSettings);
+            var seenTypes = new ConcurrentBag<string>();
+            backend.EventReceived += envelope => seenTypes.Add(envelope.Type);
+
+            await backend.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "song",
+                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    }),
+                cts.Token);
+
+            engine.CompleteEnqueue();
+            await engine.RunAsync(cts.Token);
+
+            Assert.IsTrue(seenTypes.Contains("job.upserted"));
+            Assert.IsTrue(seenTypes.Contains("song.searching"));
+            Assert.IsTrue(seenTypes.Contains("download.started"));
+            Assert.IsTrue(seenTypes.Contains("download.state-changed"));
+            Assert.IsTrue(seenTypes.Contains("song.state-changed"));
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
+        }
+    }
+
     private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);

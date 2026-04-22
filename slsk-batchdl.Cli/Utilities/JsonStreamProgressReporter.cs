@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Sldl.Core;
 using Sldl.Core.Jobs;
 using Sldl.Core.Models;
+using Sldl.Server;
 
 namespace Sldl.Cli;
 
@@ -42,6 +43,35 @@ public class JsonStreamProgressReporter
         events.ExtractionFailed   += ReportExtractionFailed;
     }
 
+    internal void Attach(ICliBackend backend)
+    {
+        backend.EventReceived += envelope =>
+        {
+            switch (envelope.Type)
+            {
+                case "song.searching" when envelope.Payload is SongSearchingEventDto e:
+                    ReportSearchStart(e);
+                    break;
+
+                case "download.started" when envelope.Payload is DownloadStartedEventDto e:
+                    ReportDownloadStart(e);
+                    break;
+
+                case "download.progress" when envelope.Payload is DownloadProgressEventDto e:
+                    ReportDownloadProgress(e);
+                    break;
+
+                case "song.state-changed" when envelope.Payload is SongStateChangedEventDto e:
+                    ReportStateChanged(e);
+                    break;
+
+                case "track-batch.resolved" when envelope.Payload is TrackBatchResolvedEventDto e:
+                    ReportTrackBatchResolved(e);
+                    break;
+            }
+        };
+    }
+
     private void ReportTrackList(IEnumerable<SongJob> songs)
     {
         var list = songs.ToList();
@@ -62,6 +92,16 @@ public class JsonStreamProgressReporter
     }
 
     private void ReportSearchStart(SongJob song)
+    {
+        WriteEvent("search_start", new
+        {
+            artist = song.Query.Artist,
+            title  = song.Query.Title,
+            album  = song.Query.Album,
+        });
+    }
+
+    private void ReportSearchStart(SongSearchingEventDto song)
     {
         WriteEvent("search_start", new
         {
@@ -94,6 +134,19 @@ public class JsonStreamProgressReporter
         });
     }
 
+    private void ReportDownloadStart(DownloadStartedEventDto song)
+    {
+        WriteEvent("download_start", new
+        {
+            artist = song.Query.Artist,
+            title = song.Query.Title,
+            username = song.Candidate.Username,
+            filename = song.Candidate.Filename,
+            size = song.Candidate.Size,
+            extension = GetExtension(song.Candidate.Filename),
+        });
+    }
+
     private void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes)
     {
         var now = DateTime.UtcNow;
@@ -108,6 +161,22 @@ public class JsonStreamProgressReporter
             bytesTransferred,
             totalBytes,
             percent = totalBytes > 0 ? Math.Round((double)bytesTransferred / totalBytes * 100, 1) : 0,
+        });
+    }
+
+    private void ReportDownloadProgress(DownloadProgressEventDto progress)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastDownloadProgressReport < _downloadProgressThrottle)
+            return;
+        _lastDownloadProgressReport = now;
+
+        WriteEvent("download_progress", new
+        {
+            jobId = progress.JobId,
+            bytesTransferred = progress.BytesTransferred,
+            totalBytes = progress.TotalBytes,
+            percent = progress.TotalBytes > 0 ? Math.Round((double)progress.BytesTransferred / progress.TotalBytes * 100, 1) : 0,
         });
     }
 
@@ -127,6 +196,46 @@ public class JsonStreamProgressReporter
             bitRate       = chosen?.File.BitRate,
             extension     = chosen != null ? GetExtension(chosen.Filename) : null,
         });
+    }
+
+    private void ReportStateChanged(SongStateChangedEventDto song)
+    {
+        WriteEvent("track_state", new
+        {
+            artist = song.Query.Artist,
+            title = song.Query.Title,
+            state = song.State,
+            failureReason = song.FailureReason,
+            downloadPath = song.DownloadPath,
+            username = song.ChosenCandidate?.Username,
+            filename = song.ChosenCandidate?.Filename,
+            size = song.ChosenCandidate?.Size,
+            bitRate = song.ChosenCandidate?.BitRate,
+            extension = song.ChosenCandidate != null ? GetExtension(song.ChosenCandidate.Filename) : null,
+        });
+    }
+
+    private void ReportTrackBatchResolved(TrackBatchResolvedEventDto batch)
+    {
+        var pending = batch.Pending.ToList();
+        var existing = batch.Existing.ToList();
+        var notFound = batch.NotFound.ToList();
+        var tracks = pending.Concat(existing).Concat(notFound).ToList();
+
+        var data = new
+        {
+            total = tracks.Count,
+            tracks = tracks.Select((s, i) => new
+            {
+                index = i,
+                artist = s.Query.Artist,
+                title = s.Query.Title,
+                album = s.Query.Album,
+                length = s.Query.Length,
+                state = pending.Contains(s) ? "Pending" : existing.Contains(s) ? "AlreadyExists" : "Failed",
+            }).ToList(),
+        };
+        WriteEvent("track_list", data);
     }
 
     private void ReportOverallProgress(int downloaded, int failed, int total)

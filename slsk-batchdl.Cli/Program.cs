@@ -1,8 +1,10 @@
 using Sldl.Core;
 using Sldl.Core.Jobs;
+using Sldl.Core.Models;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
 using Sldl.Server;
+using Soulseek;
 
 namespace Sldl.Cli;
 
@@ -47,20 +49,24 @@ internal static partial class Program
 
         CliProgressReporter? cliReporter = null;
         if (cliSettings.ProgressJson)
-            new JsonStreamProgressReporter(Console.Out).Attach(engine.Events);
+            new JsonStreamProgressReporter(Console.Out).Attach(backend);
         else
         {
             cliReporter = new CliProgressReporter(cliSettings);
-            cliReporter.Attach(engine.Events);
+            cliReporter.Attach(backend);
         }
-        engine.Events.EngineCompleted += queue => Printing.PrintComplete(queue);
-        engine.Events.TrackBatchResolved += (job, pending, existing, notFound) =>
-            Printing.PrintTracksTbd(
-                pending.ToList(),
-                existing.ToList(),
-                notFound.ToList(),
-                job is JobList,
-                job.Config.PrintOption);
+        backend.EventReceived += envelope =>
+        {
+            if (envelope.Type == "track-batch.resolved" && envelope.Payload is TrackBatchResolvedEventDto batch)
+            {
+                Printing.PrintTracksTbd(
+                    batch.Pending.Select(ToSongJob).ToList(),
+                    batch.Existing.Select(ToSongJob).ToList(),
+                    batch.NotFound.Select(ToSongJob).ToList(),
+                    batch.IsNormal,
+                    batch.PrintOption);
+            }
+        };
 
         if (cliSettings.InteractiveMode)
         {
@@ -99,9 +105,9 @@ internal static partial class Program
 
             if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
             {
-                Logger.Info("Cancelling all jobs...");
+                Logger.LogNonConsole(Logger.LogLevel.Info, "Cancelling all jobs...");
+                Printing.WriteLine("Cancelling all jobs...", ConsoleColor.Gray, force: true);
                 engine.Cancel();
-                cts.Cancel();
                 return;
             }
 
@@ -127,6 +133,7 @@ internal static partial class Program
         try
         {
             await engine.RunAsync(cts.Token);
+            Printing.PrintComplete(engine.Queue);
 
             if (rootSettings.DoNotDownload)
                 Printing.PrintPlannedOutput(engine.Queue);
@@ -143,4 +150,41 @@ internal static partial class Program
         }
     }
 
+    private static SongJob ToSongJob(SongJobPayloadDto song)
+    {
+        var job = new SongJob(new SongQuery
+        {
+            Artist = song.Query.Artist,
+            Title = song.Query.Title,
+            Album = song.Query.Album,
+            URI = song.Query.Uri,
+            Length = song.Query.Length,
+            ArtistMaybeWrong = song.Query.ArtistMaybeWrong,
+            IsDirectLink = song.Query.IsDirectLink,
+        })
+        {
+            DownloadPath = song.DownloadPath,
+        };
+
+        if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
+            && !string.IsNullOrWhiteSpace(song.ResolvedFilename))
+        {
+            job.ResolvedTarget = new FileCandidate(
+                new SearchResponse(
+                    song.ResolvedUsername,
+                    -1,
+                    song.ResolvedHasFreeUploadSlot ?? false,
+                    song.ResolvedUploadSpeed ?? -1,
+                    -1,
+                    null),
+                new Soulseek.File(
+                    0,
+                    song.ResolvedFilename,
+                    song.ResolvedSize ?? 0,
+                    song.ResolvedExtension ?? Path.GetExtension(song.ResolvedFilename),
+                    song.ResolvedAttributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+        }
+
+        return job;
+    }
 }

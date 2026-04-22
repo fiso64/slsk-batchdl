@@ -347,7 +347,14 @@ public sealed class EngineSupervisor
                     song.Candidates?.Count,
                     song.DownloadPath,
                     song.ResolvedTarget?.Username,
-                    song.ResolvedTarget?.Filename)).ToList()
+                    song.ResolvedTarget?.Filename,
+                    song.ResolvedTarget?.Response.HasFreeUploadSlot,
+                    song.ResolvedTarget?.Response.UploadSpeed,
+                    song.ResolvedTarget?.File.Size,
+                    song.ResolvedTarget?.File.Extension,
+                    song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+                    song.Id,
+                    song.DisplayId)).ToList()
                 : null);
 
     private static SongQueryDto ToSongQuery(SongQuery query)

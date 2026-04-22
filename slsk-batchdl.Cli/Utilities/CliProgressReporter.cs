@@ -6,6 +6,7 @@ using Sldl.Core.Models;
 using Konsole;
 using ProgressBar = Sldl.Cli.IProgressBar;
 using Sldl.Core.Settings;
+using Sldl.Server;
 
 namespace Sldl.Cli;
 
@@ -19,6 +20,11 @@ public class CliProgressReporter
     private readonly ConcurrentDictionary<Job, string> _jobStatuses = new();
     private readonly ConcurrentDictionary<Job, int> _jobSpinIndexes = new();
     private readonly ConcurrentDictionary<SongJob, (string text, int pos)> _savedState = new();
+    private readonly ConcurrentDictionary<Guid, BarData> _backendBars = new();
+    private readonly ConcurrentDictionary<Guid, ProgressBar?> _backendJobBars = new();
+    private readonly ConcurrentDictionary<Guid, BackendAlbumBlock> _backendAlbumBlocks = new();
+    private readonly ConcurrentDictionary<Guid, string> _backendJobStatuses = new();
+    private readonly ConcurrentDictionary<Guid, (string text, int pos)> _backendSavedState = new();
 
     static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
 
@@ -36,6 +42,12 @@ public class CliProgressReporter
     sealed class AlbumBlock
     {
         public List<SongJob> Songs = new();
+    }
+
+    sealed class BackendAlbumBlock
+    {
+        public JobSummaryDto Summary = default!;
+        public List<SongJobPayloadDto> Songs = new();
     }
 
     private readonly CancellationTokenSource _tickCts = new();
@@ -73,6 +85,70 @@ public class CliProgressReporter
         events.JobStatus              += ReportJobStatus;
     }
 
+    internal void Attach(ICliBackend backend)
+    {
+        backend.EventReceived += envelope =>
+        {
+            switch (envelope.Type)
+            {
+                case "extraction.started" when envelope.Payload is ExtractionStartedEventDto e:
+                    ReportExtractionStarted(e);
+                    break;
+                case "extraction.failed" when envelope.Payload is ExtractionFailedEventDto e:
+                    ReportExtractionFailed(e);
+                    break;
+                case "job.started" when envelope.Payload is JobStartedEventDto e:
+                    ReportJobStarted(e);
+                    break;
+                case "job.completed" when envelope.Payload is JobCompletedEventDto e:
+                    ReportJobCompleted(e);
+                    break;
+                case "job.status" when envelope.Payload is JobStatusEventDto e:
+                    ReportJobStatus(e);
+                    break;
+                case "job.folder-retrieving" when envelope.Payload is JobFolderRetrievingEventDto e:
+                    ReportJobFolderRetrieving(e);
+                    break;
+                case "song.searching" when envelope.Payload is SongSearchingEventDto e:
+                    ReportSongSearching(e);
+                    break;
+                case "song.not-found" when envelope.Payload is SongNotFoundEventDto e:
+                    ReportSongNotFound(e);
+                    break;
+                case "song.failed" when envelope.Payload is SongFailedEventDto e:
+                    ReportSongFailed(e);
+                    break;
+                case "download.started" when envelope.Payload is DownloadStartedEventDto e:
+                    ReportDownloadStart(e);
+                    break;
+                case "download.progress" when envelope.Payload is DownloadProgressEventDto e:
+                    ReportDownloadProgress(e);
+                    break;
+                case "download.state-changed" when envelope.Payload is DownloadStateChangedEventDto e:
+                    ReportDownloadStateChanged(e);
+                    break;
+                case "song.state-changed" when envelope.Payload is SongStateChangedEventDto e:
+                    ReportStateChanged(e);
+                    break;
+                case "album.download-started" when envelope.Payload is AlbumDownloadStartedEventDto e:
+                    ReportAlbumDownloadStarted(e);
+                    break;
+                case "album.track-download-started" when envelope.Payload is AlbumTrackDownloadStartedEventDto e:
+                    ReportAlbumTrackDownloadStarted(e);
+                    break;
+                case "album.download-completed" when envelope.Payload is AlbumDownloadCompletedEventDto e:
+                    ReportAlbumDownloadCompleted(e);
+                    break;
+                case "on-complete.started" when envelope.Payload is OnCompleteStartedEventDto e:
+                    ReportOnCompleteStart(e);
+                    break;
+                case "on-complete.ended" when envelope.Payload is OnCompleteEndedEventDto e:
+                    ReportOnCompleteEnd(e);
+                    break;
+            }
+        };
+    }
+
     async Task TickLoopAsync(CancellationToken ct)
     {
         try
@@ -89,6 +165,13 @@ public class CliProgressReporter
                     try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
                 }
 
+                foreach (var (_, d) in _backendBars)
+                {
+                    if (d.StateLabel != "InProgress" || d.Bar == null) continue;
+                    d.SpinIndex++;
+                    try { d.Bar.Refresh(d.Pct, BuildText(d)); } catch { }
+                }
+
                 foreach (var (job, block) in _albumBlocks)
                 {
                     if (!_jobBars.TryGetValue(job, out var headerBar) || headerBar == null) continue;
@@ -96,6 +179,16 @@ public class CliProgressReporter
                     int total = block.Songs.Count;
                     _jobStatuses.TryGetValue(job, out var status);
                     try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job, done, total, status)); } catch { }
+                }
+
+                foreach (var (jobId, block) in _backendAlbumBlocks)
+                {
+                    if (!_backendJobBars.TryGetValue(jobId, out var headerBar) || headerBar == null) continue;
+                    int done = block.Songs.Count(s => _backendBars.TryGetValue(s.JobId ?? Guid.Empty, out var d)
+                        && (d.StateLabel == "Succeeded" || d.StateLabel.StartsWith("Failed", StringComparison.Ordinal)));
+                    int total = block.Songs.Count;
+                    _backendJobStatuses.TryGetValue(jobId, out var status);
+                    try { headerBar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(block.Summary, total > 0 ? done : 0, total, status)); } catch { }
                 }
 
             }
@@ -121,11 +214,22 @@ public class CliProgressReporter
         return $"[{job.DisplayId}] AlbumJob: {job.ToString(true)}{statusStr}  [{done}/{total}]";
     }
 
+    private static string AlbumHeaderText(JobSummaryDto summary, int done, int total, string? status = null)
+    {
+        string statusStr = !string.IsNullOrEmpty(status) ? $" ({status})" : "";
+        return $"[{summary.DisplayId}] AlbumJob: {summary.QueryText}{statusStr}  [{done}/{total}]";
+    }
+
     private static string GetJobTypePrefix(Job job) => job switch
     {
         RetrieveFolderJob => "RetrieveFolderJob: ",
         _                 => job.GetType().Name + ": "
     };
+
+    private static string GetJobTypePrefix(string kind)
+        => string.IsNullOrWhiteSpace(kind)
+            ? "Job: "
+            : $"{char.ToUpperInvariant(kind[0])}{kind[1..]}Job: ";
 
     private static string ProfileSuffix(Job job)
     {
@@ -133,8 +237,14 @@ public class CliProgressReporter
         return profiles?.Count > 0 ? $" [{string.Join(", ", profiles)}]" : "";
     }
 
+    private static string ProfileSuffix(JobSummaryDto summary)
+        => summary.AppliedAutoProfiles.Count > 0 ? $" [{string.Join(", ", summary.AppliedAutoProfiles)}]" : "";
+
     private static string TextWithProfileSuffix(Job job, string text)
         => text + ProfileSuffix(job);
+
+    private static string TextWithProfileSuffix(JobSummaryDto summary, string text)
+        => text + ProfileSuffix(summary);
 
     private static void WriteJobLineWithProfileSuffix(Job job, string text, ConsoleColor mainColor = ConsoleColor.Gray)
     {
@@ -153,6 +263,12 @@ public class CliProgressReporter
     private static void RefreshOrPrintJobLineWithProfileSuffix(ProgressBar? progress, int current, Job job, string text, bool print = false, bool refreshIfOffscreen = false)
     {
         var textWithSuffix = TextWithProfileSuffix(job, text);
+        Printing.RefreshOrPrint(progress, current, textWithSuffix, print, refreshIfOffscreen);
+    }
+
+    private static void RefreshOrPrintJobLineWithProfileSuffix(ProgressBar? progress, int current, JobSummaryDto summary, string text, bool print = false, bool refreshIfOffscreen = false)
+    {
+        var textWithSuffix = TextWithProfileSuffix(summary, text);
         Printing.RefreshOrPrint(progress, current, textWithSuffix, print, refreshIfOffscreen);
     }
 
@@ -195,6 +311,21 @@ public class CliProgressReporter
         return reason.Length > 0 ? $"Failed [{reason}]" : "Failed";
     }
 
+    private static string SongDisplay(SongStateChangedEventDto song)
+    {
+        var chosen = song.ChosenCandidate;
+        return chosen != null
+            ? $"{chosen.Username}\\..\\{System.IO.Path.GetFileName(chosen.Filename)}"
+            : $"[{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}";
+    }
+
+    private static string TerminalLabel(SongStateChangedEventDto song)
+        => song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists)
+            ? "Succeeded"
+            : !string.IsNullOrWhiteSpace(song.FailureReason)
+                ? $"Failed [{song.FailureReason}]"
+                : "Failed";
+
 
     // ── event handlers ───────────────────────────────────────────────────
 
@@ -213,12 +344,35 @@ public class CliProgressReporter
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
     }
 
+    private void ReportDownloadStart(DownloadStartedEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"Downloading: {song.Candidate.Username}\\..\\{System.IO.Path.GetFileName(song.Candidate.Filename)}");
+            return;
+        }
+
+        var d = _backendBars.GetOrAdd(song.JobId, _ => new BarData { Bar = Printing.GetProgressBar() });
+        d.StateLabel = "Queued";
+        d.BaseText = $"{song.Candidate.Username}\\..\\{System.IO.Path.GetFileName(song.Candidate.Filename)}";
+        d.Pct = 0;
+        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
+    }
+
     private void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes)
     {
         if (PlainMode) return;
 
         if (!_bars.TryGetValue(song, out var d)) return;
         d.Pct = totalBytes > 0 ? (int)(bytesTransferred * 100 / totalBytes) : 0;
+    }
+
+    private void ReportDownloadProgress(DownloadProgressEventDto progress)
+    {
+        if (PlainMode) return;
+
+        if (!_backendBars.TryGetValue(progress.JobId, out var d)) return;
+        d.Pct = progress.TotalBytes > 0 ? (int)(progress.BytesTransferred * 100 / progress.TotalBytes) : 0;
     }
 
     private void ReportStateChanged(SongJob song)
@@ -246,6 +400,28 @@ public class CliProgressReporter
         _savedState.TryRemove(song, out _);
     }
 
+    private void ReportStateChanged(SongStateChangedEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"{TerminalLabel(song)}: {SongDisplay(song)}");
+            return;
+        }
+
+        if (_backendBars.TryGetValue(song.JobId, out var d) && d.Bar != null)
+        {
+            bool succeeded = song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists);
+            d.StateLabel = succeeded ? "Succeeded" : "Failed";
+            if (succeeded)
+                d.Pct = 100;
+            else if (!string.IsNullOrWhiteSpace(song.FailureReason))
+                d.BaseText += $" [{song.FailureReason}]";
+            Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
+        }
+        _backendBars.TryRemove(song.JobId, out _);
+        _backendSavedState.TryRemove(song.JobId, out _);
+    }
+
 
     // ── display event handlers ───────────────────────────────────────────
 
@@ -261,12 +437,35 @@ public class CliProgressReporter
         }
     }
 
+    private void ReportExtractionStarted(ExtractionStartedEventDto job)
+    {
+        if (!string.IsNullOrWhiteSpace(job.InputType))
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Printing.WriteLine();
+                RefreshOrPrintJobLineWithProfileSuffix(
+                    null,
+                    0,
+                    job.Summary,
+                    $"[{job.Summary.DisplayId}] ExtractJob: Input ({job.InputType}): {job.Input}",
+                    print: true);
+            }
+        }
+    }
+
     private void ReportExtractionCompleted(ExtractJob job, Job result) { }
 
     private void ReportExtractionFailed(ExtractJob job, string reason)
     {
         Logger.Error($"[{job.DisplayId}] ExtractJob: Failed: {job.Input}\n  Reason:    {reason}");
         _jobBars.TryRemove(job, out _);
+    }
+
+    private void ReportExtractionFailed(ExtractionFailedEventDto job)
+    {
+        Logger.Error($"[{job.Summary.DisplayId}] ExtractJob: Failed: {job.Summary.QueryText}\n  Reason:    {job.Reason}");
+        _backendJobBars.TryRemove(job.Summary.JobId, out _);
     }
 
     private void ReportJobStarted(Job job)
@@ -284,6 +483,33 @@ public class CliProgressReporter
         string status = job is RetrieveFolderJob ? "retrieving folder" : "searching";
         _jobStatuses[job] = status;
         RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job, $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}", print: true);
+    }
+
+    private void ReportJobStarted(JobStartedEventDto job)
+    {
+        string status = job.Summary.Kind == "retrieve-folder" ? "retrieving folder" : "searching";
+
+        if (PlainMode)
+        {
+            _backendJobStatuses[job.Summary.JobId] = status;
+            RefreshOrPrintJobLineWithProfileSuffix(
+                null,
+                0,
+                job.Summary,
+                $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{status}: {job.Summary.QueryText}",
+                print: true);
+            return;
+        }
+
+        var bar = Printing.GetProgressBar();
+        _backendJobBars[job.Summary.JobId] = bar;
+        _backendJobStatuses[job.Summary.JobId] = status;
+        RefreshOrPrintJobLineWithProfileSuffix(
+            bar,
+            0,
+            job.Summary,
+            $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{status}: {job.Summary.QueryText}",
+            print: true);
     }
 
     private void ReportAlbumDownloadStarted(AlbumJob job, AlbumFolder folder)
@@ -341,6 +567,53 @@ public class CliProgressReporter
         }
     }
 
+    private void ReportAlbumDownloadStarted(AlbumDownloadStartedEventDto job)
+    {
+        if (PlainMode)
+        {
+            _backendJobStatuses[job.Summary.JobId] = "downloading";
+            RefreshOrPrintJobLineWithProfileSuffix(
+                null,
+                0,
+                job.Summary,
+                $"[{job.Summary.DisplayId}] AlbumJob: downloading: {job.Summary.QueryText}",
+                print: true);
+            return;
+        }
+
+        if (Console.IsOutputRedirected)
+        {
+            Printing.WriteLine();
+            return;
+        }
+
+        int total = job.Folder.Files?.Count ?? 0;
+        lock (Printing.ConsoleLock)
+        {
+            if (_backendJobBars.TryGetValue(job.Summary.JobId, out var headerBar) && headerBar != null)
+            {
+                _backendJobStatuses[job.Summary.JobId] = "downloading";
+                try { RefreshOrPrintJobLineWithProfileSuffix(headerBar, 0, job.Summary, AlbumHeaderText(job.Summary, 0, total, "downloading"), print: true); } catch { }
+            }
+
+            Printing.PrintAlbumHeader(ToAlbumFolder(job.Folder));
+
+            var block = new BackendAlbumBlock { Summary = job.Summary, Songs = job.Folder.Files?.ToList() ?? [] };
+            foreach (var song in block.Songs.Where(s => s.JobId.HasValue))
+            {
+                string filename = song.ResolvedFilename ?? $"{song.Query.Artist} - {song.Query.Title}";
+                string shortName = System.IO.Path.GetFileName(filename);
+                var bar = Printing.GetProgressBar();
+                var d = new BarData { Bar = bar, BaseText = shortName, StateLabel = "Pending", Pct = 0 };
+                _backendBars[song.JobId!.Value] = d;
+                if (bar != null)
+                    try { bar.Refresh(0, BuildText(d)); } catch { }
+            }
+
+            _backendAlbumBlocks[job.Summary.JobId] = block;
+        }
+    }
+
     private void ReportAlbumTrackDownloadStarted(AlbumJob job, AlbumFolder folder)
     {
         if (_albumBlocks.ContainsKey(job))
@@ -358,6 +631,36 @@ public class CliProgressReporter
 
         Printing.WriteLine();
         WriteJobLineWithProfileSuffix(job, $"[{job.DisplayId}] AlbumJob: downloading tracks: {job.ToString(true)}");
+        Printing.WriteLine($"Folder: {folderName}", ConsoleColor.DarkGray);
+    }
+
+    private void ReportAlbumTrackDownloadStarted(AlbumTrackDownloadStartedEventDto job)
+    {
+        if (_backendAlbumBlocks.ContainsKey(job.Summary.JobId))
+            return;
+
+        string folderName = string.IsNullOrWhiteSpace(job.Folder.FolderPath)
+            ? job.Summary.QueryText ?? ""
+            : job.Folder.FolderPath;
+
+        if (PlainMode)
+        {
+            RefreshOrPrintJobLineWithProfileSuffix(
+                null,
+                0,
+                job.Summary,
+                $"[{job.Summary.DisplayId}] AlbumJob: downloading tracks: {job.Summary.QueryText} - {folderName}",
+                print: true);
+            return;
+        }
+
+        Printing.WriteLine();
+        RefreshOrPrintJobLineWithProfileSuffix(
+            null,
+            0,
+            job.Summary,
+            $"[{job.Summary.DisplayId}] AlbumJob: downloading tracks: {job.Summary.QueryText}",
+            print: true);
         Printing.WriteLine($"Folder: {folderName}", ConsoleColor.DarkGray);
     }
 
@@ -390,6 +693,32 @@ public class CliProgressReporter
         }
     }
 
+    private void ReportAlbumDownloadCompleted(AlbumDownloadCompletedEventDto job)
+    {
+        if (PlainMode)
+        {
+            _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
+            return;
+        }
+
+        if (_backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
+        {
+            int total = block.Songs.Count;
+            int done = block.Songs.Count(s => s.JobId.HasValue && !_backendBars.ContainsKey(s.JobId.Value));
+            if (_backendJobBars.TryGetValue(job.Summary.JobId, out var headerBar) && headerBar != null)
+            {
+                _backendJobStatuses.TryGetValue(job.Summary.JobId, out var status);
+                try { headerBar.Refresh(100, AlbumHeaderText(job.Summary, done, total, status)); } catch { }
+            }
+            _backendAlbumBlocks.TryRemove(job.Summary.JobId, out _);
+        }
+        _backendJobBars.TryRemove(job.Summary.JobId, out _);
+        _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
+
+        if (!Console.IsOutputRedirected && !_cli.NoProgress)
+            Printing.WriteLine();
+    }
+
     private void ReportJobFolderRetrieving(Job job)
     {
         if (PlainMode)
@@ -399,6 +728,23 @@ public class CliProgressReporter
         }
 
         _jobBars.TryGetValue(job, out var bar);
+        Printing.RefreshOrPrint(bar, 0, "Getting all files in folder..", print: true);
+    }
+
+    private void ReportJobFolderRetrieving(JobFolderRetrievingEventDto job)
+    {
+        if (PlainMode)
+        {
+            RefreshOrPrintJobLineWithProfileSuffix(
+                null,
+                0,
+                job.Summary,
+                $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}retrieving folder: {job.Summary.QueryText}",
+                print: true);
+            return;
+        }
+
+        _backendJobBars.TryGetValue(job.Summary.JobId, out var bar);
         Printing.RefreshOrPrint(bar, 0, "Getting all files in folder..", print: true);
     }
 
@@ -441,6 +787,47 @@ public class CliProgressReporter
         }
     }
 
+    private void ReportJobCompleted(JobCompletedEventDto job)
+    {
+        if (PlainMode)
+        {
+            string status = job.Found
+                ? (job.Summary.Kind == "retrieve-folder" ? "found additional files in" : "found results")
+                : (job.Summary.Kind == "retrieve-folder" ? "no additional files found" : "no results found");
+            string lockedMsg = !job.Found && job.LockedFileCount > 0 ? $" (Found {job.LockedFileCount} locked files)" : "";
+            RefreshOrPrintJobLineWithProfileSuffix(
+                null,
+                0,
+                job.Summary,
+                $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{status}: {job.Summary.QueryText}{lockedMsg}",
+                print: true);
+            _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
+            return;
+        }
+
+        _backendJobBars.TryGetValue(job.Summary.JobId, out var bar);
+        if (!job.Found)
+        {
+            string lockedMsg = job.LockedFileCount > 0 ? $" (Found {job.LockedFileCount} locked files)" : "";
+            string prefix = job.Summary.Kind == "retrieve-folder" ? "no additional files found" : "no results found";
+            _backendJobStatuses[job.Summary.JobId] = prefix;
+            RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job.Summary, $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{prefix}: {job.Summary.QueryText}{lockedMsg}", print: true);
+            _backendJobBars.TryRemove(job.Summary.JobId, out _);
+            _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
+        }
+        else if (job.Summary.Kind != "album")
+        {
+            if (bar != null)
+            {
+                string prefix = job.Summary.Kind == "retrieve-folder" ? "found additional files in" : "found results";
+                _backendJobStatuses[job.Summary.JobId] = prefix;
+                RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job.Summary, $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{prefix}: {job.Summary.QueryText}", print: true);
+            }
+            _backendJobBars.TryRemove(job.Summary.JobId, out _);
+            _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
+        }
+    }
+
     private void ReportSongSearching(SongJob song)
     {
         if (PlainMode)
@@ -464,6 +851,29 @@ public class CliProgressReporter
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: isFirst);
     }
 
+    private void ReportSongSearching(SongSearchingEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"Searching: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            return;
+        }
+
+        if (_backendBars.TryGetValue(song.JobId, out var existing))
+        {
+            existing.StateLabel = "Searching";
+            existing.BaseText = $"[{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}";
+            Printing.RefreshOrPrint(existing.Bar, 0, BuildText(existing), print: false);
+            return;
+        }
+
+        bool isFirst = !_backendBars.ContainsKey(song.JobId);
+        var d = _backendBars.GetOrAdd(song.JobId, _ => new BarData { Bar = Printing.GetProgressBar() });
+        d.StateLabel = "Searching";
+        d.BaseText = $"[{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}";
+        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: isFirst);
+    }
+
     private void ReportSongNotFound(SongJob song)
     {
         if (PlainMode)
@@ -476,6 +886,21 @@ public class CliProgressReporter
         d.StateLabel = "Not found";
         var reason = FailureReasonLabel(song.FailureReason);
         if (reason.Length > 0) d.BaseText += $" [{reason}]";
+        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
+    }
+
+    private void ReportSongNotFound(SongNotFoundEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"Not found: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            return;
+        }
+
+        if (!_backendBars.TryGetValue(song.JobId, out var d)) return;
+        d.StateLabel = "Not found";
+        if (!string.IsNullOrWhiteSpace(song.FailureReason))
+            d.BaseText += $" [{song.FailureReason}]";
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
     }
 
@@ -492,12 +917,34 @@ public class CliProgressReporter
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
     }
 
+    private void ReportSongFailed(SongFailedEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"{TerminalLabel(new SongStateChangedEventDto(song.JobId, song.DisplayId, song.WorkflowId, song.Query, nameof(JobState.Failed), song.FailureReason, null, null))}: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            return;
+        }
+
+        if (!_backendBars.TryGetValue(song.JobId, out var d)) return;
+        d.StateLabel = "Failed";
+        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
+    }
+
     private void ReportDownloadStateChanged(SongJob song, string stateLabel)
     {
         if (PlainMode) return;
 
         if (!_bars.TryGetValue(song, out var d)) return;
         d.StateLabel = stateLabel;
+        Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
+    }
+
+    private void ReportDownloadStateChanged(DownloadStateChangedEventDto song)
+    {
+        if (PlainMode) return;
+
+        if (!_backendBars.TryGetValue(song.JobId, out var d)) return;
+        d.StateLabel = GetStateLabel(Enum.TryParse<TransferStates>(song.State, out var state) ? state : TransferStates.None);
         Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
     }
 
@@ -514,6 +961,19 @@ public class CliProgressReporter
         Printing.RefreshOrPrint(d.Bar, d.Bar.Current, "  OnComplete:  " + $"{song}");
     }
 
+    private void ReportOnCompleteStart(OnCompleteStartedEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"OnComplete start: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            return;
+        }
+
+        if (!_backendBars.TryGetValue(song.JobId, out var d) || d.Bar == null) return;
+        _backendSavedState[song.JobId] = (d.Bar.Line1 ?? "", d.Bar.Current);
+        Printing.RefreshOrPrint(d.Bar, d.Bar.Current, "  OnComplete:  " + $"[{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+    }
+
     private void ReportOnCompleteEnd(SongJob song)
     {
         if (PlainMode)
@@ -524,6 +984,19 @@ public class CliProgressReporter
 
         if (!_bars.TryGetValue(song, out var d) || d.Bar == null) return;
         if (_savedState.TryGetValue(song, out var saved))
+            Printing.RefreshOrPrint(d.Bar, saved.pos, saved.text);
+    }
+
+    private void ReportOnCompleteEnd(OnCompleteEndedEventDto song)
+    {
+        if (PlainMode)
+        {
+            Logger.Info($"OnComplete end: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            return;
+        }
+
+        if (!_backendBars.TryGetValue(song.JobId, out var d) || d.Bar == null) return;
+        if (_backendSavedState.TryGetValue(song.JobId, out var saved))
             Printing.RefreshOrPrint(d.Bar, saved.pos, saved.text);
     }
 
@@ -551,4 +1024,65 @@ public class CliProgressReporter
             }
         }
     }
+
+    private void ReportJobStatus(JobStatusEventDto job)
+    {
+        if (PlainMode)
+        {
+            _backendJobStatuses[job.Summary.JobId] = job.Status;
+            Logger.Info($"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{job.Status}: {job.Summary.QueryText}");
+            return;
+        }
+
+        _backendJobStatuses[job.Summary.JobId] = job.Status;
+        if (_backendJobBars.TryGetValue(job.Summary.JobId, out var bar) && bar != null)
+        {
+            if (job.Summary.Kind == "album" && _backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
+            {
+                int done = block.Songs.Count(s => s.JobId.HasValue && !_backendBars.ContainsKey(s.JobId.Value));
+                int total = block.Songs.Count;
+                try { bar.Refresh(total > 0 ? done * 100 / total : 0, AlbumHeaderText(job.Summary, done, total, job.Status)); } catch { }
+            }
+            else
+            {
+                Printing.RefreshOrPrint(bar, 0, $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{job.Status}: {job.Summary.QueryText}", print: false);
+            }
+        }
+    }
+
+    private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
+        => new(
+            folder.Username,
+            folder.FolderPath,
+            folder.Files?.Select(ToSongJob).ToList() ?? []);
+
+    private static SongJob ToSongJob(SongJobPayloadDto dto)
+        => new(new SongQuery
+        {
+            Artist = dto.Query.Artist,
+            Title = dto.Query.Title,
+            Album = dto.Query.Album,
+            URI = dto.Query.Uri,
+            Length = dto.Query.Length,
+            ArtistMaybeWrong = dto.Query.ArtistMaybeWrong,
+            IsDirectLink = dto.Query.IsDirectLink,
+        })
+        {
+            ResolvedTarget = dto.ResolvedUsername != null && dto.ResolvedFilename != null
+                ? new FileCandidate(
+                    new SearchResponse(
+                        dto.ResolvedUsername,
+                        -1,
+                        dto.ResolvedHasFreeUploadSlot ?? false,
+                        dto.ResolvedUploadSpeed ?? -1,
+                        -1,
+                        null),
+                    new Soulseek.File(
+                        1,
+                        dto.ResolvedFilename,
+                        dto.ResolvedSize ?? 0,
+                        dto.ResolvedExtension ?? System.IO.Path.GetExtension(dto.ResolvedFilename),
+                        dto.ResolvedAttributes?.Select(x => new FileAttribute(Enum.Parse<FileAttributeType>(x.Type), x.Value))))
+                : null
+        };
 }
