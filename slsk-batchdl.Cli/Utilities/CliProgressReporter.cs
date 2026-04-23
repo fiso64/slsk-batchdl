@@ -91,6 +91,9 @@ public class CliProgressReporter
         {
             switch (envelope.Type)
             {
+                case "job.upserted" when envelope.Payload is JobSummaryDto e:
+                    ReportJobUpserted(e);
+                    break;
                 case "extraction.started" when envelope.Payload is ExtractionStartedEventDto e:
                     ReportExtractionStarted(e);
                     break;
@@ -147,6 +150,21 @@ public class CliProgressReporter
                     break;
             }
         };
+    }
+
+    private void ReportJobUpserted(JobSummaryDto summary)
+    {
+        if (PlainMode)
+            return;
+
+        if (summary.Kind == "album"
+            && IsTerminalJobState(summary.State)
+            && _backendAlbumBlocks.TryRemove(summary.JobId, out var block))
+        {
+            CompleteRemainingBackendAlbumBars(block, summary);
+            _backendJobBars.TryRemove(summary.JobId, out _);
+            _backendJobStatuses.TryRemove(summary.JobId, out _);
+        }
     }
 
     async Task TickLoopAsync(CancellationToken ct)
@@ -293,6 +311,12 @@ public class CliProgressReporter
         if (s.HasFlag(TransferStates.Initializing)) return "Initialising";
         return "Requested";
     }
+
+    private static bool IsTerminalJobState(string state)
+        => state is nameof(JobState.Done)
+            or nameof(JobState.AlreadyExists)
+            or nameof(JobState.Failed)
+            or nameof(JobState.Skipped);
 
     private static string SongDisplay(SongJob song)
     {
@@ -597,20 +621,7 @@ public class CliProgressReporter
             }
 
             Printing.PrintAlbumHeader(ToAlbumFolder(job.Folder));
-
-            var block = new BackendAlbumBlock { Summary = job.Summary, Songs = job.Folder.Files?.ToList() ?? [] };
-            foreach (var song in block.Songs.Where(s => s.JobId.HasValue))
-            {
-                string filename = song.ResolvedFilename ?? $"{song.Query.Artist} - {song.Query.Title}";
-                string shortName = System.IO.Path.GetFileName(filename);
-                var bar = Printing.GetProgressBar();
-                var d = new BarData { Bar = bar, BaseText = shortName, StateLabel = "Pending", Pct = 0 };
-                _backendBars[song.JobId!.Value] = d;
-                if (bar != null)
-                    try { bar.Refresh(0, BuildText(d)); } catch { }
-            }
-
-            _backendAlbumBlocks[job.Summary.JobId] = block;
+            InitializeBackendAlbumBlock(job.Summary, job.Folder);
         }
     }
 
@@ -662,6 +673,7 @@ public class CliProgressReporter
             $"[{job.Summary.DisplayId}] AlbumJob: downloading tracks: {job.Summary.QueryText}",
             print: true);
         Printing.WriteLine($"Folder: {folderName}", ConsoleColor.DarkGray);
+        InitializeBackendAlbumBlock(job.Summary, job.Folder);
     }
 
     private void ReportAlbumDownloadCompleted(AlbumJob job)
@@ -703,6 +715,7 @@ public class CliProgressReporter
 
         if (_backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
         {
+            CompleteRemainingBackendAlbumBars(block, job.Summary);
             int total = block.Songs.Count;
             int done = block.Songs.Count(s => s.JobId.HasValue && !_backendBars.ContainsKey(s.JobId.Value));
             if (_backendJobBars.TryGetValue(job.Summary.JobId, out var headerBar) && headerBar != null)
@@ -717,6 +730,52 @@ public class CliProgressReporter
 
         if (!Console.IsOutputRedirected && !_cli.NoProgress)
             Printing.WriteLine();
+    }
+
+    private void InitializeBackendAlbumBlock(JobSummaryDto summary, AlbumFolderDto folder)
+    {
+        var block = new BackendAlbumBlock { Summary = summary, Songs = folder.Files?.ToList() ?? [] };
+        foreach (var song in block.Songs.Where(s => s.JobId.HasValue))
+        {
+            string filename = song.ResolvedFilename ?? $"{song.Query.Artist} - {song.Query.Title}";
+            string shortName = System.IO.Path.GetFileName(filename);
+            var bar = Printing.GetProgressBar();
+            var data = ToBarData(song, bar, shortName);
+            _backendBars[song.JobId!.Value] = data;
+            if (bar != null)
+                try { bar.Refresh(data.Pct, BuildText(data)); } catch { }
+        }
+
+        _backendAlbumBlocks[summary.JobId] = block;
+    }
+
+    private void CompleteRemainingBackendAlbumBars(BackendAlbumBlock block, JobSummaryDto summary)
+    {
+        foreach (var song in block.Songs.Where(song => song.JobId.HasValue))
+        {
+            if (!_backendBars.TryGetValue(song.JobId!.Value, out var data))
+                continue;
+
+            bool albumSucceeded = summary.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists);
+            data.StateLabel = albumSucceeded ? "Succeeded" : "Failed";
+            if (albumSucceeded)
+            {
+                data.Pct = 100;
+            }
+            else
+            {
+                var reason = !string.IsNullOrWhiteSpace(summary.FailureReason)
+                    ? summary.FailureReason
+                    : song.FailureReason;
+                if (!string.IsNullOrWhiteSpace(reason) && !data.BaseText.Contains($"[{reason}]", StringComparison.Ordinal))
+                    data.BaseText += $" [{reason}]";
+            }
+
+            if (data.Bar != null)
+                Printing.RefreshOrPrint(data.Bar, data.Pct, BuildText(data), print: false);
+            _backendBars.TryRemove(song.JobId.Value, out _);
+            _backendSavedState.TryRemove(song.JobId.Value, out _);
+        }
     }
 
     private void ReportJobFolderRetrieving(Job job)
@@ -1057,7 +1116,8 @@ public class CliProgressReporter
             folder.Files?.Select(ToSongJob).ToList() ?? []);
 
     private static SongJob ToSongJob(SongJobPayloadDto dto)
-        => new(new SongQuery
+    {
+        var job = new SongJob(new SongQuery
         {
             Artist = dto.Query.Artist,
             Title = dto.Query.Title,
@@ -1085,4 +1145,43 @@ public class CliProgressReporter
                         dto.ResolvedAttributes?.Select(x => new FileAttribute(Enum.Parse<FileAttributeType>(x.Type), x.Value))))
                 : null
         };
+
+        if (!string.IsNullOrWhiteSpace(dto.State)
+            && Enum.TryParse<JobState>(dto.State, out var state))
+            job.State = state;
+        if (!string.IsNullOrWhiteSpace(dto.FailureReason)
+            && Enum.TryParse<FailureReason>(dto.FailureReason, out var failureReason))
+            job.FailureReason = failureReason;
+        job.FailureMessage = dto.FailureMessage;
+        job.DownloadPath = dto.DownloadPath;
+
+        return job;
+    }
+
+    private static BarData ToBarData(SongJobPayloadDto song, ProgressBar? bar, string shortName)
+    {
+        var data = new BarData { Bar = bar, BaseText = shortName, StateLabel = "Pending", Pct = 0 };
+
+        if (song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists))
+        {
+            data.StateLabel = "Succeeded";
+            data.Pct = 100;
+        }
+        else if (song.State == nameof(JobState.Failed))
+        {
+            data.StateLabel = "Failed";
+            if (!string.IsNullOrWhiteSpace(song.FailureReason))
+                data.BaseText += $" [{song.FailureReason}]";
+        }
+        else if (song.State == nameof(JobState.Downloading))
+        {
+            data.StateLabel = "InProgress";
+        }
+        else if (song.State == nameof(JobState.Searching))
+        {
+            data.StateLabel = "Searching";
+        }
+
+        return data;
+    }
 }

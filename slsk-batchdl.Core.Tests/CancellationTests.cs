@@ -349,5 +349,77 @@ namespace Tests.Cancellation
                     System.IO.Directory.Delete(outputDir, recursive: true);
             }
         }
+
+        [TestMethod]
+        public async Task CancelAlbum_MarksAllUnfinishedFolderFilesCancelled()
+        {
+            var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-album-cancel-music-" + Guid.NewGuid());
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-album-cancel-out-" + Guid.NewGuid());
+            var albumDir = Path.Combine(musicRoot, "Artist", "Album");
+            System.IO.Directory.CreateDirectory(albumDir);
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            for (int i = 1; i <= 12; i++)
+                System.IO.File.WriteAllBytes(Path.Combine(albumDir, $"{i:00}. Artist - Track {i:00}.mp3"), new byte[1024]);
+
+            try
+            {
+                var eng = new EngineSettings
+                {
+                    Username = "u",
+                    Password = "p",
+                    MockFilesDir = musicRoot,
+                    MockFilesReadTags = false,
+                    MockFilesSlow = true,
+                };
+                var dl = new DownloadSettings();
+                dl.Extraction.Input = "Artist Album";
+                dl.Extraction.IsAlbum = true;
+                dl.Search.NoBrowseFolder = true;
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "{foldername}/{filename}";
+
+                var clientManager = new SoulseekClientManager(eng);
+                var engine = new DownloadEngine(eng, clientManager);
+
+                AlbumJob? albumJob = null;
+                AlbumFolder? folder = null;
+                engine.Events.AlbumTrackDownloadStarted += (job, startedFolder) =>
+                {
+                    albumJob = (AlbumJob)job;
+                    folder = startedFolder;
+                };
+
+                engine.Enqueue(new ExtractJob(dl.Extraction.Input!, dl.Extraction.InputType), dl);
+                engine.CompleteEnqueue();
+                var runTask = engine.RunAsync(CancellationToken.None);
+
+                await WaitForAsync(() => folder != null && folder.Files.Any(song => song.State == JobState.Downloading), 5000);
+
+                albumJob!.Cancel();
+                await IgnoreCancellation(runTask);
+
+                Assert.IsNotNull(folder);
+                Assert.IsFalse(
+                    folder!.Files.Any(song => song.State is JobState.Pending or JobState.Searching or JobState.Downloading),
+                    "Cancelling an album should not leave unresolved folder files in active states.");
+                Assert.IsTrue(
+                    folder.Files.Any(song => song.State == JobState.Failed && song.FailureReason == FailureReason.Cancelled),
+                    "At least one unfinished album file should be marked as cancelled.");
+
+                Assert.IsNotNull(albumJob);
+                var resolved = albumJob!.ResolvedTarget ?? folder;
+                Assert.IsFalse(
+                    resolved.Files.Any(song => song.State is JobState.Pending or JobState.Searching or JobState.Downloading),
+                    "The album's resolved folder should not expose stale active child states after cancellation.");
+            }
+            finally
+            {
+                if (System.IO.Directory.Exists(musicRoot))
+                    System.IO.Directory.Delete(musicRoot, recursive: true);
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, recursive: true);
+            }
+        }
     }
 }

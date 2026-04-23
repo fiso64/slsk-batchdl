@@ -6,6 +6,7 @@ using Sldl.Server;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 
 namespace Tests.Cli;
 
@@ -306,6 +307,107 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    public async Task RemoteCliBackend_PrintCompleteCountsCancelledAlbumPayloadFiles()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-cancel-music-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-cancel-out-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+
+        for (int i = 1; i <= 12; i++)
+            File.WriteAllBytes(Path.Combine(albumDir, $"{i:00}. Artist - Track {i:00}.mp3"), new byte[1024]);
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+                MockFilesSlow = true,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{foldername}/{filename}",
+                },
+                Search =
+                {
+                    NoBrowseFolder = true,
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        TextWriter originalOut = Console.Out;
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+
+            var searchSummary = await backend.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-album",
+                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
+                    }));
+
+            await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
+            var projection = await backend.GetAlbumProjectionAsync(searchSummary.JobId, includeFiles: false);
+            Assert.IsNotNull(projection);
+            Assert.AreEqual(1, projection.Items.Count);
+
+            var downloadSummary = await backend.StartAlbumDownloadAsync(
+                searchSummary.JobId,
+                new StartAlbumDownloadRequestDto(projection.Items[0].Ref));
+
+            Assert.IsNotNull(downloadSummary);
+
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var detail = await backend.GetJobDetailAsync(downloadSummary.JobId);
+                    var payload = detail?.Payload as AlbumJobPayloadDto;
+                    return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                        .Any(file => file.State == nameof(JobState.Downloading)) == true;
+                },
+                "Timed out waiting for remote album file downloads to start.");
+
+            Assert.IsTrue(await backend.CancelWorkflowAsync(downloadSummary.WorkflowId) > 0);
+            await WaitForJobStateAsync(backend, downloadSummary.JobId, nameof(JobState.Failed));
+
+            using var output = new StringWriter();
+            Console.SetOut(output);
+            Logger.AddConsole(writer: (message, _) => Console.WriteLine(message));
+            Logger.SetConsoleLogLevel(Logger.LogLevel.Info);
+            await Sldl.Cli.Program.PrintRemoteCompleteAsync(backend, downloadSummary.WorkflowId, CancellationToken.None);
+
+            string rendered = output.ToString();
+            var match = Regex.Match(rendered, @"Completed:\s+(\d+) succeeded,\s+(\d+) failed\.");
+            Assert.IsTrue(match.Success, "Remote completion output should include the final succeeded/failed counts.");
+            Assert.AreEqual(
+                12,
+                int.Parse(match.Groups[1].Value) + int.Parse(match.Groups[2].Value),
+                "Remote completion should count every audio file in a cancelled album as either succeeded or failed.");
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            await app.StopAsync();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
     public async Task RemoteCliBackend_PrintResults_RendersCompletedSearchPayloadWithoutDownloading()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-print-test-" + Guid.NewGuid());
@@ -521,5 +623,20 @@ public class RemoteCliBackendTests
             ? "<missing>"
             : string.Join(", ", finalDetail.Jobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{job.State} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
         Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
+    }
+
+    private static async Task WaitForConditionAsync(Func<Task<bool>> condition, string failureMessage, int timeoutMs = 5000)
+    {
+        using var timeout = new CancellationTokenSource(timeoutMs);
+
+        while (!timeout.IsCancellationRequested)
+        {
+            if (await condition())
+                return;
+
+            await Task.Delay(50, CancellationToken.None);
+        }
+
+        Assert.Fail(failureMessage);
     }
 }

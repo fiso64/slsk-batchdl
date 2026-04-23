@@ -146,6 +146,91 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
+    public async Task StartAlbumDownloadAsync_CancelWorkflowMarksUnfinishedPayloadFilesCancelled()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+
+        for (int i = 1; i <= 12; i++)
+            File.WriteAllBytes(Path.Combine(albumDir, $"{i:00}. Artist - Track {i:00}.mp3"), new byte[1024]);
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var supervisor = CreateSupervisor(
+                musicRoot,
+                outputDir,
+                configureDownload: settings => settings.Search.NoBrowseFolder = true,
+                configureEngine: settings => settings.MockFilesSlow = true);
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var searchSummary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-album",
+                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
+                    }),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+
+            var albums = supervisor.GetAlbumProjection(searchSummary.JobId, includeFiles: false);
+            Assert.IsNotNull(albums);
+            Assert.AreEqual(1, albums.Items.Count);
+
+            var downloadSummary = await supervisor.StartAlbumDownloadAsync(
+                searchSummary.JobId,
+                new StartAlbumDownloadRequestDto(albums.Items[0].Ref),
+                CancellationToken.None);
+
+            Assert.IsNotNull(downloadSummary);
+
+            await WaitForConditionAsync(
+                () =>
+                {
+                    var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
+                    var payload = detail?.Payload as AlbumJobPayloadDto;
+                    return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                        .Any(file => file.State == "Downloading") == true;
+                },
+                "Timed out waiting for album file downloads to start.");
+
+            var cancelled = supervisor.CancelWorkflow(downloadSummary.WorkflowId);
+            Assert.IsTrue(cancelled > 0, "CancelWorkflow should cancel the active album download job.");
+
+            await WaitForJobStateAsync(supervisor, downloadSummary.JobId, "Failed");
+
+            var cancelledDetail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
+            Assert.IsNotNull(cancelledDetail);
+            var cancelledPayload = cancelledDetail.Payload as AlbumJobPayloadDto;
+            Assert.IsNotNull(cancelledPayload);
+
+            var files = cancelledPayload.Results?.SelectMany(folder => folder.Files ?? []).ToList() ?? [];
+            Assert.AreEqual(12, files.Count);
+            Assert.IsFalse(
+                files.Any(file => file.State is "Pending" or "Searching" or "Downloading"),
+                "Cancelled album payload should not expose stale active file states.");
+            Assert.IsTrue(
+                files.Any(file => file.State == "Failed" && file.FailureReason == "Cancelled"),
+                "Cancelled album payload should mark unfinished files as cancelled.");
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
     public async Task StateStore_RaisesJobAndWorkflowUpserts_ForSubmittedJobs()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
@@ -652,8 +737,16 @@ public class EngineSupervisorTests
         string musicRoot,
         string outputDir,
         Action<DownloadSettings>? configureDownload = null,
+        Action<EngineSettings>? configureEngine = null,
         ProfileCatalog? profiles = null)
     {
+        var engineSettings = new EngineSettings
+        {
+            MockFilesDir = musicRoot,
+            MockFilesReadTags = false,
+        };
+        configureEngine?.Invoke(engineSettings);
+
         var defaultDownload = new DownloadSettings
         {
             Output =
@@ -666,11 +759,7 @@ public class EngineSupervisorTests
 
         var options = Options.Create(new ServerOptions
         {
-            Engine = new EngineSettings
-            {
-                MockFilesDir = musicRoot,
-                MockFilesReadTags = false,
-            },
+            Engine = engineSettings,
             DefaultDownload = defaultDownload,
             Profiles = profiles ?? ProfileCatalog.Empty,
         });

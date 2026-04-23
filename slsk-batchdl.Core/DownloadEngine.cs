@@ -675,6 +675,7 @@ public class DownloadEngine
         string? filterStr = null;
         int index = 0;
         int albumTrackCountRetries = config.Transfer.AlbumTrackCountMaxRetries;
+        AlbumFolder? lastChosenFolder = null;
 
         async Task RunAlbumDownloads(AlbumFolder folder, CancellationTokenSource cts)
         {
@@ -745,6 +746,7 @@ public class DownloadEngine
             if (job.Query.IsDirectLink)
                 retrievedFolders.Add(chosenFolder.FolderPath);
 
+            lastChosenFolder = chosenFolder;
             organizer.SetremoteBaseDir(chosenFolder.FolderPath);
 
             if (!wasPreselected)
@@ -774,6 +776,8 @@ public class DownloadEngine
             }
             catch (OperationCanceledException)
             {
+                MarkUnfinishedAlbumFilesCancelled(chosenFolder);
+
                 if (!config.IgnoreAlbumFail)
                     HandleAlbumFail(job, chosenFolder, config.DeleteAlbumOnFail, config);
 
@@ -823,6 +827,15 @@ public class DownloadEngine
             job.FailureReason = FailureReason.NoSuitableFileFound;
         }
 
+        if (job.FailureReason == FailureReason.Cancelled)
+        {
+            var cancelledFolder = job.ResolvedTarget
+                ?? lastChosenFolder;
+
+            if (cancelledFolder != null)
+                MarkUnfinishedAlbumFilesCancelled(cancelledFolder);
+        }
+
         List<SongJob>? additionalImages = null;
 
         if (config.Output.AlbumArtOnly || (succeeded && config.Output.AlbumArtOption != AlbumArtOption.Default))
@@ -854,6 +867,16 @@ public class DownloadEngine
         ctx.PlaylistEditor?.Update();
 
         await OnCompleteExecutor.ExecuteAsync(job, null, ctx);
+    }
+
+    void MarkUnfinishedAlbumFilesCancelled(AlbumFolder folder)
+    {
+        foreach (var song in folder.Files.Where(song => song.State is not (JobState.Done or JobState.AlreadyExists or JobState.Failed)))
+        {
+            song.State = JobState.Failed;
+            song.FailureReason = FailureReason.Cancelled;
+            Events.RaiseStateChanged(song);
+        }
     }
 
 
