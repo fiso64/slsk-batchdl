@@ -10,12 +10,12 @@ public record ConfigFile(
 );
 
 /// One profile's typed Core patch plus optional CLI-only settings patch.
-public record ProfileEntry(SettingsProfile Profile, CliSettingsPatch Cli, List<string> Tokens)
+public record ProfileEntry(SettingsProfile Profile, CliSettingsPatch Cli, DaemonSettingsPatch Daemon, List<string> Tokens)
 {
     public string? Condition => Profile.Condition;
 
     public ProfileEntry(List<string> tokens, string? condition)
-        : this(new SettingsProfile { Condition = condition }, new CliSettingsPatch(), tokens)
+        : this(new SettingsProfile { Condition = condition }, new CliSettingsPatch(), new DaemonSettingsPatch(), tokens)
     {
     }
 }
@@ -29,6 +29,21 @@ public sealed class CliSettingsPatch
     public void Add(Action<CliSettings> operation) => _operations.Add(operation);
 
     public void ApplyTo(CliSettings settings)
+    {
+        foreach (var operation in _operations)
+            operation(settings);
+    }
+}
+
+public sealed class DaemonSettingsPatch
+{
+    private readonly List<Action<DaemonSettings>> _operations = [];
+
+    public bool HasOperations => _operations.Count > 0;
+
+    public void Add(Action<DaemonSettings> operation) => _operations.Add(operation);
+
+    public void ApplyTo(DaemonSettings settings)
     {
         foreach (var operation in _operations)
             operation(settings);

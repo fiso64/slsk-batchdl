@@ -22,6 +22,10 @@ Implemented so far:
   - The server applies default, matching auto, and named profile download settings per workflow/job.
   - Client-only variables such as `interactive` are context values, not daemon behavior.
   - Local CLI separately resolves client-only profile effects such as `interactive`, `no-progress`, and `progress-json`.
+- `sldl daemon` starts the server from the CLI launcher.
+  - The daemon reuses CLI config/profile parsing for startup.
+  - Daemon listen settings are separate from CLI presentation settings and Soulseek listen settings.
+  - `--server-ip` / `--server-port` choose the HTTP/SignalR listen address.
 
 Still open / not finished yet:
 - No `RemoteCliBackend` yet.
@@ -29,13 +33,11 @@ Still open / not finished yet:
 - The server/state-store boundary still relies on retained live Core objects for some reads and search-session subscriptions.
 - The typed submission/profile surface is usable but not yet final:
   - no general typed download-settings delta yet
-  - daemon startup still needs to populate `ProfileCatalog` from config when `sldl daemon` is wired
 
 Immediate next likely steps:
 1. `RemoteCliBackend` over HTTP + SignalR.
-2. Wire `sldl daemon` startup so CLI config/profile parsing populates server options/catalog.
-3. Progress batching for live event streaming.
-4. Thin-client mode on top of the remote backend.
+2. Progress batching for live event streaming.
+3. Thin-client mode on top of the remote backend.
 
 ## Core Model
 
@@ -316,11 +318,13 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
     - server-owned projection/cache state
   - The goal is to avoid accidental over-coupling between the daemon API layer and the in-process Core object graph.
 
-- Server-side profile loading still needs a proper startup home.
+- Server-side profile loading has a first startup path, but should stay under review.
   - Runtime profile application is now server-owned once a `ProfileCatalog` exists.
-  - The remaining question is how `sldl daemon` populates that catalog from config.
-  - For the first daemon command, the CLI launcher can parse config and pass the resulting catalog into server options.
+  - `sldl daemon` currently populates that catalog through the CLI launcher's config parser.
   - Longer term, decide whether config/profile parsing moves into Core/shared infrastructure or remains launcher-owned.
+
+- Daemon/server logging needs an explicit pass before this is considered polished.
+  - Think through local CLI, thin CLI, daemon console/stdout, service managers such as systemd, optional log files, and framework/server logs together.
 
 - Keep protocol expectations explicit around local/mock file identity.
   - In `MockFilesDir` / local-files mode, folder paths can currently surface as absolute local paths rather than remote-style relative paths.

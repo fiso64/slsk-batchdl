@@ -102,6 +102,10 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 --shared-files <int>            Number of files you share on Soulseek (default: 0)
 --shared-folders <int>          Number of folders you share on Soulseek (default: 0)
 
+--server-ip <ip>                IP/interface for `sldl daemon` HTTP API
+                                (default: 127.0.0.1)
+--server-port <port>            Port for `sldl daemon` HTTP API (default: 5030)
+
 --on-complete <command>         Run a command when a download completes. See `--help
                                 on-complete`
 ```
@@ -255,6 +259,8 @@ A smart and configurable downloader for Soulseek. Built with Soulseek.NET.
 - Flags can be explicitly disabled by setting them to false, e.g. `--interactive false`.
 - Single-character flags can be combined, e.g. `-at` for `-a -t`.
 - Acronyms of two- and `--three-word-flags` like `--twf` are also accepted. E.g. `--Mbr` for `--max-bitrate`.
+- Run `sldl daemon` to start the HTTP/SignalR daemon. Use `--server-ip` and `--server-port`
+  to choose where it listens.
 <!-- sldl-help:end -->
 
 <!-- sldl-help:start(input) -->

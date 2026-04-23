@@ -52,26 +52,34 @@ public static partial class ConfigManager
 
     /// Creates fresh settings, applies the config file's [default] profile,
     /// any named profile, and finally cliArgs — in that order.
-    /// Returns the three top-level settings objects.
+    /// Returns the top-level settings objects.
     public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli)
         Bind(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null)
+    {
+        var (engine, download, cli, _) = BindAll(file, cliArgs, profileName);
+        return (engine, download, cli);
+    }
+
+    public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli, DaemonSettings Daemon)
+        BindAll(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null)
     {
         var engine = new EngineSettings();
         var dl     = new DownloadSettings();
         var cli    = new CliSettings();
+        var daemon = new DaemonSettings();
         profileName ??= ExtractProfileName(cliArgs);
 
         if (file.Profiles.TryGetValue("default", out var def))
-            ApplyProfile(def, engine, dl, cli);
+            ApplyProfile(def, engine, dl, cli, daemon);
 
         foreach (var prof in GetNamedProfiles(file, profileName))
-            ApplyProfile(prof, engine, dl, cli);
+            ApplyProfile(prof, engine, dl, cli, daemon);
 
-        ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli);
+        ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli, daemon);
 
         PostProcess(engine, dl);
 
-        return (engine, dl, cli);
+        return (engine, dl, cli, daemon);
     }
 
     public static IJobSettingsResolver CreateJobSettingsResolver(
@@ -183,11 +191,12 @@ public static partial class ConfigManager
         }
     }
 
-    private static void ApplyProfile(ProfileEntry profile, EngineSettings engine, DownloadSettings dl, CliSettings cli)
+    private static void ApplyProfile(ProfileEntry profile, EngineSettings engine, DownloadSettings dl, CliSettings cli, DaemonSettings daemon)
     {
         var effective = ToProfileEntry(profile);
         SettingsPatchApplier.Apply(effective.Profile, engine, dl);
         effective.Cli.ApplyTo(cli);
+        effective.Daemon.ApplyTo(daemon);
     }
 
     private static SettingsProfile ToSettingsProfile(ProfileEntry profile)
@@ -209,9 +218,10 @@ public static partial class ConfigManager
         IList<string> tokens,
         EngineSettings engine,
         DownloadSettings dl,
-        CliSettings cli)
+        CliSettings cli,
+        DaemonSettings daemon)
     {
-        ApplyProfile(ParseTokensAsProfile("<tokens>", tokens), engine, dl, cli);
+        ApplyProfile(ParseTokensAsProfile("<tokens>", tokens), engine, dl, cli, daemon);
     }
 
     private static ProfileEntry ParseTokensAsProfile(string name, IList<string> tokens)
@@ -219,6 +229,7 @@ public static partial class ConfigManager
         var entry = new ProfileEntry(
             new SettingsProfile { Name = name },
             new CliSettingsPatch(),
+            new DaemonSettingsPatch(),
             []);
 
         for (int i = 0; i < tokens.Count; i++)
@@ -332,6 +343,7 @@ public static partial class ConfigManager
                 profiles[curProfile] = new ProfileEntry(
                     new SettingsProfile { Name = curProfile },
                     new CliSettingsPatch(),
+                    new DaemonSettingsPatch(),
                     []);
 
             if (key == "profile-cond")
@@ -362,6 +374,7 @@ public static partial class ConfigManager
         void Engine(Action<EngineSettings> action) => entry.Profile.Engine.Add(action);
         void Download(Action<DownloadSettings> action) => entry.Profile.Download.Add(action);
         void Cli(Action<CliSettings> action) => entry.Cli.Add(action);
+        void Daemon(Action<DaemonSettings> action) => entry.Daemon.Add(action);
 
         bool Bool() => bool.Parse(value);
         bool? NullableBool() => Bool();
@@ -433,6 +446,10 @@ public static partial class ConfigManager
                 Cli(c => c.NoProgress = !Bool()); break;
             case "--progress-json":
                 Cli(c => c.ProgressJson = Bool()); break;
+            case "--server-ip": case "--daemon-ip": case "--api-ip":
+                Daemon(d => d.ListenIp = value); break;
+            case "--server-port": case "--daemon-port": case "--api-port":
+                Daemon(d => d.ListenPort = Int()); break;
 
             // ── OutputSettings ───────────────────────────────────────────────
             case "-p": case "--path": case "--parent":

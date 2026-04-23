@@ -261,6 +261,13 @@ namespace Tests.ConfigParsingTests
             return ConfigManager.Bind(file, args);
         }
 
+        private static (EngineSettings eng, DownloadSettings dl, CliSettings cli, DaemonSettings daemon)
+            BindAll(params string[] args)
+        {
+            var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
+            return ConfigManager.BindAll(file, args);
+        }
+
         // ── Scalar types ──────────────────────────────────────────────────────
 
         [TestMethod]
@@ -434,6 +441,20 @@ namespace Tests.ConfigParsingTests
         {
             var (_, _, cli) = Bind("--no-progress");
             Assert.IsTrue(cli.NoProgress);
+        }
+
+        [TestMethod]
+        public void ServerIp_SetsCli()
+        {
+            var (_, _, _, daemon) = BindAll("--server-ip", "0.0.0.0");
+            Assert.AreEqual("0.0.0.0", daemon.ListenIp);
+        }
+
+        [TestMethod]
+        public void ServerPort_SetsCli()
+        {
+            var (_, _, _, daemon) = BindAll("--server-port", "5055");
+            Assert.AreEqual(5055, daemon.ListenPort);
         }
 
         [TestMethod]

@@ -17,18 +17,27 @@ internal static partial class Program
         if (Help.PrintAndExitIfNeeded(args))
             return;
 
+        bool daemonMode = args.Length > 0 && string.Equals(args[0], "daemon", StringComparison.OrdinalIgnoreCase);
+        var bindArgs = daemonMode ? args.Skip(1).ToArray() : args;
+
         Logger.SetupExceptionHandling();
         Logger.AddConsole(writer: (msg, color) => Printing.WriteLine(msg, color));
 
-        string configPath = ConfigManager.ExtractConfigPath(args);
+        string configPath = ConfigManager.ExtractConfigPath(bindArgs);
         var configFile = ConfigManager.Load(configPath);
-        var (engineSettings, rootSettings, cliSettings) = ConfigManager.Bind(configFile, args);
+        var (engineSettings, rootSettings, cliSettings, daemonSettings) = ConfigManager.BindAll(configFile, bindArgs);
         ConfigManager.ApplyAutoProfileCliSettings(configFile, rootSettings, cliSettings);
 
         if (!string.IsNullOrWhiteSpace(engineSettings.LogFilePath))
             Logger.AddOrReplaceFile(engineSettings.LogFilePath);
 
         Logger.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? Logger.LogLevel.Error : engineSettings.LogLevel);
+
+        if (daemonMode)
+        {
+            await RunDaemonAsync(bindArgs, configFile, engineSettings, rootSettings, daemonSettings);
+            return;
+        }
         
         var cts = new CancellationTokenSource();
         var clientManager = new SoulseekClientManager(engineSettings);
@@ -44,7 +53,7 @@ internal static partial class Program
             return;
         }
 
-        var jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(configFile, args, cliSettings);
+        var jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(configFile, bindArgs, cliSettings);
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         var backend = new LocalCliBackend(engine, rootSettings);
 
@@ -149,6 +158,28 @@ internal static partial class Program
             Printing.SetBuffering(false);
             Printing.Flush();
         }
+    }
+
+    private static async Task RunDaemonAsync(
+        string[] args,
+        ConfigFile configFile,
+        EngineSettings engineSettings,
+        DownloadSettings rootSettings,
+        DaemonSettings daemonSettings)
+    {
+        var url = $"http://{daemonSettings.ListenIp}:{daemonSettings.ListenPort}";
+        var options = new ServerOptions
+        {
+            Engine = SettingsCloner.Clone(engineSettings),
+            DefaultDownload = SettingsCloner.Clone(rootSettings),
+            Profiles = ConfigManager.CreateProfileCatalog(configFile),
+        };
+
+        Logger.Info($"Starting sldl daemon on {url}");
+        Logger.Info("Press Ctrl+C to stop.");
+
+        var app = ServerHost.Build(args, options, url);
+        await app.RunAsync();
     }
 
     private static SongJob ToSongJob(SongJobPayloadDto song)
