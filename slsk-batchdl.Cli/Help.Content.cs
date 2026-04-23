@@ -62,6 +62,7 @@ public static partial class Help
     --server-ip <ip>                IP/interface for `sldl daemon` HTTP API
                                     (default: 127.0.0.1)
     --server-port <port>            Port for `sldl daemon` HTTP API (default: 5030)
+    --remote <url>                  Use an existing `sldl daemon` instead of running locally
     
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
@@ -218,7 +219,8 @@ Notes
   - Acronyms of two- and --three-word-flags like --twf are also accepted. E.g. --Mbr for
     --max-bitrate.
   - Run sldl daemon to start the HTTP/SignalR daemon. Use --server-ip and --server-port to choose
-    where it listens.";
+    where it listens.
+  - Use --remote <url> to run the CLI as a thin client against that daemon.";
 
     const string inputHelp = @"
 Input types

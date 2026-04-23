@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <PackageReference Include="Goblinfactory.Konsole" Version="7.0.0.7-alpha" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup>

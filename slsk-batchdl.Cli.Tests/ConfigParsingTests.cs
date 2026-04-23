@@ -261,7 +261,7 @@ namespace Tests.ConfigParsingTests
             return ConfigManager.Bind(file, args);
         }
 
-        private static (EngineSettings eng, DownloadSettings dl, CliSettings cli, DaemonSettings daemon)
+        private static (EngineSettings eng, DownloadSettings dl, CliSettings cli, DaemonSettings daemon, RemoteSettings remote)
             BindAll(params string[] args)
         {
             var file = new ConfigFile("none", new Dictionary<string, ProfileEntry>());
@@ -446,15 +446,22 @@ namespace Tests.ConfigParsingTests
         [TestMethod]
         public void ServerIp_SetsCli()
         {
-            var (_, _, _, daemon) = BindAll("--server-ip", "0.0.0.0");
+            var (_, _, _, daemon, _) = BindAll("--server-ip", "0.0.0.0");
             Assert.AreEqual("0.0.0.0", daemon.ListenIp);
         }
 
         [TestMethod]
         public void ServerPort_SetsCli()
         {
-            var (_, _, _, daemon) = BindAll("--server-port", "5055");
+            var (_, _, _, daemon, _) = BindAll("--server-port", "5055");
             Assert.AreEqual(5055, daemon.ListenPort);
+        }
+
+        [TestMethod]
+        public void Remote_SetsRemoteUrl()
+        {
+            var (_, _, _, _, remote) = BindAll("--remote", "http://127.0.0.1:5030");
+            Assert.AreEqual("http://127.0.0.1:5030", remote.ServerUrl);
         }
 
         [TestMethod]

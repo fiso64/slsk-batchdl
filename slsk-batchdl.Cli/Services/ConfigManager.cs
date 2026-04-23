@@ -56,30 +56,31 @@ public static partial class ConfigManager
     public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli)
         Bind(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null)
     {
-        var (engine, download, cli, _) = BindAll(file, cliArgs, profileName);
+        var (engine, download, cli, _, _) = BindAll(file, cliArgs, profileName);
         return (engine, download, cli);
     }
 
-    public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli, DaemonSettings Daemon)
+    public static (EngineSettings Engine, DownloadSettings Download, CliSettings Cli, DaemonSettings Daemon, RemoteSettings Remote)
         BindAll(ConfigFile file, IReadOnlyList<string> cliArgs, string? profileName = null)
     {
         var engine = new EngineSettings();
         var dl     = new DownloadSettings();
         var cli    = new CliSettings();
         var daemon = new DaemonSettings();
+        var remote = new RemoteSettings();
         profileName ??= ExtractProfileName(cliArgs);
 
         if (file.Profiles.TryGetValue("default", out var def))
-            ApplyProfile(def, engine, dl, cli, daemon);
+            ApplyProfile(def, engine, dl, cli, daemon, remote);
 
         foreach (var prof in GetNamedProfiles(file, profileName))
-            ApplyProfile(prof, engine, dl, cli, daemon);
+            ApplyProfile(prof, engine, dl, cli, daemon, remote);
 
-        ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli, daemon);
+        ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli, daemon, remote);
 
         PostProcess(engine, dl);
 
-        return (engine, dl, cli, daemon);
+        return (engine, dl, cli, daemon, remote);
     }
 
     public static IJobSettingsResolver CreateJobSettingsResolver(
@@ -191,12 +192,13 @@ public static partial class ConfigManager
         }
     }
 
-    private static void ApplyProfile(ProfileEntry profile, EngineSettings engine, DownloadSettings dl, CliSettings cli, DaemonSettings daemon)
+    private static void ApplyProfile(ProfileEntry profile, EngineSettings engine, DownloadSettings dl, CliSettings cli, DaemonSettings daemon, RemoteSettings remote)
     {
         var effective = ToProfileEntry(profile);
         SettingsPatchApplier.Apply(effective.Profile, engine, dl);
         effective.Cli.ApplyTo(cli);
         effective.Daemon.ApplyTo(daemon);
+        effective.Remote.ApplyTo(remote);
     }
 
     private static SettingsProfile ToSettingsProfile(ProfileEntry profile)
@@ -219,9 +221,10 @@ public static partial class ConfigManager
         EngineSettings engine,
         DownloadSettings dl,
         CliSettings cli,
-        DaemonSettings daemon)
+        DaemonSettings daemon,
+        RemoteSettings remote)
     {
-        ApplyProfile(ParseTokensAsProfile("<tokens>", tokens), engine, dl, cli, daemon);
+        ApplyProfile(ParseTokensAsProfile("<tokens>", tokens), engine, dl, cli, daemon, remote);
     }
 
     private static ProfileEntry ParseTokensAsProfile(string name, IList<string> tokens)
@@ -230,6 +233,7 @@ public static partial class ConfigManager
             new SettingsProfile { Name = name },
             new CliSettingsPatch(),
             new DaemonSettingsPatch(),
+            new RemoteSettingsPatch(),
             []);
 
         for (int i = 0; i < tokens.Count; i++)
@@ -344,6 +348,7 @@ public static partial class ConfigManager
                     new SettingsProfile { Name = curProfile },
                     new CliSettingsPatch(),
                     new DaemonSettingsPatch(),
+                    new RemoteSettingsPatch(),
                     []);
 
             if (key == "profile-cond")
@@ -375,6 +380,7 @@ public static partial class ConfigManager
         void Download(Action<DownloadSettings> action) => entry.Profile.Download.Add(action);
         void Cli(Action<CliSettings> action) => entry.Cli.Add(action);
         void Daemon(Action<DaemonSettings> action) => entry.Daemon.Add(action);
+        void Remote(Action<RemoteSettings> action) => entry.Remote.Add(action);
 
         bool Bool() => bool.Parse(value);
         bool? NullableBool() => Bool();
@@ -450,6 +456,8 @@ public static partial class ConfigManager
                 Daemon(d => d.ListenIp = value); break;
             case "--server-port": case "--daemon-port": case "--api-port":
                 Daemon(d => d.ListenPort = Int()); break;
+            case "--remote": case "--server-url":
+                Remote(r => r.ServerUrl = value); break;
 
             // ── OutputSettings ───────────────────────────────────────────────
             case "-p": case "--path": case "--parent":

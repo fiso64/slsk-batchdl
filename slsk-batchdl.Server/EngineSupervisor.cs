@@ -23,6 +23,8 @@ public sealed class EngineSupervisor
     private DownloadEngine? currentEngine;
     private int restartCount;
 
+    public event Action<DownloadEngine>? EngineCreated;
+
     public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
     public EngineStateStore StateStore { get; }
 
@@ -297,6 +299,7 @@ public sealed class EngineSupervisor
         StateStore.AttachEngine(engine);
         lock (engineGate)
             currentEngine = engine;
+        EngineCreated?.Invoke(engine);
         return engine;
     }
 

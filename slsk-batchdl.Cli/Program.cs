@@ -25,7 +25,7 @@ internal static partial class Program
 
         string configPath = ConfigManager.ExtractConfigPath(bindArgs);
         var configFile = ConfigManager.Load(configPath);
-        var (engineSettings, rootSettings, cliSettings, daemonSettings) = ConfigManager.BindAll(configFile, bindArgs);
+        var (engineSettings, rootSettings, cliSettings, daemonSettings, remoteSettings) = ConfigManager.BindAll(configFile, bindArgs);
         ConfigManager.ApplyAutoProfileCliSettings(configFile, rootSettings, cliSettings);
 
         if (!string.IsNullOrWhiteSpace(engineSettings.LogFilePath))
@@ -38,8 +38,15 @@ internal static partial class Program
             await RunDaemonAsync(bindArgs, configFile, engineSettings, rootSettings, daemonSettings);
             return;
         }
-        
+
         var cts = new CancellationTokenSource();
+
+        if (remoteSettings.IsEnabled)
+        {
+            await RunRemoteAsync(bindArgs, rootSettings, cliSettings, remoteSettings, cts);
+            return;
+        }
+
         var clientManager = new SoulseekClientManager(engineSettings);
 
         if (string.IsNullOrEmpty(rootSettings.Extraction.Input))
@@ -159,6 +166,146 @@ internal static partial class Program
             Printing.Flush();
         }
     }
+
+    private static async Task RunRemoteAsync(
+        string[] args,
+        DownloadSettings rootSettings,
+        CliSettings cliSettings,
+        RemoteSettings remoteSettings,
+        CancellationTokenSource cts)
+    {
+        if (string.IsNullOrWhiteSpace(rootSettings.Extraction.Input))
+        {
+            Logger.Fatal("Remote mode requires an input.");
+            return;
+        }
+
+        if (cliSettings.InteractiveMode)
+        {
+            Logger.Fatal("Remote interactive mode is not implemented yet.");
+            return;
+        }
+
+        await using var backend = new RemoteCliBackend(remoteSettings.ServerUrl!);
+        await backend.StartAsync(cts.Token);
+
+        CliProgressReporter? cliReporter = null;
+        if (cliSettings.ProgressJson)
+            new JsonStreamProgressReporter(Console.Out).Attach(backend);
+        else
+        {
+            cliReporter = new CliProgressReporter(cliSettings);
+            cliReporter.Attach(backend);
+        }
+
+        backend.EventReceived += envelope =>
+        {
+            if (envelope.Type == "track-batch.resolved" && envelope.Payload is TrackBatchResolvedEventDto batch)
+            {
+                Printing.PrintTracksTbd(
+                    batch.Pending.Select(ToSongJob).ToList(),
+                    batch.Existing.Select(ToSongJob).ToList(),
+                    batch.NotFound.Select(ToSongJob).ToList(),
+                    batch.IsNormal,
+                    batch.PrintOption);
+            }
+        };
+
+        var submission = await backend.SubmitJobAsync(
+            new SubmitJobRequestDto(
+                new JobSpecDto
+                {
+                    Kind = "extract",
+                    Input = rootSettings.Extraction.Input,
+                    InputType = rootSettings.Extraction.InputType.ToString(),
+                },
+                BuildRemoteSubmissionOptions(args, rootSettings, cliSettings)),
+            cts.Token);
+
+        ConsoleInputManager.Reporter = cliReporter;
+        ConsoleInputManager.OnCancelRequested = async () =>
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Console.WriteLine();
+                Printing.Write("Cancel job ID or all jobs? id/[A]ll/n=Esc: ", ConsoleColor.Yellow, force: true);
+            }
+
+            var result = ConsoleInputManager.ReadCancelPromptResult();
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
+                return;
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
+            {
+                Logger.LogNonConsole(Logger.LogLevel.Info, "Cancelling workflow...");
+                Printing.WriteLine("Cancelling workflow...", ConsoleColor.Gray, force: true);
+                await backend.CancelWorkflowAsync(submission.WorkflowId, cts.Token);
+                return;
+            }
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
+            {
+                if (await backend.CancelJobByDisplayIdAsync(id, cts.Token))
+                    Logger.Info($"Cancelling job [{id}]...");
+                else
+                    Logger.Error($"Job ID [{id}] not found.");
+            }
+            else
+            {
+                Logger.Error($"Invalid input '{result.Input}'.");
+            }
+        };
+
+        _ = Task.Run(() => ConsoleInputManager.RunLoopAsync(cts.Token), cts.Token);
+
+        try
+        {
+            await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            cts.Cancel();
+            cliReporter?.Stop();
+            Printing.SetBuffering(false);
+            Printing.Flush();
+        }
+    }
+
+    private static async Task WaitForRemoteWorkflowAsync(ICliBackend backend, Guid workflowId, CancellationToken ct)
+    {
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var workflow = await backend.GetWorkflowAsync(workflowId, ct);
+            if (workflow?.Summary.State is "completed" or "failed")
+                return;
+
+            await Task.Delay(200, ct);
+        }
+    }
+
+    private static SubmissionOptionsDto BuildRemoteSubmissionOptions(
+        string[] args,
+        DownloadSettings rootSettings,
+        CliSettings cliSettings)
+        => new(
+            OutputParentDir: rootSettings.Output.ParentDir,
+            ProfileNames: SplitProfileNames(ConfigManager.ExtractProfileName(args)),
+            ProfileContext: new Dictionary<string, bool>
+            {
+                ["interactive"] = cliSettings.InteractiveMode,
+                ["progress-json"] = cliSettings.ProgressJson,
+                ["no-progress"] = cliSettings.NoProgress,
+            });
+
+    private static IReadOnlyList<string>? SplitProfileNames(string? names)
+        => string.IsNullOrWhiteSpace(names)
+            ? null
+            : names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     private static async Task RunDaemonAsync(
         string[] args,
