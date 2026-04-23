@@ -518,6 +518,124 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
+    public async Task SubmitJobAsync_ExpandsServerProfileOutputPaths()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var profile = CreateProfile("album-inbox", settings => settings.Output.ParentDir = "~/Music/Inbox")
+                with { Condition = "album" };
+            var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
+            {
+                AutoProfiles = [profile],
+                NamedProfiles = [profile],
+            });
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var summary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-album",
+                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
+                    }),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+
+            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            Assert.IsNotNull(job);
+            Assert.AreEqual(
+                Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Music", "Inbox")),
+                job.Config?.Output.ParentDir);
+            Assert.IsFalse(job.Config?.Output.ParentDir?.Contains('~') == true);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SubmitJobAsync_LaunchDownloadSettingsOverrideServerAutoProfiles()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        string outputDir = Path.Combine(musicRoot, "out");
+        string launchOutputDir = Path.Combine(musicRoot, "launch-out");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+        Directory.CreateDirectory(launchOutputDir);
+
+        File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var profile = CreateProfile("album-profile", settings =>
+                {
+                    settings.Output.ParentDir = "~/Music/Inbox";
+                    settings.Search.MaxStaleTime = 999999;
+                })
+                with { Condition = "album" };
+            var supervisor = CreateSupervisor(
+                musicRoot,
+                outputDir,
+                configureDownload: settings => settings.Search.MaxStaleTime = 111,
+                profiles: new ProfileCatalog
+                {
+                    AutoProfiles = [profile],
+                    NamedProfiles = [profile],
+                },
+                launchDownloadSettings: new DownloadSettingsDeltaDto([
+                    DownloadSettingsDeltaMapper.Set("Output.ParentDir", launchOutputDir),
+                    DownloadSettingsDeltaMapper.Set("Search.MaxStaleTime", 222),
+                ]));
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var summary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-album",
+                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
+                    }),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+
+            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            Assert.IsNotNull(job);
+            Assert.AreEqual(Path.GetFullPath(launchOutputDir), job.Config?.Output.ParentDir);
+            Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
     public async Task SubmitJobAsync_AppliesServerNamedProfile()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
@@ -738,7 +856,8 @@ public class EngineSupervisorTests
         string outputDir,
         Action<DownloadSettings>? configureDownload = null,
         Action<EngineSettings>? configureEngine = null,
-        ProfileCatalog? profiles = null)
+        ProfileCatalog? profiles = null,
+        DownloadSettingsDeltaDto? launchDownloadSettings = null)
     {
         var engineSettings = new EngineSettings
         {
@@ -761,6 +880,7 @@ public class EngineSupervisorTests
         {
             Engine = engineSettings,
             DefaultDownload = defaultDownload,
+            LaunchDownloadSettings = launchDownloadSettings,
             Profiles = profiles ?? ProfileCatalog.Empty,
         });
 

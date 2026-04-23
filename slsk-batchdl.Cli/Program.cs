@@ -539,6 +539,7 @@ internal static partial class Program
         {
             Engine = SettingsCloner.Clone(engineSettings),
             DefaultDownload = SettingsCloner.Clone(rootSettings),
+            LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsDelta(args),
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
         };
 

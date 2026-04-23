@@ -34,9 +34,9 @@ public sealed class EngineSupervisor
 
         engineSettings = SettingsCloner.Clone(this.options.Engine);
         defaultDownloadSettings = SettingsCloner.Clone(this.options.DefaultDownload);
-        SettingsNormalizer.Normalize(defaultDownloadSettings);
+        ServerJobSettingsResolver.NormalizeForServer(defaultDownloadSettings);
         profileCatalog = this.options.Profiles ?? ProfileCatalog.Empty;
-        jobSettingsResolver = new ServerJobSettingsResolver(defaultDownloadSettings, profileCatalog);
+        jobSettingsResolver = new ServerJobSettingsResolver(defaultDownloadSettings, profileCatalog, this.options.LaunchDownloadSettings);
 
         StateStore = new EngineStateStore();
     }
@@ -282,7 +282,7 @@ public sealed class EngineSupervisor
         var settings = SettingsCloner.Clone(searchJob.Config);
         if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
             settings.Output.ParentDir = request.OutputParentDir;
-        SettingsNormalizer.Normalize(settings);
+        ServerJobSettingsResolver.NormalizeForServer(settings);
 
         return await SubmitFollowUpJobAsync(searchJobId, searchJob, songJob, settings, request.OutputParentDir, ct);
     }
@@ -310,7 +310,7 @@ public sealed class EngineSupervisor
         var settings = SettingsCloner.Clone(searchJob.Config);
         if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
             settings.Output.ParentDir = request.OutputParentDir;
-        SettingsNormalizer.Normalize(settings);
+        ServerJobSettingsResolver.NormalizeForServer(settings);
 
         return await SubmitFollowUpJobAsync(searchJobId, searchJob, albumJob, settings, request.OutputParentDir, ct);
     }
