@@ -291,7 +291,7 @@ internal sealed class InteractiveCliCoordinator
         }
     }
 
-    private static string FolderKey(AlbumFolder folder)
+    internal static string FolderKey(AlbumFolder folder)
         => folder.Username + "\\" + folder.FolderPath;
 
     private sealed class InteractiveAlbumSession
@@ -313,7 +313,7 @@ internal sealed class InteractiveCliCoordinator
         }
     }
 
-    private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
+    internal static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
         => new(
             folder.Username,
             folder.FolderPath,
@@ -323,7 +323,7 @@ internal sealed class InteractiveCliCoordinator
             folder.SearchSortedAudioLengths.ToArray(),
             folder.SearchRepresentativeAudioFilename);
 
-    private static SongJob ToSongJob(SongJobPayloadDto song)
+    internal static SongJob ToSongJob(SongJobPayloadDto song)
     {
         var job = new SongJob(new SongQuery
         {

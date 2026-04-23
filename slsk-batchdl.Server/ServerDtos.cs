@@ -25,11 +25,15 @@ public sealed record JobSpecDto
     public string? Name { get; init; }
     public string? Input { get; init; }
     public string? InputType { get; init; }
+    public bool? AutoStartExtractedResult { get; init; }
     public SongQueryDto? SongQuery { get; init; }
     public AlbumQueryDto? AlbumQuery { get; init; }
     public bool IncludeFullResults { get; init; }
     public IReadOnlyList<JobSpecDto>? Jobs { get; init; }
 }
+
+public sealed record StartExtractedResultRequestDto(
+    bool Interactive = false);
 
 public sealed record SubmissionOptionsDto(
     Guid? WorkflowId = null,

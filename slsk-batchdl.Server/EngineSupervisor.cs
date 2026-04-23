@@ -240,6 +240,29 @@ public sealed class EngineSupervisor
         return await SubmitFollowUpJobAsync(searchJobId, searchJob, retrieveJob, searchJob.Config, null, ct);
     }
 
+    public async Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(
+        Guid extractJobId,
+        StartExtractedResultRequestDto request,
+        CancellationToken ct)
+    {
+        var extractJob = StateStore.GetJob<ExtractJob>(extractJobId);
+        if (extractJob?.Config == null)
+            return null;
+
+        if (extractJob.Result == null)
+            return [];
+
+        var resultJob = request.Interactive
+            ? ToInteractiveJob(extractJob.Result)
+            : extractJob.Result;
+        AssignWorkflowId(resultJob, extractJob.WorkflowId);
+        PrepareDetachedExtractions(resultJob);
+
+        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(resultJob, extractJob.Config), ct);
+
+        return [StateStore.GetJobSummary(resultJob.Id) ?? BuildSubmittedJobSummary(resultJob)];
+    }
+
     public async Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct)
     {
         var searchJob = StateStore.GetJob<SearchJob>(searchJobId);
@@ -327,6 +350,50 @@ public sealed class EngineSupervisor
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
             new PresentationHintsDto(visualParentJobId != null, visualParentJobId, job.DisplayId, null));
+
+    private static Job ToInteractiveJob(Job job)
+    {
+        switch (job)
+        {
+            case AlbumJob albumJob when !albumJob.Query.IsDirectLink:
+                var searchJob = new SearchJob(albumJob.Query);
+                searchJob.CopySharedFieldsFrom(albumJob);
+                return searchJob;
+
+            case JobList jobList:
+                var transformed = new JobList(jobList.ItemName, jobList.Jobs.Select(ToInteractiveJob));
+                transformed.CopySharedFieldsFrom(jobList);
+                return transformed;
+
+            default:
+                return job;
+        }
+    }
+
+    private static void PrepareDetachedExtractions(Job job)
+    {
+        switch (job)
+        {
+            case ExtractJob extractJob:
+                extractJob.AutoProcessResult = false;
+                break;
+
+            case JobList jobList:
+                foreach (var child in jobList.Jobs)
+                    PrepareDetachedExtractions(child);
+                break;
+        }
+    }
+
+    private static void AssignWorkflowId(Job job, Guid workflowId)
+    {
+        job.WorkflowId = workflowId;
+        if (job is JobList jobList)
+        {
+            foreach (var child in jobList.Jobs)
+                AssignWorkflowId(child, workflowId);
+        }
+    }
 
     private static SearchRawResultDto ToSearchRawResultDto(SearchRawResult result)
         => new(

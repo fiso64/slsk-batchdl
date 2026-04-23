@@ -60,7 +60,11 @@ public static class JobRequestMapper
             inputType = parsed;
         }
 
-        return new ExtractJob(spec.Input, inputType);
+        var job = new ExtractJob(spec.Input, inputType);
+        if (spec.AutoStartExtractedResult.HasValue)
+            job.AutoProcessResult = spec.AutoStartExtractedResult.Value;
+
+        return job;
     }
 
     private static JobList CreateJobList(JobSpecDto spec)

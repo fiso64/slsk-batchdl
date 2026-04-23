@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Sldl.Server;
@@ -9,6 +10,7 @@ public static class ServerHost
     public static WebApplication Build(string[] args, ServerOptions? options = null, string? url = null)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         if (!string.IsNullOrWhiteSpace(url))
             builder.WebHost.UseUrls(url);
@@ -109,6 +111,18 @@ public static class ServerHost
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
+        });
+
+        app.MapPost("/api/jobs/{jobId:guid}/extracted-result/start", async (
+            Guid jobId,
+            StartExtractedResultRequestDto request,
+            EngineSupervisor supervisor,
+            CancellationToken ct) =>
+        {
+            var summaries = await supervisor.StartExtractedResultAsync(jobId, request, ct);
+            return summaries != null
+                ? Results.Accepted($"/api/jobs/{jobId}", summaries)
+                : Results.NotFound();
         });
 
         app.MapPost("/api/jobs/{jobId:guid}/downloads/song", async (

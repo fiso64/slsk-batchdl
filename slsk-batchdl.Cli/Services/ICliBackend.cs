@@ -14,6 +14,7 @@ internal interface ICliBackend
     Task<SearchProjectionSnapshotDto<AlbumFolderDto>?> GetAlbumProjectionAsync(Guid jobId, bool includeFiles, CancellationToken ct = default);
     Task<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackProjectionAsync(Guid jobId, CancellationToken ct = default);
     Task<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumProjectionAsync(Guid jobId, CancellationToken ct = default);
+    Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(Guid extractJobId, StartExtractedResultRequestDto request, CancellationToken ct = default);
     Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default);
     Task<int> RetrieveFolderAndWaitAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default);
     Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct = default);

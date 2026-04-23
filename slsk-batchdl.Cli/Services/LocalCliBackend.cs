@@ -199,6 +199,9 @@ internal sealed class LocalCliBackend
             snapshot.Items.Select(album => new AggregateAlbumCandidateDto(ToAlbumQueryDto(album.Query), album.ItemName)).ToList()));
     }
 
+    public Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(Guid extractJobId, StartExtractedResultRequestDto request, CancellationToken ct = default)
+        => throw new NotSupportedException("Local interactive extraction result handling is owned by InteractiveCliCoordinator.");
+
     public Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();

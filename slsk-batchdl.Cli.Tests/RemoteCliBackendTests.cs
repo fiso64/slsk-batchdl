@@ -13,6 +13,22 @@ namespace Tests.Cli;
 public class RemoteCliBackendTests
 {
     [TestMethod]
+    public void NormalizeServerUrl_AcceptsHostOnlyAndDefaultsDaemonPort()
+    {
+        Assert.AreEqual(
+            "http://127.0.0.1:5030/",
+            RemoteCliBackend.NormalizeServerUrl("127.0.0.1").ToString());
+    }
+
+    [TestMethod]
+    public void NormalizeServerUrl_PreservesExplicitSchemeAndPort()
+    {
+        Assert.AreEqual(
+            "http://127.0.0.1:6123/",
+            RemoteCliBackend.NormalizeServerUrl("http://127.0.0.1:6123").ToString());
+    }
+
+    [TestMethod]
     public async Task RemoteCliBackend_SearchProjectionAndDownloadFollowUp_Work()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-backend-test-" + Guid.NewGuid());
@@ -161,6 +177,127 @@ public class RemoteCliBackendTests
         {
             Console.SetOut(originalOut);
             await app.StopAsync();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteInteractiveCliCoordinator_FromListSerializesPromptsAndDownloadsSelections()
+    {
+        string inputPath = Path.Combine(Path.GetTempPath(), "sldl-remote-interactive-" + Guid.NewGuid() + ".txt");
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-interactive-music-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-interactive-out-" + Guid.NewGuid());
+        string albumOneDir = Path.Combine(musicRoot, "Artist One", "Album One");
+        string albumTwoDir = Path.Combine(musicRoot, "Artist Two", "Album Two");
+        Directory.CreateDirectory(albumOneDir);
+        Directory.CreateDirectory(albumTwoDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(albumOneDir, "01. Artist One - Track One.mp3"), "a");
+        File.WriteAllText(Path.Combine(albumTwoDir, "01. Artist Two - Track Two.mp3"), "b");
+        File.WriteAllLines(inputPath, ["a:\"Artist One - Album One\"", "a:\"Artist Two - Album Two\""]);
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+                MockFilesSlow = true,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{foldername}/{filename}",
+                },
+                Search =
+                {
+                    NoBrowseFolder = true,
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+
+            int activePickers = 0;
+            int maxActivePickers = 0;
+            int pickerCalls = 0;
+            var coordinator = new RemoteInteractiveCliCoordinator(
+                backend,
+                new CliSettings { InteractiveMode = true, NoProgress = true },
+                CancellationToken.None,
+                async request =>
+                {
+                    var active = Interlocked.Increment(ref activePickers);
+                    int observed;
+                    do
+                    {
+                        observed = maxActivePickers;
+                        if (active <= observed) break;
+                    }
+                    while (Interlocked.CompareExchange(ref maxActivePickers, active, observed) != observed);
+
+                    try
+                    {
+                        await Task.Delay(100);
+                        Interlocked.Increment(ref pickerCalls);
+                        var folder = request.Folders.First();
+                        return new InteractiveModeManager.RunResult(
+                            0,
+                            folder,
+                            RetrieveCurrentFolder: true,
+                            ExitInteractiveMode: false,
+                            request.FilterStr);
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref activePickers);
+                    }
+                });
+
+            var summary = await coordinator.StartAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "extract",
+                        Input = inputPath,
+                        InputType = "List",
+                    },
+                    new SubmissionOptionsDto(
+                        OutputParentDir: outputDir,
+                        ProfileContext: new Dictionary<string, bool> { ["interactive"] = true },
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta([inputPath, "--input-type", "list", "--no-browse-folder"]))),
+                CancellationToken.None);
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await coordinator.RunUntilCompleteAsync(summary.WorkflowId, timeout.Token);
+
+            Assert.AreEqual(2, pickerCalls, "Both extracted album searches should reach the interactive picker.");
+            Assert.AreEqual(1, maxActivePickers, "Remote interactive album prompts must not overlap.");
+
+            var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                .Select(Path.GetFileName)
+                .OrderBy(x => x)
+                .ToArray();
+            CollectionAssert.AreEqual(new[] { "01. Artist One - Track One.mp3", "01. Artist Two - Track Two.mp3" }, downloaded);
+        }
+        finally
+        {
+            await app.StopAsync();
+            if (File.Exists(inputPath))
+                File.Delete(inputPath);
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
             if (Directory.Exists(outputDir))

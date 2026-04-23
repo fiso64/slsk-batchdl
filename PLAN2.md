@@ -33,6 +33,8 @@ Implemented so far:
   - Remote print-result modes can render completed daemon search payloads from job snapshots, so the daemon does the same extraction/search work and the thin CLI only renders the result.
   - Remote print-tracks can render planned song, album, aggregate, and album-aggregate download leaves from workflow/job snapshots, including nested extraction outputs from list files.
   - Remote normal downloads render the final completed/failed summary from workflow/job snapshots.
+  - Remote interactive album mode has a first client-driven implementation: the CLI submits extract-only root jobs, starts extracted results through the server in interactive form, prompts from `SearchJob` album projections, and starts preselected album downloads as normal follow-up jobs.
+  - `POST /api/jobs/{jobId}/extracted-result/start` lets a client continue an extract-only job without round-tripping internal Core job state through DTO serialization.
 - A typed download-settings delta exists for remote submissions.
   - The daemon still owns defaults and profiles.
   - The thin client sends explicit command-line download/search operations as a DTO, and the server applies that delta after server-side profile resolution.
@@ -42,15 +44,15 @@ Still open / not finished yet:
 - SignalR progress batching/coalescing is still pending.
 - The server/state-store boundary still relies on retained live Core objects for some reads and search-session subscriptions.
 - Remote CLI is not yet fully feature-complete compared to local CLI.
-  - Interactive remote mode is intentionally blocked for now.
+  - Interactive remote mode is implemented for album selection, but still needs real-user polish around cancellation/no-progress rendering and manual terminal testing.
   - Print-result modes now have a completed-job snapshot path; a dedicated live/SearchJob print path may still be useful later if we want incremental result printing.
   - Remote cancellation works by job id/display id and current workflow, but the exact UX may still differ from local "cancel all" behavior.
   - Plain no-progress remote rendering can currently repeat some status lines because rich Core events are bridged directly; progress/event coalescing should address this deliberately.
 
 Immediate next likely steps:
-1. Continue remote CLI parity: cancellation/no-progress polish, then interactive mode.
+1. Continue remote CLI parity: cancellation/no-progress polish and manual remote interactive smoke testing.
 2. Progress/event batching for live event streaming.
-3. Remote interactive CLI on top of SearchJob + follow-up jobs.
+3. Tighten any remaining remote/local CLI behavioral differences found during manual use.
 
 ## Core Model
 
@@ -104,6 +106,7 @@ Immediate next likely steps:
 
 - `POST /api/jobs`
   - submit any root job, including `ExtractJob`, `SearchJob`, `SongJob`, `AlbumJob`, `JobList`
+  - extract submissions can request `AutoStartExtractedResult = false` so clients can inspect or explicitly continue the extracted result
 
 - `GET /api/jobs`
   - support filtering by:
@@ -115,6 +118,10 @@ Immediate next likely steps:
 
 - `GET /api/jobs/{jobId}`
 - `POST /api/jobs/{jobId}/cancel`
+- `POST /api/jobs/{jobId}/extracted-result/start`
+  - valid for completed extract jobs that were submitted in extract-only mode
+  - starts the already-created extracted result without forcing clients to serialize internal Core job state back to the server
+  - optional `Interactive = true` converts extracted album jobs into `SearchJob`s so CLI/GUI-style clients can choose folders before downloading
 
 - `GET /api/workflows`
 - `GET /api/workflows/{workflowId}`
@@ -146,6 +153,13 @@ These follow-up routes should use the source search job as the continuity anchor
   - display live or completed projections
   - optionally run `RetrieveFolderJob`
   - submit concrete prefilled `SongJob` / `AlbumJob`
+
+- Interactive extraction/list flows use the same primitives:
+  - submit the root `ExtractJob` as extract-only
+  - continue the extracted result via `POST /api/jobs/{extractJobId}/extracted-result/start`
+  - in interactive form, album results become `SearchJob`s
+  - clients prompt from album projections and submit preselected album downloads
+  - this preserves server-owned extractor metadata instead of exposing a fragile full Core job serialization contract
 
 - `RetrieveFolderJob` stays a real job.
   - It should be visible and cancellable.

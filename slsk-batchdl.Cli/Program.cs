@@ -182,12 +182,6 @@ internal static partial class Program
             return;
         }
 
-        if (cliSettings.InteractiveMode)
-        {
-            Logger.Fatal("Remote interactive mode is not implemented yet.");
-            return;
-        }
-
         await using var backend = new RemoteCliBackend(remoteSettings.ServerUrl!);
         await backend.StartAsync(cts.Token);
 
@@ -215,16 +209,26 @@ internal static partial class Program
             }
         };
 
-        var submission = await backend.SubmitJobAsync(
-            new SubmitJobRequestDto(
-                new JobSpecDto
-                {
-                    Kind = "extract",
-                    Input = rootSettings.Extraction.Input,
-                    InputType = rootSettings.Extraction.InputType.ToString(),
-                },
-                BuildRemoteSubmissionOptions(args, rootSettings, cliSettings)),
-            cts.Token);
+        var request = new SubmitJobRequestDto(
+            new JobSpecDto
+            {
+                Kind = "extract",
+                Input = rootSettings.Extraction.Input,
+                InputType = rootSettings.Extraction.InputType.ToString(),
+            },
+            BuildRemoteSubmissionOptions(args, cliSettings));
+
+        RemoteInteractiveCliCoordinator? interactiveCoordinator = null;
+        JobSummaryDto submission;
+        if (cliSettings.InteractiveMode)
+        {
+            interactiveCoordinator = new RemoteInteractiveCliCoordinator(backend, cliSettings, cts.Token);
+            submission = await interactiveCoordinator.StartAsync(request, cts.Token);
+        }
+        else
+        {
+            submission = await backend.SubmitJobAsync(request, cts.Token);
+        }
 
         ConsoleInputManager.Reporter = cliReporter;
         ConsoleInputManager.OnCancelRequested = async () =>
@@ -265,7 +269,11 @@ internal static partial class Program
 
         try
         {
-            await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
+            if (interactiveCoordinator != null)
+                await interactiveCoordinator.RunUntilCompleteAsync(submission.WorkflowId, cts.Token);
+            else
+                await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
+
             if (!rootSettings.DoNotDownload)
                 await PrintRemoteCompleteAsync(backend, submission.WorkflowId, cts.Token);
 
@@ -501,12 +509,10 @@ internal static partial class Program
         }
     }
 
-    private static SubmissionOptionsDto BuildRemoteSubmissionOptions(
+    internal static SubmissionOptionsDto BuildRemoteSubmissionOptions(
         string[] args,
-        DownloadSettings rootSettings,
         CliSettings cliSettings)
         => new(
-            OutputParentDir: rootSettings.Output.ParentDir,
             ProfileNames: SplitProfileNames(ConfigManager.ExtractProfileName(args)),
             ProfileContext: new Dictionary<string, bool>
             {

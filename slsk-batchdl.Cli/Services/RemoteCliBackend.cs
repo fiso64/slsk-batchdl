@@ -17,7 +17,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
 
     public RemoteCliBackend(string serverUrl)
     {
-        var baseUri = new Uri(serverUrl.TrimEnd('/') + "/");
+        var baseUri = NormalizeServerUrl(serverUrl);
         http = new HttpClient { BaseAddress = baseUri };
         jsonOptions = new JsonSerializerOptions
         {
@@ -34,6 +34,22 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         {
             EventReceived?.Invoke(RehydrateEnvelope(envelope));
         });
+    }
+
+    internal static Uri NormalizeServerUrl(string serverUrl)
+    {
+        var value = serverUrl.Trim();
+        if (!value.Contains("://", StringComparison.Ordinal))
+            value = "http://" + value;
+
+        var builder = new UriBuilder(value);
+        if (builder.Uri.IsDefaultPort)
+            builder.Port = 5030;
+
+        if (!builder.Path.EndsWith('/'))
+            builder.Path += "/";
+
+        return builder.Uri;
     }
 
     public Task StartAsync(CancellationToken ct = default)
@@ -116,6 +132,18 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
             return null;
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
+    }
+
+    public async Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(
+        Guid extractJobId,
+        StartExtractedResultRequestDto request,
+        CancellationToken ct = default)
+    {
+        using var response = await http.PostAsJsonAsync($"api/jobs/{extractJobId}/extracted-result/start", request, jsonOptions, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<IReadOnlyList<JobSummaryDto>>(response, ct);
     }
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
@@ -235,6 +263,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
             "song" => Deserialize<SongJobPayloadDto>(element),
             "album" => Deserialize<AlbumJobPayloadDto>(element),
             "aggregate" => Deserialize<AggregateJobPayloadDto>(element),
+            "album-aggregate" => Deserialize<AlbumAggregateJobPayloadDto>(element),
             "job-list" => Deserialize<JobListPayloadDto>(element),
             "retrieve-folder" => Deserialize<RetrieveFolderJobPayloadDto>(element),
             _ => Deserialize<GenericJobPayloadDto>(element),

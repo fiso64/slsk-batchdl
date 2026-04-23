@@ -315,6 +315,69 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
+    public async Task StartExtractedResultAsync_InteractiveAlbumResultStartsSearchJob()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var supervisor = CreateSupervisor(musicRoot, outputDir, settings =>
+            {
+                settings.Extraction.IsAlbum = true;
+                settings.Search.NoBrowseFolder = true;
+            });
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var extractSummary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "extract",
+                        Input = "Artist Album",
+                        InputType = "String",
+                        AutoStartExtractedResult = false,
+                    }),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, extractSummary.JobId, "Done");
+
+            var started = await supervisor.StartExtractedResultAsync(
+                extractSummary.JobId,
+                new StartExtractedResultRequestDto(Interactive: true),
+                CancellationToken.None);
+
+            Assert.IsNotNull(started);
+            Assert.AreEqual(1, started.Count);
+            Assert.AreEqual("search", started[0].Kind);
+            Assert.AreEqual(extractSummary.WorkflowId, started[0].WorkflowId);
+
+            await WaitForJobStateAsync(supervisor, started[0].JobId, "Done");
+
+            var albums = supervisor.GetAlbumProjection(started[0].JobId, includeFiles: true);
+            Assert.IsNotNull(albums);
+            Assert.AreEqual(1, albums.Items.Count);
+            Assert.AreEqual(ToSoulseekPath(albumDir), albums.Items[0].FolderPath);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
     public async Task SubmitJobAsync_AppliesServerAutoProfileFromClientContext()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());

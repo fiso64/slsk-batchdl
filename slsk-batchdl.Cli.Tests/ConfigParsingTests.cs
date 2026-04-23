@@ -486,6 +486,30 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void RemoteSubmissionOptions_DoNotOverrideServerPathByDefault()
+        {
+            var options = Sldl.Cli.Program.BuildRemoteSubmissionOptions(
+                ["some input", "--remote", "127.0.0.1"],
+                new CliSettings());
+
+            Assert.IsNull(options.OutputParentDir);
+            Assert.IsFalse(options.DownloadSettings?.Operations.Any(op => op.Path == "Output.ParentDir") == true);
+        }
+
+        [TestMethod]
+        public void RemoteSubmissionOptions_SendExplicitPathAsDownloadDelta()
+        {
+            var options = Sldl.Cli.Program.BuildRemoteSubmissionOptions(
+                ["some input", "--remote", "127.0.0.1", "-p", "C:\\Downloads"],
+                new CliSettings());
+
+            Assert.IsNull(options.OutputParentDir);
+            var pathOp = options.DownloadSettings?.Operations.SingleOrDefault(op => op.Path == "Output.ParentDir");
+            Assert.IsNotNull(pathOp);
+            Assert.AreEqual("C:\\Downloads", pathOp.StringValue);
+        }
+
+        [TestMethod]
         public void Progress_ClearsNoProgress()
         {
             var (_, _, cli) = Bind("--no-progress", "--progress");
