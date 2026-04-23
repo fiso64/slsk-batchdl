@@ -368,16 +368,32 @@ public static class Printing
             PrintTracksTbd(songs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, true, config.PrintOption);
         }
 
-        if (otherJobs.Count == 0)
-            return;
+        var existingJobs = otherJobs.Where(IsAlreadyExistingPlannedJob).ToList();
+        var notFoundJobs = otherJobs.Where(IsNotFoundPlannedJob).ToList();
+        var pendingJobs = otherJobs.Except(existingJobs).Except(notFoundJobs).ToList();
 
-        if (songs.Count > 0)
-            Console.WriteLine();
+        if (pendingJobs.Count > 0)
+        {
+            if (songs.Count > 0)
+                Console.WriteLine();
 
-        Logger.Info($"Downloading {otherJobs.Count} {(otherJobs.Count == 1 ? "item" : "items")}:");
-        Console.ResetColor();
-        foreach (var job in otherJobs)
-            Console.WriteLine($"  {job.ToString(noInfo: config.PrintOption.HasFlag(PrintOption.Tracks))}");
+            PrintPlannedJobLines($"Downloading {pendingJobs.Count} {(pendingJobs.Count == 1 ? "item" : "items")}:", pendingJobs, config);
+        }
+
+        if (config.PrintTracks || (config.PrintOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0)
+        {
+            if (existingJobs.Count > 0)
+            {
+                Console.WriteLine();
+                PrintPlannedJobLines("The following items already exist:", existingJobs, config, includePath: true);
+            }
+
+            if (notFoundJobs.Count > 0)
+            {
+                Console.WriteLine();
+                PrintPlannedJobLines("The following items were not found during a prior run:", notFoundJobs, config);
+            }
+        }
     }
 
     private static void PrintPlannedResults(IReadOnlyList<Job> plannedJobs, DownloadSettings config)
@@ -420,6 +436,33 @@ public static class Printing
         }
     }
 
+    private static void PrintPlannedJobLines(string header, IReadOnlyList<Job> jobs, DownloadSettings config, bool includePath = false)
+    {
+        Logger.Info(header);
+        Console.ResetColor();
+        foreach (var job in jobs)
+        {
+            var path = includePath ? GetPlannedJobDownloadPath(job) : null;
+            Console.WriteLine($"  {job.ToString(noInfo: config.PrintOption.HasFlag(PrintOption.Tracks))}{(string.IsNullOrWhiteSpace(path) ? "" : $" -> {path}")}");
+        }
+    }
+
+    private static bool IsAlreadyExistingPlannedJob(Job job)
+        => job.State == JobState.AlreadyExists
+        || job.State == JobState.Skipped && !string.IsNullOrWhiteSpace(GetPlannedJobDownloadPath(job));
+
+    private static bool IsNotFoundPlannedJob(Job job)
+        => job.State == JobState.NotFoundLastTime
+        || job.FailureReason == FailureReason.NoSuitableFileFound;
+
+    private static string? GetPlannedJobDownloadPath(Job job)
+        => job switch
+        {
+            SongJob song => song.DownloadPath,
+            AlbumJob album => album.DownloadPath,
+            _ => null,
+        };
+
 
     public static void PrintComplete(JobList queue)
     {
@@ -434,24 +477,32 @@ public static class Printing
             };
             foreach (var s in songs)
             {
-                if (s.State == JobState.Done) successes++;
+                if (IsSuccessfulCompletion(s.State)) successes++;
                 else if (s.State == JobState.Failed) fails++;
             }
             if (job is AlbumJob albumJob && albumJob.ResolvedTarget != null)
             {
                 foreach (var f in albumJob.ResolvedTarget.Files.Where(f => !f.IsNotAudio))
                 {
-                    if (f.State == JobState.Done)   successes++;
+                    if (IsSuccessfulCompletion(f.State)) successes++;
                     else if (f.State == JobState.Failed) fails++;
                 }
             }
         }
+        PrintComplete(successes, fails);
+    }
+
+    public static void PrintComplete(int successes, int fails)
+    {
         if (successes + fails > 1)
         {
             Console.WriteLine();
             Logger.Info($"Completed: {successes} succeeded, {fails} failed.");
         }
     }
+
+    public static bool IsSuccessfulCompletion(JobState state)
+        => state is JobState.Done or JobState.AlreadyExists;
 
 
     public static void PrintTracksTbd(List<SongJob> toBeDownloaded, List<SongJob> existing, List<SongJob> notFound,

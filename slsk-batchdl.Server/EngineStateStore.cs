@@ -405,7 +405,10 @@ public sealed class EngineStateStore
                 songJob.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                 songJob.Id,
                 songJob.DisplayId,
-                songJob.Candidates?.Select(ToFileCandidateDto).ToList()),
+                songJob.Candidates?.Select(ToFileCandidateDto).ToList(),
+                songJob.State.ToString(),
+                songJob.FailureReason != FailureReason.None ? songJob.FailureReason.ToString() : null,
+                songJob.FailureMessage),
             AlbumJob albumJob => new AlbumJobPayloadDto(
                 ToAlbumQueryDto(albumJob.Query),
                 albumJob.Results.Count,
@@ -428,7 +431,10 @@ public sealed class EngineStateStore
                     song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                     song.Id,
                     song.DisplayId,
-                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()),
+                    song.Candidates?.Select(ToFileCandidateDto).ToList(),
+                    song.State.ToString(),
+                    song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+                    song.FailureMessage)).ToList()),
             AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
                 ToAlbumQueryDto(albumAggregateJob.Query)),
             JobList jobList => new JobListPayloadDto(
@@ -446,7 +452,10 @@ public sealed class EngineStateStore
                     song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                     song.Id,
                     song.DisplayId,
-                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()),
+                    song.Candidates?.Select(ToFileCandidateDto).ToList(),
+                    song.State.ToString(),
+                    song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+                    song.FailureMessage)).ToList()),
             RetrieveFolderJob retrieveFolderJob => new RetrieveFolderJobPayloadDto(
                 retrieveFolderJob.TargetFolder.FolderPath,
                 retrieveFolderJob.TargetFolder.Username,
@@ -509,7 +518,10 @@ public sealed class EngineStateStore
                     song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                     song.Id,
                     song.DisplayId,
-                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()
+                    song.Candidates?.Select(ToFileCandidateDto).ToList(),
+                    song.State.ToString(),
+                    song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+                    song.FailureMessage)).ToList()
                 : null);
 
     private JobState EffectiveState(Job job)

@@ -125,7 +125,10 @@ public sealed class ServerEventBroadcaster
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
             song.DisplayId,
-            song.Candidates?.Select(ToFileCandidateDto).ToList());
+            song.Candidates?.Select(ToFileCandidateDto).ToList(),
+            song.State.ToString(),
+            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            song.FailureMessage);
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(

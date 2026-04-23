@@ -32,6 +32,7 @@ Implemented so far:
   - The rich terminal/JSON progress reporters consume the same server-shaped event envelope for local and remote backends.
   - Remote print-result modes can render completed daemon search payloads from job snapshots, so the daemon does the same extraction/search work and the thin CLI only renders the result.
   - Remote print-tracks can render planned song, album, aggregate, and album-aggregate download leaves from workflow/job snapshots, including nested extraction outputs from list files.
+  - Remote normal downloads render the final completed/failed summary from workflow/job snapshots.
 - A typed download-settings delta exists for remote submissions.
   - The daemon still owns defaults and profiles.
   - The thin client sends explicit command-line download/search operations as a DTO, and the server applies that delta after server-side profile resolution.
@@ -43,12 +44,11 @@ Still open / not finished yet:
 - Remote CLI is not yet fully feature-complete compared to local CLI.
   - Interactive remote mode is intentionally blocked for now.
   - Print-result modes now have a completed-job snapshot path; a dedicated live/SearchJob print path may still be useful later if we want incremental result printing.
-  - Local-style final summary/planned-output rendering is not fully reproduced from remote snapshots yet.
   - Remote cancellation works by job id/display id and current workflow, but the exact UX may still differ from local "cancel all" behavior.
   - Plain no-progress remote rendering can currently repeat some status lines because rich Core events are bridged directly; progress/event coalescing should address this deliberately.
 
 Immediate next likely steps:
-1. Continue remote CLI parity: print-tracks/final summary/planned-output polish, then interactive mode.
+1. Continue remote CLI parity: cancellation/no-progress polish, then interactive mode.
 2. Progress/event batching for live event streaming.
 3. Remote interactive CLI on top of SearchJob + follow-up jobs.
 

@@ -266,6 +266,9 @@ internal static partial class Program
         try
         {
             await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
+            if (!rootSettings.DoNotDownload)
+                await PrintRemoteCompleteAsync(backend, submission.WorkflowId, cts.Token);
+
             if (rootSettings.PrintResults)
                 await PrintRemoteResultsAsync(backend, submission.WorkflowId, rootSettings, cts.Token);
             else if (rootSettings.PrintTracks)
@@ -294,6 +297,72 @@ internal static partial class Program
 
             await Task.Delay(200, ct);
         }
+    }
+
+    internal static async Task PrintRemoteCompleteAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        CancellationToken ct)
+    {
+        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
+        if (workflow == null)
+            return;
+
+        int successes = 0;
+        int fails = 0;
+
+        foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
+        {
+            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+            switch (detail?.Payload)
+            {
+                case SongJobPayloadDto song:
+                    CountSong(song, summary, ref successes, ref fails);
+                    break;
+
+                case AggregateJobPayloadDto aggregate:
+                    foreach (var aggregateSong in aggregate.Songs)
+                        CountSong(aggregateSong, null, ref successes, ref fails);
+                    break;
+
+                case AlbumJobPayloadDto album:
+                    foreach (var albumSong in ResolvedAlbumSongs(album))
+                        CountSong(albumSong, null, ref successes, ref fails);
+                    break;
+            }
+        }
+
+        Printing.PrintComplete(successes, fails);
+    }
+
+    private static void CountSong(SongJobPayloadDto song, JobSummaryDto? summary, ref int successes, ref int fails)
+    {
+        string? stateText = song.State ?? summary?.State;
+        if (!Enum.TryParse<JobState>(stateText, out var state))
+            return;
+
+        if (Printing.IsSuccessfulCompletion(state))
+            successes++;
+        else if (state == JobState.Failed)
+            fails++;
+    }
+
+    private static IEnumerable<SongJobPayloadDto> ResolvedAlbumSongs(AlbumJobPayloadDto album)
+    {
+        if (album.Results == null)
+            return [];
+
+        AlbumFolderDto? resolvedFolder = null;
+        if (!string.IsNullOrWhiteSpace(album.ResolvedFolderUsername)
+            && !string.IsNullOrWhiteSpace(album.ResolvedFolderPath))
+        {
+            resolvedFolder = album.Results.FirstOrDefault(folder =>
+                string.Equals(folder.Username, album.ResolvedFolderUsername, StringComparison.Ordinal)
+                && string.Equals(folder.FolderPath, album.ResolvedFolderPath, StringComparison.Ordinal));
+        }
+
+        resolvedFolder ??= album.Results.Count == 1 ? album.Results[0] : null;
+        return resolvedFolder?.Files?.Where(song => Utils.IsMusicFile(song.ResolvedFilename ?? "")) ?? [];
     }
 
     internal static async Task PrintRemoteResultsAsync(
@@ -393,7 +462,7 @@ internal static partial class Program
                 break;
 
             case AlbumJobPayloadDto album:
-                plannedJobs.Add(ToAlbumJob(album));
+                plannedJobs.Add(ToAlbumJob(album, detail.Summary));
                 break;
 
             case AggregateJobPayloadDto aggregate:
@@ -401,7 +470,7 @@ internal static partial class Program
                 break;
 
             case AlbumAggregateJobPayloadDto albumAggregate:
-                plannedJobs.Add(ToAlbumAggregateJob(albumAggregate));
+                plannedJobs.Add(ToAlbumAggregateJob(albumAggregate, detail.Summary));
                 break;
 
             case JobListPayloadDto jobList:
@@ -494,13 +563,11 @@ internal static partial class Program
             Candidates = song.Candidates?.Select(ToFileCandidate).ToList(),
         };
 
+        ApplyJobOutcome(job, song.State, song.FailureReason, song.FailureMessage);
+
         if (summary != null)
         {
-            if (Enum.TryParse<JobState>(summary.State, out var state))
-                job.State = state;
-            if (!string.IsNullOrWhiteSpace(summary.FailureReason)
-                && Enum.TryParse<FailureReason>(summary.FailureReason, out var failureReason))
-                job.FailureReason = failureReason;
+            ApplyJobOutcome(job, summary.State, summary.FailureReason, summary.FailureMessage);
         }
 
         if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
@@ -523,10 +590,21 @@ internal static partial class Program
     }
 
     private static AlbumJob ToAlbumJob(AlbumJobPayloadDto album)
-        => new(ToAlbumQuery(album.Query))
+        => ToAlbumJob(album, null);
+
+    private static AlbumJob ToAlbumJob(AlbumJobPayloadDto album, JobSummaryDto? summary)
+    {
+        var job = new AlbumJob(ToAlbumQuery(album.Query))
         {
             Results = album.Results?.Select(ToAlbumFolder).ToList() ?? [],
+            DownloadPath = album.DownloadPath,
         };
+
+        if (summary != null)
+            ApplyJobOutcome(job, summary.State, summary.FailureReason, summary.FailureMessage);
+
+        return job;
+    }
 
     private static AggregateJob ToAggregateJob(AggregateJobPayloadDto aggregate)
         => new(ToSongQuery(aggregate.Query))
@@ -534,8 +612,22 @@ internal static partial class Program
             Songs = aggregate.Songs.Select(ToSongJob).ToList(),
         };
 
-    private static AlbumAggregateJob ToAlbumAggregateJob(AlbumAggregateJobPayloadDto albumAggregate)
-        => new(ToAlbumQuery(albumAggregate.Query));
+    private static AlbumAggregateJob ToAlbumAggregateJob(AlbumAggregateJobPayloadDto albumAggregate, JobSummaryDto? summary = null)
+    {
+        var job = new AlbumAggregateJob(ToAlbumQuery(albumAggregate.Query));
+        if (summary != null)
+            ApplyJobOutcome(job, summary.State, summary.FailureReason, summary.FailureMessage);
+        return job;
+    }
+
+    private static void ApplyJobOutcome(Job job, string? state, string? failureReason, string? failureMessage)
+    {
+        if (!string.IsNullOrWhiteSpace(state) && Enum.TryParse<JobState>(state, out var parsedState))
+            job.State = parsedState;
+        if (!string.IsNullOrWhiteSpace(failureReason) && Enum.TryParse<FailureReason>(failureReason, out var parsedFailureReason))
+            job.FailureReason = parsedFailureReason;
+        job.FailureMessage = failureMessage;
+    }
 
     private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
         => new(

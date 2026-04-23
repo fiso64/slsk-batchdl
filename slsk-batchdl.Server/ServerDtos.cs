@@ -307,7 +307,10 @@ public sealed record SongJobPayloadDto(
     IReadOnlyList<FileAttributeDto>? ResolvedAttributes = null,
     Guid? JobId = null,
     int? DisplayId = null,
-    IReadOnlyList<FileCandidateDto>? Candidates = null);
+    IReadOnlyList<FileCandidateDto>? Candidates = null,
+    string? State = null,
+    string? FailureReason = null,
+    string? FailureMessage = null);
 
 public sealed record FileAttributeDto(
     string Type,

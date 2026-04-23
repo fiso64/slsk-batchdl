@@ -124,6 +124,7 @@ public class RemoteCliBackendTests
             Profiles = ProfileCatalog.Empty,
         }, url);
 
+        TextWriter originalOut = Console.Out;
         try
         {
             await app.StartAsync();
@@ -148,9 +149,17 @@ public class RemoteCliBackendTests
                 .OrderBy(x => x)
                 .ToArray();
             CollectionAssert.AreEqual(new[] { "01. Track One.mp3", "02. Track Two.mp3" }, downloaded);
+
+            using var output = new StringWriter();
+            Console.SetOut(output);
+            Logger.AddConsole(writer: (message, _) => Console.WriteLine(message));
+            Logger.SetConsoleLogLevel(Logger.LogLevel.Info);
+            await Sldl.Cli.Program.PrintRemoteCompleteAsync(backend, summary.WorkflowId, CancellationToken.None);
+            StringAssert.Contains(output.ToString(), "Completed: 2 succeeded, 0 failed.");
         }
         finally
         {
+            Console.SetOut(originalOut);
             await app.StopAsync();
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
@@ -247,6 +256,10 @@ public class RemoteCliBackendTests
         string inputPath = Path.Combine(Path.GetTempPath(), "sldl-remote-print-tracks-" + Guid.NewGuid() + ".txt");
         string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-print-tracks-out-" + Guid.NewGuid());
         Directory.CreateDirectory(outputDir);
+        string existingAlbumDir = Path.Combine(outputDir, "Artist Two", "Album Two");
+        Directory.CreateDirectory(existingAlbumDir);
+        File.WriteAllText(Path.Combine(outputDir, "Artist One - Track One.mp3"), "already here");
+        File.WriteAllText(Path.Combine(existingAlbumDir, "01. Artist Two - Album Track.mp3"), "already here");
         File.WriteAllLines(inputPath, ["\"Artist One - Track One\"", "a:\"Artist Two - Album Two\""]);
 
         int port = GetFreeTcpPort();
@@ -260,6 +273,10 @@ public class RemoteCliBackendTests
                 {
                     ParentDir = outputDir,
                     NameFormat = "{filename}",
+                },
+                Skip =
+                {
+                    SkipMode = SkipMode.Name,
                 },
             },
             Profiles = ProfileCatalog.Empty,
@@ -303,7 +320,8 @@ public class RemoteCliBackendTests
             string rendered = output.ToString();
             StringAssert.Contains(rendered, "Artist One - Track One");
             StringAssert.Contains(rendered, "Artist Two - Album Two");
-            Assert.AreEqual(0, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
+            StringAssert.Contains(rendered, "already exist");
+            Assert.AreEqual(2, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
                 "Remote print-tracks mode should not download files.");
         }
         finally

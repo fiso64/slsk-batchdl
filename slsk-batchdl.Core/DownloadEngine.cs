@@ -419,7 +419,13 @@ public class DownloadEngine
 
         if (config.Skip.SkipExisting && !config.PrintResults && job.CanBeSkipped && TrySetJobAlreadyExists(job, ctx))
         {
-            Logger.Info($"Download '{job.ToString(true)}' already exists at {(job as AlbumJob)?.DownloadPath}, skipping");
+            var existingPath = job switch
+            {
+                SongJob songJob => songJob.DownloadPath,
+                AlbumJob albumJob => albumJob.DownloadPath,
+                _ => null,
+            };
+            Logger.Info($"Download '{job.ToString(true)}' already exists{(string.IsNullOrWhiteSpace(existingPath) ? "" : $" at {existingPath}")}, skipping");
             ctx.IndexEditor?.Update();
             ctx.PlaylistEditor?.Update();
             return;
@@ -1090,30 +1096,41 @@ public class DownloadEngine
 
     bool TrySetJobAlreadyExists(Job job, JobContext ctx)
     {
-        if (job is not AlbumJob aj) return false;
-
         var skipCtx = TrackSkipperContext.From(ctx, job.Config.Skip, job.Config.Search);
         string? path = null;
 
-        if (ctx.OutputDirSkipper != null)
+        if (job is SongJob song)
         {
-            if (!ctx.OutputDirSkipper.IndexIsBuilt) ctx.OutputDirSkipper.BuildIndex();
-            ctx.OutputDirSkipper.AlbumExists(aj, skipCtx, out path);
+            return TrySetAlreadyExists(job, song, skipCtx);
         }
-
-        if (path == null && ctx.MusicDirSkipper != null)
+        else if (job is AlbumJob aj)
         {
-            if (!ctx.MusicDirSkipper.IndexIsBuilt)
+            if (ctx.OutputDirSkipper != null)
             {
-                Logger.Info("Building music directory index..");
-                ctx.MusicDirSkipper.BuildIndex();
+                if (!ctx.OutputDirSkipper.IndexIsBuilt) ctx.OutputDirSkipper.BuildIndex();
+                ctx.OutputDirSkipper.AlbumExists(aj, skipCtx, out path);
             }
-            ctx.MusicDirSkipper.AlbumExists(aj, skipCtx, out path);
+
+            if (path == null && ctx.MusicDirSkipper != null)
+            {
+                if (!ctx.MusicDirSkipper.IndexIsBuilt)
+                {
+                    Logger.Info("Building music directory index..");
+                    ctx.MusicDirSkipper.BuildIndex();
+                }
+                ctx.MusicDirSkipper.AlbumExists(aj, skipCtx, out path);
+            }
+        }
+        else
+        {
+            return false;
         }
 
         if (path != null)
         {
             job.State = JobState.Skipped;
+            if (job is AlbumJob albumJob)
+                albumJob.DownloadPath = path;
             ctx.IndexEditor?.NotifyJobDownloadPath(job.Id, path);
         }
 
@@ -1139,13 +1156,16 @@ public class DownloadEngine
         if (jobCtx.IndexEditor == null) return false;
         IndexEntry? prev = null;
 
-        if (job is AlbumJob aj)
+        if (job is SongJob song)
+            prev = jobCtx.IndexEditor.PreviousRunResult(song);
+        else if (job is AlbumJob aj)
             prev = jobCtx.IndexEditor.PreviousRunResult(aj);
 
         if (prev == null) return false;
         if (prev.FailureReason == FailureReason.NoSuitableFileFound || prev.State == JobState.NotFoundLastTime)
         {
-            job.State = JobState.Skipped;
+            job.State = job is SongJob ? JobState.NotFoundLastTime : JobState.Skipped;
+            job.FailureReason = FailureReason.NoSuitableFileFound;
             return true;
         }
         return false;
