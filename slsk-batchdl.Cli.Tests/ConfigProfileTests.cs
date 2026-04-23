@@ -113,6 +113,42 @@ namespace Tests.ConfigTests
         }
 
         [TestMethod]
+        public void Resolver_WithInteractiveAndAlbum_AppliesCliOnlySettings()
+        {
+            string content =
+                "[my-interactive]\n" +
+                "profile-cond = interactive && album\n" +
+                "max-stale-time = 9999999\n" +
+                "no-progress = true";
+
+            var (file, root, cli, args) = Bind(content, "--interactive", "--album");
+            var result = Resolve(file, root, cli, args, new AlbumJob(new AlbumQuery()));
+
+            Assert.AreEqual(9999999, result.Search.MaxStaleTime);
+            Assert.IsTrue(cli.NoProgress);
+        }
+
+        [TestMethod]
+        public void Resolver_ProfileCanEnableInteractiveBeforeInteractiveConditionMatches()
+        {
+            string content =
+                "[album-ui]\n" +
+                "profile-cond = album\n" +
+                "interactive = true\n" +
+                "[my-interactive]\n" +
+                "profile-cond = interactive && album\n" +
+                "max-stale-time = 9999999\n" +
+                "no-progress = true";
+
+            var (file, root, cli, args) = Bind(content, "--album");
+            var result = Resolve(file, root, cli, args, new AlbumJob(new AlbumQuery()));
+
+            Assert.IsTrue(cli.InteractiveMode);
+            Assert.AreEqual(9999999, result.Search.MaxStaleTime);
+            Assert.IsTrue(cli.NoProgress);
+        }
+
+        [TestMethod]
         public void Resolver_WithYouTubeInput_EnablesYtDlp()
         {
             string content =
