@@ -26,6 +26,7 @@ app.MapGet("/", () => Results.Redirect("/api/server/info"));
 
 app.MapGet("/api/server/info", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetInfo()));
 app.MapGet("/api/server/status", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetStatus()));
+app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()));
 
 app.MapGet("/api/jobs", (
     EngineStateStore stateStore,

@@ -14,6 +14,8 @@ public sealed class EngineSupervisor
     private readonly ServerOptions options;
     private readonly EngineSettings engineSettings;
     private readonly DownloadSettings defaultDownloadSettings;
+    private readonly ProfileCatalog profileCatalog;
+    private readonly ServerJobSettingsResolver jobSettingsResolver;
     private readonly Channel<QueuedSubmission> submissionChannel = Channel.CreateUnbounded<QueuedSubmission>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly Lock engineGate = new();
@@ -31,6 +33,8 @@ public sealed class EngineSupervisor
         engineSettings = SettingsCloner.Clone(this.options.Engine);
         defaultDownloadSettings = SettingsCloner.Clone(this.options.DefaultDownload);
         SettingsNormalizer.Normalize(defaultDownloadSettings);
+        profileCatalog = this.options.Profiles ?? ProfileCatalog.Empty;
+        jobSettingsResolver = new ServerJobSettingsResolver(defaultDownloadSettings, profileCatalog);
 
         StateStore = new EngineStateStore();
     }
@@ -104,6 +108,17 @@ public sealed class EngineSupervisor
             restartCount);
     }
 
+    public IReadOnlyList<ProfileSummaryDto> GetProfiles()
+        => profileCatalog.NamedProfiles
+            .Select(profile => new ProfileSummaryDto(
+                profile.Name,
+                profile.Condition,
+                profile.Condition != null,
+                profile.HasEngineSettings,
+                profile.HasDownloadSettings))
+            .OrderBy(profile => profile.Name)
+            .ToList();
+
     public async Task<JobSummaryDto> SubmitJobAsync(SubmitJobRequestDto request, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -111,11 +126,9 @@ public sealed class EngineSupervisor
         var job = JobRequestMapper.CreateJob(request.Job);
         if (request.Options?.WorkflowId is Guid workflowId)
             job.WorkflowId = workflowId;
+        jobSettingsResolver.SetWorkflowOptions(job.WorkflowId, request.Options);
 
-        var settings = SettingsCloner.Clone(defaultDownloadSettings);
-        if (!string.IsNullOrWhiteSpace(request.Options?.OutputParentDir))
-            settings.Output.ParentDir = request.Options.OutputParentDir;
-        SettingsNormalizer.Normalize(settings);
+        var settings = jobSettingsResolver.Resolve(defaultDownloadSettings, job);
 
         if (settings.NeedLogin && !CanAcceptLoginRequiredJobs())
             throw new ArgumentException("This server is not configured for Soulseek login. Configure username/password, enable random login, or use a non-login submission.");
@@ -222,7 +235,7 @@ public sealed class EngineSupervisor
             throw new ArgumentException("Requested folder was not found in this search job.");
 
         var retrieveJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, retrieveJob, searchJob.Config, ct);
+        return await SubmitFollowUpJobAsync(searchJobId, searchJob, retrieveJob, searchJob.Config, null, ct);
     }
 
     public async Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct)
@@ -246,7 +259,7 @@ public sealed class EngineSupervisor
             settings.Output.ParentDir = request.OutputParentDir;
         SettingsNormalizer.Normalize(settings);
 
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, songJob, settings, ct);
+        return await SubmitFollowUpJobAsync(searchJobId, searchJob, songJob, settings, request.OutputParentDir, ct);
     }
 
     public async Task<JobSummaryDto?> StartAlbumDownloadAsync(Guid searchJobId, StartAlbumDownloadRequestDto request, CancellationToken ct)
@@ -274,13 +287,13 @@ public sealed class EngineSupervisor
             settings.Output.ParentDir = request.OutputParentDir;
         SettingsNormalizer.Normalize(settings);
 
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, albumJob, settings, ct);
+        return await SubmitFollowUpJobAsync(searchJobId, searchJob, albumJob, settings, request.OutputParentDir, ct);
     }
 
     private DownloadEngine CreateEngine()
     {
         var clientManager = new SoulseekClientManager(engineSettings);
-        var engine = new DownloadEngine(engineSettings, clientManager, DefaultJobSettingsResolver.Instance);
+        var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         StateStore.AttachEngine(engine);
         lock (engineGate)
             currentEngine = engine;
@@ -396,10 +409,12 @@ public sealed class EngineSupervisor
         SearchJob sourceJob,
         Job followUpJob,
         DownloadSettings settings,
+        string? outputParentDir,
         CancellationToken ct)
     {
         followUpJob.WorkflowId = sourceJob.WorkflowId;
         StateStore.SetVisualParent(followUpJob.Id, sourceJobId);
+        jobSettingsResolver.SetJobOutputParentDir(followUpJob.Id, outputParentDir);
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings), ct);
         return StateStore.GetJobSummary(followUpJob.Id) ?? BuildSubmittedJobSummary(followUpJob, sourceJobId);
     }

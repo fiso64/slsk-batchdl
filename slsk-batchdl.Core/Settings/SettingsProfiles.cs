@@ -12,6 +12,41 @@ public sealed record SettingsProfile
     public DownloadSettingsPatch Download { get; init; } = new();
 
     public bool HasEngineSettings => Engine.HasOperations;
+    public bool HasDownloadSettings => Download.HasOperations;
+}
+
+public sealed class ProfileCatalog
+{
+    public SettingsProfile? DefaultProfile { get; init; }
+    public IReadOnlyList<SettingsProfile> AutoProfiles { get; init; } = [];
+    public IReadOnlyList<SettingsProfile> NamedProfiles { get; init; } = [];
+
+    public static ProfileCatalog Empty { get; } = new();
+
+    public IReadOnlyList<string> ProfileNames =>
+        NamedProfiles.Select(p => p.Name).OrderBy(x => x).ToList();
+
+    public IReadOnlyList<SettingsProfile> ResolveNamedProfiles(IEnumerable<string>? names, Action<string>? warn = null)
+    {
+        if (names == null)
+            return [];
+
+        var byName = NamedProfiles.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+        var resolved = new List<SettingsProfile>();
+
+        foreach (var name in names.SelectMany(x => x.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)))
+        {
+            if (string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (byName.TryGetValue(name, out var profile))
+                resolved.Add(profile);
+            else
+                warn?.Invoke($"Warning: No profile '{name}' found in config");
+        }
+
+        return resolved;
+    }
 }
 
 public sealed class EngineSettingsPatch
@@ -225,19 +260,27 @@ public static partial class ProfileConditionEvaluator
         static string ToKebab(string s) =>
             string.Concat(s.Select((c, i) => char.IsUpper(c) && i > 0 ? "-" + char.ToLower(c) : char.ToLower(c).ToString()));
 
-        string mode = job != null
-            ? ToKebab(job.GetType().Name.Replace("Job", ""))
-            : settings.Extraction.IsAlbum && settings.Search.IsAggregate ? "album-aggregate"
-            : settings.Extraction.IsAlbum ? "album"
-            : settings.Search.IsAggregate ? "aggregate"
-            : "normal";
+        string mode = job switch
+        {
+            SearchJob { Intent: SearchIntent.Album } => "album",
+            SearchJob { Intent: SearchIntent.Track } => "song",
+            AlbumAggregateJob => "album-aggregate",
+            AlbumJob => "album",
+            AggregateJob => "aggregate",
+            SongJob => "song",
+            _ when job != null => ToKebab(job.GetType().Name.Replace("Job", "")),
+            _ when settings.Extraction.IsAlbum && settings.Search.IsAggregate => "album-aggregate",
+            _ when settings.Extraction.IsAlbum => "album",
+            _ when settings.Search.IsAggregate => "aggregate",
+            _ => "normal",
+        };
 
         return var switch
         {
             "input-type" => settings.Extraction.InputType.ToString().ToLower(),
             "download-mode" => mode,
-            "album" => settings.Extraction.IsAlbum,
-            "aggregate" => settings.Search.IsAggregate,
+            "album" => settings.Extraction.IsAlbum || mode is "album" or "album-aggregate",
+            "aggregate" => settings.Search.IsAggregate || mode is "aggregate" or "album-aggregate",
             _ when context?.Values.TryGetValue(var, out var value) == true => value,
             _ => throw new Exception($"Input error: Unrecognized profile condition variable '{var}'"),
         };

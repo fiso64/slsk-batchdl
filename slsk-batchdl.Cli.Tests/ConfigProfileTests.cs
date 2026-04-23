@@ -24,6 +24,7 @@ namespace Tests.ConfigTests
 
         public static DownloadSettings Resolve(ConfigFile file, DownloadSettings root, CliSettings cli, string[] args, Job job)
         {
+            ConfigManager.ApplyAutoProfileCliSettings(file, root, cli, job);
             var resolver = ConfigManager.CreateJobSettingsResolver(file, args, cli);
             return resolver.Resolve(root, job);
         }

@@ -16,19 +16,26 @@ Implemented so far:
 - Local CLI now has a real in-process backend (`ICliBackend` + `LocalCliBackend`) and much of the CLI has been migrated onto the shared client-facing DTO/event model.
 - `RetrieveFolderJob` is a real queued job path in Core and preserves retrieval outcome (`NewFilesFoundCount`).
 - Search/album semantics were clarified so album network search terms and file-match terms are explicitly distinct.
+- The server now owns runtime profile resolution through a `ProfileCatalog`.
+  - `GET /api/profiles` exposes the server catalog.
+  - `SubmissionOptionsDto` accepts profile names and client-supplied profile context values.
+  - The server applies default, matching auto, and named profile download settings per workflow/job.
+  - Client-only variables such as `interactive` are context values, not daemon behavior.
+  - Local CLI separately resolves client-only profile effects such as `interactive`, `no-progress`, and `progress-json`.
 
 Still open / not finished yet:
 - No `RemoteCliBackend` yet.
-- No server-owned profile catalog / `GET /api/profiles` yet.
 - SignalR progress batching/coalescing is still pending.
 - The server/state-store boundary still relies on retained live Core objects for some reads and search-session subscriptions.
-- The typed submission/profile surface is usable but not yet final.
+- The typed submission/profile surface is usable but not yet final:
+  - no general typed download-settings delta yet
+  - daemon startup still needs to populate `ProfileCatalog` from config when `sldl daemon` is wired
 
 Immediate next likely steps:
-1. Server-owned runtime profile discovery/resolution (`GET /api/profiles` and submission-time profile application).
-2. `RemoteCliBackend` over HTTP + SignalR.
+1. `RemoteCliBackend` over HTTP + SignalR.
+2. Wire `sldl daemon` startup so CLI config/profile parsing populates server options/catalog.
 3. Progress batching for live event streaming.
-4. `sldl daemon` and thin-client mode on top of the above.
+4. Thin-client mode on top of the remote backend.
 
 ## Core Model
 
@@ -161,6 +168,12 @@ These follow-up routes should use the source search job as the continuity anchor
   - profile context values
   - optional typed download-settings delta
   - optional raw server-side output path override
+
+Profile context values are supplied by the client and evaluated by the server profile resolver.
+
+- Example: a CLI client can submit `{ "interactive": true }` so a server-side profile with `profile-cond = interactive && album` can apply search/download settings.
+- The server should not infer or implement interactive UI behavior from that flag.
+- CLI-only profile effects stay client-side. Local CLI resolves them directly; thin CLI should do the same before submitting server jobs.
 
 ### Query / candidate DTOs
 
@@ -303,13 +316,11 @@ This keeps Core factual while still giving GUI/thin CLI the shape they actually 
     - server-owned projection/cache state
   - The goal is to avoid accidental over-coupling between the daemon API layer and the in-process Core object graph.
 
-- Server-side profile discovery/resolution still needs a proper home.
-  - This is not a blocker for `sldl daemon`.
-  - CLI can still launch/bootstrap the server and supply startup config.
-  - The missing piece is server-owned runtime profile resolution for submitted jobs.
-  - Right now the concrete config/profile parsing code still lives in the CLI project, and the server does not yet own a real named profile catalog to expose/apply for remote submissions.
-  - The server should not quietly depend on CLI config parsing long-term when a client submits `profileNames`.
-  - Decide whether profile loading moves into Core/shared infrastructure or the server gets its own explicit profile source.
+- Server-side profile loading still needs a proper startup home.
+  - Runtime profile application is now server-owned once a `ProfileCatalog` exists.
+  - The remaining question is how `sldl daemon` populates that catalog from config.
+  - For the first daemon command, the CLI launcher can parse config and pass the resulting catalog into server options.
+  - Longer term, decide whether config/profile parsing moves into Core/shared infrastructure or remains launcher-owned.
 
 - Keep protocol expectations explicit around local/mock file identity.
   - In `MockFilesDir` / local-files mode, folder paths can currently surface as absolute local paths rather than remote-style relative paths.

@@ -81,11 +81,26 @@ public static partial class ConfigManager
         string? profileName = null)
     {
         profileName ??= ExtractProfileName(cliArgs);
-        var context = new ProfileContext();
-        context.Values["interactive"] = cli.InteractiveMode;
-        context.Values["progress-json"] = cli.ProgressJson;
-        context.Values["no-progress"] = cli.NoProgress;
+        var context = CreateProfileContext(cli);
 
+        var catalog = CreateProfileCatalog(file);
+        var namedProfiles = catalog.ResolveNamedProfiles(SplitProfileNames(profileName), msg => Logger.Warn(msg));
+
+        var cliProfile = ParseTokensAsProfile("<cli>", NormalizeArgs(cliArgs)).Profile;
+
+        return new ProfileJobSettingsResolver(
+            new DownloadSettings(),
+            catalog.DefaultProfile,
+            catalog.AutoProfiles,
+            namedProfiles,
+            cliProfile,
+            context,
+            normalize: PostProcessDownload,
+            warn: msg => Logger.Warn(msg));
+    }
+
+    public static ProfileCatalog CreateProfileCatalog(ConfigFile file)
+    {
         var defaultProfile = file.Profiles.TryGetValue("default", out var def)
             ? ToSettingsProfile(def)
             : null;
@@ -95,25 +110,63 @@ public static partial class ConfigManager
             .Select(x => ToSettingsProfile(x.Value))
             .ToList();
 
-        var namedProfiles = GetNamedProfiles(file, profileName)
-            .Select(ToSettingsProfile)
+        var namedProfiles = file.Profiles
+            .Where(x => x.Key != "default")
+            .Select(x => ToSettingsProfile(x.Value))
             .ToList();
 
-        var cliProfile = ParseTokensAsProfile("<cli>", NormalizeArgs(cliArgs)).Profile;
+        return new ProfileCatalog
+        {
+            DefaultProfile = defaultProfile,
+            AutoProfiles = autoProfiles,
+            NamedProfiles = namedProfiles,
+        };
+    }
 
-        return new ProfileJobSettingsResolver(
-            new DownloadSettings(),
-            defaultProfile,
-            autoProfiles,
-            namedProfiles,
-            cliProfile,
-            context,
-            normalize: PostProcessDownload,
-            warn: msg => Logger.Warn(msg));
+    public static void ApplyAutoProfileCliSettings(ConfigFile file, DownloadSettings root, CliSettings cli, Job? job = null)
+    {
+        // Client settings can themselves affect profile context, e.g. one profile
+        // enables interactive mode and another condition depends on interactive.
+        // Resolve to a small fixed point so later matching sees those client-side values.
+        const int maxPasses = 8;
+
+        for (int pass = 0; pass < maxPasses; pass++)
+        {
+            var before = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            var context = CreateProfileContext(cli);
+
+            foreach (var profile in file.Profiles
+                         .Where(x => x.Key != "default" && x.Value.Condition != null)
+                         .Select(x => ToProfileEntry(x.Value))
+                         .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, root, job, context)))
+            {
+                profile.Cli.ApplyTo(cli);
+            }
+
+            var after = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            if (after.Equals(before))
+                return;
+        }
+
+        Logger.Warn("Warning: Client profile settings did not stabilize after repeated auto-profile passes");
     }
 
     public static IReadOnlyList<string> GetProfileNames(ConfigFile file)
         => file.Profiles.Keys.Where(k => k != "default").OrderBy(k => k).ToList();
+
+    private static IEnumerable<string> SplitProfileNames(string? profileName)
+        => string.IsNullOrWhiteSpace(profileName)
+            ? []
+            : profileName.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static ProfileContext CreateProfileContext(CliSettings cli)
+    {
+        var context = new ProfileContext();
+        context.Values["interactive"] = cli.InteractiveMode;
+        context.Values["progress-json"] = cli.ProgressJson;
+        context.Values["no-progress"] = cli.NoProgress;
+        return context;
+    }
 
     private static IEnumerable<ProfileEntry> GetNamedProfiles(ConfigFile file, string? profileName)
     {

@@ -23,6 +23,7 @@ internal static partial class Program
         string configPath = ConfigManager.ExtractConfigPath(args);
         var configFile = ConfigManager.Load(configPath);
         var (engineSettings, rootSettings, cliSettings) = ConfigManager.Bind(configFile, args);
+        ConfigManager.ApplyAutoProfileCliSettings(configFile, rootSettings, cliSettings);
 
         if (!string.IsNullOrWhiteSpace(engineSettings.LogFilePath))
             Logger.AddOrReplaceFile(engineSettings.LogFilePath);

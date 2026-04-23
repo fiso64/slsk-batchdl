@@ -7,4 +7,5 @@ public sealed class ServerOptions
     public string Name { get; set; } = "slsk-batchdl";
     public EngineSettings Engine { get; set; } = new();
     public DownloadSettings DefaultDownload { get; set; } = new();
+    public ProfileCatalog Profiles { get; set; } = ProfileCatalog.Empty;
 }

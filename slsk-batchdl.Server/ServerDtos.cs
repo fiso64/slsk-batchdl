@@ -33,7 +33,16 @@ public sealed record JobSpecDto
 
 public sealed record SubmissionOptionsDto(
     Guid? WorkflowId = null,
-    string? OutputParentDir = null);
+    string? OutputParentDir = null,
+    IReadOnlyList<string>? ProfileNames = null,
+    IReadOnlyDictionary<string, bool>? ProfileContext = null);
+
+public sealed record ProfileSummaryDto(
+    string Name,
+    string? Condition,
+    bool IsAutoProfile,
+    bool HasEngineSettings,
+    bool HasDownloadSettings);
 
 public sealed record RetrieveFolderRequestDto(
     AlbumFolderRefDto Folder);
