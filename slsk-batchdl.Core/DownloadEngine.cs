@@ -327,6 +327,9 @@ public class DownloadEngine
 
                 if (config.PrintTracks)
                 {
+                    if (directSongs.Count == 0)
+                        await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, extractor, jl.Cts!.Token, jl)));
+
                     jl.PrintLines();
                     return;
                 }

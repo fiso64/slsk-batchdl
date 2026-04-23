@@ -5,6 +5,7 @@ using Sldl.Core;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
 using Sldl.Cli;
+using Sldl.Server;
 
 namespace Tests.ConfigParsingTests
 {
@@ -326,6 +327,26 @@ namespace Tests.ConfigParsingTests
         {
             var (eng, _, _) = Bind("--mock-files-no-read-tags");
             Assert.IsFalse(eng.MockFilesReadTags);
+        }
+
+        [TestMethod]
+        public void RemoteDelta_ExplicitDefaultBool_IsRepresented()
+        {
+            var delta = ConfigManager.CreateCliDownloadSettingsDelta(["x", "--skip-existing", "true"]);
+            Assert.IsNotNull(delta);
+            var op = delta.Operations.Single(x => x.Path == "Skip.SkipExisting");
+            Assert.AreEqual(SettingOperationKind.Set, op.Operation);
+            Assert.AreEqual(true, op.BoolValue);
+        }
+
+        [TestMethod]
+        public void RemoteDelta_OnCompleteAppend_IsRepresentedAsAppend()
+        {
+            var delta = ConfigManager.CreateCliDownloadSettingsDelta(["x", "--on-complete", "+ second"]);
+            Assert.IsNotNull(delta);
+            var op = delta.Operations.Single(x => x.Path == "Output.OnComplete");
+            Assert.AreEqual(SettingOperationKind.Append, op.Operation);
+            CollectionAssert.AreEqual(new[] { "second" }, op.StringListValue?.ToArray());
         }
 
         // ── Inline = form ─────────────────────────────────────────────────────

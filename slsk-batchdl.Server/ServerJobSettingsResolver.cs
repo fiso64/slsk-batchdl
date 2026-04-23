@@ -53,6 +53,8 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
         foreach (var profile in namedProfiles)
             profile.Download.ApplyTo(settings);
 
+        DownloadSettingsDeltaMapper.ApplyTo(settings, options?.DownloadSettings);
+
         if (!string.IsNullOrWhiteSpace(options?.OutputParentDir))
             settings.Output.ParentDir = options.OutputParentDir;
 

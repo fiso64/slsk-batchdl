@@ -13,6 +13,7 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, Guid> resultJobIds = [];
     private readonly Dictionary<Guid, Guid> visualParentJobIds = [];
     private readonly HashSet<Guid> infrastructureFailedJobs = [];
+    private readonly HashSet<Guid> executionCompletedJobs = [];
 
     public event Action<JobSummaryDto>? JobUpserted;
     public event Action<WorkflowSummaryDto>? WorkflowUpserted;
@@ -23,6 +24,7 @@ public sealed class EngineStateStore
         engine.Events.JobRegistered += OnJobRegistered;
         engine.Events.JobResultCreated += OnJobResultCreated;
         engine.Events.JobStateChanged += OnJobStateChanged;
+        engine.Events.JobExecutionCompleted += OnJobExecutionCompleted;
     }
 
     public void DetachEngine(DownloadEngine engine)
@@ -30,6 +32,7 @@ public sealed class EngineStateStore
         engine.Events.JobRegistered -= OnJobRegistered;
         engine.Events.JobResultCreated -= OnJobResultCreated;
         engine.Events.JobStateChanged -= OnJobStateChanged;
+        engine.Events.JobExecutionCompleted -= OnJobExecutionCompleted;
     }
 
     public JobSummaryDto? GetJobSummary(Guid jobId)
@@ -246,6 +249,23 @@ public sealed class EngineStateStore
         PublishJobAndWorkflowUpserts([summary], [workflowSummary]);
     }
 
+    private void OnJobExecutionCompleted(Job job)
+    {
+        JobSummaryDto summary;
+        WorkflowSummaryDto workflowSummary;
+        lock (gate)
+        {
+            if (!jobs.ContainsKey(job.Id))
+                return;
+
+            executionCompletedJobs.Add(job.Id);
+            summary = BuildJobSummary(job);
+            workflowSummary = BuildWorkflowSummary(job.WorkflowId);
+        }
+
+        PublishJobAndWorkflowUpserts([summary], [workflowSummary]);
+    }
+
     private void PublishJobAndWorkflowUpserts(
         IReadOnlyList<JobSummaryDto> jobSummaries,
         IReadOnlyList<WorkflowSummaryDto> workflowSummaries)
@@ -319,7 +339,7 @@ public sealed class EngineStateStore
             ?? workflowJobs.First().ToString(noInfo: true);
 
         int active = workflowJobs.Count(IsActiveJob);
-        int failed = workflowJobs.Count(job => job.State == JobState.Failed);
+        int failed = workflowJobs.Count(job => EffectiveState(job) == JobState.Failed);
         int completed = workflowJobs.Count(job => !IsActiveJob(job));
 
         string state = active > 0 ? "active"
@@ -343,7 +363,7 @@ public sealed class EngineStateStore
             job.DisplayId,
             job.WorkflowId,
             GetJobKind(job),
-            job.State.ToString(),
+            EffectiveState(job).ToString(),
             job.ItemName,
             job.ToString(noInfo: true),
             job.FailureReason != FailureReason.None ? job.FailureReason.ToString() : null,
@@ -384,14 +404,49 @@ public sealed class EngineStateStore
                 songJob.ResolvedTarget?.File.Extension,
                 songJob.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                 songJob.Id,
-                songJob.DisplayId),
+                songJob.DisplayId,
+                songJob.Candidates?.Select(ToFileCandidateDto).ToList()),
             AlbumJob albumJob => new AlbumJobPayloadDto(
                 ToAlbumQueryDto(albumJob.Query),
                 albumJob.Results.Count,
                 albumJob.DownloadPath,
                 albumJob.ResolvedTarget?.Username,
-                albumJob.ResolvedTarget?.FolderPath),
-            JobList jobList => new JobListPayloadDto(jobList.Count),
+                albumJob.ResolvedTarget?.FolderPath,
+                albumJob.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles: true)).ToList()),
+            AggregateJob aggregateJob => new AggregateJobPayloadDto(
+                ToSongQueryDto(aggregateJob.Query),
+                aggregateJob.Songs.Select(song => new SongJobPayloadDto(
+                    ToSongQueryDto(song.Query),
+                    song.Candidates?.Count,
+                    song.DownloadPath,
+                    song.ResolvedTarget?.Username,
+                    song.ResolvedTarget?.Filename,
+                    song.ResolvedTarget?.Response.HasFreeUploadSlot,
+                    song.ResolvedTarget?.Response.UploadSpeed,
+                    song.ResolvedTarget?.File.Size,
+                    song.ResolvedTarget?.File.Extension,
+                    song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+                    song.Id,
+                    song.DisplayId,
+                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()),
+            AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
+                ToAlbumQueryDto(albumAggregateJob.Query)),
+            JobList jobList => new JobListPayloadDto(
+                jobList.Count,
+                jobList.Jobs.OfType<SongJob>().Select(song => new SongJobPayloadDto(
+                    ToSongQueryDto(song.Query),
+                    song.Candidates?.Count,
+                    song.DownloadPath,
+                    song.ResolvedTarget?.Username,
+                    song.ResolvedTarget?.Filename,
+                    song.ResolvedTarget?.Response.HasFreeUploadSlot,
+                    song.ResolvedTarget?.Response.UploadSpeed,
+                    song.ResolvedTarget?.File.Size,
+                    song.ResolvedTarget?.File.Extension,
+                    song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+                    song.Id,
+                    song.DisplayId,
+                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()),
             RetrieveFolderJob retrieveFolderJob => new RetrieveFolderJobPayloadDto(
                 retrieveFolderJob.TargetFolder.FolderPath,
                 retrieveFolderJob.TargetFolder.Username,
@@ -418,6 +473,53 @@ public sealed class EngineStateStore
         query.MinTrackCount,
         query.MaxTrackCount);
 
-    private static bool IsActiveJob(Job job)
-        => job.State is JobState.Pending or JobState.Searching or JobState.Downloading or JobState.Extracting;
+    private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate) => new(
+        new FileCandidateRefDto(candidate.Username, candidate.Filename),
+        candidate.Username,
+        candidate.Filename,
+        candidate.File.Size,
+        candidate.File.BitRate,
+        candidate.File.Length,
+        candidate.Response.HasFreeUploadSlot,
+        candidate.Response.UploadSpeed,
+        candidate.File.Extension,
+        candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+
+    private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
+        => new(
+            new AlbumFolderRefDto(folder.Username, folder.FolderPath),
+            folder.Username,
+            folder.FolderPath,
+            folder.SearchFileCount,
+            folder.SearchAudioFileCount,
+            folder.SearchSortedAudioLengths.ToList(),
+            folder.SearchRepresentativeAudioFilename,
+            folder.HasSearchMetadata,
+            includeFiles
+                ? folder.Files.Select(song => new SongJobPayloadDto(
+                    ToSongQueryDto(song.Query),
+                    song.Candidates?.Count,
+                    song.DownloadPath,
+                    song.ResolvedTarget?.Username,
+                    song.ResolvedTarget?.Filename,
+                    song.ResolvedTarget?.Response.HasFreeUploadSlot,
+                    song.ResolvedTarget?.Response.UploadSpeed,
+                    song.ResolvedTarget?.File.Size,
+                    song.ResolvedTarget?.File.Extension,
+                    song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+                    song.Id,
+                    song.DisplayId,
+                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()
+                : null);
+
+    private JobState EffectiveState(Job job)
+        => executionCompletedJobs.Contains(job.Id) && IsActiveJobState(job.State)
+            ? JobState.Done
+            : job.State;
+
+    private bool IsActiveJob(Job job)
+        => IsActiveJobState(EffectiveState(job));
+
+    private static bool IsActiveJobState(JobState state)
+        => state is JobState.Pending or JobState.Searching or JobState.Downloading or JobState.Extracting;
 }

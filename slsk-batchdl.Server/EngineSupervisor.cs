@@ -345,7 +345,11 @@ public sealed class EngineSupervisor
             candidate.Filename,
             candidate.File.Size,
             candidate.File.BitRate,
-            candidate.File.Length);
+            candidate.File.Length,
+            candidate.Response.HasFreeUploadSlot,
+            candidate.Response.UploadSpeed,
+            candidate.File.Extension,
+            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(
@@ -370,7 +374,8 @@ public sealed class EngineSupervisor
                     song.ResolvedTarget?.File.Extension,
                     song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
                     song.Id,
-                    song.DisplayId)).ToList()
+                    song.DisplayId,
+                    song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()
                 : null);
 
     private static SongQueryDto ToSongQuery(SongQuery query)

@@ -105,7 +105,11 @@ public sealed class ServerEventBroadcaster
             candidate.Filename,
             candidate.File.Size,
             candidate.File.BitRate,
-            candidate.File.Length);
+            candidate.File.Length,
+            candidate.Response.HasFreeUploadSlot,
+            candidate.Response.UploadSpeed,
+            candidate.File.Extension,
+            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
     private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
         => new(
@@ -120,7 +124,8 @@ public sealed class ServerEventBroadcaster
             song.ResolvedTarget?.File.Extension,
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
-            song.DisplayId);
+            song.DisplayId,
+            song.Candidates?.Select(ToFileCandidateDto).ToList());
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(

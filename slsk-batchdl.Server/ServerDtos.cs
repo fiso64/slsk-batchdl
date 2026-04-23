@@ -35,7 +35,8 @@ public sealed record SubmissionOptionsDto(
     Guid? WorkflowId = null,
     string? OutputParentDir = null,
     IReadOnlyList<string>? ProfileNames = null,
-    IReadOnlyDictionary<string, bool>? ProfileContext = null);
+    IReadOnlyDictionary<string, bool>? ProfileContext = null,
+    DownloadSettingsDeltaDto? DownloadSettings = null);
 
 public sealed record ProfileSummaryDto(
     string Name,
@@ -103,7 +104,11 @@ public sealed record FileCandidateDto(
     string Filename,
     long Size,
     int? BitRate,
-    int? Length);
+    int? Length,
+    bool? HasFreeUploadSlot = null,
+    int? UploadSpeed = null,
+    string? Extension = null,
+    IReadOnlyList<FileAttributeDto>? Attributes = null);
 
 public sealed record AlbumFolderDto(
     AlbumFolderRefDto Ref,
@@ -301,7 +306,8 @@ public sealed record SongJobPayloadDto(
     string? ResolvedExtension = null,
     IReadOnlyList<FileAttributeDto>? ResolvedAttributes = null,
     Guid? JobId = null,
-    int? DisplayId = null);
+    int? DisplayId = null,
+    IReadOnlyList<FileCandidateDto>? Candidates = null);
 
 public sealed record FileAttributeDto(
     string Type,
@@ -312,10 +318,19 @@ public sealed record AlbumJobPayloadDto(
     int ResultCount,
     string? DownloadPath,
     string? ResolvedFolderUsername,
-    string? ResolvedFolderPath);
+    string? ResolvedFolderPath,
+    IReadOnlyList<AlbumFolderDto>? Results = null);
+
+public sealed record AggregateJobPayloadDto(
+    SongQueryDto Query,
+    IReadOnlyList<SongJobPayloadDto> Songs);
+
+public sealed record AlbumAggregateJobPayloadDto(
+    AlbumQueryDto Query);
 
 public sealed record JobListPayloadDto(
-    int Count);
+    int Count,
+    IReadOnlyList<SongJobPayloadDto>? DirectSongs = null);
 
 public sealed record RetrieveFolderJobPayloadDto(
     string FolderPath,

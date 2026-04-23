@@ -74,7 +74,9 @@ internal static partial class Program
         }
         backend.EventReceived += envelope =>
         {
-            if (envelope.Type == "track-batch.resolved" && envelope.Payload is TrackBatchResolvedEventDto batch)
+            if (envelope.Type == "track-batch.resolved"
+                && envelope.Payload is TrackBatchResolvedEventDto batch
+                && !batch.PrintOption.HasFlag(PrintOption.Tracks))
             {
                 Printing.PrintTracksTbd(
                     batch.Pending.Select(ToSongJob).ToList(),
@@ -200,7 +202,9 @@ internal static partial class Program
 
         backend.EventReceived += envelope =>
         {
-            if (envelope.Type == "track-batch.resolved" && envelope.Payload is TrackBatchResolvedEventDto batch)
+            if (envelope.Type == "track-batch.resolved"
+                && envelope.Payload is TrackBatchResolvedEventDto batch
+                && !batch.PrintOption.HasFlag(PrintOption.Tracks))
             {
                 Printing.PrintTracksTbd(
                     batch.Pending.Select(ToSongJob).ToList(),
@@ -262,6 +266,10 @@ internal static partial class Program
         try
         {
             await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
+            if (rootSettings.PrintResults)
+                await PrintRemoteResultsAsync(backend, submission.WorkflowId, rootSettings, cts.Token);
+            else if (rootSettings.PrintTracks)
+                await PrintRemotePlannedOutputAsync(backend, submission.WorkflowId, rootSettings, cts.Token);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
@@ -288,6 +296,142 @@ internal static partial class Program
         }
     }
 
+    internal static async Task PrintRemoteResultsAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        DownloadSettings settings,
+        CancellationToken ct)
+    {
+        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
+        if (workflow == null)
+            return;
+
+        bool nonVerbose = (settings.PrintOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
+        bool printedAny = false;
+
+        foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
+        {
+            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+            if (detail?.Payload == null)
+                continue;
+
+            Job? job = detail.Payload switch
+            {
+                SongJobPayloadDto song when song.CandidateCount.GetValueOrDefault() > 0
+                    => ToSongJob(song),
+                AlbumJobPayloadDto album when album.ResultCount > 0
+                    => ToAlbumJob(album),
+                AggregateJobPayloadDto aggregate when aggregate.Songs.Count > 0
+                    => ToAggregateJob(aggregate),
+                _ => null,
+            };
+
+            if (job == null)
+                continue;
+
+            if (printedAny && !nonVerbose)
+                Console.WriteLine();
+
+            Printing.PrintResults(job, settings.PrintOption, settings.Search);
+            printedAny = true;
+        }
+    }
+
+    internal static async Task PrintRemotePlannedOutputAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        DownloadSettings settings,
+        CancellationToken ct)
+    {
+        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
+        if (workflow == null)
+            return;
+
+        var details = new Dictionary<Guid, JobDetailDto>();
+        foreach (var summary in workflow.Jobs)
+        {
+            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+            if (detail != null)
+                details[summary.JobId] = detail;
+        }
+
+        var roots = details.Values
+            .Where(detail => detail.Summary.ParentJobId == null)
+            .OrderBy(detail => detail.Summary.DisplayId)
+            .ToList();
+
+        var visited = new HashSet<Guid>();
+        var plannedJobs = new List<Job>();
+        foreach (var root in roots)
+            CollectRemotePlannedDownloads(root, details, plannedJobs, visited);
+
+        if (plannedJobs.Count > 0 && settings.PrintTracks)
+            Printing.PrintPlannedDownloads(plannedJobs, settings);
+    }
+
+    private static void CollectRemotePlannedDownloads(
+        JobDetailDto detail,
+        IReadOnlyDictionary<Guid, JobDetailDto> details,
+        List<Job> plannedJobs,
+        HashSet<Guid> visited)
+    {
+        if (!visited.Add(detail.Summary.JobId))
+            return;
+
+        if (detail.Payload is ExtractJobPayloadDto extract
+            && extract.ResultJobId is Guid resultJobId
+            && details.TryGetValue(resultJobId, out var resultDetail))
+        {
+            CollectRemotePlannedDownloads(resultDetail, details, plannedJobs, visited);
+            return;
+        }
+
+        switch (detail.Payload)
+        {
+            case SongJobPayloadDto song:
+                plannedJobs.Add(ToSongJob(song));
+                break;
+
+            case AlbumJobPayloadDto album:
+                plannedJobs.Add(ToAlbumJob(album));
+                break;
+
+            case AggregateJobPayloadDto aggregate:
+                plannedJobs.Add(ToAggregateJob(aggregate));
+                break;
+
+            case AlbumAggregateJobPayloadDto albumAggregate:
+                plannedJobs.Add(ToAlbumAggregateJob(albumAggregate));
+                break;
+
+            case JobListPayloadDto jobList:
+                var directSongIds = new HashSet<Guid>();
+                if (jobList.DirectSongs != null)
+                {
+                    foreach (var song in jobList.DirectSongs)
+                    {
+                        plannedJobs.Add(ToSongJob(song));
+                        if (song.JobId is Guid jobId)
+                            directSongIds.Add(jobId);
+                    }
+                }
+
+                var children = details.Values
+                    .Where(candidate => candidate.Summary.ParentJobId == detail.Summary.JobId)
+                    .OrderBy(candidate => candidate.Summary.DisplayId)
+                    .ToList();
+
+                foreach (var child in children)
+                {
+                    if (directSongIds.Contains(child.Summary.JobId))
+                        continue;
+
+                    CollectRemotePlannedDownloads(child, details, plannedJobs, visited);
+                }
+                break;
+        }
+    }
+
     private static SubmissionOptionsDto BuildRemoteSubmissionOptions(
         string[] args,
         DownloadSettings rootSettings,
@@ -300,7 +444,8 @@ internal static partial class Program
                 ["interactive"] = cliSettings.InteractiveMode,
                 ["progress-json"] = cliSettings.ProgressJson,
                 ["no-progress"] = cliSettings.NoProgress,
-            });
+            },
+            DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(args));
 
     private static IReadOnlyList<string>? SplitProfileNames(string? names)
         => string.IsNullOrWhiteSpace(names)
@@ -330,6 +475,9 @@ internal static partial class Program
     }
 
     private static SongJob ToSongJob(SongJobPayloadDto song)
+        => ToSongJob(song, null);
+
+    private static SongJob ToSongJob(SongJobPayloadDto song, JobSummaryDto? summary)
     {
         var job = new SongJob(new SongQuery
         {
@@ -343,27 +491,96 @@ internal static partial class Program
         })
         {
             DownloadPath = song.DownloadPath,
+            Candidates = song.Candidates?.Select(ToFileCandidate).ToList(),
         };
+
+        if (summary != null)
+        {
+            if (Enum.TryParse<JobState>(summary.State, out var state))
+                job.State = state;
+            if (!string.IsNullOrWhiteSpace(summary.FailureReason)
+                && Enum.TryParse<FailureReason>(summary.FailureReason, out var failureReason))
+                job.FailureReason = failureReason;
+        }
 
         if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
             && !string.IsNullOrWhiteSpace(song.ResolvedFilename))
         {
-            job.ResolvedTarget = new FileCandidate(
-                new SearchResponse(
-                    song.ResolvedUsername,
-                    -1,
-                    song.ResolvedHasFreeUploadSlot ?? false,
-                    song.ResolvedUploadSpeed ?? -1,
-                    -1,
-                    null),
-                new Soulseek.File(
-                    0,
-                    song.ResolvedFilename,
-                    song.ResolvedSize ?? 0,
-                    song.ResolvedExtension ?? Path.GetExtension(song.ResolvedFilename),
-                    song.ResolvedAttributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+            job.ResolvedTarget = ToFileCandidate(new FileCandidateDto(
+                new FileCandidateRefDto(song.ResolvedUsername, song.ResolvedFilename),
+                song.ResolvedUsername,
+                song.ResolvedFilename,
+                song.ResolvedSize ?? 0,
+                null,
+                null,
+                song.ResolvedHasFreeUploadSlot,
+                song.ResolvedUploadSpeed,
+                song.ResolvedExtension,
+                song.ResolvedAttributes));
         }
 
         return job;
     }
+
+    private static AlbumJob ToAlbumJob(AlbumJobPayloadDto album)
+        => new(ToAlbumQuery(album.Query))
+        {
+            Results = album.Results?.Select(ToAlbumFolder).ToList() ?? [],
+        };
+
+    private static AggregateJob ToAggregateJob(AggregateJobPayloadDto aggregate)
+        => new(ToSongQuery(aggregate.Query))
+        {
+            Songs = aggregate.Songs.Select(ToSongJob).ToList(),
+        };
+
+    private static AlbumAggregateJob ToAlbumAggregateJob(AlbumAggregateJobPayloadDto albumAggregate)
+        => new(ToAlbumQuery(albumAggregate.Query));
+
+    private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)
+        => new(
+            folder.Username,
+            folder.FolderPath,
+            folder.Files?.Select(ToSongJob).ToList() ?? []);
+
+    private static SongQuery ToSongQuery(SongQueryDto query)
+        => new()
+        {
+            Artist = query.Artist,
+            Title = query.Title,
+            Album = query.Album,
+            URI = query.Uri,
+            Length = query.Length,
+            ArtistMaybeWrong = query.ArtistMaybeWrong,
+            IsDirectLink = query.IsDirectLink,
+        };
+
+    private static AlbumQuery ToAlbumQuery(AlbumQueryDto query)
+        => new()
+        {
+            Artist = query.Artist,
+            Album = query.Album,
+            SearchHint = query.SearchHint,
+            URI = query.Uri,
+            ArtistMaybeWrong = query.ArtistMaybeWrong,
+            IsDirectLink = query.IsDirectLink,
+            MinTrackCount = query.MinTrackCount,
+            MaxTrackCount = query.MaxTrackCount,
+        };
+
+    private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
+        => new(
+            new SearchResponse(
+                candidate.Username,
+                -1,
+                candidate.HasFreeUploadSlot ?? false,
+                candidate.UploadSpeed ?? -1,
+                -1,
+                null),
+            new Soulseek.File(
+                0,
+                candidate.Filename,
+                candidate.Size,
+                candidate.Extension ?? Path.GetExtension(candidate.Filename),
+                candidate.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
 }

@@ -3,6 +3,7 @@ using Sldl.Core.Models;
 using Sldl.Core.Jobs;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
+using Sldl.Server;
 
 namespace Sldl.Cli;
 
@@ -106,6 +107,25 @@ public static partial class ConfigManager
             context,
             normalize: PostProcessDownload,
             warn: msg => Logger.Warn(msg));
+    }
+
+    public static DownloadSettings BindCliDownloadTokens(IReadOnlyList<string> cliArgs)
+    {
+        var engine = new EngineSettings();
+        var download = new DownloadSettings();
+        var cli = new CliSettings();
+        var daemon = new DaemonSettings();
+        var remote = new RemoteSettings();
+        ApplyTokens(NormalizeArgs(cliArgs), engine, download, cli, daemon, remote);
+        NormalizeDownload(download);
+        return download;
+    }
+
+    public static DownloadSettingsDeltaDto? CreateCliDownloadSettingsDelta(IReadOnlyList<string> cliArgs)
+    {
+        var builder = new DownloadSettingsDeltaBuilder();
+        ParseTokensAsProfile("<remote-cli>", NormalizeArgs(cliArgs), builder);
+        return builder.Build();
     }
 
     public static ProfileCatalog CreateProfileCatalog(ConfigFile file)
@@ -227,7 +247,10 @@ public static partial class ConfigManager
         ApplyProfile(ParseTokensAsProfile("<tokens>", tokens), engine, dl, cli, daemon, remote);
     }
 
-    private static ProfileEntry ParseTokensAsProfile(string name, IList<string> tokens)
+    private static ProfileEntry ParseTokensAsProfile(
+        string name,
+        IList<string> tokens,
+        DownloadSettingsDeltaBuilder? downloadDeltaBuilder = null)
     {
         var entry = new ProfileEntry(
             new SettingsProfile { Name = name },
@@ -242,7 +265,7 @@ public static partial class ConfigManager
 
             if (!t.StartsWith('-'))
             {
-                AddProfileOption(entry, "--input", t);
+                AddProfileOption(entry, "--input", t, downloadDeltaBuilder);
                 continue;
             }
 
@@ -258,18 +281,18 @@ public static partial class ConfigManager
                 default:
                     if (IsValuelessOption(t))
                     {
-                        AddProfileOption(entry, t, "true");
+                        AddProfileOption(entry, t, "true", downloadDeltaBuilder);
                     }
                     else if (IsBoolOption(t))
                     {
                         string value = "true";
                         if (i + 1 < tokens.Count && IsBoolLiteral(tokens[i + 1]))
                             value = tokens[++i];
-                        AddProfileOption(entry, t, value);
+                        AddProfileOption(entry, t, value, downloadDeltaBuilder);
                     }
                     else
                     {
-                        AddProfileOption(entry, t, Next(tokens, ref i, t));
+                        AddProfileOption(entry, t, Next(tokens, ref i, t), downloadDeltaBuilder);
                     }
                     break;
             }
@@ -372,12 +395,20 @@ public static partial class ConfigManager
         return new ConfigFile(path, profiles, hasAutoProfiles);
     }
 
-    private static void AddProfileOption(ProfileEntry entry, string flag, string value)
+    private static void AddProfileOption(
+        ProfileEntry entry,
+        string flag,
+        string value,
+        DownloadSettingsDeltaBuilder? downloadDeltaBuilder = null)
     {
         var tr = StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries;
 
         void Engine(Action<EngineSettings> action) => entry.Profile.Engine.Add(action);
-        void Download(Action<DownloadSettings> action) => entry.Profile.Download.Add(action);
+        void Download(Action<DownloadSettings> action)
+        {
+            entry.Profile.Download.Add(action);
+            downloadDeltaBuilder?.Record(flag, value, action);
+        }
         void Cli(Action<CliSettings> action) => entry.Cli.Add(action);
         void Daemon(Action<DaemonSettings> action) => entry.Daemon.Add(action);
         void Remote(Action<RemoteSettings> action) => entry.Remote.Add(action);
@@ -769,6 +800,299 @@ public static partial class ConfigManager
             default:
                 throw new Exception($"Input error: Unknown argument: {flag}");
         }
+    }
+
+    private sealed class DownloadSettingsDeltaBuilder
+    {
+        private readonly List<DownloadSettingOperationDto> operations = [];
+
+        public DownloadSettingsDeltaDto? Build()
+            => DownloadSettingsDeltaMapper.FromOperations(operations);
+
+        public void Record(string flag, string value, Action<DownloadSettings> action)
+        {
+            if (TryRecordSpecial(flag, value))
+                return;
+
+            AddDiffOperations(action, CreateSentinelSettings(
+                boolSeed: false,
+                intSeed: -987654321,
+                doubleSeed: -987654321.5,
+                stringSeed: "<<sldl-sentinel-a>>",
+                printSeed: PrintOption.IndexFailed,
+                inputSeed: InputType.CSV,
+                skipSeed: SkipMode.Name,
+                albumArtSeed: AlbumArtOption.Default));
+
+            AddDiffOperations(action, CreateSentinelSettings(
+                boolSeed: true,
+                intSeed: -987654320,
+                doubleSeed: -987654320.5,
+                stringSeed: "<<sldl-sentinel-b>>",
+                printSeed: PrintOption.Tracks,
+                inputSeed: InputType.Spotify,
+                skipSeed: SkipMode.Tag,
+                albumArtSeed: AlbumArtOption.Most));
+        }
+
+        private bool TryRecordSpecial(string flag, string value)
+        {
+            switch (flag)
+            {
+                case "-i":
+                case "--input":
+                    Add(DownloadSettingsDeltaMapper.Set("Extraction.Input", value));
+                    return true;
+
+                case "--oc":
+                case "--on-complete":
+                    if (value.TrimStart().StartsWith("+ "))
+                    {
+                        Add(DownloadSettingsDeltaMapper.Append(
+                            "Output.OnComplete",
+                            [value.TrimStart()[2..]]));
+                        return true;
+                    }
+                    return false;
+
+                case "--re":
+                case "--regex":
+                    if (value.TrimStart().StartsWith("+ "))
+                    {
+                        var preprocess = new PreprocessSettings();
+                        ApplyRegex(value, preprocess);
+                        Add(DownloadSettingsDeltaMapper.AppendRegex(
+                            "Preprocess.Regex",
+                            preprocess.Regex?.Select(ToRegexRuleDto).ToList() ?? []));
+                        return true;
+                    }
+                    return false;
+
+                case "--cond":
+                case "--conditions":
+                    AddConditionOperations("Search.NecessaryCond", "Search.NecessaryFolderCond", value);
+                    return true;
+
+                case "--pc":
+                case "--pref":
+                case "--preferred-conditions":
+                    AddConditionOperations("Search.PreferredCond", "Search.PreferredFolderCond", value);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        private void AddConditionOperations(string filePrefix, string folderPrefix, string value)
+        {
+            var folder = new FolderConditions();
+            var file = ConditionParser.ParseFileConditions(value, folder);
+            AddFileConditionOperations(filePrefix, file);
+
+            if (folder.MinTrackCount != -1)
+                Add(DownloadSettingsDeltaMapper.Set($"{folderPrefix}.MinTrackCount", folder.MinTrackCount));
+            if (folder.MaxTrackCount != -1)
+                Add(DownloadSettingsDeltaMapper.Set($"{folderPrefix}.MaxTrackCount", folder.MaxTrackCount));
+            if (folder.RequiredTrackTitles.Count > 0)
+                Add(DownloadSettingsDeltaMapper.Append($"{folderPrefix}.RequiredTrackTitles", folder.RequiredTrackTitles));
+        }
+
+        private void AddFileConditionOperations(string prefix, FileConditions file)
+        {
+            if (file.LengthTolerance != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.LengthTolerance", file.LengthTolerance));
+            if (file.MinBitrate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinBitrate", file.MinBitrate));
+            if (file.MaxBitrate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxBitrate", file.MaxBitrate));
+            if (file.MinSampleRate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinSampleRate", file.MinSampleRate));
+            if (file.MaxSampleRate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxSampleRate", file.MaxSampleRate));
+            if (file.MinBitDepth != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinBitDepth", file.MinBitDepth));
+            if (file.MaxBitDepth != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxBitDepth", file.MaxBitDepth));
+            if (file.StrictTitle != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictTitle", file.StrictTitle));
+            if (file.StrictArtist != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictArtist", file.StrictArtist));
+            if (file.StrictAlbum != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictAlbum", file.StrictAlbum));
+            if (file.Formats != null) Add(DownloadSettingsDeltaMapper.Replace($"{prefix}.Formats", file.Formats));
+            if (file.BannedUsers != null) Add(DownloadSettingsDeltaMapper.Replace($"{prefix}.BannedUsers", file.BannedUsers));
+            if (file.AcceptNoLength != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.AcceptNoLength", file.AcceptNoLength));
+            if (file.AcceptMissingProps != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.AcceptMissingProps", file.AcceptMissingProps));
+        }
+
+        private void AddDiffOperations(Action<DownloadSettings> action, DownloadSettings before)
+        {
+            var after = SettingsCloner.Clone(before);
+            action(after);
+
+            foreach (var operation in DownloadSettingsDeltaMapper.DifferenceOperations(before, after))
+                Add(operation);
+        }
+
+        private void Add(DownloadSettingOperationDto operation)
+        {
+            if (operations.Any(existing => SameOperation(existing, operation)))
+                return;
+
+            operations.Add(operation);
+        }
+
+        private static bool SameOperation(DownloadSettingOperationDto left, DownloadSettingOperationDto right)
+            => left.Path == right.Path
+            && left.Operation == right.Operation
+            && left.StringValue == right.StringValue
+            && left.IntValue == right.IntValue
+            && left.DoubleValue == right.DoubleValue
+            && left.BoolValue == right.BoolValue
+            && left.PrintOptionValue == right.PrintOptionValue
+            && left.InputTypeValue == right.InputTypeValue
+            && left.SkipModeValue == right.SkipModeValue
+            && left.AlbumArtOptionValue == right.AlbumArtOptionValue
+            && ListEqual(left.StringListValue, right.StringListValue)
+            && RegexListEqual(left.RegexListValue, right.RegexListValue);
+
+        private static bool ListEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
+            => left == null && right == null
+            || left != null && right != null && left.SequenceEqual(right);
+
+        private static bool RegexListEqual(IReadOnlyList<RegexRuleDto>? left, IReadOnlyList<RegexRuleDto>? right)
+            => left == null && right == null
+            || left != null && right != null && left.SequenceEqual(right);
+
+        private static DownloadSettings CreateSentinelSettings(
+            bool boolSeed,
+            int intSeed,
+            double doubleSeed,
+            string stringSeed,
+            PrintOption printSeed,
+            InputType inputSeed,
+            SkipMode skipSeed,
+            AlbumArtOption albumArtSeed)
+        {
+            var settings = new DownloadSettings
+            {
+                PrintOption = printSeed,
+            };
+
+            settings.Output.ParentDir = stringSeed;
+            settings.Output.NameFormat = stringSeed;
+            settings.Output.InvalidReplaceStr = stringSeed;
+            settings.Output.WritePlaylist = boolSeed;
+            settings.Output.WriteIndex = boolSeed;
+            settings.Output.HasConfiguredIndex = boolSeed;
+            settings.Output.M3uFilePath = stringSeed;
+            settings.Output.IndexFilePath = stringSeed;
+            settings.Output.FailedAlbumPath = stringSeed;
+            settings.Output.OnComplete = [stringSeed];
+            settings.Output.AlbumArtOnly = boolSeed;
+            settings.Output.AlbumArtOption = albumArtSeed;
+
+            settings.Search.NecessaryCond = SentinelFileConditions(boolSeed, intSeed, stringSeed);
+            settings.Search.PreferredCond = SentinelFileConditions(boolSeed, intSeed, stringSeed);
+            settings.Search.NecessaryFolderCond = SentinelFolderConditions(intSeed, stringSeed);
+            settings.Search.PreferredFolderCond = SentinelFolderConditions(intSeed, stringSeed);
+            settings.Search.SearchTimeout = intSeed;
+            settings.Search.MaxStaleTime = intSeed;
+            settings.Search.DownrankOn = intSeed;
+            settings.Search.IgnoreOn = intSeed;
+            settings.Search.FastSearch = boolSeed;
+            settings.Search.FastSearchDelay = intSeed;
+            settings.Search.FastSearchMinUpSpeed = doubleSeed;
+            settings.Search.DesperateSearch = boolSeed;
+            settings.Search.NoRemoveSpecialChars = boolSeed;
+            settings.Search.RemoveSingleCharSearchTerms = boolSeed;
+            settings.Search.NoBrowseFolder = boolSeed;
+            settings.Search.Relax = boolSeed;
+            settings.Search.ArtistMaybeWrong = boolSeed;
+            settings.Search.IsAggregate = boolSeed;
+            settings.Search.MinSharesAggregate = intSeed;
+            settings.Search.AggregateLengthTol = intSeed;
+
+            settings.Skip.SkipExisting = boolSeed;
+            settings.Skip.SkipNotFound = boolSeed;
+            settings.Skip.SkipMode = skipSeed;
+            settings.Skip.SkipMusicDir = stringSeed;
+            settings.Skip.SkipModeMusicDir = skipSeed;
+            settings.Skip.SkipCheckCond = boolSeed;
+            settings.Skip.SkipCheckPrefCond = boolSeed;
+
+            settings.Preprocess.RemoveFt = boolSeed;
+            settings.Preprocess.RemoveBrackets = boolSeed;
+            settings.Preprocess.ExtractArtist = boolSeed;
+            settings.Preprocess.ParseTitleTemplate = stringSeed;
+            settings.Preprocess.Regex = [(SentinelRegexFields(stringSeed), SentinelRegexFields(stringSeed + "-replace"))];
+
+            settings.Extraction.Input = stringSeed;
+            settings.Extraction.InputType = inputSeed;
+            settings.Extraction.MaxTracks = intSeed;
+            settings.Extraction.Offset = intSeed;
+            settings.Extraction.Reverse = boolSeed;
+            settings.Extraction.RemoveTracksFromSource = boolSeed;
+            settings.Extraction.IsAlbum = boolSeed;
+            settings.Extraction.SetAlbumMinTrackCount = boolSeed;
+            settings.Extraction.SetAlbumMaxTrackCount = boolSeed;
+
+            settings.Transfer.MaxRetriesPerTrack = intSeed;
+            settings.Transfer.UnknownErrorRetries = intSeed;
+            settings.Transfer.NoIncompleteExt = boolSeed;
+            settings.Transfer.AlbumTrackCountMaxRetries = intSeed;
+
+            settings.Spotify.ClientId = stringSeed;
+            settings.Spotify.ClientSecret = stringSeed;
+            settings.Spotify.Token = stringSeed;
+            settings.Spotify.Refresh = stringSeed;
+            settings.YouTube.ApiKey = stringSeed;
+            settings.YouTube.GetDeleted = boolSeed;
+            settings.YouTube.DeletedOnly = boolSeed;
+            settings.YtDlp.UseYtdlp = boolSeed;
+            settings.YtDlp.YtdlpArgument = stringSeed;
+            settings.Csv.ArtistCol = stringSeed;
+            settings.Csv.AlbumCol = stringSeed;
+            settings.Csv.TitleCol = stringSeed;
+            settings.Csv.YtIdCol = stringSeed;
+            settings.Csv.DescCol = stringSeed;
+            settings.Csv.TrackCountCol = stringSeed;
+            settings.Csv.LengthCol = stringSeed;
+            settings.Csv.TimeUnit = stringSeed;
+            settings.Csv.YtParse = boolSeed;
+            settings.Bandcamp.HtmlFromFile = stringSeed;
+
+            return settings;
+        }
+
+        private static FileConditions SentinelFileConditions(bool boolSeed, int intSeed, string stringSeed) => new()
+        {
+            LengthTolerance = intSeed,
+            MinBitrate = intSeed,
+            MaxBitrate = intSeed,
+            MinSampleRate = intSeed,
+            MaxSampleRate = intSeed,
+            MinBitDepth = intSeed,
+            MaxBitDepth = intSeed,
+            StrictTitle = boolSeed,
+            StrictArtist = boolSeed,
+            StrictAlbum = boolSeed,
+            Formats = [stringSeed],
+            BannedUsers = [stringSeed],
+            AcceptNoLength = boolSeed,
+            AcceptMissingProps = boolSeed,
+        };
+
+        private static FolderConditions SentinelFolderConditions(int intSeed, string stringSeed) => new()
+        {
+            MinTrackCount = intSeed,
+            MaxTrackCount = intSeed,
+            RequiredTrackTitles = [stringSeed],
+        };
+
+        private static RegexFields SentinelRegexFields(string value) => new()
+        {
+            Title = value,
+            Artist = value,
+            Album = value,
+        };
+
+        private static RegexRuleDto ToRegexRuleDto((RegexFields, RegexFields) rule)
+            => new(ToDto(rule.Item1), ToDto(rule.Item2));
+
+        private static RegexFieldsDto ToDto(RegexFields fields)
+            => new(fields.Title, fields.Artist, fields.Album);
     }
 
     private static string ResolveConfigPath(string? explicit_)

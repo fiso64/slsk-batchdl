@@ -329,18 +329,16 @@ public static class Printing
                 break;
 
             case JobList jobList:
-                var directSongs = jobList.Jobs.OfType<SongJob>().ToList();
-                if (directSongs.Count > 0)
+                var plannedJobs = CollectPlannedDownloadJobs(jobList).ToList();
+                if (plannedJobs.Count > 0)
                 {
                     if (jobList.Config!.PrintTracks)
                     {
-                        var existing = directSongs.Where(s => s.State == JobState.AlreadyExists).ToList();
-                        var notFound = directSongs.Where(s => s.FailureReason == FailureReason.NoSuitableFileFound).ToList();
-                        PrintTracksTbd(directSongs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, true, jobList.Config.PrintOption);
+                        PrintPlannedDownloads(plannedJobs, jobList.Config);
                     }
                     else if (jobList.Config!.PrintResults)
                     {
-                        PrintResults(jobList, jobList.Config.PrintOption, jobList.Config.Search);
+                        PrintPlannedResults(plannedJobs, jobList.Config);
                     }
                     break;
                 }
@@ -350,8 +348,74 @@ public static class Printing
                 break;
 
             default:
-                if (job.Config?.PrintResults == true)
+                if (job.Config?.PrintTracks == true)
+                    PrintPlannedDownloads([job], job.Config);
+                else if (job.Config?.PrintResults == true)
                     PrintResults(job, job.Config.PrintOption, job.Config.Search);
+                break;
+        }
+    }
+
+    public static void PrintPlannedDownloads(IReadOnlyList<Job> plannedJobs, DownloadSettings config)
+    {
+        var songs = plannedJobs.OfType<SongJob>().ToList();
+        var otherJobs = plannedJobs.Where(job => job is not SongJob).ToList();
+
+        if (songs.Count > 0)
+        {
+            var existing = songs.Where(s => s.State == JobState.AlreadyExists).ToList();
+            var notFound = songs.Where(s => s.FailureReason == FailureReason.NoSuitableFileFound).ToList();
+            PrintTracksTbd(songs.Where(s => s.State == JobState.Pending).ToList(), existing, notFound, true, config.PrintOption);
+        }
+
+        if (otherJobs.Count == 0)
+            return;
+
+        if (songs.Count > 0)
+            Console.WriteLine();
+
+        Logger.Info($"Downloading {otherJobs.Count} {(otherJobs.Count == 1 ? "item" : "items")}:");
+        Console.ResetColor();
+        foreach (var job in otherJobs)
+            Console.WriteLine($"  {job.ToString(noInfo: config.PrintOption.HasFlag(PrintOption.Tracks))}");
+    }
+
+    private static void PrintPlannedResults(IReadOnlyList<Job> plannedJobs, DownloadSettings config)
+    {
+        bool nonVerbose = (config.PrintOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
+        bool printedAny = false;
+
+        foreach (var plannedJob in plannedJobs)
+        {
+            if (printedAny && !nonVerbose)
+                Console.WriteLine();
+
+            PrintResults(plannedJob, config.PrintOption, config.Search);
+            printedAny = true;
+        }
+    }
+
+    private static IEnumerable<Job> CollectPlannedDownloadJobs(Job job)
+    {
+        switch (job)
+        {
+            case SongJob song:
+                yield return song;
+                break;
+
+            case AlbumJob or AggregateJob or AlbumAggregateJob:
+                yield return job;
+                break;
+
+            case ExtractJob extractJob when extractJob.Result != null:
+                foreach (var plannedJob in CollectPlannedDownloadJobs(extractJob.Result))
+                    yield return plannedJob;
+                break;
+
+            case JobList jobList:
+                foreach (var child in jobList.Jobs)
+                foreach (var plannedJob in CollectPlannedDownloadJobs(child))
+                    yield return plannedJob;
                 break;
         }
     }

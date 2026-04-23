@@ -70,7 +70,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobDetailDto>(response, ct);
+        return RehydrateJobDetail(await ReadRequiredAsync<JobDetailDto>(response, ct));
     }
 
     public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
@@ -98,6 +98,24 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
             return null;
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchProjectionSnapshotDto<AlbumFolderDto>>(response, ct);
+    }
+
+    public async Task<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackProjectionAsync(Guid jobId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/aggregate-tracks", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>>(response, ct);
+    }
+
+    public async Task<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumProjectionAsync(Guid jobId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/aggregate-albums", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
     }
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
@@ -200,6 +218,27 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         };
 
         return envelope with { Payload = typedPayload };
+    }
+
+    private JobDetailDto RehydrateJobDetail(JobDetailDto detail)
+        => detail with { Payload = RehydrateJobPayload(detail.Summary.Kind, detail.Payload) };
+
+    private object? RehydrateJobPayload(string kind, object? payload)
+    {
+        if (payload is not JsonElement element)
+            return payload;
+
+        return kind switch
+        {
+            "extract" => Deserialize<ExtractJobPayloadDto>(element),
+            "search" => Deserialize<SearchJobPayloadDto>(element),
+            "song" => Deserialize<SongJobPayloadDto>(element),
+            "album" => Deserialize<AlbumJobPayloadDto>(element),
+            "aggregate" => Deserialize<AggregateJobPayloadDto>(element),
+            "job-list" => Deserialize<JobListPayloadDto>(element),
+            "retrieve-folder" => Deserialize<RetrieveFolderJobPayloadDto>(element),
+            _ => Deserialize<GenericJobPayloadDto>(element),
+        };
     }
 
     private T Deserialize<T>(JsonElement payload)

@@ -422,6 +422,169 @@ public class EngineSupervisorTests
         }
     }
 
+    [TestMethod]
+    public async Task SubmitJobAsync_AppliesClientDownloadSettingsDeltaAfterProfiles()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var named = CreateProfile("short-search", settings => settings.Search.MaxStaleTime = 111);
+            var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
+            {
+                NamedProfiles = [named],
+            });
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var baseline = new DownloadSettings();
+            var cliSettings = SettingsCloner.Clone(baseline);
+            cliSettings.Search.MaxStaleTime = 222;
+            cliSettings.Search.NecessaryCond.Formats = ["flac"];
+
+            var summary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-track",
+                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    },
+                    new SubmissionOptionsDto(
+                        ProfileNames: ["short-search"],
+                        DownloadSettings: DownloadSettingsDeltaMapper.FromDifference(baseline, cliSettings))),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+
+            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            Assert.IsNotNull(job);
+            Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
+            CollectionAssert.AreEqual(new[] { "flac" }, job.Config?.Search.NecessaryCond.Formats);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SubmitJobAsync_ClientDeltaCanSetBuiltInDefaultValueOverProfile()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var named = CreateProfile("no-skip", settings => settings.Skip.SkipExisting = false);
+            var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
+            {
+                NamedProfiles = [named],
+            });
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var summary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-track",
+                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    },
+                    new SubmissionOptionsDto(
+                        ProfileNames: ["no-skip"],
+                        DownloadSettings: new DownloadSettingsDeltaDto([
+                            DownloadSettingsDeltaMapper.Set("Skip.SkipExisting", true),
+                        ]))),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+
+            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            Assert.IsNotNull(job);
+            Assert.IsTrue(job.Config?.Skip.SkipExisting);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SubmitJobAsync_ClientDeltaCanAppendToProfileListSettings()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-server-test-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+
+        using var cts = new CancellationTokenSource();
+
+        try
+        {
+            var named = CreateProfile("base-command", settings => settings.Output.OnComplete = ["first"]);
+            var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
+            {
+                NamedProfiles = [named],
+            });
+            var runTask = supervisor.RunAsync(cts.Token);
+
+            var summary = await supervisor.SubmitJobAsync(
+                new SubmitJobRequestDto(
+                    new JobSpecDto
+                    {
+                        Kind = "search-track",
+                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    },
+                    new SubmissionOptionsDto(
+                        ProfileNames: ["base-command"],
+                        DownloadSettings: new DownloadSettingsDeltaDto([
+                            DownloadSettingsDeltaMapper.Append("Output.OnComplete", ["second"]),
+                        ]))),
+                CancellationToken.None);
+
+            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+
+            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            Assert.IsNotNull(job);
+            CollectionAssert.AreEqual(new[] { "first", "second" }, job.Config?.Output.OnComplete);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
     private static EngineSupervisor CreateSupervisor(
         string musicRoot,
         string outputDir,
