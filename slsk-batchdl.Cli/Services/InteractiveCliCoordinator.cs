@@ -112,7 +112,7 @@ internal sealed class InteractiveCliCoordinator
         if (searchJob.State != JobState.Done || searchJob.AlbumQuery == null)
             return;
 
-        var projection = _backend.GetAlbumProjectionAsync(searchJob.Id, includeFiles: true, _appToken).GetAwaiter().GetResult();
+        var projection = _backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, _appToken).GetAwaiter().GetResult();
         var folders = projection?.Items
             .Select(ToAlbumFolder)
             .ToList()

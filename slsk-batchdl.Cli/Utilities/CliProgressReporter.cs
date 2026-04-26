@@ -20,11 +20,13 @@ public class CliProgressReporter
     private readonly ConcurrentDictionary<Job, string> _jobStatuses = new();
     private readonly ConcurrentDictionary<Job, int> _jobSpinIndexes = new();
     private readonly ConcurrentDictionary<SongJob, (string text, int pos)> _savedState = new();
+    private readonly ConcurrentDictionary<Job, string> _plainJobStatusLines = new();
     private readonly ConcurrentDictionary<Guid, BarData> _backendBars = new();
     private readonly ConcurrentDictionary<Guid, ProgressBar?> _backendJobBars = new();
     private readonly ConcurrentDictionary<Guid, BackendAlbumBlock> _backendAlbumBlocks = new();
     private readonly ConcurrentDictionary<Guid, string> _backendJobStatuses = new();
     private readonly ConcurrentDictionary<Guid, (string text, int pos)> _backendSavedState = new();
+    private readonly ConcurrentDictionary<Guid, string> _backendPlainJobStatusLines = new();
 
     static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
 
@@ -1064,7 +1066,12 @@ public class CliProgressReporter
         if (PlainMode)
         {
             _jobStatuses[job] = status;
-            Logger.Info($"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}");
+            var line = $"[{job.DisplayId}] {GetJobTypePrefix(job)}{status}: {job.ToString(true)}";
+            if (_plainJobStatusLines.TryGetValue(job, out var previous) && previous == line)
+                return;
+
+            _plainJobStatusLines[job] = line;
+            Logger.Info(line);
             return;
         }
 
@@ -1089,7 +1096,12 @@ public class CliProgressReporter
         if (PlainMode)
         {
             _backendJobStatuses[job.Summary.JobId] = job.Status;
-            Logger.Info($"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{job.Status}: {job.Summary.QueryText}");
+            var line = $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{job.Status}: {job.Summary.QueryText}";
+            if (_backendPlainJobStatusLines.TryGetValue(job.Summary.JobId, out var previous) && previous == line)
+                return;
+
+            _backendPlainJobStatusLines[job.Summary.JobId] = line;
+            Logger.Info(line);
             return;
         }
 

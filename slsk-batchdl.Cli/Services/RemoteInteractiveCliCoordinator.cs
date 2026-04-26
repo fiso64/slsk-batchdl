@@ -74,7 +74,7 @@ internal sealed class RemoteInteractiveCliCoordinator
             {
                 await backend.StartExtractedResultAsync(
                     summary.JobId,
-                    new StartExtractedResultRequestDto(Interactive: true),
+                    new StartExtractedResultRequestDto(ServerProtocol.ExtractedResultStartModes.AlbumSearch),
                     ct);
                 startedFollowUp = true;
             }
@@ -109,7 +109,7 @@ internal sealed class RemoteInteractiveCliCoordinator
         if (detail?.Payload is not SearchJobPayloadDto search || search.AlbumQuery == null)
             return;
 
-        var projection = await backend.GetAlbumProjectionAsync(searchJobId, includeFiles: true, ct);
+        var projection = await backend.GetAlbumResultsAsync(searchJobId, includeFiles: true, ct);
         var folders = projection?.Items.Select(InteractiveCliCoordinator.ToAlbumFolder).ToList() ?? [];
         if (folders.Count == 0)
             return;

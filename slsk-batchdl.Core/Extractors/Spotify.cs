@@ -231,7 +231,7 @@ namespace Sldl.Core.Extractors;
                 {
                     var oauthClient    = new OAuthClient();
                     var refreshResponse = await oauthClient.RequestToken(refreshRequest);
-                    Logger.Debug($"We got a new refreshed access token from server: {refreshResponse.AccessToken}");
+                    Logger.Debug("Received refreshed Spotify access token.");
                     _clientToken = refreshResponse.AccessToken;
                     _client      = new SpotifyClient(_clientToken);
                     return true;
@@ -261,11 +261,11 @@ namespace Sldl.Core.Extractors;
                 new AuthorizationCodeTokenRequest(_clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")));
 
             Logger.Debug($"Spotify: Got token");
-            Logger.Info("spotify-token=" + tokenResponse.AccessToken);
+            Logger.LogConsoleOnly(Logger.LogLevel.Info, "spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
-            Logger.Info("");
-            Logger.Info("spotify-refresh=" + tokenResponse.RefreshToken);
-            Logger.Info("");
+            Logger.LogConsoleOnly(Logger.LogLevel.Info, "");
+            Logger.LogConsoleOnly(Logger.LogLevel.Info, "spotify-refresh=" + tokenResponse.RefreshToken);
+            Logger.LogConsoleOnly(Logger.LogLevel.Info, "");
             _clientRefreshToken = tokenResponse.RefreshToken;
             _client             = new SpotifyClient(tokenResponse.AccessToken);
             loggedIn            = true;

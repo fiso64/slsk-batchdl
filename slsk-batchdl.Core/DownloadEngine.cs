@@ -656,7 +656,7 @@ public class DownloadEngine
         var downloadTasks = songs.Select(async song =>
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
-            await DownloadSong(song, job, config, organizer, cts, cancelOnFail: false, organize: true);
+            await DownloadEmbeddedSong(song, job, config, organizer, cts, cancelGroupOnFail: false, organize: true);
             ctx.IndexEditor?.Update();
             ctx.PlaylistEditor?.Update();
         });
@@ -684,7 +684,7 @@ public class DownloadEngine
                 if (af.State != JobState.Pending) return;
                 if (af.ResolvedTarget != null && af.Candidates == null)
                     af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-                await DownloadSong(af, job, config, organizer, cts, cancelOnFail: true, organize: true);
+                await DownloadEmbeddedSong(af, job, config, organizer, cts, cancelGroupOnFail: true, organize: true);
             });
             await Task.WhenAll(tasks);
         }
@@ -1455,7 +1455,7 @@ public class DownloadEngine
             {
                 if (af.ResolvedTarget != null && af.Candidates == null)
                     af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-                await DownloadSong(af, job, config, fileManager, cts, cancelOnFail: false, organize: true);
+                await DownloadEmbeddedSong(af, job, config, fileManager, cts, cancelGroupOnFail: false, organize: true);
                 if (af.State == JobState.Done)
                     result.Add(af);
                 else
@@ -1466,6 +1466,44 @@ public class DownloadEngine
         }
 
         return result;
+    }
+
+    async Task DownloadEmbeddedSong(
+        SongJob song,
+        Job parentJob,
+        DownloadSettings config,
+        FileManager organizer,
+        CancellationTokenSource groupCts,
+        bool cancelGroupOnFail,
+        bool organize)
+    {
+        if (song.State != JobState.Pending) return;
+
+        song.WorkflowId = parentJob.WorkflowId;
+        song.Config = config;
+        song.Cts = CancellationTokenSource.CreateLinkedTokenSource(appCts.Token, groupCts.Token);
+        RegisterJob(song, parentJob);
+        Events.RaiseJobStarted(song);
+
+        try
+        {
+            await DownloadSong(song, parentJob, config, organizer, song.Cts, cancelOnFail: cancelGroupOnFail, organize);
+        }
+        catch (OperationCanceledException) when (!groupCts.IsCancellationRequested
+            && song.Cts.IsCancellationRequested
+            && song.FailureReason == FailureReason.Cancelled)
+        {
+            // User cancelled only this embedded song; keep the album/aggregate parent running.
+        }
+        catch (OperationCanceledException) when (!groupCts.IsCancellationRequested && cancelGroupOnFail)
+        {
+            groupCts.Cancel();
+            throw;
+        }
+        finally
+        {
+            Events.RaiseJobExecutionCompleted(song);
+        }
     }
 
 

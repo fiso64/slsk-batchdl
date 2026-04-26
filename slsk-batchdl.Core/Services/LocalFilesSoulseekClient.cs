@@ -17,15 +17,22 @@ namespace Sldl.Core.Services
         private readonly bool slowMode;
         private readonly int searchDelayMs;
         private readonly HashSet<string> failingUsers;
+        private readonly Dictionary<string, string> localFilePaths;
 
         public int SearchesCancelledMidDelay { get; private set; }
 
-        public LocalFilesSoulseekClient(List<Soulseek.SearchResponse> index, bool slowMode = false, int searchDelayMs = 0, IEnumerable<string>? failingUsers = null)
+        public LocalFilesSoulseekClient(
+            List<Soulseek.SearchResponse> index,
+            bool slowMode = false,
+            int searchDelayMs = 0,
+            IEnumerable<string>? failingUsers = null,
+            Dictionary<string, string>? localFilePaths = null)
         {
-            this.index         = index;
-            this.slowMode      = slowMode;
-            this.searchDelayMs = searchDelayMs;
-            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.index          = index;
+            this.slowMode       = slowMode;
+            this.searchDelayMs  = searchDelayMs;
+            this.failingUsers   = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.localFilePaths = localFilePaths ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         public static LocalFilesSoulseekClient FromLocalPaths(bool useTags, bool slowMode, params string[] localPaths)
@@ -33,14 +40,15 @@ namespace Sldl.Core.Services
             if (useTags)
                 Logger.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
 
-            var files = localPaths.SelectMany(path =>
-                System.IO.Directory.Exists(path)
-                    ? System.IO.Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
-                    : new[] { path });
+            var files = localPaths.SelectMany(EnumerateLocalFiles).ToList();
+            var localFilePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             var fileList = files
-                .Select((path, i) =>
+                .Select((entry, i) =>
                 {
+                    var path = entry.LocalPath;
+                    var remoteFilename = ToSoulseekPath(entry.RemoteFilename);
+                    localFilePaths[remoteFilename] = Path.GetFullPath(path);
 
                     var attributes = new List<Soulseek.FileAttribute>();
 
@@ -77,7 +85,7 @@ namespace Sldl.Core.Services
 
                     return new Soulseek.File(
                         i + 1,
-                        path.Replace('/', '\\'),
+                        remoteFilename,
                         new FileInfo(path).Length,
                         Path.GetExtension(path),
                         attributeList: attributes
@@ -96,7 +104,7 @@ namespace Sldl.Core.Services
                 )
             };
 
-            return new LocalFilesSoulseekClient(index, slowMode);
+            return new LocalFilesSoulseekClient(index, slowMode, localFilePaths: localFilePaths);
         }
 
 
@@ -268,8 +276,11 @@ namespace Sldl.Core.Services
 
             if (username == "local")
             {
-                // For local user, try to find the actual file in the filesystem
-                sourceFilePath = Path.GetFullPath(Utils.GetAsPathSlsk(remoteFilename));
+                // Mock-file search identities are Soulseek-style relative paths; keep the
+                // local filesystem path private so the public protocol does not learn it.
+                sourceFilePath = localFilePaths.TryGetValue(remoteFilename, out var localPath)
+                    ? localPath
+                    : Path.GetFullPath(Utils.GetAsPathSlsk(remoteFilename));
                 if (!System.IO.File.Exists(sourceFilePath))
                 {
                     throw new FileNotFoundException($"Local file {sourceFilePath} not found");
@@ -451,6 +462,39 @@ namespace Sldl.Core.Services
 
             return transfer;
         }
+
+        private static IEnumerable<(string LocalPath, string RemoteFilename)> EnumerateLocalFiles(string inputPath)
+        {
+            string fullPath = Path.GetFullPath(inputPath);
+            if (System.IO.Directory.Exists(fullPath))
+            {
+                var files = System.IO.Directory.GetFiles(fullPath, "*.*", SearchOption.AllDirectories);
+                bool hasNestedFiles = files.Any(file =>
+                {
+                    var relative = Path.GetRelativePath(fullPath, file);
+                    return relative.Contains(Path.DirectorySeparatorChar) || relative.Contains(Path.AltDirectorySeparatorChar);
+                });
+
+                string rootName = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                foreach (var file in files)
+                {
+                    var relative = Path.GetRelativePath(fullPath, file);
+                    var remote = hasNestedFiles
+                        ? relative
+                        : Path.Combine(rootName, relative);
+                    yield return (file, remote);
+                }
+
+                yield break;
+            }
+
+            string parent = Path.GetDirectoryName(fullPath) ?? System.IO.Directory.GetCurrentDirectory();
+            string parentName = Path.GetFileName(parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            yield return (fullPath, Path.Combine(parentName, Path.GetFileName(fullPath)));
+        }
+
+        private static string ToSoulseekPath(string path)
+            => path.Replace('/', '\\');
 
     }
 }

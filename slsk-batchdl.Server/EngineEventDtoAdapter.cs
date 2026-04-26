@@ -1,0 +1,112 @@
+using Soulseek;
+using Sldl.Core;
+using Sldl.Core.Jobs;
+using Sldl.Core.Models;
+
+namespace Sldl.Server;
+
+public sealed class EngineEventDtoAdapter
+{
+    private readonly Func<Job, JobSummaryDto> getSummary;
+    private readonly Action<string, object> publish;
+
+    public EngineEventDtoAdapter(Func<Job, JobSummaryDto> getSummary, Action<string, object> publish)
+    {
+        this.getSummary = getSummary;
+        this.publish = publish;
+    }
+
+    public void Attach(EngineEvents events)
+    {
+        events.ExtractionStarted += job => publish("extraction.started", new ExtractionStartedEventDto(getSummary(job), job.Input, job.InputType?.ToString()));
+        events.ExtractionFailed += (job, reason) => publish("extraction.failed", new ExtractionFailedEventDto(getSummary(job), reason));
+        events.JobStarted += job => publish("job.started", new JobStartedEventDto(getSummary(job)));
+        events.JobCompleted += (job, found, locked) => publish("job.completed", new JobCompletedEventDto(getSummary(job), found, locked));
+        events.JobStatus += (job, status) => publish("job.status", new JobStatusEventDto(getSummary(job), status));
+        events.JobFolderRetrieving += job => publish("job.folder-retrieving", new JobFolderRetrievingEventDto(getSummary(job)));
+        events.SongSearching += song => publish("song.searching", new SongSearchingEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
+        events.SongNotFound += song => publish("song.not-found", new SongNotFoundEventDto(
+            song.Id,
+            song.DisplayId,
+            song.WorkflowId,
+            ToSongQueryDto(song.Query),
+            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
+        events.SongFailed += song => publish("song.failed", new SongFailedEventDto(
+            song.Id,
+            song.DisplayId,
+            song.WorkflowId,
+            ToSongQueryDto(song.Query),
+            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
+        events.DownloadStarted += (song, candidate) => publish("download.started", new DownloadStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query), ToFileCandidateDto(candidate)));
+        events.DownloadProgress += (song, transferred, total) => publish("download.progress", new DownloadProgressEventDto(song.Id, transferred, total));
+        events.DownloadStateChanged += (song, state) => publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, state.ToString()));
+        events.StateChanged += song => publish("song.state-changed", new SongStateChangedEventDto(
+            song.Id,
+            song.DisplayId,
+            song.WorkflowId,
+            ToSongQueryDto(song.Query),
+            song.State.ToString(),
+            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            song.DownloadPath,
+            song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null));
+        events.AlbumDownloadStarted += (job, folder) => publish("album.download-started", new AlbumDownloadStartedEventDto(getSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
+        events.AlbumTrackDownloadStarted += (job, folder) => publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(getSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
+        events.AlbumDownloadCompleted += job => publish("album.download-completed", new AlbumDownloadCompletedEventDto(getSummary(job)));
+        events.OnCompleteStart += song => publish("on-complete.started", new OnCompleteStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
+        events.OnCompleteEnd += song => publish("on-complete.ended", new OnCompleteEndedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
+        events.TrackBatchResolved += (job, pending, existing, notFound) => publish("track-batch.resolved", new TrackBatchResolvedEventDto(
+            getSummary(job),
+            job is JobList,
+            job.Config.PrintOption,
+            pending.Select(ToSongJobPayloadDto).ToList(),
+            existing.Select(ToSongJobPayloadDto).ToList(),
+            notFound.Select(ToSongJobPayloadDto).ToList()));
+    }
+
+    public static SongQueryDto ToSongQueryDto(SongQuery query)
+        => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong, query.IsDirectLink);
+
+    public static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
+        => new(
+            new FileCandidateRefDto(candidate.Username, candidate.Filename),
+            candidate.Username,
+            candidate.Filename,
+            candidate.File.Size,
+            candidate.File.BitRate,
+            candidate.File.Length,
+            candidate.Response.HasFreeUploadSlot,
+            candidate.Response.UploadSpeed,
+            candidate.File.Extension,
+            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+
+    public static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
+        => new(
+            ToSongQueryDto(song.Query),
+            song.Candidates?.Count,
+            song.DownloadPath,
+            song.ResolvedTarget?.Username,
+            song.ResolvedTarget?.Filename,
+            song.ResolvedTarget?.Response.HasFreeUploadSlot,
+            song.ResolvedTarget?.Response.UploadSpeed,
+            song.ResolvedTarget?.File.Size,
+            song.ResolvedTarget?.File.Extension,
+            song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+            song.Id,
+            song.DisplayId,
+            song.Candidates?.Select(ToFileCandidateDto).ToList(),
+            song.State.ToString(),
+            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            song.FailureMessage);
+
+    public static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
+        => new(
+            new AlbumFolderRefDto(folder.Username, folder.FolderPath),
+            folder.Username,
+            folder.FolderPath,
+            folder.SearchFileCount,
+            folder.SearchAudioFileCount,
+            folder.SearchSortedAudioLengths.ToList(),
+            folder.SearchRepresentativeAudioFilename,
+            folder.HasSearchMetadata,
+            includeFiles ? folder.Files.Select(ToSongJobPayloadDto).ToList() : null);
+}

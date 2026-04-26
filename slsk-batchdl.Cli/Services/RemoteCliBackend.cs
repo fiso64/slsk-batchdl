@@ -71,8 +71,8 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)
     {
         var url = "api/jobs"
-            + $"?rootOnly={query.RootOnly.ToString().ToLowerInvariant()}"
-            + $"&includeHidden={query.IncludeHidden.ToString().ToLowerInvariant()}"
+            + $"?canonicalRootsOnly={query.CanonicalRootsOnly.ToString().ToLowerInvariant()}"
+            + $"&includeNonDefault={query.IncludeNonDefault.ToString().ToLowerInvariant()}"
             + QueryPart("state", query.State)
             + QueryPart("kind", query.Kind)
             + QueryPart("workflowId", query.WorkflowId?.ToString());
@@ -86,7 +86,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return RehydrateJobDetail(await ReadRequiredAsync<JobDetailDto>(response, ct));
+        return await ReadRequiredAsync<JobDetailDto>(response, ct);
     }
 
     public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
@@ -98,40 +98,40 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return await ReadRequiredAsync<WorkflowDetailDto>(response, ct);
     }
 
-    public async Task<SearchProjectionSnapshotDto<FileCandidateDto>?> GetTrackProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetTrackResultsAsync(Guid jobId, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/tracks", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/tracks", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchProjectionSnapshotDto<FileCandidateDto>>(response, ct);
+        return await ReadRequiredAsync<SearchResultSnapshotDto<FileCandidateDto>>(response, ct);
     }
 
-    public async Task<SearchProjectionSnapshotDto<AlbumFolderDto>?> GetAlbumProjectionAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetAlbumResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/albums?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/albums?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchProjectionSnapshotDto<AlbumFolderDto>>(response, ct);
+        return await ReadRequiredAsync<SearchResultSnapshotDto<AlbumFolderDto>>(response, ct);
     }
 
-    public async Task<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/aggregate-tracks", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/aggregate-tracks", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>>(response, ct);
+        return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>>(response, ct);
     }
 
-    public async Task<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/projections/aggregate-albums", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/aggregate-albums", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
+        return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
     }
 
     public async Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(
@@ -165,7 +165,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
                 continue;
             }
 
-            return TryReadRetrieveFolderPayload(detail.Payload, out var payload)
+            return detail.Payload is RetrieveFolderJobPayloadDto payload
                 ? payload.NewFilesFoundCount
                 : 0;
         }
@@ -186,9 +186,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return true;
     }
 
-    public async Task<bool> CancelJobByDisplayIdAsync(int displayId, CancellationToken ct = default)
+    public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
-        var jobs = await GetJobsAsync(new JobQuery(null, null, null, RootOnly: false, IncludeHidden: true), ct);
+        var jobs = await GetJobsAsync(new JobQuery(null, null, workflowId, CanonicalRootsOnly: false, IncludeNonDefault: true), ct);
         var match = jobs.FirstOrDefault(job => job.DisplayId == displayId);
         return match != null && await CancelJobAsync(match.JobId, ct);
     }
@@ -248,49 +248,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return envelope with { Payload = typedPayload };
     }
 
-    private JobDetailDto RehydrateJobDetail(JobDetailDto detail)
-        => detail with { Payload = RehydrateJobPayload(detail.Summary.Kind, detail.Payload) };
-
-    private object? RehydrateJobPayload(string kind, object? payload)
-    {
-        if (payload is not JsonElement element)
-            return payload;
-
-        return kind switch
-        {
-            "extract" => Deserialize<ExtractJobPayloadDto>(element),
-            "search" => Deserialize<SearchJobPayloadDto>(element),
-            "song" => Deserialize<SongJobPayloadDto>(element),
-            "album" => Deserialize<AlbumJobPayloadDto>(element),
-            "aggregate" => Deserialize<AggregateJobPayloadDto>(element),
-            "album-aggregate" => Deserialize<AlbumAggregateJobPayloadDto>(element),
-            "job-list" => Deserialize<JobListPayloadDto>(element),
-            "retrieve-folder" => Deserialize<RetrieveFolderJobPayloadDto>(element),
-            _ => Deserialize<GenericJobPayloadDto>(element),
-        };
-    }
-
     private T Deserialize<T>(JsonElement payload)
         => payload.Deserialize<T>(jsonOptions)
             ?? throw new InvalidOperationException($"Failed to deserialize server event payload as {typeof(T).Name}.");
-
-    private static bool TryReadRetrieveFolderPayload(object? payload, out RetrieveFolderJobPayloadDto value)
-    {
-        if (payload is JsonElement element)
-        {
-            value = element.Deserialize<RetrieveFolderJobPayloadDto>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
-            return value != null;
-        }
-
-        if (payload is RetrieveFolderJobPayloadDto typed)
-        {
-            value = typed;
-            return true;
-        }
-
-        value = null!;
-        return false;
-    }
 
     private async Task<T> ReadRequiredAsync<T>(HttpResponseMessage response, CancellationToken ct)
         => await response.Content.ReadFromJsonAsync<T>(jsonOptions, ct)

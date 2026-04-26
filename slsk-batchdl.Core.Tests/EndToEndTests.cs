@@ -8,12 +8,9 @@ namespace Tests.EndToEnd
     [TestClass]
     public class ProgramTests
     {
-        // Regression: when --mock-files-dir is used, file paths in the index are absolute
-        // (e.g. "C:\Users\fiso\Music\ELO\Time\01.flac"). FolderPath in AlbumFolder is
-        // "local\\" + directory, so remoteBaseDir gets a "local/" prefix that the bare
-        // Soulseek.File.Filename doesn't have. GetFolderName's Path.GetRelativePath call
-        // was then comparing mismatched paths, causing the full directory tree to bleed into
-        // {foldername}, producing "Music/Main/ELO/Time" instead of just "Time".
+        // Regression: --mock-files-dir should expose Soulseek-style remote paths while
+        // still copying from local source files. {foldername} must stay the remote
+        // album leaf, not a mirrored local filesystem subtree.
         [TestMethod]
         public async Task AlbumDownload_MockFilesDir_FoldernameIsLeafOnly()
         {
@@ -23,7 +20,6 @@ namespace Tests.EndToEnd
             Logger.AddConsole();
             Logger.SetConsoleLogLevel(Logger.LogLevel.Debug);
 
-            // Create temp music dir with absolute paths (mirrors --mock-files-dir behaviour)
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Main", "TestArtist", "TestAlbum");
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-" + Guid.NewGuid());
@@ -34,8 +30,7 @@ namespace Tests.EndToEnd
             System.IO.File.WriteAllBytes(Path.Combine(albumDir, "01. TestArtist - Track1.mp3"), TestHelpers.EmptyMp3Bytes);
             System.IO.File.WriteAllBytes(Path.Combine(albumDir, "02. TestArtist - Track2.mp3"), TestHelpers.EmptyMp3Bytes);
 
-            // Build the mock client the same way SoulseekClientManager does for --mock-files-dir
-            var testClient = ClientTests.MockSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, albumDir);
+            var testClient = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, albumDir);
 
             try
             {

@@ -17,6 +17,7 @@ public static class Logger
     public class OutputConfig
     {
         public Action<string> Output = null!;
+        public Action<LogLevel, string>? OutputWithLevel;
         public Action<string, ConsoleColor>? ColoredOutput; // only set for console outputs with color
         public LogLevel MinimumLevel;
         public bool PrependDate;
@@ -39,12 +40,12 @@ public static class Logger
         };
     }
 
-    private static void AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true,
+    private static OutputConfig AddOutput(Action<string> output, LogLevel minimumLevel = LogLevel.Info, bool prependDate = true,
         bool prependLogLevel = true, bool isFileOutput = false)
     {
         lock (LockObject)
         {
-            OutputConfigs.Add(new OutputConfig
+            var config = new OutputConfig
             {
                 Output = output,
                 PrependDate = prependDate,
@@ -52,8 +53,21 @@ public static class Logger
                 UseConsoleColors = false,
                 MinimumLevel = minimumLevel,
                 IsFileOutput = isFileOutput
-            });
+            };
+
+            OutputConfigs.Add(config);
+            return config;
         }
+    }
+
+    public static void AddSink(
+        Action<LogLevel, string> output,
+        LogLevel minimumLevel = LogLevel.Info,
+        bool prependDate = false,
+        bool prependLogLevel = false)
+    {
+        var sinkConfig = AddOutput(message => output(LogLevel.Info, message), minimumLevel, prependDate, prependLogLevel);
+        sinkConfig.OutputWithLevel = output;
     }
 
     public static void AddConsole(LogLevel minimumLevel = LogLevel.Info, bool useColors = true, bool prependDate = false, bool prependLogLevel = false,
@@ -65,8 +79,7 @@ public static class Logger
             Console.WriteLine(msg);
             Console.ResetColor();
         });
-        AddOutput(msg => write(msg, ConsoleColor.Gray), minimumLevel, prependDate, prependLogLevel);
-        var consoleConfig = OutputConfigs[^1];
+        var consoleConfig = AddOutput(msg => write(msg, ConsoleColor.Gray), minimumLevel, prependDate, prependLogLevel);
         consoleConfig.UseConsoleColors = useColors;
         consoleConfig.IsConsoleOutput = true;
         consoleConfig.ColoredOutput = write;
@@ -80,6 +93,18 @@ public static class Logger
             if (consoleConfig != null)
                 consoleConfig.MinimumLevel = logLevel;
         }
+    }
+
+    public static void RemoveConsoleOutputs()
+    {
+        lock (LockObject)
+            OutputConfigs.RemoveAll(config => config.IsConsoleOutput);
+    }
+
+    public static void RemoveNonFileOutputs()
+    {
+        lock (LockObject)
+            OutputConfigs.RemoveAll(config => !config.IsFileOutput);
     }
 
     public static void AddFile(string filePath, LogLevel minimumLevel = LogLevel.Debug, bool prependDate = true, bool prependLogLevel = true)
@@ -127,7 +152,10 @@ public static class Logger
             }
             else
             {
-                config.Output(logEntry);
+                if (config.OutputWithLevel != null)
+                    config.OutputWithLevel(level, logEntry);
+                else
+                    config.Output(logEntry);
             }
         }
     }
@@ -140,6 +168,16 @@ public static class Logger
             nonConsole = OutputConfigs.Where(x => !x.IsConsoleOutput).ToList();
         }
         Log(level, message, color: null, outputs: nonConsole);
+    }
+
+    public static void LogConsoleOnly(LogLevel level, string message, ConsoleColor? color = null)
+    {
+        List<OutputConfig> console;
+        lock (LockObject)
+        {
+            console = OutputConfigs.Where(x => x.IsConsoleOutput).ToList();
+        }
+        Log(level, message, color, console);
     }
 
     private static string BuildLogEntry(LogLevel level, string message, bool prependDate, bool prependLogLevel)

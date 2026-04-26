@@ -57,11 +57,11 @@ public class LocalCliBackendTests
 
             await engine.RunAsync(cts.Token);
 
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, "search", null, RootOnly: false, IncludeHidden: true));
+            var jobs = await backend.GetJobsAsync(new JobQuery(null, "search", null, CanonicalRootsOnly: false, IncludeNonDefault: true));
             Assert.AreEqual(1, jobs.Count);
             Assert.AreEqual(submitted.JobId, jobs[0].JobId);
 
-            var projection = await backend.GetTrackProjectionAsync(submitted.JobId);
+            var projection = await backend.GetTrackResultsAsync(submitted.JobId);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
@@ -123,7 +123,7 @@ public class LocalCliBackendTests
                 () => searchJob.State == JobState.Done,
                 "Timed out waiting for the album search to complete.");
 
-            var initialProjection = await backend.GetAlbumProjectionAsync(searchJob.Id, includeFiles: true, cts.Token);
+            var initialProjection = await backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
             Assert.IsNotNull(initialProjection);
             Assert.AreEqual(1, initialProjection.Items.Count);
             Assert.AreEqual(1, initialProjection.Items[0].Files?.Count);
@@ -135,7 +135,7 @@ public class LocalCliBackendTests
 
             Assert.AreEqual(1, foundCount);
 
-            var expandedProjection = await backend.GetAlbumProjectionAsync(searchJob.Id, includeFiles: true, cts.Token);
+            var expandedProjection = await backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
             Assert.IsNotNull(expandedProjection);
             Assert.AreEqual(2, expandedProjection.Items[0].Files?.Count);
 

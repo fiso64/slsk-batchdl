@@ -132,7 +132,7 @@ internal static partial class Program
 
             if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
             {
-                if (await backend.CancelJobByDisplayIdAsync(id, cts.Token))
+                if (await backend.CancelJobByDisplayIdAsync(id, ct: cts.Token))
                 {
                     Logger.Info($"Cancelling job [{id}]...");
                 }
@@ -236,7 +236,7 @@ internal static partial class Program
             lock (Printing.ConsoleLock)
             {
                 Console.WriteLine();
-                Printing.Write("Cancel job ID or all jobs? id/[A]ll/n=Esc: ", ConsoleColor.Yellow, force: true);
+                Printing.Write("Cancel job ID or current workflow? id/[A]ll/n=Esc: ", ConsoleColor.Yellow, force: true);
             }
 
             var result = ConsoleInputManager.ReadCancelPromptResult();
@@ -254,7 +254,7 @@ internal static partial class Program
 
             if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
             {
-                if (await backend.CancelJobByDisplayIdAsync(id, cts.Token))
+                if (await backend.CancelJobByDisplayIdAsync(id, submission.WorkflowId, cts.Token))
                     Logger.Info($"Cancelling job [{id}]...");
                 else
                     Logger.Error($"Job ID [{id}] not found.");
@@ -321,6 +321,9 @@ internal static partial class Program
 
         foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
         {
+            if (summary.Presentation.DisplayMode == ServerProtocol.PresentationDisplayModes.Embedded)
+                continue;
+
             var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
             switch (detail?.Payload)
             {
@@ -543,10 +546,9 @@ internal static partial class Program
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
         };
 
+        var app = ServerHost.Build(args, options, url);
         Logger.Info($"Starting sldl daemon on {url}");
         Logger.Info("Press Ctrl+C to stop.");
-
-        var app = ServerHost.Build(args, options, url);
         await app.RunAsync();
     }
 

@@ -174,53 +174,53 @@ public sealed class EngineSupervisor
             .ToList();
     }
 
-    public SearchProjectionSnapshotDto<FileCandidateDto>? GetTrackProjection(Guid jobId)
+    public SearchResultSnapshotDto<FileCandidateDto>? GetTrackResults(Guid jobId)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
             return null;
 
         var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts());
-        return new SearchProjectionSnapshotDto<FileCandidateDto>(
+        return new SearchResultSnapshotDto<FileCandidateDto>(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(ToFileCandidateDto).ToList());
     }
 
-    public SearchProjectionSnapshotDto<AlbumFolderDto>? GetAlbumProjection(Guid jobId, bool includeFiles)
+    public SearchResultSnapshotDto<AlbumFolderDto>? GetAlbumResults(Guid jobId, bool includeFiles)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
             return null;
 
         var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
-        return new SearchProjectionSnapshotDto<AlbumFolderDto>(
+        return new SearchResultSnapshotDto<AlbumFolderDto>(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToList());
     }
 
-    public SearchProjectionSnapshotDto<AggregateTrackCandidateDto>? GetAggregateTrackProjection(Guid jobId)
+    public SearchResultSnapshotDto<AggregateTrackCandidateDto>? GetAggregateTrackResults(Guid jobId)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
             return null;
 
         var snapshot = searchJob.GetAggregateTracks(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts());
-        return new SearchProjectionSnapshotDto<AggregateTrackCandidateDto>(
+        return new SearchResultSnapshotDto<AggregateTrackCandidateDto>(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(song => new AggregateTrackCandidateDto(ToSongQuery(song.Query), song.ItemName)).ToList());
     }
 
-    public SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>? GetAggregateAlbumProjection(Guid jobId)
+    public SearchResultSnapshotDto<AggregateAlbumCandidateDto>? GetAggregateAlbumResults(Guid jobId)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
             return null;
 
         var snapshot = searchJob.GetAggregateAlbums(searchJob.Config.Search);
-        return new SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>(
+        return new SearchResultSnapshotDto<AggregateAlbumCandidateDto>(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(album => new AggregateAlbumCandidateDto(ToAlbumQuery(album.Query), album.ItemName)).ToList());
@@ -252,9 +252,12 @@ public sealed class EngineSupervisor
         if (extractJob.Result == null)
             return [];
 
-        var resultJob = request.Interactive
-            ? ToInteractiveJob(extractJob.Result)
-            : extractJob.Result;
+        var resultJob = request.Mode switch
+        {
+            ServerProtocol.ExtractedResultStartModes.Normal => extractJob.Result,
+            ServerProtocol.ExtractedResultStartModes.AlbumSearch => ToInteractiveJob(extractJob.Result),
+            _ => throw new ArgumentException($"Unsupported extracted result start mode '{request.Mode}'."),
+        };
         AssignWorkflowId(resultJob, extractJob.WorkflowId);
         PrepareDetachedExtractions(resultJob);
 
@@ -349,7 +352,8 @@ public sealed class EngineSupervisor
             null,
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new PresentationHintsDto(visualParentJobId != null, visualParentJobId, job.DisplayId, null));
+            new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, visualParentJobId, job.DisplayId, null),
+            []);
 
     private static Job ToInteractiveJob(Job job)
     {

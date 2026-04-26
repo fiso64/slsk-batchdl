@@ -132,7 +132,8 @@ public class CliProgressReporterTests
                 ParentJobId: null,
                 ResultJobId: null,
                 AppliedAutoProfiles: [],
-                Presentation: new PresentationHintsDto(false, null, 6, null));
+                Presentation: new PresentationHintsDto("node", null, 6, null),
+                AvailableActions: []);
             var folder = new AlbumFolderDto(
                 new AlbumFolderRefDto("local", @"Artist\Album"),
                 "local",
@@ -274,7 +275,8 @@ public class CliProgressReporterTests
             ParentJobId: null,
             ResultJobId: null,
             AppliedAutoProfiles: [],
-            Presentation: new PresentationHintsDto(false, null, 6, null));
+            Presentation: new PresentationHintsDto("node", null, 6, null),
+            AvailableActions: []);
 
     private static AlbumFolderDto CreateSingleFileAlbumFolder(Guid fileJobId, string state, string? failureReason)
         => new(

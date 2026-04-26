@@ -10,8 +10,6 @@ namespace Tests.Server;
 [TestClass]
 public class EngineSupervisorTests
 {
-    private static string ToSoulseekPath(string path) => path.Replace('/', '\\');
-
     [TestMethod]
     public async Task StartSongDownloadAsync_ReusesWorkflowAndSetsVisualParent()
     {
@@ -41,7 +39,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
 
-            var tracks = supervisor.GetTrackProjection(searchSummary.JobId);
+            var tracks = supervisor.GetTrackResults(searchSummary.JobId);
             Assert.IsNotNull(tracks);
             Assert.AreEqual(1, tracks.Items.Count);
 
@@ -52,14 +50,14 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(downloadSummary);
             Assert.AreEqual(searchSummary.WorkflowId, downloadSummary.WorkflowId);
-            Assert.IsTrue(downloadSummary.Presentation.IsHiddenFromRoot);
-            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.VisualParentJobId);
+            Assert.AreEqual("node", downloadSummary.Presentation.DisplayMode);
+            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.DisplayParentJobId);
 
             await WaitForJobStateAsync(supervisor, downloadSummary.JobId, "Done");
 
             var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
             Assert.IsNotNull(detail);
-            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.VisualParentJobId);
+            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.DisplayParentJobId);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
             Assert.AreEqual(1, downloaded.Length);
@@ -106,11 +104,11 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
 
-            var albums = supervisor.GetAlbumProjection(searchSummary.JobId, includeFiles: false);
+            var albums = supervisor.GetAlbumResults(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(albums);
             Assert.AreEqual(1, albums.Items.Count);
             Assert.AreEqual("local", albums.Items[0].Username);
-            Assert.AreEqual(ToSoulseekPath(albumDir), albums.Items[0].FolderPath);
+            Assert.AreEqual(@"Artist\Album", albums.Items[0].FolderPath);
 
             var downloadSummary = await supervisor.StartAlbumDownloadAsync(
                 searchSummary.JobId,
@@ -119,14 +117,21 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(downloadSummary);
             Assert.AreEqual(searchSummary.WorkflowId, downloadSummary.WorkflowId);
-            Assert.IsTrue(downloadSummary.Presentation.IsHiddenFromRoot);
-            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.VisualParentJobId);
+            Assert.AreEqual("node", downloadSummary.Presentation.DisplayMode);
+            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.DisplayParentJobId);
 
             await WaitForJobStateAsync(supervisor, downloadSummary.JobId, "Done");
 
             var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
             Assert.IsNotNull(detail);
-            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.VisualParentJobId);
+            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.DisplayParentJobId);
+
+            var presentedWorkflow = supervisor.StateStore.GetPresentedWorkflow(searchSummary.WorkflowId);
+            Assert.IsNotNull(presentedWorkflow);
+            Assert.AreEqual(1, presentedWorkflow.Jobs.Count);
+            Assert.AreEqual(searchSummary.JobId, presentedWorkflow.Jobs[0].Summary.JobId);
+            Assert.AreEqual(1, presentedWorkflow.Jobs[0].Children.Count);
+            Assert.AreEqual(downloadSummary.JobId, presentedWorkflow.Jobs[0].Children[0].Summary.JobId);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -179,7 +184,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
 
-            var albums = supervisor.GetAlbumProjection(searchSummary.JobId, includeFiles: false);
+            var albums = supervisor.GetAlbumResults(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(albums);
             Assert.AreEqual(1, albums.Items.Count);
 
@@ -199,6 +204,39 @@ public class EngineSupervisorTests
                         .Any(file => file.State == "Downloading") == true;
                 },
                 "Timed out waiting for album file downloads to start.");
+
+            var activeDetail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
+            Assert.IsNotNull(activeDetail);
+            var activePayload = activeDetail.Payload as AlbumJobPayloadDto;
+            Assert.IsNotNull(activePayload);
+
+            var activeFiles = activePayload.Results?.SelectMany(folder => folder.Files ?? []).ToList() ?? [];
+            var cancellableFile = activeFiles.FirstOrDefault(file =>
+                file.AvailableActions?.Any(action => action.Kind == "cancel") == true);
+            Assert.IsNotNull(cancellableFile, "Active album payload files should expose cancel actions.");
+
+            var embeddedSongJobs = supervisor.StateStore.GetJobs(
+                new JobQuery(null, "song", downloadSummary.WorkflowId, CanonicalRootsOnly: false, IncludeNonDefault: true))
+                .Where(summary => summary.ParentJobId == downloadSummary.JobId)
+                .ToList();
+            Assert.IsTrue(embeddedSongJobs.Count > 0, "Album payload songs should be registered jobs.");
+            Assert.IsTrue(embeddedSongJobs.All(summary => summary.Presentation.DisplayMode == "embedded"));
+            Assert.IsFalse(
+                supervisor.StateStore.GetJobs(new JobQuery(null, "song", downloadSummary.WorkflowId, CanonicalRootsOnly: false, IncludeNonDefault: false))
+                    .Any(summary => summary.ParentJobId == downloadSummary.JobId),
+                "Embedded album payload songs should stay out of the default job list.");
+
+            Assert.IsNotNull(cancellableFile.JobId);
+            Assert.IsTrue(supervisor.CancelJob(cancellableFile.JobId.Value), "Embedded album payload file should be cancellable by job id.");
+            await WaitForConditionAsync(
+                () =>
+                {
+                    var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
+                    var payload = detail?.Payload as AlbumJobPayloadDto;
+                    return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                        .Any(file => file.JobId == cancellableFile.JobId && file.State == "Failed" && file.FailureReason == "Cancelled") == true;
+                },
+                "Timed out waiting for embedded album file cancellation.");
 
             var cancelled = supervisor.CancelWorkflow(downloadSummary.WorkflowId);
             Assert.IsTrue(cancelled > 0, "CancelWorkflow should cancel the active album download job.");
@@ -361,7 +399,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
 
-            var beforeRetrieve = supervisor.GetAlbumProjection(searchSummary.JobId, includeFiles: true);
+            var beforeRetrieve = supervisor.GetAlbumResults(searchSummary.JobId, includeFiles: true);
             Assert.IsNotNull(beforeRetrieve);
             Assert.AreEqual(1, beforeRetrieve.Items.Count);
             Assert.AreEqual(1, beforeRetrieve.Items[0].Files?.Count);
@@ -373,8 +411,8 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(retrieveSummary);
             Assert.AreEqual(searchSummary.WorkflowId, retrieveSummary.WorkflowId);
-            Assert.IsTrue(retrieveSummary.Presentation.IsHiddenFromRoot);
-            Assert.AreEqual(searchSummary.JobId, retrieveSummary.Presentation.VisualParentJobId);
+            Assert.AreEqual("node", retrieveSummary.Presentation.DisplayMode);
+            Assert.AreEqual(searchSummary.JobId, retrieveSummary.Presentation.DisplayParentJobId);
 
             await WaitForJobStateAsync(supervisor, retrieveSummary.JobId, "Done");
 
@@ -384,7 +422,14 @@ public class EngineSupervisorTests
             Assert.IsNotNull(payload);
             Assert.AreEqual(1, payload.NewFilesFoundCount);
 
-            var afterRetrieve = supervisor.GetAlbumProjection(searchSummary.JobId, includeFiles: true);
+            var presentedWorkflow = supervisor.StateStore.GetPresentedWorkflow(searchSummary.WorkflowId);
+            Assert.IsNotNull(presentedWorkflow);
+            Assert.AreEqual(1, presentedWorkflow.Jobs.Count);
+            Assert.AreEqual(searchSummary.JobId, presentedWorkflow.Jobs[0].Summary.JobId);
+            Assert.AreEqual(1, presentedWorkflow.Jobs[0].Children.Count);
+            Assert.AreEqual(retrieveSummary.JobId, presentedWorkflow.Jobs[0].Children[0].Summary.JobId);
+
+            var afterRetrieve = supervisor.GetAlbumResults(searchSummary.JobId, includeFiles: true);
             Assert.IsNotNull(afterRetrieve);
             Assert.AreEqual(2, afterRetrieve.Items[0].Files?.Count);
 
@@ -436,7 +481,7 @@ public class EngineSupervisorTests
 
             var started = await supervisor.StartExtractedResultAsync(
                 extractSummary.JobId,
-                new StartExtractedResultRequestDto(Interactive: true),
+                new StartExtractedResultRequestDto(ServerProtocol.ExtractedResultStartModes.AlbumSearch),
                 CancellationToken.None);
 
             Assert.IsNotNull(started);
@@ -446,10 +491,15 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, started[0].JobId, "Done");
 
-            var albums = supervisor.GetAlbumProjection(started[0].JobId, includeFiles: true);
+            var presentedWorkflow = supervisor.StateStore.GetPresentedWorkflow(extractSummary.WorkflowId);
+            Assert.IsNotNull(presentedWorkflow);
+            Assert.AreEqual(1, presentedWorkflow.Jobs.Count);
+            Assert.AreEqual(started[0].JobId, presentedWorkflow.Jobs[0].Summary.JobId);
+
+            var albums = supervisor.GetAlbumResults(started[0].JobId, includeFiles: true);
             Assert.IsNotNull(albums);
             Assert.AreEqual(1, albums.Items.Count);
-            Assert.AreEqual(ToSoulseekPath(albumDir), albums.Items[0].FolderPath);
+            Assert.AreEqual(@"Artist\Album", albums.Items[0].FolderPath);
 
             cts.Cancel();
             await runTask;

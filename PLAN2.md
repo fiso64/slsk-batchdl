@@ -13,6 +13,8 @@ Implemented so far:
   - search raw results / projections
   - search follow-up actions (`retrieve-folder`, `downloads/song`, `downloads/album`)
 - SignalR event streaming exists at `/api/events` with typed server envelopes.
+- Server and local CLI Core-event mapping now share `EngineEventDtoAdapter`, so local and remote rendering consume the same event DTO translations.
+- The server coalesces noisy `download.progress` events before SignalR broadcast and flushes pending progress before non-progress events.
 - Local CLI now has a real in-process backend (`ICliBackend` + `LocalCliBackend`) and much of the CLI has been migrated onto the shared client-facing DTO/event model.
 - `RetrieveFolderJob` is a real queued job path in Core and preserves retrieval outcome (`NewFilesFoundCount`).
 - Search/album semantics were clarified so album network search terms and file-match terms are explicitly distinct.
@@ -35,24 +37,24 @@ Implemented so far:
   - Remote normal downloads render the final completed/failed summary from workflow/job snapshots.
   - Remote interactive album mode has a first client-driven implementation: the CLI submits extract-only root jobs, starts extracted results through the server in interactive form, prompts from `SearchJob` album projections, and starts preselected album downloads as normal follow-up jobs.
   - `POST /api/jobs/{jobId}/extracted-result/start` lets a client continue an extract-only job without round-tripping internal Core job state through DTO serialization.
+  - Remote display-id cancellation is scoped to the current CLI workflow, so a thin client cannot accidentally cancel another daemon workflow with the same visible prompt context.
+  - The remote cancel prompt explicitly says "current workflow" rather than implying daemon-wide cancellation.
 - A typed download-settings delta exists for remote submissions.
   - The daemon still owns defaults and profiles.
   - The thin client sends explicit command-line download/search operations as a DTO, and the server applies that delta after server-side profile resolution.
   - The operation model preserves intent for explicit default-value overrides and append-style settings such as `--on-complete "+ ..."`.
 
 Still open / not finished yet:
-- SignalR progress batching/coalescing is still pending.
 - The server/state-store boundary still relies on retained live Core objects for some reads and search-session subscriptions.
 - Remote CLI is not yet fully feature-complete compared to local CLI.
-  - Interactive remote mode is implemented for album selection, but still needs real-user polish around cancellation/no-progress rendering and manual terminal testing.
+  - Interactive remote mode is implemented for album selection, but still needs real-user polish and manual terminal testing.
   - Print-result modes now have a completed-job snapshot path; a dedicated live/SearchJob print path may still be useful later if we want incremental result printing.
-  - Remote cancellation works by job id/display id and current workflow, but the exact UX may still differ from local "cancel all" behavior.
-  - Plain no-progress remote rendering can currently repeat some status lines because rich Core events are bridged directly; progress/event coalescing should address this deliberately.
+  - Plain no-progress rendering now suppresses identical repeated job-status lines; manual use may still reveal additional rendering polish.
 
 Immediate next likely steps:
-1. Continue remote CLI parity: cancellation/no-progress polish and manual remote interactive smoke testing.
-2. Progress/event batching for live event streaming.
-3. Tighten any remaining remote/local CLI behavioral differences found during manual use.
+1. Continue remote CLI parity: manual remote interactive smoke testing and any remaining UX polish found during use.
+2. Tighten any remaining remote/local CLI behavioral differences found during manual use.
+3. Continue server/state-store boundary cleanup for retained Core objects and search-session subscriptions.
 
 ## Core Model
 

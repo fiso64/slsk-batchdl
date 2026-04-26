@@ -12,14 +12,14 @@ public static class JobRequestMapper
 
         return kind switch
         {
-            "extract" => CreateExtractJob(spec),
+            ServerProtocol.JobKinds.Extract => CreateExtractJob(spec),
             "search-track" => new SearchJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for search-track jobs")), spec.IncludeFullResults),
             "search-album" => new SearchJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for search-album jobs"))),
-            "song" => new SongJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for song jobs"))),
-            "album" => new AlbumJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album jobs"))),
-            "aggregate" => new AggregateJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for aggregate jobs"))),
-            "album-aggregate" => new AlbumAggregateJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album-aggregate jobs"))),
-            "job-list" => CreateJobList(spec),
+            ServerProtocol.JobKinds.Song => new SongJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for song jobs"))),
+            ServerProtocol.JobKinds.Album => new AlbumJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album jobs"))),
+            ServerProtocol.JobKinds.Aggregate => new AggregateJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for aggregate jobs"))),
+            ServerProtocol.JobKinds.AlbumAggregate => new AlbumAggregateJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album-aggregate jobs"))),
+            ServerProtocol.JobKinds.JobList => CreateJobList(spec),
             _ => throw new ArgumentException($"Unsupported job kind '{spec.Kind}'")
         };
     }

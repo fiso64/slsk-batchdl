@@ -26,49 +26,7 @@ internal sealed class LocalCliBackend
         stateStore.JobUpserted += summary => Publish("job.upserted", summary);
         stateStore.WorkflowUpserted += summary => Publish("workflow.upserted", summary);
         stateStore.SearchUpdated += update => Publish("search.updated", update);
-        engine.Events.ExtractionStarted += job => Publish("extraction.started", new ExtractionStartedEventDto(GetSummary(job), job.Input, job.InputType?.ToString()));
-        engine.Events.ExtractionFailed += (job, reason) => Publish("extraction.failed", new ExtractionFailedEventDto(GetSummary(job), reason));
-        engine.Events.JobStarted += job => Publish("job.started", new JobStartedEventDto(GetSummary(job)));
-        engine.Events.JobCompleted += (job, found, locked) => Publish("job.completed", new JobCompletedEventDto(GetSummary(job), found, locked));
-        engine.Events.JobStatus += (job, status) => Publish("job.status", new JobStatusEventDto(GetSummary(job), status));
-        engine.Events.JobFolderRetrieving += job => Publish("job.folder-retrieving", new JobFolderRetrievingEventDto(GetSummary(job)));
-        engine.Events.SongSearching += song => Publish("song.searching", new SongSearchingEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
-        engine.Events.SongNotFound += song => Publish("song.not-found", new SongNotFoundEventDto(
-            song.Id,
-            song.DisplayId,
-            song.WorkflowId,
-            ToSongQueryDto(song.Query),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
-        engine.Events.SongFailed += song => Publish("song.failed", new SongFailedEventDto(
-            song.Id,
-            song.DisplayId,
-            song.WorkflowId,
-            ToSongQueryDto(song.Query),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
-        engine.Events.DownloadStarted += (song, candidate) => Publish("download.started", new DownloadStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query), ToFileCandidateDto(candidate)));
-        engine.Events.DownloadProgress += (song, transferred, total) => Publish("download.progress", new DownloadProgressEventDto(song.Id, transferred, total));
-        engine.Events.DownloadStateChanged += (song, state) => Publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, state.ToString()));
-        engine.Events.StateChanged += song => Publish("song.state-changed", new SongStateChangedEventDto(
-            song.Id,
-            song.DisplayId,
-            song.WorkflowId,
-            ToSongQueryDto(song.Query),
-            song.State.ToString(),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
-            song.DownloadPath,
-            song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null));
-        engine.Events.AlbumDownloadStarted += (job, folder) => Publish("album.download-started", new AlbumDownloadStartedEventDto(GetSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
-        engine.Events.AlbumTrackDownloadStarted += (job, folder) => Publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(GetSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
-        engine.Events.AlbumDownloadCompleted += job => Publish("album.download-completed", new AlbumDownloadCompletedEventDto(GetSummary(job)));
-        engine.Events.OnCompleteStart += song => Publish("on-complete.started", new OnCompleteStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
-        engine.Events.OnCompleteEnd += song => Publish("on-complete.ended", new OnCompleteEndedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
-        engine.Events.TrackBatchResolved += (job, pending, existing, notFound) => Publish("track-batch.resolved", new TrackBatchResolvedEventDto(
-            GetSummary(job),
-            job is JobList,
-            job.Config.PrintOption,
-            pending.Select(ToSongJobPayloadDto).ToList(),
-            existing.Select(ToSongJobPayloadDto).ToList(),
-            notFound.Select(ToSongJobPayloadDto).ToList()));
+        new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events);
     }
 
     public Task<JobSummaryDto> SubmitJobAsync(SubmitJobRequestDto request, CancellationToken ct = default)
@@ -108,31 +66,31 @@ internal sealed class LocalCliBackend
         return Task.FromResult(stateStore.GetWorkflow(workflowId));
     }
 
-    public Task<SearchProjectionSnapshotDto<FileCandidateDto>?> GetTrackProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetTrackResultsAsync(Guid jobId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
-            return Task.FromResult<SearchProjectionSnapshotDto<FileCandidateDto>?>(null);
+            return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(null);
 
         var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, engine.UserSuccessCounts);
-        return Task.FromResult<SearchProjectionSnapshotDto<FileCandidateDto>?>(new(
+        return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(new(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(ToFileCandidateDto).ToList()));
     }
 
-    public Task<SearchProjectionSnapshotDto<AlbumFolderDto>?> GetAlbumProjectionAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetAlbumResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
-            return Task.FromResult<SearchProjectionSnapshotDto<AlbumFolderDto>?>(null);
+            return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(null);
 
         var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
-        return Task.FromResult<SearchProjectionSnapshotDto<AlbumFolderDto>?>(new(
+        return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(new(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(folder => new AlbumFolderDto(
@@ -169,31 +127,31 @@ internal sealed class LocalCliBackend
                     : null)).ToList()));
     }
 
-    public Task<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
-            return Task.FromResult<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?>(null);
+            return Task.FromResult<SearchResultSnapshotDto<AggregateTrackCandidateDto>?>(null);
 
         var snapshot = searchJob.GetAggregateTracks(searchJob.Config.Search, engine.UserSuccessCounts);
-        return Task.FromResult<SearchProjectionSnapshotDto<AggregateTrackCandidateDto>?>(new(
+        return Task.FromResult<SearchResultSnapshotDto<AggregateTrackCandidateDto>?>(new(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(song => new AggregateTrackCandidateDto(ToSongQueryDto(song.Query), song.ItemName)).ToList()));
     }
 
-    public Task<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumProjectionAsync(Guid jobId, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
-            return Task.FromResult<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?>(null);
+            return Task.FromResult<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?>(null);
 
         var snapshot = searchJob.GetAggregateAlbums(searchJob.Config.Search);
-        return Task.FromResult<SearchProjectionSnapshotDto<AggregateAlbumCandidateDto>?>(new(
+        return Task.FromResult<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?>(new(
             snapshot.Revision,
             snapshot.IsComplete,
             snapshot.Items.Select(album => new AggregateAlbumCandidateDto(ToAlbumQueryDto(album.Query), album.ItemName)).ToList()));
@@ -316,9 +274,9 @@ internal sealed class LocalCliBackend
         return Task.FromResult(true);
     }
 
-    public async Task<bool> CancelJobByDisplayIdAsync(int displayId, CancellationToken ct = default)
+    public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
-        var jobs = await GetJobsAsync(new JobQuery(null, null, null, RootOnly: false, IncludeHidden: true), ct);
+        var jobs = await GetJobsAsync(new JobQuery(null, null, workflowId, CanonicalRootsOnly: false, IncludeNonDefault: true), ct);
         var match = jobs.FirstOrDefault(job => job.DisplayId == displayId);
         return match != null && await CancelJobAsync(match.JobId, ct);
     }
@@ -331,10 +289,13 @@ internal sealed class LocalCliBackend
 
     private void Publish(string type, object payload)
     {
+        var descriptor = ServerEventCatalog.Describe(type);
         EventReceived?.Invoke(new ServerEventEnvelopeDto(
             Interlocked.Increment(ref nextSequence),
             type,
             DateTimeOffset.UtcNow,
+            descriptor.Category,
+            descriptor.SnapshotInvalidation,
             payload));
     }
 
@@ -368,7 +329,8 @@ internal sealed class LocalCliBackend
             null,
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new PresentationHintsDto(false, null, job.DisplayId, null));
+            new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, null, job.DisplayId, null),
+            []);
 
     private JobSummaryDto GetSummary(Job job)
         => stateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);

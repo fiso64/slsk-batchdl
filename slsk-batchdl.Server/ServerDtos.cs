@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Sldl.Core;
 
 namespace Sldl.Server;
@@ -33,7 +34,7 @@ public sealed record JobSpecDto
 }
 
 public sealed record StartExtractedResultRequestDto(
-    bool Interactive = false);
+    string Mode = ServerProtocol.ExtractedResultStartModes.Normal);
 
 public sealed record SubmissionOptionsDto(
     Guid? WorkflowId = null,
@@ -97,7 +98,7 @@ public sealed record SearchRawResultDto(
     int? BitRate,
     int? Length);
 
-public sealed record SearchProjectionSnapshotDto<T>(
+public sealed record SearchResultSnapshotDto<T>(
     int Revision,
     bool IsComplete,
     IReadOnlyList<T> Items);
@@ -134,10 +135,15 @@ public sealed record AggregateAlbumCandidateDto(
     string? ItemName);
 
 public sealed record PresentationHintsDto(
-    bool IsHiddenFromRoot,
-    Guid? VisualParentJobId,
-    int VisualOrder,
+    string DisplayMode,
+    Guid? DisplayParentJobId,
+    int DisplayOrder,
     Guid? ReplaceWithJobId);
+
+public sealed record ResourceActionDto(
+    string Kind,
+    string Method,
+    string Href);
 
 public sealed record JobSummaryDto(
     Guid JobId,
@@ -152,11 +158,12 @@ public sealed record JobSummaryDto(
     Guid? ParentJobId,
     Guid? ResultJobId,
     IReadOnlyList<string> AppliedAutoProfiles,
-    PresentationHintsDto Presentation);
+    PresentationHintsDto Presentation,
+    IReadOnlyList<ResourceActionDto> AvailableActions);
 
 public sealed record JobDetailDto(
     JobSummaryDto Summary,
-    object? Payload,
+    JobPayloadDto? Payload,
     IReadOnlyList<JobSummaryDto> Children);
 
 public sealed record WorkflowSummaryDto(
@@ -172,11 +179,27 @@ public sealed record WorkflowDetailDto(
     WorkflowSummaryDto Summary,
     IReadOnlyList<JobSummaryDto> Jobs);
 
+public sealed record PresentedJobNodeDto(
+    JobSummaryDto Summary,
+    IReadOnlyList<PresentedJobNodeDto> Children);
+
+public sealed record PresentedWorkflowDto(
+    WorkflowSummaryDto Summary,
+    IReadOnlyList<PresentedJobNodeDto> Jobs);
+
 public sealed record ServerEventEnvelopeDto(
     long Sequence,
     string Type,
     DateTimeOffset OccurredAtUtc,
+    string Category,
+    bool SnapshotInvalidation,
     object Payload);
+
+public sealed record ServerEventDescriptorDto(
+    string Type,
+    string Category,
+    bool SnapshotInvalidation,
+    string PayloadDto);
 
 public sealed record SearchUpdatedDto(
     Guid JobId,
@@ -285,10 +308,22 @@ public sealed record TrackBatchResolvedEventDto(
     IReadOnlyList<SongJobPayloadDto> Existing,
     IReadOnlyList<SongJobPayloadDto> NotFound);
 
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ExtractJobPayloadDto), ServerProtocol.JobKinds.Extract)]
+[JsonDerivedType(typeof(SearchJobPayloadDto), ServerProtocol.JobKinds.Search)]
+[JsonDerivedType(typeof(SongJobPayloadDto), ServerProtocol.JobKinds.Song)]
+[JsonDerivedType(typeof(AlbumJobPayloadDto), ServerProtocol.JobKinds.Album)]
+[JsonDerivedType(typeof(AggregateJobPayloadDto), ServerProtocol.JobKinds.Aggregate)]
+[JsonDerivedType(typeof(AlbumAggregateJobPayloadDto), ServerProtocol.JobKinds.AlbumAggregate)]
+[JsonDerivedType(typeof(JobListPayloadDto), ServerProtocol.JobKinds.JobList)]
+[JsonDerivedType(typeof(RetrieveFolderJobPayloadDto), ServerProtocol.JobKinds.RetrieveFolder)]
+[JsonDerivedType(typeof(GenericJobPayloadDto), ServerProtocol.JobKinds.Generic)]
+public abstract record JobPayloadDto;
+
 public sealed record ExtractJobPayloadDto(
     string Input,
     string? InputType,
-    Guid? ResultJobId);
+    Guid? ResultJobId) : JobPayloadDto;
 
 public sealed record SearchJobPayloadDto(
     string Intent,
@@ -296,7 +331,7 @@ public sealed record SearchJobPayloadDto(
     AlbumQueryDto? AlbumQuery,
     int ResultCount,
     int Revision,
-    bool IsComplete);
+    bool IsComplete) : JobPayloadDto;
 
 public sealed record SongJobPayloadDto(
     SongQueryDto Query,
@@ -314,7 +349,8 @@ public sealed record SongJobPayloadDto(
     IReadOnlyList<FileCandidateDto>? Candidates = null,
     string? State = null,
     string? FailureReason = null,
-    string? FailureMessage = null);
+    string? FailureMessage = null,
+    IReadOnlyList<ResourceActionDto>? AvailableActions = null) : JobPayloadDto;
 
 public sealed record FileAttributeDto(
     string Type,
@@ -326,30 +362,30 @@ public sealed record AlbumJobPayloadDto(
     string? DownloadPath,
     string? ResolvedFolderUsername,
     string? ResolvedFolderPath,
-    IReadOnlyList<AlbumFolderDto>? Results = null);
+    IReadOnlyList<AlbumFolderDto>? Results = null) : JobPayloadDto;
 
 public sealed record AggregateJobPayloadDto(
     SongQueryDto Query,
-    IReadOnlyList<SongJobPayloadDto> Songs);
+    IReadOnlyList<SongJobPayloadDto> Songs) : JobPayloadDto;
 
 public sealed record AlbumAggregateJobPayloadDto(
-    AlbumQueryDto Query);
+    AlbumQueryDto Query) : JobPayloadDto;
 
 public sealed record JobListPayloadDto(
     int Count,
-    IReadOnlyList<SongJobPayloadDto>? DirectSongs = null);
+    IReadOnlyList<SongJobPayloadDto>? DirectSongs = null) : JobPayloadDto;
 
 public sealed record RetrieveFolderJobPayloadDto(
     string FolderPath,
     string Username,
-    int NewFilesFoundCount);
+    int NewFilesFoundCount) : JobPayloadDto;
 
 public sealed record GenericJobPayloadDto(
-    string Text);
+    string Text) : JobPayloadDto;
 
 public sealed record JobQuery(
     string? State,
     string? Kind,
     Guid? WorkflowId,
-    bool RootOnly,
-    bool IncludeHidden);
+    bool CanonicalRootsOnly,
+    bool IncludeNonDefault);

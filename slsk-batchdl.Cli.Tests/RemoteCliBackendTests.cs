@@ -77,7 +77,7 @@ public class RemoteCliBackendTests
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
 
-            var projection = await backend.GetTrackProjectionAsync(searchSummary.JobId);
+            var projection = await backend.GetTrackResultsAsync(searchSummary.JobId);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
@@ -87,7 +87,7 @@ public class RemoteCliBackendTests
 
             Assert.IsNotNull(downloadSummary);
             Assert.AreEqual(searchSummary.WorkflowId, downloadSummary.WorkflowId);
-            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.VisualParentJobId);
+            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.DisplayParentJobId);
 
             await WaitForJobStateAsync(backend, downloadSummary.JobId, "Done");
 
@@ -359,7 +359,7 @@ public class RemoteCliBackendTests
                     }));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
-            var projection = await backend.GetAlbumProjectionAsync(searchSummary.JobId, includeFiles: false);
+            var projection = await backend.GetAlbumResultsAsync(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
@@ -399,6 +399,90 @@ public class RemoteCliBackendTests
         finally
         {
             Console.SetOut(originalOut);
+            await app.StopAsync();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteCliBackend_CancelJobByDisplayId_WhenScopedToWorkflow_DoesNotCancelOtherWorkflow()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-scoped-cancel-music-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-scoped-cancel-out-" + Guid.NewGuid());
+        string albumOneDir = Path.Combine(musicRoot, "Artist One", "Album One");
+        string albumTwoDir = Path.Combine(musicRoot, "Artist Two", "Album Two");
+        Directory.CreateDirectory(albumOneDir);
+        Directory.CreateDirectory(albumTwoDir);
+        Directory.CreateDirectory(outputDir);
+
+        for (int i = 1; i <= 12; i++)
+        {
+            File.WriteAllBytes(Path.Combine(albumOneDir, $"{i:00}. Artist One - Track {i:00}.mp3"), new byte[1024]);
+            File.WriteAllBytes(Path.Combine(albumTwoDir, $"{i:00}. Artist Two - Track {i:00}.mp3"), new byte[1024]);
+        }
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+                MockFilesSlow = true,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{foldername}/{filename}",
+                },
+                Search =
+                {
+                    NoBrowseFolder = true,
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+
+            var firstSearch = await StartAlbumSearchAsync(backend, "Artist One", "Album One");
+            var secondSearch = await StartAlbumSearchAsync(backend, "Artist Two", "Album Two");
+            await WaitForJobStateAsync(backend, firstSearch.JobId, nameof(JobState.Done));
+            await WaitForJobStateAsync(backend, secondSearch.JobId, nameof(JobState.Done));
+
+            var firstDownload = await StartFirstAlbumDownloadAsync(backend, firstSearch.JobId);
+            var secondDownload = await StartFirstAlbumDownloadAsync(backend, secondSearch.JobId);
+
+            await WaitForAlbumFileDownloadToStartAsync(backend, firstDownload.JobId);
+            await WaitForAlbumFileDownloadToStartAsync(backend, secondDownload.JobId);
+
+            Assert.IsFalse(
+                await backend.CancelJobByDisplayIdAsync(secondDownload.DisplayId, firstDownload.WorkflowId),
+                "A remote CLI scoped to one workflow must not cancel another workflow's display id.");
+
+            Assert.IsTrue(await backend.CancelJobByDisplayIdAsync(firstDownload.DisplayId, firstDownload.WorkflowId));
+            await WaitForJobStateAsync(backend, firstDownload.JobId, nameof(JobState.Failed));
+
+            var secondDetail = await backend.GetJobDetailAsync(secondDownload.JobId);
+            Assert.AreNotEqual(
+                nameof(JobState.Failed),
+                secondDetail?.Summary.State,
+                "Cancelling the first workflow by display id must not fail the second workflow's job.");
+
+            await backend.CancelWorkflowAsync(secondDownload.WorkflowId);
+        }
+        finally
+        {
             await app.StopAsync();
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
@@ -623,6 +707,41 @@ public class RemoteCliBackendTests
             ? "<missing>"
             : string.Join(", ", finalDetail.Jobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{job.State} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
         Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
+    }
+
+    private static async Task WaitForAlbumFileDownloadToStartAsync(ICliBackend backend, Guid albumJobId)
+    {
+        await WaitForConditionAsync(
+            async () =>
+            {
+                var detail = await backend.GetJobDetailAsync(albumJobId);
+                var payload = detail?.Payload as AlbumJobPayloadDto;
+                return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                    .Any(file => file.State == nameof(JobState.Downloading)) == true;
+            },
+            "Timed out waiting for remote album file downloads to start.");
+    }
+
+    private static async Task<JobSummaryDto> StartAlbumSearchAsync(ICliBackend backend, string artist, string album)
+        => await backend.SubmitJobAsync(
+            new SubmitJobRequestDto(
+                new JobSpecDto
+                {
+                    Kind = "search-album",
+                    AlbumQuery = new AlbumQueryDto(artist, album, "", "", false, false, -1, -1),
+                }));
+
+    private static async Task<JobSummaryDto> StartFirstAlbumDownloadAsync(ICliBackend backend, Guid searchJobId)
+    {
+        var projection = await backend.GetAlbumResultsAsync(searchJobId, includeFiles: false);
+        Assert.IsNotNull(projection);
+        Assert.IsTrue(projection.Items.Count > 0);
+
+        var summary = await backend.StartAlbumDownloadAsync(
+            searchJobId,
+            new StartAlbumDownloadRequestDto(projection.Items[0].Ref));
+        Assert.IsNotNull(summary);
+        return summary;
     }
 
     private static async Task WaitForConditionAsync(Func<Task<bool>> condition, string failureMessage, int timeoutMs = 5000)

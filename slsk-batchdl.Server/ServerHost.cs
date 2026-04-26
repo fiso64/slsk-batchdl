@@ -10,6 +10,12 @@ public static class ServerHost
     public static WebApplication Build(string[] args, ServerOptions? options = null, string? url = null)
     {
         var builder = WebApplication.CreateBuilder(args);
+        builder.Logging.ClearProviders();
+        builder.Logging.AddSimpleConsole(consoleOptions =>
+        {
+            consoleOptions.SingleLine = true;
+            consoleOptions.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
+        });
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         if (!string.IsNullOrWhiteSpace(url))
@@ -32,6 +38,7 @@ public static class ServerHost
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
         var app = builder.Build();
+        CoreLoggerBridge.Configure(app.Services, (options ?? app.Services.GetRequiredService<IOptions<ServerOptions>>().Value).Engine.LogLevel);
         _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
 
         MapEndpoints(app);
@@ -45,16 +52,17 @@ public static class ServerHost
         app.MapGet("/api/server/info", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetInfo()));
         app.MapGet("/api/server/status", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetStatus()));
         app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()));
+        app.MapGet("/api/events/catalog", () => Results.Ok(ServerEventCatalog.All));
 
         app.MapGet("/api/jobs", (
             EngineStateStore stateStore,
             string? state,
             string? kind,
             Guid? workflowId,
-            bool rootOnly = false,
-            bool includeHidden = false) =>
+            bool canonicalRootsOnly = false,
+            bool includeNonDefault = false) =>
         {
-            var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, rootOnly, includeHidden));
+            var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, canonicalRootsOnly, includeNonDefault));
             return Results.Ok(jobs);
         });
 
@@ -70,28 +78,28 @@ public static class ServerHost
             return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/projections/tracks", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/tracks", (Guid jobId, EngineSupervisor supervisor) =>
         {
-            var projection = supervisor.GetTrackProjection(jobId);
-            return projection != null ? Results.Ok(projection) : Results.NotFound();
+            var results = supervisor.GetTrackResults(jobId);
+            return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/projections/albums", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/albums", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
         {
-            var projection = supervisor.GetAlbumProjection(jobId, includeFiles);
-            return projection != null ? Results.Ok(projection) : Results.NotFound();
+            var results = supervisor.GetAlbumResults(jobId, includeFiles);
+            return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/projections/aggregate-tracks", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", (Guid jobId, EngineSupervisor supervisor) =>
         {
-            var projection = supervisor.GetAggregateTrackProjection(jobId);
-            return projection != null ? Results.Ok(projection) : Results.NotFound();
+            var results = supervisor.GetAggregateTrackResults(jobId);
+            return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/projections/aggregate-albums", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", (Guid jobId, EngineSupervisor supervisor) =>
         {
-            var projection = supervisor.GetAggregateAlbumProjection(jobId);
-            return projection != null ? Results.Ok(projection) : Results.NotFound();
+            var results = supervisor.GetAggregateAlbumResults(jobId);
+            return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
         app.MapPost("/api/jobs/{jobId:guid}/retrieve-folder", async (
@@ -119,10 +127,17 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken ct) =>
         {
-            var summaries = await supervisor.StartExtractedResultAsync(jobId, request, ct);
-            return summaries != null
-                ? Results.Accepted($"/api/jobs/{jobId}", summaries)
-                : Results.NotFound();
+            try
+            {
+                var summaries = await supervisor.StartExtractedResultAsync(jobId, request, ct);
+                return summaries != null
+                    ? Results.Accepted($"/api/jobs/{jobId}", summaries)
+                    : Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         app.MapPost("/api/jobs/{jobId:guid}/downloads/song", async (
@@ -188,6 +203,12 @@ public static class ServerHost
         app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, EngineStateStore stateStore) =>
         {
             var workflow = stateStore.GetWorkflow(workflowId);
+            return workflow != null ? Results.Ok(workflow) : Results.NotFound();
+        });
+
+        app.MapGet("/api/workflows/{workflowId:guid}/presentation", (Guid workflowId, EngineStateStore stateStore) =>
+        {
+            var workflow = stateStore.GetPresentedWorkflow(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         });
 
