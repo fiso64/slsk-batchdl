@@ -1,5 +1,9 @@
 namespace Sldl.Server;
 
+/// <summary>
+/// Stable string values used by the server wire protocol. Keep DTOs string-based for simple JSON
+/// clients, but use these constants inside .NET consumers instead of scattering literals.
+/// </summary>
 public static class ServerProtocol
 {
     public static class JobKinds
