@@ -246,10 +246,17 @@ namespace Sldl.Core.Extractors;
                         Artist        = artist,
                         Album         = album,
                         URI           = uri,
-                        MinTrackCount = minAlbumTrackCount,
-                        MaxTrackCount = maxAlbumTrackCount,
                     };
-                    rows.Add(new AlbumJob(query) { ItemNumber = rows.Count + 1, LineNumber = index });
+                    rows.Add(new AlbumJob(query)
+                    {
+                        ItemNumber = rows.Count + 1,
+                        LineNumber = index,
+                        ExtractorFolderCond = new FolderConditions
+                        {
+                            MinTrackCount = minAlbumTrackCount,
+                            MaxTrackCount = maxAlbumTrackCount,
+                        },
+                    });
                 }
                 else if (ytParse)
                 {

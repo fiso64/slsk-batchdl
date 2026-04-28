@@ -106,11 +106,16 @@ namespace Sldl.Core.Extractors;
             {
                 Artist = artistCredit,
                 Album = albumTitle,
-                MinTrackCount = totalTracks,
-                MaxTrackCount = (!fromReleaseGroup || extraction.SetAlbumMaxTrackCount) ? totalTracks : -1,
             };
 
-            queue.Jobs.Add(new AlbumJob(query));
+            queue.Jobs.Add(new AlbumJob(query)
+            {
+                ExtractorFolderCond = new FolderConditions
+                {
+                    MinTrackCount = totalTracks,
+                    MaxTrackCount = (!fromReleaseGroup || extraction.SetAlbumMaxTrackCount) ? totalTracks : -1,
+                }
+            });
             return queue;
         }
 
@@ -175,8 +180,6 @@ namespace Sldl.Core.Extractors;
                         Artist = artistCredit,
                         Album = albumTitle,
                         URI = releaseId,
-                        MinTrackCount = trackCount,
-                        MaxTrackCount = trackCount,
                     };
 
                     var job = new AlbumJob(query)
@@ -184,6 +187,7 @@ namespace Sldl.Core.Extractors;
                         ItemNumber = offset + count + 1,
                         ItemName = collectionName,
                         EnablesIndexByDefault = true,
+                        ExtractorFolderCond = new FolderConditions { MinTrackCount = trackCount, MaxTrackCount = trackCount },
                     };
                     queue.Jobs.Add(job);
                     count++;

@@ -49,45 +49,41 @@ public static class JobRequestMapper
 
     public static SongQuery ToSongQuery(SongQueryDto dto) => new()
     {
-        Artist = dto.Artist,
-        Title = dto.Title,
-        Album = dto.Album,
-        URI = dto.Uri,
-        Length = dto.Length,
+        Artist = dto.Artist ?? "",
+        Title = dto.Title ?? "",
+        Album = dto.Album ?? "",
+        URI = dto.Uri ?? "",
+        Length = dto.Length ?? -1,
         ArtistMaybeWrong = dto.ArtistMaybeWrong,
-        IsDirectLink = dto.IsDirectLink,
     };
 
     public static AlbumQuery ToAlbumQuery(AlbumQueryDto dto) => new()
     {
-        Artist = dto.Artist,
-        Album = dto.Album,
-        SearchHint = dto.SearchHint,
-        URI = dto.Uri,
+        Artist = dto.Artist ?? "",
+        Album = dto.Album ?? "",
+        SearchHint = dto.SearchHint ?? "",
+        URI = dto.Uri ?? "",
         ArtistMaybeWrong = dto.ArtistMaybeWrong,
-        IsDirectLink = dto.IsDirectLink,
-        MinTrackCount = dto.MinTrackCount,
-        MaxTrackCount = dto.MaxTrackCount,
     };
 
-    private static Job CreateJob(JobListItemDto item)
+    public static Job CreateJob(JobDraftDto item)
         => item switch
         {
-            ExtractJobListItemDto extract => CreateExtractJob(new SubmitExtractJobRequestDto(
+            ExtractJobDraftDto extract => CreateExtractJob(new SubmitExtractJobRequestDto(
                 extract.Input,
                 extract.InputType,
                 extract.AutoStartExtractedResult)),
-            TrackSearchJobListItemDto search => new SearchJob(ToSongQuery(search.SongQuery), search.IncludeFullResults),
-            AlbumSearchJobListItemDto search => new SearchJob(ToAlbumQuery(search.AlbumQuery)),
-            SongJobListItemDto song => new SongJob(ToSongQuery(song.SongQuery)),
-            AlbumJobListItemDto album => new AlbumJob(ToAlbumQuery(album.AlbumQuery)),
-            AggregateJobListItemDto aggregate => new AggregateJob(ToSongQuery(aggregate.SongQuery)),
-            AlbumAggregateJobListItemDto aggregate => new AlbumAggregateJob(ToAlbumQuery(aggregate.AlbumQuery)),
-            JobListJobListItemDto list => CreateJobList(list.Name, list.Jobs),
-            _ => throw new ArgumentException($"Unsupported job-list item type '{item.GetType().Name}'")
+            TrackSearchJobDraftDto search => new SearchJob(ToSongQuery(search.SongQuery), search.IncludeFullResults),
+            AlbumSearchJobDraftDto search => new SearchJob(ToAlbumQuery(search.AlbumQuery)),
+            SongJobDraftDto song => new SongJob(ToSongQuery(song.SongQuery)),
+            AlbumJobDraftDto album => new AlbumJob(ToAlbumQuery(album.AlbumQuery)),
+            AggregateJobDraftDto aggregate => new AggregateJob(ToSongQuery(aggregate.SongQuery)),
+            AlbumAggregateJobDraftDto aggregate => new AlbumAggregateJob(ToAlbumQuery(aggregate.AlbumQuery)),
+            JobListJobDraftDto list => CreateJobList(list.Name, list.Jobs),
+            _ => throw new ArgumentException($"Unsupported job draft type '{item.GetType().Name}'")
         };
 
-    private static JobList CreateJobList(string? name, IReadOnlyList<JobListItemDto> jobs)
+    private static JobList CreateJobList(string? name, IReadOnlyList<JobDraftDto> jobs)
     {
         if (jobs.Count == 0)
             throw new ArgumentException("job-list must contain at least one child job");

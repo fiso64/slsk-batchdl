@@ -341,7 +341,6 @@ namespace Sldl.Core.Extractors;
                     {
                         Album         = album.Name,
                         Artist        = artist,
-                        MinTrackCount = album.TotalTracks,
                     };
 
                     var job = new AlbumJob(query)
@@ -349,6 +348,7 @@ namespace Sldl.Core.Extractors;
                         ItemNumber            = num++,
                         ItemName              = "Spotify Albums",
                         EnablesIndexByDefault = true,
+                        ExtractorFolderCond = new FolderConditions { MinTrackCount = album.TotalTracks },
                     };
                     queue.Jobs.Add(job);
                 }
@@ -442,10 +442,17 @@ namespace Sldl.Core.Extractors;
                 Artist = album.Artists.First().Name,
             };
 
-            if (extraction.SetAlbumMinTrackCount) albumQuery.MinTrackCount = songs.Count;
-            if (extraction.SetAlbumMaxTrackCount) albumQuery.MaxTrackCount = songs.Count;
+            var albumJob = new AlbumJob(albumQuery);
+            if (extraction.SetAlbumMinTrackCount || extraction.SetAlbumMaxTrackCount)
+            {
+                albumJob.ExtractorFolderCond = new FolderConditions
+                {
+                    MinTrackCount = extraction.SetAlbumMinTrackCount ? songs.Count : -1,
+                    MaxTrackCount = extraction.SetAlbumMaxTrackCount ? songs.Count : -1,
+                };
+            }
 
-            return new AlbumJob(albumQuery);
+            return albumJob;
         }
 
         private string GetAlbumIdFromUrl(string url)

@@ -9,14 +9,15 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
 {
     private readonly DownloadSettings baseDefaults;
     private readonly ProfileCatalog catalog;
-    private readonly DownloadSettingsDeltaDto? launchDownloadSettings;
+    private readonly DownloadSettingsPatchDto? launchDownloadSettings;
     private readonly ConcurrentDictionary<Guid, SubmissionOptionsDto> workflowOptions = new();
+    private readonly ConcurrentDictionary<Guid, SubmissionOptionsDto> jobOptions = new();
     private readonly ConcurrentDictionary<Guid, string> jobOutputParentDirs = new();
 
     public ServerJobSettingsResolver(
         DownloadSettings baseDefaults,
         ProfileCatalog catalog,
-        DownloadSettingsDeltaDto? launchDownloadSettings = null)
+        DownloadSettingsPatchDto? launchDownloadSettings = null)
     {
         this.baseDefaults = SettingsCloner.Clone(baseDefaults);
         this.catalog = catalog;
@@ -27,7 +28,18 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
     }
 
     public void SetWorkflowOptions(Guid workflowId, SubmissionOptionsDto? options)
-        => workflowOptions[workflowId] = options ?? new SubmissionOptionsDto();
+    {
+        if (options == null)
+        {
+            workflowOptions.TryAdd(workflowId, new SubmissionOptionsDto());
+            return;
+        }
+
+        if (IsWorkflowOnly(options) && workflowOptions.ContainsKey(workflowId))
+            return;
+
+        workflowOptions[workflowId] = options;
+    }
 
     public void SetJobOutputParentDir(Guid jobId, string? outputParentDir)
     {
@@ -35,12 +47,16 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
             jobOutputParentDirs[jobId] = outputParentDir;
     }
 
+    public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
+        => jobOptions[jobId] = options ?? new SubmissionOptionsDto();
+
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {
         if (inherited.PrintOption != PrintOption.None)
             return SettingsCloner.Clone(inherited);
 
-        workflowOptions.TryGetValue(job.WorkflowId, out var options);
+        if (!jobOptions.TryGetValue(job.Id, out var options))
+            workflowOptions.TryGetValue(job.WorkflowId, out options);
         var context = ToProfileContext(options?.ProfileContext);
 
         var matchingAutoProfiles = catalog.AutoProfiles
@@ -58,8 +74,40 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
         foreach (var profile in namedProfiles)
             profile.Download.ApplyTo(settings);
 
-        DownloadSettingsDeltaMapper.ApplyTo(settings, launchDownloadSettings);
-        DownloadSettingsDeltaMapper.ApplyTo(settings, options?.DownloadSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, launchDownloadSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, options?.DownloadSettings);
+
+        if (!string.IsNullOrWhiteSpace(options?.OutputParentDir))
+            settings.Output.ParentDir = options.OutputParentDir;
+
+        if (jobOutputParentDirs.TryGetValue(job.Id, out var outputParentDir))
+            settings.Output.ParentDir = outputParentDir;
+
+        settings.AppliedAutoProfiles = [.. matchingAutoProfiles.Select(p => p.Name)];
+        NormalizeForServer(settings);
+        return settings;
+    }
+
+    public DownloadSettings ResolveFollowUp(Job job, SubmissionOptionsDto? options)
+    {
+        var context = ToProfileContext(options?.ProfileContext);
+        var matchingAutoProfiles = catalog.AutoProfiles
+            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, baseDefaults, job, context))
+            .ToList();
+
+        var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames, msg => Logger.Warn(msg));
+
+        var settings = SettingsCloner.Clone(baseDefaults);
+        catalog.DefaultProfile?.Download.ApplyTo(settings);
+
+        foreach (var profile in matchingAutoProfiles)
+            profile.Download.ApplyTo(settings);
+
+        foreach (var profile in namedProfiles)
+            profile.Download.ApplyTo(settings);
+
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, launchDownloadSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, options?.DownloadSettings);
 
         if (!string.IsNullOrWhiteSpace(options?.OutputParentDir))
             settings.Output.ParentDir = options.OutputParentDir;
@@ -106,4 +154,10 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
 
         return context;
     }
+
+    private static bool IsWorkflowOnly(SubmissionOptionsDto options)
+        => options.OutputParentDir == null
+        && options.ProfileNames == null
+        && options.ProfileContext == null
+        && options.DownloadSettings == null;
 }

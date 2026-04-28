@@ -122,18 +122,18 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return await ReadRequiredAsync<WorkflowDetailDto>(response, ct);
     }
 
-    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetTrackResultsAsync(Guid jobId, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/tracks", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/files", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchResultSnapshotDto<FileCandidateDto>>(response, ct);
     }
 
-    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetAlbumResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
+    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/albums?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
+        using var response = await http.GetAsync($"api/jobs/{jobId}/results/folders?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
@@ -156,18 +156,6 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
             return null;
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
-    }
-
-    public async Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(
-        Guid extractJobId,
-        StartExtractedResultRequestDto request,
-        CancellationToken ct = default)
-    {
-        using var response = await http.PostAsJsonAsync($"api/jobs/{extractJobId}/extracted-result/start", request, jsonOptions, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<IReadOnlyList<JobSummaryDto>>(response, ct);
     }
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
@@ -195,11 +183,11 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         }
     }
 
-    public async Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct = default)
-        => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/downloads/song", request, ct);
+    public async Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid searchJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
+        => await PostOptionalAsync<IReadOnlyList<JobSummaryDto>, StartFileDownloadsRequestDto>($"api/jobs/{searchJobId}/downloads/files", request, ct);
 
-    public async Task<JobSummaryDto?> StartAlbumDownloadAsync(Guid searchJobId, StartAlbumDownloadRequestDto request, CancellationToken ct = default)
-        => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/downloads/album", request, ct);
+    public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
+        => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/downloads/folder", request, ct);
 
     public async Task<bool> CancelJobAsync(Guid jobId, CancellationToken ct = default)
     {
@@ -229,12 +217,15 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     }
 
     private async Task<JobSummaryDto?> PostOptionalSummaryAsync<T>(string url, T request, CancellationToken ct)
+        => await PostOptionalAsync<JobSummaryDto, T>(url, request, ct);
+
+    private async Task<TResponse?> PostOptionalAsync<TResponse, TRequest>(string url, TRequest request, CancellationToken ct)
     {
         using var response = await http.PostAsJsonAsync(url, request, jsonOptions, ct);
         if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
+            return default;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobSummaryDto>(response, ct);
+        return await ReadRequiredAsync<TResponse>(response, ct);
     }
 
     private ServerEventEnvelopeDto RehydrateEnvelope(ServerEventEnvelopeDto envelope)

@@ -71,11 +71,23 @@ internal sealed class RemoteInteractiveCliCoordinator
                 && summary.ResultJobId != null
                 && startedExtractResults.Add(summary.JobId))
             {
-                await backend.StartExtractedResultAsync(
-                    summary.JobId,
-                    new StartExtractedResultRequestDto(ServerProtocol.ExtractedResultStartModes.AlbumSearch),
-                    ct);
-                startedFollowUp = true;
+                var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+                if (detail?.Payload is ExtractJobPayloadDto { ResultDraft: not null } extract)
+                {
+                    var draft = ToInteractiveDraft(extract.ResultDraft);
+                    var options = new SubmissionOptionsDto(WorkflowId: summary.WorkflowId);
+                    if (draft is JobListJobDraftDto list)
+                    {
+                        foreach (var child in list.Jobs)
+                            await SubmitDraftAsync(child, options, ct);
+                    }
+                    else
+                    {
+                        await SubmitDraftAsync(draft, options, ct);
+                    }
+
+                    startedFollowUp = true;
+                }
             }
 
             if (summary.Kind == "search"
@@ -108,7 +120,7 @@ internal sealed class RemoteInteractiveCliCoordinator
         if (detail?.Payload is not SearchJobPayloadDto search || search.AlbumQuery == null)
             return;
 
-        var projection = await backend.GetAlbumResultsAsync(searchJobId, includeFiles: true, ct);
+        var projection = await backend.GetFolderResultsAsync(searchJobId, includeFiles: true, ct);
         var folders = projection?.Items.Select(InteractiveCliCoordinator.ToAlbumFolder).ToList() ?? [];
         if (folders.Count == 0)
             return;
@@ -153,11 +165,10 @@ internal sealed class RemoteInteractiveCliCoordinator
         AlbumFolder selected,
         CancellationToken ct)
     {
-        var summary = await backend.StartAlbumDownloadAsync(
+        var summary = await backend.StartFolderDownloadAsync(
             session.SourceSearchJobId,
-            new StartAlbumDownloadRequestDto(
-                new AlbumFolderRefDto(selected.Username, selected.FolderPath),
-                AllowBrowseResolvedTarget: true),
+            new StartFolderDownloadRequestDto(
+                new AlbumFolderRefDto(selected.Username, selected.FolderPath)),
             ct);
 
         if (summary == null)
@@ -241,28 +252,66 @@ internal sealed class RemoteInteractiveCliCoordinator
         var job = payload.AlbumQuery != null
             ? new SearchJob(new AlbumQuery
             {
-                Artist = payload.AlbumQuery.Artist,
-                Album = payload.AlbumQuery.Album,
-                SearchHint = payload.AlbumQuery.SearchHint,
-                URI = payload.AlbumQuery.Uri,
+                Artist = payload.AlbumQuery.Artist ?? "",
+                Album = payload.AlbumQuery.Album ?? "",
+                SearchHint = payload.AlbumQuery.SearchHint ?? "",
+                URI = payload.AlbumQuery.Uri ?? "",
                 ArtistMaybeWrong = payload.AlbumQuery.ArtistMaybeWrong,
-                IsDirectLink = payload.AlbumQuery.IsDirectLink,
-                MinTrackCount = payload.AlbumQuery.MinTrackCount,
-                MaxTrackCount = payload.AlbumQuery.MaxTrackCount,
             })
             : new SearchJob(new SongQuery
             {
-                Artist = payload.Query.Artist,
-                Title = payload.Query.Title,
-                Album = payload.Query.Album,
-                URI = payload.Query.Uri,
-                Length = payload.Query.Length,
+                Artist = payload.Query.Artist ?? "",
+                Title = payload.Query.Title ?? "",
+                Album = payload.Query.Album ?? "",
+                URI = payload.Query.Uri ?? "",
+                Length = payload.Query.Length ?? -1,
                 ArtistMaybeWrong = payload.Query.ArtistMaybeWrong,
-                IsDirectLink = payload.Query.IsDirectLink,
             });
 
         return job;
     }
+
+    private async Task<JobSummaryDto> SubmitDraftAsync(JobDraftDto draft, SubmissionOptionsDto options, CancellationToken ct)
+        => draft switch
+        {
+            ExtractJobDraftDto extract => await backend.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(extract.Input, extract.InputType, extract.AutoStartExtractedResult, options),
+                ct),
+            TrackSearchJobDraftDto search => await backend.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(search.SongQuery, search.IncludeFullResults, options),
+                ct),
+            AlbumSearchJobDraftDto search => await backend.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(search.AlbumQuery, options),
+                ct),
+            SongJobDraftDto song => await backend.SubmitSongJobAsync(
+                new SubmitSongJobRequestDto(song.SongQuery, options),
+                ct),
+            AlbumJobDraftDto album => await backend.SubmitAlbumJobAsync(
+                new SubmitAlbumJobRequestDto(album.AlbumQuery, options),
+                ct),
+            AggregateJobDraftDto aggregate => await backend.SubmitAggregateJobAsync(
+                new SubmitAggregateJobRequestDto(aggregate.SongQuery, options),
+                ct),
+            AlbumAggregateJobDraftDto aggregate => await backend.SubmitAlbumAggregateJobAsync(
+                new SubmitAlbumAggregateJobRequestDto(aggregate.AlbumQuery, options),
+                ct),
+            JobListJobDraftDto list => await backend.SubmitJobListAsync(
+                new SubmitJobListRequestDto(list.Name, list.Jobs, options),
+                ct),
+            _ => throw new InvalidOperationException($"Unsupported extracted job draft type '{draft.GetType().Name}'."),
+        };
+
+    private static JobDraftDto ToInteractiveDraft(JobDraftDto draft)
+        => draft switch
+        {
+            AlbumJobDraftDto album =>
+                new AlbumSearchJobDraftDto(album.AlbumQuery),
+            ExtractJobDraftDto extract =>
+                extract with { AutoStartExtractedResult = false },
+            JobListJobDraftDto list =>
+                list with { Jobs = list.Jobs.Select(ToInteractiveDraft).ToList() },
+            _ => draft,
+        };
 
     private static bool IsActive(string state)
         => state is nameof(JobState.Pending)

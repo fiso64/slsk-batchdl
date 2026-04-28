@@ -121,7 +121,7 @@ public static partial class ConfigManager
         return download;
     }
 
-    public static DownloadSettingsDeltaDto? CreateCliDownloadSettingsDelta(IReadOnlyList<string> cliArgs)
+    public static DownloadSettingsPatchDto? CreateCliDownloadSettingsPatch(IReadOnlyList<string> cliArgs)
     {
         var builder = new DownloadSettingsDeltaBuilder();
         ParseTokensAsProfile("<remote-cli>", NormalizeArgs(cliArgs), builder);
@@ -806,8 +806,8 @@ public static partial class ConfigManager
     {
         private readonly List<DownloadSettingOperationDto> operations = [];
 
-        public DownloadSettingsDeltaDto? Build()
-            => DownloadSettingsDeltaMapper.FromOperations(operations);
+        public DownloadSettingsPatchDto? Build()
+            => DownloadSettingsPatchDtoMapper.FromOperations(operations);
 
         public void Record(string flag, string value, Action<DownloadSettings> action)
         {

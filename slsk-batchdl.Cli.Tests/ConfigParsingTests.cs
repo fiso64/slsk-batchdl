@@ -206,7 +206,7 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
-        public void CondAlbumTrackCountExact_FlowsThroughUpgradeAndPreprocessor()
+        public void CondAlbumTrackCountExact_SetsFolderConditions()
         {
             var config = Cfg("--cond", "album-track-count=10", "x");
 
@@ -214,9 +214,7 @@ namespace Tests.ConfigParsingTests
             Assert.AreEqual(10, config.Search.NecessaryFolderCond.MaxTrackCount, "CLI --cond must set NecessaryFolderCond.MaxTrackCount");
 
             var albumJob = UpgradeAndPrepare(config);
-
-            Assert.AreEqual(10, albumJob.Query.MinTrackCount, "Preprocessor must apply NecessaryFolderCond to AlbumQuery after Upgrade");
-            Assert.AreEqual(10, albumJob.Query.MaxTrackCount);
+            Assert.AreEqual("Some Artist", albumJob.Query.Artist);
         }
 
         [TestMethod]
@@ -228,26 +226,20 @@ namespace Tests.ConfigParsingTests
             Assert.AreEqual(-1, config.Search.NecessaryFolderCond.MaxTrackCount);
 
             var albumJob = UpgradeAndPrepare(config);
-
-            Assert.AreEqual(8,  albumJob.Query.MinTrackCount);
-            Assert.AreEqual(-1, albumJob.Query.MaxTrackCount);
+            Assert.AreEqual("Some Artist", albumJob.Query.Artist);
         }
 
         [TestMethod]
-        public void CondAlbumTrackCount_OverridesQueryDefaultAfterUpgrade()
+        public void CondAlbumTrackCount_RemainsInFolderConditionsAfterUpgrade()
         {
-            // If a metadata extractor (e.g. MusicBrainz) embeds a track count in the SongQuery
-            // before upgrade, NecessaryFolderCond (from CLI --cond) should win after Preprocessor.
             var config = Cfg("--cond", "album-track-count=12", "x");
 
-            // Simulate a SongQuery that already has track-count hints (e.g. from MusicBrainz).
             var albumJob = UpgradeAndPrepare(config,
                 query: new SongQuery { Title = "T", Artist = "A" });
 
-            // Even though the upgraded AlbumQuery starts with default MinTrackCount=-1,
-            // the CLI folder-cond must still apply.
-            Assert.AreEqual(12, albumJob.Query.MinTrackCount, "NecessaryFolderCond must apply after Upgrade+Preprocessor");
-            Assert.AreEqual(12, albumJob.Query.MaxTrackCount);
+            Assert.AreEqual("A", albumJob.Query.Artist);
+            Assert.AreEqual(12, albumJob.Config.Search.NecessaryFolderCond.MinTrackCount);
+            Assert.AreEqual(12, albumJob.Config.Search.NecessaryFolderCond.MaxTrackCount);
         }
     }
 
@@ -330,23 +322,20 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
-        public void RemoteDelta_ExplicitDefaultBool_IsRepresented()
+        public void RemotePatch_ExplicitDefaultBool_IsRepresented()
         {
-            var delta = ConfigManager.CreateCliDownloadSettingsDelta(["x", "--skip-existing", "true"]);
-            Assert.IsNotNull(delta);
-            var op = delta.Operations.Single(x => x.Path == "Skip.SkipExisting");
-            Assert.AreEqual(SettingOperationKind.Set, op.Operation);
-            Assert.AreEqual(true, op.BoolValue);
+            var patch = ConfigManager.CreateCliDownloadSettingsPatch(["x", "--skip-existing", "true"]);
+            Assert.IsNotNull(patch);
+            Assert.AreEqual(true, patch.Skip?.SkipExisting);
         }
 
         [TestMethod]
-        public void RemoteDelta_OnCompleteAppend_IsRepresentedAsAppend()
+        public void RemotePatch_OnCompleteAppend_IsRepresentedAsAppend()
         {
-            var delta = ConfigManager.CreateCliDownloadSettingsDelta(["x", "--on-complete", "+ second"]);
-            Assert.IsNotNull(delta);
-            var op = delta.Operations.Single(x => x.Path == "Output.OnComplete");
-            Assert.AreEqual(SettingOperationKind.Append, op.Operation);
-            CollectionAssert.AreEqual(new[] { "second" }, op.StringListValue?.ToArray());
+            var patch = ConfigManager.CreateCliDownloadSettingsPatch(["x", "--on-complete", "+ second"]);
+            Assert.IsNotNull(patch);
+            CollectionAssert.AreEqual(new[] { "second" }, patch.Output?.OnComplete?.Append?.ToArray());
+            Assert.IsNull(patch.Output?.OnComplete?.Replace);
         }
 
         // ── Inline = form ─────────────────────────────────────────────────────
@@ -493,20 +482,18 @@ namespace Tests.ConfigParsingTests
                 new CliSettings());
 
             Assert.IsNull(options.OutputParentDir);
-            Assert.IsFalse(options.DownloadSettings?.Operations.Any(op => op.Path == "Output.ParentDir") == true);
+            Assert.IsNull(options.DownloadSettings?.Output?.ParentDir);
         }
 
         [TestMethod]
-        public void RemoteSubmissionOptions_SendExplicitPathAsDownloadDelta()
+        public void RemoteSubmissionOptions_SendExplicitPathAsDownloadPatch()
         {
             var options = Sldl.Cli.Program.BuildRemoteSubmissionOptions(
                 ["some input", "--remote", "127.0.0.1", "-p", "C:\\Downloads"],
                 new CliSettings());
 
             Assert.IsNull(options.OutputParentDir);
-            var pathOp = options.DownloadSettings?.Operations.SingleOrDefault(op => op.Path == "Output.ParentDir");
-            Assert.IsNotNull(pathOp);
-            Assert.AreEqual("C:\\Downloads", pathOp.StringValue);
+            Assert.AreEqual("C:\\Downloads", options.DownloadSettings?.Output?.ParentDir);
         }
 
         [TestMethod]

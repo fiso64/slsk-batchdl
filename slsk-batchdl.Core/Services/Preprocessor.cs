@@ -9,12 +9,9 @@ namespace Sldl.Core.Services;
         /// <summary>
         /// Applies all configured preprocessing transformations to song.Query.
         /// Sets song.Query = new SongQuery(song.Query) { ... } (copy-and-replace — no mutation of original).
-        /// No-op when song.Query.IsDirectLink is true.
         /// </summary>
         public static void PreprocessSong(SongJob song, PreprocessSettings preprocess)
         {
-            if (song.Query.IsDirectLink) return;
-
             var q = song.Query;
             string artist = q.Artist;
             string title  = q.Title;
@@ -71,12 +68,9 @@ namespace Sldl.Core.Services;
         /// <summary>
         /// Applies all configured preprocessing transformations to job.Query.
         /// Sets job.Query = new AlbumQuery(job.Query) { ... }.
-        /// No-op when job.Query.IsDirectLink is true.
         /// </summary>
         public static void PreprocessAlbum(AlbumJob job, PreprocessSettings preprocess)
         {
-            if (job.Query.IsDirectLink) return;
-
             var q = job.Query;
             string artist = q.Artist;
             string album  = q.Album;

@@ -1,6 +1,7 @@
 using Sldl.Core;
 using Sldl.Core.Jobs;
 using Sldl.Core.Models;
+using Sldl.Core.Services;
 using Sldl.Core.Settings;
 using Sldl.Server;
 using Soulseek;
@@ -70,7 +71,7 @@ internal sealed class InteractiveCliCoordinator
 
         if (_interactiveEnabled
             && result is AlbumJob albumJob
-            && !albumJob.Query.IsDirectLink)
+            && albumJob.ResolvedTarget == null)
         {
             var searchJob = new SearchJob(albumJob.Query);
             searchJob.CopySharedFieldsFrom(albumJob);
@@ -112,7 +113,7 @@ internal sealed class InteractiveCliCoordinator
         if (searchJob.State != JobState.Done || searchJob.AlbumQuery == null)
             return;
 
-        var projection = _backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, _appToken).GetAwaiter().GetResult();
+        var projection = _backend.GetFolderResultsAsync(searchJob.Id, includeFiles: true, _appToken).GetAwaiter().GetResult();
         var folders = projection?.Items
             .Select(ToAlbumFolder)
             .ToList()
@@ -148,9 +149,9 @@ internal sealed class InteractiveCliCoordinator
 
     private void EnqueueInteractiveAlbumJob(InteractiveAlbumSession session, AlbumFolder selected, DownloadSettings settings)
     {
-        var summary = _backend.StartAlbumDownloadAsync(
+        var summary = _backend.StartFolderDownloadAsync(
             session.SourceSearchJobId,
-            new StartAlbumDownloadRequestDto(new AlbumFolderRefDto(selected.Username, selected.FolderPath), AllowBrowseResolvedTarget: true),
+            new StartFolderDownloadRequestDto(new AlbumFolderRefDto(selected.Username, selected.FolderPath)),
             _appToken).GetAwaiter().GetResult();
 
         if (summary == null)
@@ -317,23 +318,41 @@ internal sealed class InteractiveCliCoordinator
         => new(
             folder.Username,
             folder.FolderPath,
-            () => folder.Files?.Select(ToSongJob).ToList() ?? [],
-            folder.SearchFileCount,
-            folder.SearchAudioFileCount,
-            folder.SearchSortedAudioLengths.ToArray(),
-            folder.SearchRepresentativeAudioFilename);
+            () => folder.Files?.Select(ToSongJob).ToList() ?? []);
+
+    private static SongJob ToSongJob(FileCandidateDto file)
+    {
+        var candidate = ToFileCandidate(file);
+        var query = Searcher.InferSongQuery(candidate.Filename, new SongQuery());
+        return new SongJob(query) { ResolvedTarget = candidate };
+    }
+
+    private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
+        => new(
+            new SearchResponse(
+                candidate.Username,
+                -1,
+                candidate.Peer.HasFreeUploadSlot ?? false,
+                candidate.Peer.UploadSpeed ?? -1,
+                -1,
+                null),
+            new Soulseek.File(
+                0,
+                candidate.Filename,
+                candidate.Size,
+                candidate.Extension ?? Path.GetExtension(candidate.Filename),
+                candidate.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
 
     internal static SongJob ToSongJob(SongJobPayloadDto song)
     {
         var job = new SongJob(new SongQuery
         {
-            Artist = song.Query.Artist,
-            Title = song.Query.Title,
-            Album = song.Query.Album,
-            URI = song.Query.Uri,
-            Length = song.Query.Length,
+            Artist = song.Query.Artist ?? "",
+            Title = song.Query.Title ?? "",
+            Album = song.Query.Album ?? "",
+            URI = song.Query.Uri ?? "",
+            Length = song.Query.Length ?? -1,
             ArtistMaybeWrong = song.Query.ArtistMaybeWrong,
-            IsDirectLink = song.Query.IsDirectLink,
         })
         {
             DownloadPath = song.DownloadPath,

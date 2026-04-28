@@ -93,54 +93,47 @@ public sealed record SubmitAlbumAggregateJobRequestDto(
 /// </summary>
 public sealed record SubmitJobListRequestDto(
     string? Name,
-    IReadOnlyList<JobListItemDto> Jobs,
+    IReadOnlyList<JobDraftDto> Jobs,
     SubmissionOptionsDto? Options = null);
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
-[JsonDerivedType(typeof(ExtractJobListItemDto), ServerProtocol.JobListItemKinds.Extract)]
-[JsonDerivedType(typeof(TrackSearchJobListItemDto), ServerProtocol.JobListItemKinds.TrackSearch)]
-[JsonDerivedType(typeof(AlbumSearchJobListItemDto), ServerProtocol.JobListItemKinds.AlbumSearch)]
-[JsonDerivedType(typeof(SongJobListItemDto), ServerProtocol.JobListItemKinds.Song)]
-[JsonDerivedType(typeof(AlbumJobListItemDto), ServerProtocol.JobListItemKinds.Album)]
-[JsonDerivedType(typeof(AggregateJobListItemDto), ServerProtocol.JobListItemKinds.Aggregate)]
-[JsonDerivedType(typeof(AlbumAggregateJobListItemDto), ServerProtocol.JobListItemKinds.AlbumAggregate)]
-[JsonDerivedType(typeof(JobListJobListItemDto), ServerProtocol.JobListItemKinds.JobList)]
-public abstract record JobListItemDto;
+[JsonDerivedType(typeof(ExtractJobDraftDto), ServerProtocol.JobDraftKinds.Extract)]
+[JsonDerivedType(typeof(TrackSearchJobDraftDto), ServerProtocol.JobDraftKinds.TrackSearch)]
+[JsonDerivedType(typeof(AlbumSearchJobDraftDto), ServerProtocol.JobDraftKinds.AlbumSearch)]
+[JsonDerivedType(typeof(SongJobDraftDto), ServerProtocol.JobDraftKinds.Song)]
+[JsonDerivedType(typeof(AlbumJobDraftDto), ServerProtocol.JobDraftKinds.Album)]
+[JsonDerivedType(typeof(AggregateJobDraftDto), ServerProtocol.JobDraftKinds.Aggregate)]
+[JsonDerivedType(typeof(AlbumAggregateJobDraftDto), ServerProtocol.JobDraftKinds.AlbumAggregate)]
+[JsonDerivedType(typeof(JobListJobDraftDto), ServerProtocol.JobDraftKinds.JobList)]
+public abstract record JobDraftDto;
 
-public sealed record ExtractJobListItemDto(
+public sealed record ExtractJobDraftDto(
     string Input,
     string? InputType = null,
-    bool? AutoStartExtractedResult = null) : JobListItemDto;
+    bool? AutoStartExtractedResult = null) : JobDraftDto;
 
-public sealed record TrackSearchJobListItemDto(
+public sealed record TrackSearchJobDraftDto(
     SongQueryDto SongQuery,
-    bool IncludeFullResults = false) : JobListItemDto;
+    bool IncludeFullResults = false) : JobDraftDto;
 
-public sealed record AlbumSearchJobListItemDto(
-    AlbumQueryDto AlbumQuery) : JobListItemDto;
+public sealed record AlbumSearchJobDraftDto(
+    AlbumQueryDto AlbumQuery) : JobDraftDto;
 
-public sealed record SongJobListItemDto(
-    SongQueryDto SongQuery) : JobListItemDto;
+public sealed record SongJobDraftDto(
+    SongQueryDto SongQuery) : JobDraftDto;
 
-public sealed record AlbumJobListItemDto(
-    AlbumQueryDto AlbumQuery) : JobListItemDto;
+public sealed record AlbumJobDraftDto(
+    AlbumQueryDto AlbumQuery) : JobDraftDto;
 
-public sealed record AggregateJobListItemDto(
-    SongQueryDto SongQuery) : JobListItemDto;
+public sealed record AggregateJobDraftDto(
+    SongQueryDto SongQuery) : JobDraftDto;
 
-public sealed record AlbumAggregateJobListItemDto(
-    AlbumQueryDto AlbumQuery) : JobListItemDto;
+public sealed record AlbumAggregateJobDraftDto(
+    AlbumQueryDto AlbumQuery) : JobDraftDto;
 
-public sealed record JobListJobListItemDto(
+public sealed record JobListJobDraftDto(
     string? Name,
-    IReadOnlyList<JobListItemDto> Jobs) : JobListItemDto;
-
-/// <summary>
-/// Starts the result produced by a completed extract job. Mode "normal" runs the extracted job
-/// as-is; mode "album-search" turns extracted album jobs into selectable album searches.
-/// </summary>
-public sealed record StartExtractedResultRequestDto(
-    string Mode = ServerProtocol.ExtractedResultStartModes.Normal);
+    IReadOnlyList<JobDraftDto> Jobs) : JobDraftDto;
 
 /// <summary>
 /// Submission-time settings layered over the daemon defaults.
@@ -150,7 +143,7 @@ public sealed record SubmissionOptionsDto(
     string? OutputParentDir = null,
     IReadOnlyList<string>? ProfileNames = null,
     IReadOnlyDictionary<string, bool>? ProfileContext = null,
-    DownloadSettingsDeltaDto? DownloadSettings = null);
+    DownloadSettingsPatchDto? DownloadSettings = null);
 
 /// <summary>
 /// User-visible summary of a configured profile.
@@ -169,47 +162,50 @@ public sealed record RetrieveFolderRequestDto(
     AlbumFolderRefDto Folder);
 
 /// <summary>
-/// Starts a song download from a selected search result candidate.
+/// Starts one or more downloads from selected search result files.
 /// </summary>
-public sealed record StartSongDownloadRequestDto(
-    FileCandidateRefDto Candidate,
-    string? OutputParentDir = null);
+public sealed record StartFileDownloadsRequestDto(
+    IReadOnlyList<FileCandidateRefDto> Files,
+    SubmissionOptionsDto? Options = null);
 
 /// <summary>
-/// Starts an album download from a selected album result folder.
+/// Starts an album/folder download from a selected search result folder.
 /// </summary>
-/// <param name="AllowBrowseResolvedTarget">
-/// When true, the album download may browse the selected folder for additional files.
-/// </param>
-public sealed record StartAlbumDownloadRequestDto(
+public sealed record StartFolderDownloadRequestDto(
     AlbumFolderRefDto Folder,
-    bool AllowBrowseResolvedTarget = true,
-    string? OutputParentDir = null);
+    SubmissionOptionsDto? Options = null);
 
 /// <summary>
 /// Song query shape used by search, download, and embedded song payloads.
 /// </summary>
+/// <param name="Artist">Expected artist name, or null when unknown.</param>
+/// <param name="Title">Expected track title, or null for artist-level searches.</param>
+/// <param name="Album">Optional album hint used for matching/filtering.</param>
+/// <param name="Uri">Optional source URI/ID metadata, such as Spotify or YouTube identity.</param>
+/// <param name="Length">Expected track length in seconds, or null when unknown.</param>
+/// <param name="ArtistMaybeWrong">True when the artist came from weak metadata and should be treated as a hint rather than a strict identity.</param>
 public sealed record SongQueryDto(
-    string Artist,
-    string Title,
-    string Album,
-    string Uri,
-    int Length,
-    bool ArtistMaybeWrong,
-    bool IsDirectLink);
+    string? Artist = null,
+    string? Title = null,
+    string? Album = null,
+    string? Uri = null,
+    int? Length = null,
+    bool ArtistMaybeWrong = false);
 
 /// <summary>
 /// Album query shape used by album search/download jobs.
 /// </summary>
+/// <param name="Artist">Expected album artist, or null when unknown.</param>
+/// <param name="Album">Expected album/folder name, or null for artist-level album searches.</param>
+/// <param name="SearchHint">Optional track-title hint used to find albums by a song they contain.</param>
+/// <param name="Uri">Optional source URI/ID metadata, such as Spotify or MusicBrainz identity.</param>
+/// <param name="ArtistMaybeWrong">True when the artist came from weak metadata and should be treated as a hint rather than a strict identity.</param>
 public sealed record AlbumQueryDto(
-    string Artist,
-    string Album,
-    string SearchHint,
-    string Uri,
-    bool ArtistMaybeWrong,
-    bool IsDirectLink,
-    int MinTrackCount,
-    int MaxTrackCount);
+    string? Artist = null,
+    string? Album = null,
+    string? SearchHint = null,
+    string? Uri = null,
+    bool ArtistMaybeWrong = false);
 
 /// <summary>
 /// Stable identity for a file candidate within a search result.
@@ -226,6 +222,14 @@ public sealed record AlbumFolderRefDto(
     string FolderPath);
 
 /// <summary>
+/// Peer state attached to a search response or folder result.
+/// </summary>
+public sealed record PeerInfoDto(
+    string Username,
+    bool? HasFreeUploadSlot = null,
+    int? UploadSpeed = null);
+
+/// <summary>
 /// Raw search result row, primarily for diagnostics or advanced clients.
 /// </summary>
 public sealed record SearchRawResultDto(
@@ -235,6 +239,7 @@ public sealed record SearchRawResultDto(
     string Filename,
     long Size,
     int? BitRate,
+    int? SampleRate,
     int? Length);
 
 /// <summary>
@@ -254,30 +259,36 @@ public sealed record FileCandidateDto(
     FileCandidateRefDto Ref,
     string Username,
     string Filename,
+    PeerInfoDto Peer,
     long Size,
     int? BitRate,
+    int? SampleRate,
     int? Length,
-    bool? HasFreeUploadSlot = null,
-    int? UploadSpeed = null,
     string? Extension = null,
     IReadOnlyList<FileAttributeDto>? Attributes = null);
 
 /// <summary>
 /// Album folder candidate shown in album search results.
 /// </summary>
+/// <param name="FileCount">
+/// Number of files from this folder that appeared in the search results. This may be lower than the folder's real file count;
+/// retrieve the full folder to see authoritative contents.
+/// </param>
+/// <param name="AudioFileCount">
+/// Number of audio files from this folder that appeared in the search results. This may be lower than the folder's real audio-file count;
+/// retrieve the full folder to see authoritative contents.
+/// </param>
 /// <param name="Files">
-/// Optional file list. Present only when requested with includeFiles=true.
+/// Optional file list. Present only when requested with includeFiles=true. May be incomplete; retrieve the full folder to see authoritative contents.
 /// </param>
 public sealed record AlbumFolderDto(
     AlbumFolderRefDto Ref,
     string Username,
     string FolderPath,
-    int SearchFileCount,
-    int SearchAudioFileCount,
-    IReadOnlyList<int> SearchSortedAudioLengths,
-    string? SearchRepresentativeAudioFilename,
-    bool HasSearchMetadata,
-    IReadOnlyList<SongJobPayloadDto>? Files = null);
+    PeerInfoDto Peer,
+    int FileCount,
+    int AudioFileCount,
+    IReadOnlyList<FileCandidateDto>? Files = null);
 
 /// <summary>
 /// Aggregate track candidate produced by aggregate search result views.
@@ -531,14 +542,16 @@ public sealed record SongStateChangedEventDto(
 /// </summary>
 public sealed record AlbumDownloadStartedEventDto(
     JobSummaryDto Summary,
-    AlbumFolderDto Folder);
+    AlbumFolderDto Folder,
+    IReadOnlyList<SongJobPayloadDto>? Tracks = null);
 
 /// <summary>
 /// Activity event emitted when an album starts downloading folder tracks.
 /// </summary>
 public sealed record AlbumTrackDownloadStartedEventDto(
     JobSummaryDto Summary,
-    AlbumFolderDto Folder);
+    AlbumFolderDto Folder,
+    IReadOnlyList<SongJobPayloadDto>? Tracks = null);
 
 /// <summary>
 /// Activity event emitted when album download processing completes.
@@ -603,10 +616,15 @@ public abstract record JobPayloadDto;
 /// <param name="ResultJobId">
 /// Semantic job produced by extraction. It may be started separately when auto-processing is off.
 /// </param>
+/// <param name="ResultDraft">
+/// Typed draft for the produced job. Submit it through the normal job submission endpoints to
+/// continue manually.
+/// </param>
 public sealed record ExtractJobPayloadDto(
     string Input,
     string? InputType,
-    Guid? ResultJobId) : JobPayloadDto;
+    Guid? ResultJobId,
+    JobDraftDto? ResultDraft) : JobPayloadDto;
 
 /// <summary>
 /// Payload for search jobs. Use the matching /results endpoint for the actual result items.
@@ -642,6 +660,7 @@ public sealed record SongJobPayloadDto(
     bool? ResolvedHasFreeUploadSlot = null,
     int? ResolvedUploadSpeed = null,
     long? ResolvedSize = null,
+    int? ResolvedSampleRate = null,
     string? ResolvedExtension = null,
     IReadOnlyList<FileAttributeDto>? ResolvedAttributes = null,
     Guid? JobId = null,
@@ -671,13 +690,17 @@ public sealed record FileAttributeDto(
 /// <param name="Results">
 /// Album folder candidates or the selected/downloaded folder state, depending on job phase.
 /// </param>
+/// <param name="Tracks">
+/// Running child track jobs for the selected/downloaded folder, when available.
+/// </param>
 public sealed record AlbumJobPayloadDto(
     AlbumQueryDto Query,
     int ResultCount,
     string? DownloadPath,
     string? ResolvedFolderUsername,
     string? ResolvedFolderPath,
-    IReadOnlyList<AlbumFolderDto>? Results = null) : JobPayloadDto;
+    IReadOnlyList<AlbumFolderDto>? Results = null,
+    IReadOnlyList<SongJobPayloadDto>? Tracks = null) : JobPayloadDto;
 
 /// <summary>
 /// Payload for aggregate track download jobs.

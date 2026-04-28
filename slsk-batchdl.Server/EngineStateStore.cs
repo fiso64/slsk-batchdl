@@ -573,7 +573,8 @@ public sealed class EngineStateStore
             ExtractJob extractJob => new ExtractJobPayloadDto(
                 extractJob.Input,
                 extractJob.InputType?.ToString(),
-                extractJob.Result?.Id),
+                extractJob.Result?.Id,
+                ToJobDraft(extractJob.Result)),
             SearchJob searchJob => new SearchJobPayloadDto(
                 searchJob.Intent.ToString(),
                 ToSongQueryDto(searchJob.Query),
@@ -588,7 +589,8 @@ public sealed class EngineStateStore
                 albumJob.DownloadPath,
                 albumJob.ResolvedTarget?.Username,
                 albumJob.ResolvedTarget?.FolderPath,
-                albumJob.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles: true)).ToList()),
+                albumJob.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles: true)).ToList(),
+                albumJob.ResolvedTarget?.Files.Select(ToSongJobPayloadDto).ToList()),
             AggregateJob aggregateJob => new AggregateJobPayloadDto(
                 ToSongQueryDto(aggregateJob.Query),
                 aggregateJob.Songs.Select(ToSongJobPayloadDto).ToList()),
@@ -602,6 +604,25 @@ public sealed class EngineStateStore
                 retrieveFolderJob.TargetFolder.Username,
                 retrieveFolderJob.NewFilesFoundCount),
             _ => new GenericJobPayloadDto(job.ToString(noInfo: true))
+        };
+
+    private static JobDraftDto? ToJobDraft(Job? job)
+        => job switch
+        {
+            null => null,
+            ExtractJob extract => new ExtractJobDraftDto(
+                extract.Input,
+                extract.InputType?.ToString(),
+                extract.AutoProcessResult),
+            SearchJob search when search.Intent == SearchIntent.Album && search.AlbumQuery != null =>
+                new AlbumSearchJobDraftDto(ToAlbumQueryDto(search.AlbumQuery)),
+            SearchJob search => new TrackSearchJobDraftDto(ToSongQueryDto(search.Query), search.IncludeFullResults),
+            SongJob song => new SongJobDraftDto(ToSongQueryDto(song.Query)),
+            AlbumJob album => new AlbumJobDraftDto(ToAlbumQueryDto(album.Query)),
+            AggregateJob aggregate => new AggregateJobDraftDto(ToSongQueryDto(aggregate.Query)),
+            AlbumAggregateJob aggregate => new AlbumAggregateJobDraftDto(ToAlbumQueryDto(aggregate.Query)),
+            JobList list => new JobListJobDraftDto(list.ItemName, list.Jobs.Select(ToJobDraft).OfType<JobDraftDto>().ToList()),
+            _ => null,
         };
 
     private bool IsEmbeddedSongParent(Guid parentJobId)
@@ -626,6 +647,7 @@ public sealed class EngineStateStore
             song.ResolvedTarget?.Response.HasFreeUploadSlot,
             song.ResolvedTarget?.Response.UploadSpeed,
             song.ResolvedTarget?.File.Size,
+            song.ResolvedTarget?.File.SampleRate,
             song.ResolvedTarget?.File.Extension,
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
@@ -637,33 +659,35 @@ public sealed class EngineStateStore
             BuildActions(song));
 
     private static SongQueryDto ToSongQueryDto(SongQuery query) => new(
-        query.Artist,
-        query.Title,
-        query.Album,
-        query.URI,
-        query.Length,
-        query.ArtistMaybeWrong,
-        query.IsDirectLink);
+        Optional(query.Artist),
+        Optional(query.Title),
+        Optional(query.Album),
+        Optional(query.URI),
+        Optional(query.Length),
+        query.ArtistMaybeWrong);
 
     private static AlbumQueryDto ToAlbumQueryDto(AlbumQuery query) => new(
-        query.Artist,
-        query.Album,
-        query.SearchHint,
-        query.URI,
-        query.ArtistMaybeWrong,
-        query.IsDirectLink,
-        query.MinTrackCount,
-        query.MaxTrackCount);
+        Optional(query.Artist),
+        Optional(query.Album),
+        Optional(query.SearchHint),
+        Optional(query.URI),
+        query.ArtistMaybeWrong);
+
+    private static string? Optional(string value)
+        => value.Length > 0 ? value : null;
+
+    private static int? Optional(int value)
+        => value >= 0 ? value : null;
 
     private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate) => new(
         new FileCandidateRefDto(candidate.Username, candidate.Filename),
         candidate.Username,
         candidate.Filename,
+        new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
         candidate.File.Size,
         candidate.File.BitRate,
+        candidate.File.SampleRate,
         candidate.File.Length,
-        candidate.Response.HasFreeUploadSlot,
-        candidate.Response.UploadSpeed,
         candidate.File.Extension,
         candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
@@ -672,13 +696,17 @@ public sealed class EngineStateStore
             new AlbumFolderRefDto(folder.Username, folder.FolderPath),
             folder.Username,
             folder.FolderPath,
+            new PeerInfoDto(
+                folder.Username,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
-            folder.SearchSortedAudioLengths.ToList(),
-            folder.SearchRepresentativeAudioFilename,
-            folder.HasSearchMetadata,
             includeFiles
-                ? folder.Files.Select(ToSongJobPayloadDto).ToList()
+                ? folder.Files
+                    .Where(song => song.ResolvedTarget != null)
+                    .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                    .ToList()
                 : null);
 
     private JobState EffectiveState(Job job)

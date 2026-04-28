@@ -3,6 +3,7 @@ using Soulseek;
 using Sldl.Core;
 using Sldl.Core.Jobs;
 using Sldl.Core.Models;
+using Sldl.Core.Services;
 using Konsole;
 using ProgressBar = Sldl.Cli.IProgressBar;
 using Sldl.Core.Settings;
@@ -613,7 +614,7 @@ public class CliProgressReporter
             return;
         }
 
-        int total = job.Folder.Files?.Count ?? 0;
+        int total = job.Tracks?.Count ?? job.Folder.Files?.Count ?? 0;
         lock (Printing.ConsoleLock)
         {
             if (_backendJobBars.TryGetValue(job.Summary.JobId, out var headerBar) && headerBar != null)
@@ -623,7 +624,7 @@ public class CliProgressReporter
             }
 
             Printing.PrintAlbumHeader(ToAlbumFolder(job.Folder));
-            InitializeBackendAlbumBlock(job.Summary, job.Folder);
+            InitializeBackendAlbumBlock(job.Summary, job.Tracks);
         }
     }
 
@@ -675,7 +676,7 @@ public class CliProgressReporter
             $"[{job.Summary.DisplayId}] AlbumJob: downloading tracks: {job.Summary.QueryText}",
             print: true);
         Printing.WriteLine($"Folder: {folderName}", ConsoleColor.DarkGray);
-        InitializeBackendAlbumBlock(job.Summary, job.Folder);
+        InitializeBackendAlbumBlock(job.Summary, job.Tracks);
     }
 
     private void ReportAlbumDownloadCompleted(AlbumJob job)
@@ -734,9 +735,9 @@ public class CliProgressReporter
             Printing.WriteLine();
     }
 
-    private void InitializeBackendAlbumBlock(JobSummaryDto summary, AlbumFolderDto folder)
+    private void InitializeBackendAlbumBlock(JobSummaryDto summary, IReadOnlyList<SongJobPayloadDto>? tracks)
     {
-        var block = new BackendAlbumBlock { Summary = summary, Songs = folder.Files?.ToList() ?? [] };
+        var block = new BackendAlbumBlock { Summary = summary, Songs = tracks?.ToList() ?? [] };
         foreach (var song in block.Songs.Where(s => s.JobId.HasValue))
         {
             string filename = song.ResolvedFilename ?? $"{song.Query.Artist} - {song.Query.Title}";
@@ -1127,17 +1128,39 @@ public class CliProgressReporter
             folder.FolderPath,
             folder.Files?.Select(ToSongJob).ToList() ?? []);
 
+    private static SongJob ToSongJob(FileCandidateDto file)
+    {
+        var candidate = ToFileCandidate(file);
+        var query = Searcher.InferSongQuery(candidate.Filename, new SongQuery());
+        return new SongJob(query) { ResolvedTarget = candidate };
+    }
+
+    private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
+        => new(
+            new SearchResponse(
+                candidate.Username,
+                -1,
+                candidate.Peer.HasFreeUploadSlot ?? false,
+                candidate.Peer.UploadSpeed ?? -1,
+                -1,
+                null),
+            new Soulseek.File(
+                0,
+                candidate.Filename,
+                candidate.Size,
+                candidate.Extension ?? Path.GetExtension(candidate.Filename),
+                candidate.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+
     private static SongJob ToSongJob(SongJobPayloadDto dto)
     {
         var job = new SongJob(new SongQuery
         {
-            Artist = dto.Query.Artist,
-            Title = dto.Query.Title,
-            Album = dto.Query.Album,
-            URI = dto.Query.Uri,
-            Length = dto.Query.Length,
+            Artist = dto.Query.Artist ?? "",
+            Title = dto.Query.Title ?? "",
+            Album = dto.Query.Album ?? "",
+            URI = dto.Query.Uri ?? "",
+            Length = dto.Query.Length ?? -1,
             ArtistMaybeWrong = dto.Query.ArtistMaybeWrong,
-            IsDirectLink = dto.Query.IsDirectLink,
         })
         {
             ResolvedTarget = dto.ResolvedUsername != null && dto.ResolvedFilename != null

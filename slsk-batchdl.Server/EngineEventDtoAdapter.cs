@@ -49,8 +49,14 @@ public sealed class EngineEventDtoAdapter
             song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
             song.DownloadPath,
             song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null));
-        events.AlbumDownloadStarted += (job, folder) => publish("album.download-started", new AlbumDownloadStartedEventDto(getSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
-        events.AlbumTrackDownloadStarted += (job, folder) => publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(getSummary(job), ToAlbumFolderDto(folder, includeFiles: true)));
+        events.AlbumDownloadStarted += (job, folder) => publish("album.download-started", new AlbumDownloadStartedEventDto(
+            getSummary(job),
+            ToAlbumFolderDto(folder, includeFiles: true),
+            folder.Files.Select(ToSongJobPayloadDto).ToList()));
+        events.AlbumTrackDownloadStarted += (job, folder) => publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(
+            getSummary(job),
+            ToAlbumFolderDto(folder, includeFiles: true),
+            folder.Files.Select(ToSongJobPayloadDto).ToList()));
         events.AlbumDownloadCompleted += job => publish("album.download-completed", new AlbumDownloadCompletedEventDto(getSummary(job)));
         events.OnCompleteStart += song => publish("on-complete.started", new OnCompleteStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
         events.OnCompleteEnd += song => publish("on-complete.ended", new OnCompleteEndedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
@@ -64,18 +70,24 @@ public sealed class EngineEventDtoAdapter
     }
 
     public static SongQueryDto ToSongQueryDto(SongQuery query)
-        => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong, query.IsDirectLink);
+        => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);
+
+    private static string? Optional(string value)
+        => value.Length > 0 ? value : null;
+
+    private static int? Optional(int value)
+        => value >= 0 ? value : null;
 
     public static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
         => new(
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
+            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
             candidate.File.Size,
             candidate.File.BitRate,
+            candidate.File.SampleRate,
             candidate.File.Length,
-            candidate.Response.HasFreeUploadSlot,
-            candidate.Response.UploadSpeed,
             candidate.File.Extension,
             candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
@@ -89,6 +101,7 @@ public sealed class EngineEventDtoAdapter
             song.ResolvedTarget?.Response.HasFreeUploadSlot,
             song.ResolvedTarget?.Response.UploadSpeed,
             song.ResolvedTarget?.File.Size,
+            song.ResolvedTarget?.File.SampleRate,
             song.ResolvedTarget?.File.Extension,
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
@@ -103,10 +116,16 @@ public sealed class EngineEventDtoAdapter
             new AlbumFolderRefDto(folder.Username, folder.FolderPath),
             folder.Username,
             folder.FolderPath,
+            new PeerInfoDto(
+                folder.Username,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
-            folder.SearchSortedAudioLengths.ToList(),
-            folder.SearchRepresentativeAudioFilename,
-            folder.HasSearchMetadata,
-            includeFiles ? folder.Files.Select(ToSongJobPayloadDto).ToList() : null);
+            includeFiles
+                ? folder.Files
+                    .Where(song => song.ResolvedTarget != null)
+                    .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                    .ToList()
+                : null);
 }

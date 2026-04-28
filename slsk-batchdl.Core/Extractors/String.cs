@@ -26,7 +26,7 @@ namespace Sldl.Core.Extractors;
                 throw new ArgumentException($"Input is a local file. To read it as a track list, specify --input-type list or --input-type csv.");
             ParseArgs(input, isAlbum,
                 out string artist, out string title, out string album, out string uri, out int length,
-                out bool artistMaybeWrong, out bool isDirectLink,
+                out bool artistMaybeWrong,
                 out int minAlbumTrackCount, out int maxAlbumTrackCount);
 
             bool treatAsAlbum = isAlbum || (title.Length == 0 && album.Length > 0);
@@ -40,11 +40,15 @@ namespace Sldl.Core.Extractors;
                     SearchHint      = title,
                     URI             = uri,
                     ArtistMaybeWrong = artistMaybeWrong,
-                    IsDirectLink    = isDirectLink,
-                    MinTrackCount   = minAlbumTrackCount,
-                    MaxTrackCount   = maxAlbumTrackCount,
                 };
-                return Task.FromResult<Job>(new AlbumJob(query));
+                return Task.FromResult<Job>(new AlbumJob(query)
+                {
+                    ExtractorFolderCond = new FolderConditions
+                    {
+                        MinTrackCount = minAlbumTrackCount,
+                        MaxTrackCount = maxAlbumTrackCount,
+                    },
+                });
             }
             else
             {
@@ -56,7 +60,6 @@ namespace Sldl.Core.Extractors;
                     URI             = uri,
                     Length          = length,
                     ArtistMaybeWrong = artistMaybeWrong,
-                    IsDirectLink    = isDirectLink,
                 };
                 return Task.FromResult<Job>(new SongJob(query));
             }
@@ -66,18 +69,18 @@ namespace Sldl.Core.Extractors;
         // Returns all parsed fields as out parameters so callers can build any query type.
         public static void ParseArgs(string input, bool isAlbum,
             out string artist, out string title, out string album, out string uri, out int length,
-            out bool artistMaybeWrong, out bool isDirectLink,
+            out bool artistMaybeWrong,
             out int minAlbumTrackCount, out int maxAlbumTrackCount)
         {
             input = input.Trim();
             artist = ""; title = ""; album = ""; uri = "";
-            length = -1; artistMaybeWrong = false; isDirectLink = false;
+            length = -1; artistMaybeWrong = false;
             minAlbumTrackCount = -1; maxAlbumTrackCount = -1;
 
             // Capture refs for the closure
             string _artist = "", _title = "", _album = "", _uri = "";
             int _length = -1;
-            bool _artistMaybeWrong = false, _isDirectLink = false;
+            bool _artistMaybeWrong = false;
             int _minCount = -1, _maxCount = -1;
 
             var keys = new string[] { "title", "artist", "length", "album", "artist-maybe-wrong", "album-track-count" };
@@ -183,7 +186,7 @@ namespace Sldl.Core.Extractors;
                 throw new ArgumentException("Track string must contain title, album or artist.");
 
             artist = _artist; title = _title; album = _album; uri = _uri;
-            length = _length; artistMaybeWrong = _artistMaybeWrong; isDirectLink = _isDirectLink;
+            length = _length; artistMaybeWrong = _artistMaybeWrong;
             minAlbumTrackCount = _minCount; maxAlbumTrackCount = _maxCount;
         }
 
@@ -192,7 +195,7 @@ namespace Sldl.Core.Extractors;
         {
             ParseArgs(input, isAlbum,
                 out string artist, out string title, out string album, out string uri, out int length,
-                out bool artistMaybeWrong, out bool isDirectLink,
+                out bool artistMaybeWrong,
                 out int _min, out int _max);
 
             string effectiveTitle = isAlbum ? (album.Length > 0 ? album : title) : title;
@@ -204,7 +207,6 @@ namespace Sldl.Core.Extractors;
                 URI             = uri,
                 Length          = length,
                 ArtistMaybeWrong = artistMaybeWrong,
-                IsDirectLink    = isDirectLink,
             };
         }
     }

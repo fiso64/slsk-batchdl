@@ -214,7 +214,7 @@ public sealed class EngineSupervisor
             .ToList();
     }
 
-    public SearchResultSnapshotDto<FileCandidateDto>? GetTrackResults(Guid jobId)
+    public SearchResultSnapshotDto<FileCandidateDto>? GetFileResults(Guid jobId)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
@@ -227,7 +227,7 @@ public sealed class EngineSupervisor
             snapshot.Items.Select(ToFileCandidateDto).ToList());
     }
 
-    public SearchResultSnapshotDto<AlbumFolderDto>? GetAlbumResults(Guid jobId, bool includeFiles)
+    public SearchResultSnapshotDto<AlbumFolderDto>? GetFolderResults(Guid jobId, bool includeFiles)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
         if (searchJob?.Config == null)
@@ -277,60 +277,39 @@ public sealed class EngineSupervisor
             throw new ArgumentException("Requested folder was not found in this search job.");
 
         var retrieveJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, retrieveJob, searchJob.Config, null, ct);
+        return await SubmitFollowUpJobAsync(searchJobId, searchJob, retrieveJob, searchJob.Config, null, isolateOptions: false, ct);
     }
 
-    public async Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(
-        Guid extractJobId,
-        StartExtractedResultRequestDto request,
-        CancellationToken ct)
-    {
-        var extractJob = StateStore.GetJob<ExtractJob>(extractJobId);
-        if (extractJob?.Config == null)
-            return null;
-
-        if (extractJob.Result == null)
-            return [];
-
-        var resultJob = request.Mode switch
-        {
-            ServerProtocol.ExtractedResultStartModes.Normal => extractJob.Result,
-            ServerProtocol.ExtractedResultStartModes.AlbumSearch => ToInteractiveJob(extractJob.Result),
-            _ => throw new ArgumentException($"Unsupported extracted result start mode '{request.Mode}'."),
-        };
-        AssignWorkflowId(resultJob, extractJob.WorkflowId);
-        PrepareDetachedExtractions(resultJob);
-
-        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(resultJob, extractJob.Config), ct);
-
-        return [StateStore.GetJobSummary(resultJob.Id) ?? BuildSubmittedJobSummary(resultJob)];
-    }
-
-    public async Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct)
+    public async Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid searchJobId, StartFileDownloadsRequestDto request, CancellationToken ct)
     {
         var searchJob = StateStore.GetJob<SearchJob>(searchJobId);
         if (searchJob?.Config == null)
             return null;
 
-        var candidate = FindTrackCandidate(searchJob, request.Candidate);
-        if (candidate == null)
-            throw new ArgumentException("Requested candidate was not found in this search job.");
+        if (request.Files.Count == 0)
+            throw new ArgumentException("At least one file is required.");
 
-        var songJob = new SongJob(new SongQuery(searchJob.Query))
+        var summaries = new List<JobSummaryDto>();
+        foreach (var file in request.Files)
         {
-            ResolvedTarget = candidate,
-            ItemName = searchJob.ItemName,
-        };
+            var candidate = FindFileCandidate(searchJob, file);
+            if (candidate == null)
+                throw new ArgumentException("Requested file was not found in this search job.");
 
-        var settings = SettingsCloner.Clone(searchJob.Config);
-        if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
-            settings.Output.ParentDir = request.OutputParentDir;
-        ServerJobSettingsResolver.NormalizeForServer(settings);
+            var songJob = new SongJob(new SongQuery(searchJob.Query))
+            {
+                ResolvedTarget = candidate,
+                ItemName = searchJob.ItemName,
+            };
 
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, songJob, settings, request.OutputParentDir, ct);
+            var settings = jobSettingsResolver.ResolveFollowUp(songJob, request.Options);
+            summaries.Add(await SubmitFollowUpJobAsync(searchJobId, searchJob, songJob, settings, request.Options, isolateOptions: true, ct));
+        }
+
+        return summaries;
     }
 
-    public async Task<JobSummaryDto?> StartAlbumDownloadAsync(Guid searchJobId, StartAlbumDownloadRequestDto request, CancellationToken ct)
+    public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct)
     {
         var searchJob = StateStore.GetJob<SearchJob>(searchJobId);
         if (searchJob?.Config == null)
@@ -346,16 +325,12 @@ public sealed class EngineSupervisor
         var albumJob = new AlbumJob(new AlbumQuery(searchJob.AlbumQuery))
         {
             ResolvedTarget = folder,
-            AllowBrowseResolvedTarget = request.AllowBrowseResolvedTarget,
             ItemName = searchJob.ItemName,
         };
 
-        var settings = SettingsCloner.Clone(searchJob.Config);
-        if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
-            settings.Output.ParentDir = request.OutputParentDir;
-        ServerJobSettingsResolver.NormalizeForServer(settings);
+        var settings = jobSettingsResolver.ResolveFollowUp(albumJob, request.Options);
 
-        return await SubmitFollowUpJobAsync(searchJobId, searchJob, albumJob, settings, request.OutputParentDir, ct);
+        return await SubmitFollowUpJobAsync(searchJobId, searchJob, albumJob, settings, request.Options, isolateOptions: true, ct);
     }
 
     private DownloadEngine CreateEngine()
@@ -395,50 +370,6 @@ public sealed class EngineSupervisor
             new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, visualParentJobId, job.DisplayId, null),
             []);
 
-    private static Job ToInteractiveJob(Job job)
-    {
-        switch (job)
-        {
-            case AlbumJob albumJob when !albumJob.Query.IsDirectLink:
-                var searchJob = new SearchJob(albumJob.Query);
-                searchJob.CopySharedFieldsFrom(albumJob);
-                return searchJob;
-
-            case JobList jobList:
-                var transformed = new JobList(jobList.ItemName, jobList.Jobs.Select(ToInteractiveJob));
-                transformed.CopySharedFieldsFrom(jobList);
-                return transformed;
-
-            default:
-                return job;
-        }
-    }
-
-    private static void PrepareDetachedExtractions(Job job)
-    {
-        switch (job)
-        {
-            case ExtractJob extractJob:
-                extractJob.AutoProcessResult = false;
-                break;
-
-            case JobList jobList:
-                foreach (var child in jobList.Jobs)
-                    PrepareDetachedExtractions(child);
-                break;
-        }
-    }
-
-    private static void AssignWorkflowId(Job job, Guid workflowId)
-    {
-        job.WorkflowId = workflowId;
-        if (job is JobList jobList)
-        {
-            foreach (var child in jobList.Jobs)
-                AssignWorkflowId(child, workflowId);
-        }
-    }
-
     private static SearchRawResultDto ToSearchRawResultDto(SearchRawResult result)
         => new(
             result.Sequence,
@@ -447,6 +378,7 @@ public sealed class EngineSupervisor
             result.Filename,
             result.File.Size,
             result.File.BitRate,
+            result.File.SampleRate,
             result.File.Length);
 
     private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
@@ -454,11 +386,11 @@ public sealed class EngineSupervisor
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
+            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
             candidate.File.Size,
             candidate.File.BitRate,
+            candidate.File.SampleRate,
             candidate.File.Length,
-            candidate.Response.HasFreeUploadSlot,
-            candidate.Response.UploadSpeed,
             candidate.File.Extension,
             candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
@@ -467,36 +399,30 @@ public sealed class EngineSupervisor
             new AlbumFolderRefDto(folder.Username, folder.FolderPath),
             folder.Username,
             folder.FolderPath,
+            new PeerInfoDto(
+                folder.Username,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
-            folder.SearchSortedAudioLengths.ToList(),
-                folder.SearchRepresentativeAudioFilename,
-                folder.HasSearchMetadata,
-                includeFiles
-                ? folder.Files.Select(song => new SongJobPayloadDto(
-                    ToSongQuery(song.Query),
-                    song.Candidates?.Count,
-                    song.DownloadPath,
-                    song.ResolvedTarget?.Username,
-                    song.ResolvedTarget?.Filename,
-                    song.ResolvedTarget?.Response.HasFreeUploadSlot,
-                    song.ResolvedTarget?.Response.UploadSpeed,
-                    song.ResolvedTarget?.File.Size,
-                    song.ResolvedTarget?.File.Extension,
-                    song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
-                    song.Id,
-                    song.DisplayId,
-                    song.Candidates?.Select(ToFileCandidateDto).ToList(),
-                    song.State.ToString(),
-                    song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
-                    song.FailureMessage)).ToList()
+            includeFiles
+                ? folder.Files
+                    .Where(song => song.ResolvedTarget != null)
+                    .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                    .ToList()
                 : null);
 
     private static SongQueryDto ToSongQuery(SongQuery query)
-        => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong, query.IsDirectLink);
+        => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);
 
     private static AlbumQueryDto ToAlbumQuery(AlbumQuery query)
-        => new(query.Artist, query.Album, query.SearchHint, query.URI, query.ArtistMaybeWrong, query.IsDirectLink, query.MinTrackCount, query.MaxTrackCount);
+        => new(Optional(query.Artist), Optional(query.Album), Optional(query.SearchHint), Optional(query.URI), query.ArtistMaybeWrong);
+
+    private static string? Optional(string value)
+        => value.Length > 0 ? value : null;
+
+    private static int? Optional(int value)
+        => value >= 0 ? value : null;
 
     private bool CanAcceptLoginRequiredJobs()
         => !string.IsNullOrWhiteSpace(engineSettings.MockFilesDir)
@@ -514,15 +440,27 @@ public sealed class EngineSupervisor
             && string.Equals(folder.FolderPath, folderRef.FolderPath, StringComparison.Ordinal));
     }
 
-    private FileCandidate? FindTrackCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
+    private FileCandidate? FindFileCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
     {
         if (searchJob.Config == null)
             return null;
 
-        return searchJob.GetSortedTrackCandidates(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts())
+        var trackCandidate = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts())
             .Items
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
+                && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
+
+        if (trackCandidate != null || searchJob.AlbumQuery == null)
+            return trackCandidate;
+
+        return searchJob.GetAlbumFolders(searchJob.Config.Search)
+            .Items
+            .SelectMany(folder => folder.Files)
+            .Select(song => song.ResolvedTarget)
+            .FirstOrDefault(candidate =>
+                candidate != null
+                && string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
                 && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
     }
 
@@ -531,12 +469,14 @@ public sealed class EngineSupervisor
         SearchJob sourceJob,
         Job followUpJob,
         DownloadSettings settings,
-        string? outputParentDir,
+        SubmissionOptionsDto? options,
+        bool isolateOptions,
         CancellationToken ct)
     {
         followUpJob.WorkflowId = sourceJob.WorkflowId;
         StateStore.SetVisualParent(followUpJob.Id, sourceJobId);
-        jobSettingsResolver.SetJobOutputParentDir(followUpJob.Id, outputParentDir);
+        if (isolateOptions)
+            jobSettingsResolver.SetJobOptions(followUpJob.Id, options);
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings), ct);
         return StateStore.GetJobSummary(followUpJob.Id) ?? BuildSubmittedJobSummary(followUpJob, sourceJobId);
     }

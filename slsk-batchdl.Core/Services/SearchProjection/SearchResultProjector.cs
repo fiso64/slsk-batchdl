@@ -123,8 +123,8 @@ public static partial class SearchResultProjector
 
         MergeChildDirectories(dirStructure);
 
-        int min = query.MinTrackCount;
-        int max = query.MaxTrackCount;
+        int min = search.NecessaryFolderCond.MinTrackCount;
+        int max = search.NecessaryFolderCond.MaxTrackCount;
         var folders = new List<AlbumFolder>();
         var inferDefault = new SongQuery { Artist = query.Artist, Album = query.Album };
 
@@ -309,7 +309,6 @@ public static partial class SearchResultProjector
             Title = query.Album.Length > 0 ? query.Album : query.SearchHint,
             Album = query.Album,
             ArtistMaybeWrong = query.ArtistMaybeWrong,
-            IsDirectLink = query.IsDirectLink,
         };
 
     // Album search still uses Artist + Album (or SearchHint when Album is empty) for
@@ -322,7 +321,6 @@ public static partial class SearchResultProjector
             Title = query.SearchHint,
             Album = query.Album,
             ArtistMaybeWrong = query.ArtistMaybeWrong,
-            IsDirectLink = query.IsDirectLink,
         };
 
     private static void MergeChildDirectories(Dictionary<string, AlbumFolderBuilder> dirStructure)

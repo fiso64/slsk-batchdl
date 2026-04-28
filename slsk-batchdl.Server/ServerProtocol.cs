@@ -19,7 +19,7 @@ public static class ServerProtocol
         public const string Generic = "generic";
     }
 
-    public static class JobListItemKinds
+    public static class JobDraftKinds
     {
         public const string Extract = "extract";
         public const string TrackSearch = "search-track";
@@ -43,9 +43,4 @@ public static class ServerProtocol
         public const string Cancel = "cancel";
     }
 
-    public static class ExtractedResultStartModes
-    {
-        public const string Normal = "normal";
-        public const string AlbumSearch = "album-search";
-    }
 }

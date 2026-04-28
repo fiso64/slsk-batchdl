@@ -69,23 +69,27 @@ public class RemoteCliBackendTests
 
             var searchSummary = await backend.SubmitTrackSearchJobAsync(
                 new SubmitTrackSearchJobRequestDto(
-                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)));
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
 
-            var projection = await backend.GetTrackResultsAsync(searchSummary.JobId);
+            var projection = await backend.GetFileResultsAsync(searchSummary.JobId);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
-            var downloadSummary = await backend.StartSongDownloadAsync(
+            var downloadSummary = await backend.StartFileDownloadsAsync(
                 searchSummary.JobId,
-                new StartSongDownloadRequestDto(projection.Items[0].Ref, outputDir));
+                new StartFileDownloadsRequestDto(
+                    [projection.Items[0].Ref],
+                    new SubmissionOptionsDto(OutputParentDir: outputDir)));
 
             Assert.IsNotNull(downloadSummary);
-            Assert.AreEqual(searchSummary.WorkflowId, downloadSummary.WorkflowId);
-            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.DisplayParentJobId);
+            Assert.AreEqual(1, downloadSummary.Count);
+            var downloadedSummary = downloadSummary[0];
+            Assert.AreEqual(searchSummary.WorkflowId, downloadedSummary.WorkflowId);
+            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.DisplayParentJobId);
 
-            await WaitForJobStateAsync(backend, downloadSummary.JobId, "Done");
+            await WaitForJobStateAsync(backend, downloadedSummary.JobId, "Done");
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -149,7 +153,7 @@ public class RemoteCliBackendTests
                     "Artist Album",
                     "String",
                     Options: new SubmissionOptionsDto(
-                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(["-a", "--no-browse-folder"]))));
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["-a", "--no-browse-folder"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
 
@@ -267,7 +271,7 @@ public class RemoteCliBackendTests
                     Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
                         ProfileContext: new Dictionary<string, bool> { ["interactive"] = true },
-                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta([inputPath, "--input-type", "list", "--no-browse-folder"]))),
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--no-browse-folder"]))),
                 CancellationToken.None);
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -340,16 +344,16 @@ public class RemoteCliBackendTests
 
             var searchSummary = await backend.SubmitAlbumSearchJobAsync(
             new SubmitAlbumSearchJobRequestDto(
-                new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)));
+                new AlbumQueryDto("Artist", "Album", "", "", false)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
-            var projection = await backend.GetAlbumResultsAsync(searchSummary.JobId, includeFiles: false);
+            var projection = await backend.GetFolderResultsAsync(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
-            var downloadSummary = await backend.StartAlbumDownloadAsync(
+            var downloadSummary = await backend.StartFolderDownloadAsync(
                 searchSummary.JobId,
-                new StartAlbumDownloadRequestDto(projection.Items[0].Ref));
+                new StartFolderDownloadRequestDto(projection.Items[0].Ref));
 
             Assert.IsNotNull(downloadSummary);
 
@@ -358,7 +362,7 @@ public class RemoteCliBackendTests
                 {
                     var detail = await backend.GetJobDetailAsync(downloadSummary.JobId);
                     var payload = detail?.Payload as AlbumJobPayloadDto;
-                    return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                    return payload?.Tracks?
                         .Any(file => file.State == nameof(JobState.Downloading)) == true;
                 },
                 "Timed out waiting for remote album file downloads to start.");
@@ -528,7 +532,7 @@ public class RemoteCliBackendTests
                     "String",
                     Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
-                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(["Artist - Track One", "--print-results"]))));
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["Artist - Track One", "--print-results"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
 
@@ -608,7 +612,7 @@ public class RemoteCliBackendTests
                     "List",
                     Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
-                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta([inputPath, "--input-type", "list", "--print-tracks"]))));
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--print-tracks"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
 
@@ -689,8 +693,8 @@ public class RemoteCliBackendTests
                 new SubmitJobListRequestDto(
                     "batch",
                     [
-                        new TrackSearchJobListItemDto(
-                            new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
+                        new TrackSearchJobDraftDto(
+                            new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                     ]));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
@@ -751,7 +755,7 @@ public class RemoteCliBackendTests
             {
                 var detail = await backend.GetJobDetailAsync(albumJobId);
                 var payload = detail?.Payload as AlbumJobPayloadDto;
-                return payload?.Results?.SelectMany(folder => folder.Files ?? [])
+                return payload?.Tracks?
                     .Any(file => file.State == nameof(JobState.Downloading)) == true;
             },
             "Timed out waiting for remote album file downloads to start.");
@@ -760,17 +764,17 @@ public class RemoteCliBackendTests
     private static async Task<JobSummaryDto> StartAlbumSearchAsync(ICliBackend backend, string artist, string album)
         => await backend.SubmitAlbumSearchJobAsync(
             new SubmitAlbumSearchJobRequestDto(
-                new AlbumQueryDto(artist, album, "", "", false, false, -1, -1)));
+                new AlbumQueryDto(artist, album, "", "", false)));
 
     private static async Task<JobSummaryDto> StartFirstAlbumDownloadAsync(ICliBackend backend, Guid searchJobId)
     {
-        var projection = await backend.GetAlbumResultsAsync(searchJobId, includeFiles: false);
+        var projection = await backend.GetFolderResultsAsync(searchJobId, includeFiles: false);
         Assert.IsNotNull(projection);
         Assert.IsTrue(projection.Items.Count > 0);
 
-        var summary = await backend.StartAlbumDownloadAsync(
+        var summary = await backend.StartFolderDownloadAsync(
             searchJobId,
-            new StartAlbumDownloadRequestDto(projection.Items[0].Ref));
+            new StartFolderDownloadRequestDto(projection.Items[0].Ref));
         Assert.IsNotNull(summary);
         return summary;
     }

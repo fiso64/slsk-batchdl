@@ -8,9 +8,6 @@ namespace Sldl.Core.Models;
         public string SearchHint { get; init; } = "";
         public string URI    { get; init; } = "";
         public bool   ArtistMaybeWrong { get; init; }
-        public bool   IsDirectLink     { get; init; }
-        public int    MinTrackCount { get; set; } = -1;  // -1 = no constraint
-        public int    MaxTrackCount { get; set; } = -1;  // -1 = no constraint
 
         public AlbumQuery() { }
 
@@ -21,15 +18,10 @@ namespace Sldl.Core.Models;
             SearchHint     = other.SearchHint;
             URI            = other.URI;
             ArtistMaybeWrong = other.ArtistMaybeWrong;
-            IsDirectLink   = other.IsDirectLink;
-            MinTrackCount  = other.MinTrackCount;
-            MaxTrackCount  = other.MaxTrackCount;
         }
 
         public string ToKey()
         {
-            if (IsDirectLink)
-                return URI;
             // Keep numeric suffix compatible with old index files (TrackType.Album = 1)
             return $"{Artist};{Album};1";
         }
@@ -38,9 +30,6 @@ namespace Sldl.Core.Models;
 
         public string ToString(bool noInfo)
         {
-            if (IsDirectLink)
-                return URI;
-
             string str = Artist;
 
             if (Album.Length > 0)
@@ -60,5 +49,5 @@ namespace Sldl.Core.Models;
         }
 
         public static AlbumQuery FromSongQuery(SongQuery q)
-            => new AlbumQuery { Artist = q.Artist, Album = q.Album, URI = q.URI, ArtistMaybeWrong = q.ArtistMaybeWrong, IsDirectLink = q.IsDirectLink };
+            => new AlbumQuery { Artist = q.Artist, Album = q.Album, URI = q.URI, ArtistMaybeWrong = q.ArtistMaybeWrong };
     }

@@ -78,15 +78,15 @@ public static class ServerHost
             return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/tracks", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/files", (Guid jobId, EngineSupervisor supervisor) =>
         {
-            var results = supervisor.GetTrackResults(jobId);
+            var results = supervisor.GetFileResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/albums", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/folders", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
         {
-            var results = supervisor.GetAlbumResults(jobId, includeFiles);
+            var results = supervisor.GetFolderResults(jobId, includeFiles);
             return results != null ? Results.Ok(results) : Results.NotFound();
         });
 
@@ -121,15 +121,15 @@ public static class ServerHost
             }
         });
 
-        app.MapPost("/api/jobs/{jobId:guid}/extracted-result/start", async (
+        app.MapPost("/api/jobs/{jobId:guid}/downloads/files", async (
             Guid jobId,
-            StartExtractedResultRequestDto request,
+            StartFileDownloadsRequestDto request,
             EngineSupervisor supervisor,
             CancellationToken ct) =>
         {
             try
             {
-                var summaries = await supervisor.StartExtractedResultAsync(jobId, request, ct);
+                var summaries = await supervisor.StartFileDownloadsAsync(jobId, request, ct);
                 return summaries != null
                     ? Results.Accepted($"/api/jobs/{jobId}", summaries)
                     : Results.NotFound();
@@ -140,34 +140,15 @@ public static class ServerHost
             }
         });
 
-        app.MapPost("/api/jobs/{jobId:guid}/downloads/song", async (
+        app.MapPost("/api/jobs/{jobId:guid}/downloads/folder", async (
             Guid jobId,
-            StartSongDownloadRequestDto request,
+            StartFolderDownloadRequestDto request,
             EngineSupervisor supervisor,
             CancellationToken ct) =>
         {
             try
             {
-                var summary = await supervisor.StartSongDownloadAsync(jobId, request, ct);
-                return summary != null
-                    ? Results.Accepted($"/api/jobs/{summary.JobId}", summary)
-                    : Results.NotFound();
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
-        });
-
-        app.MapPost("/api/jobs/{jobId:guid}/downloads/album", async (
-            Guid jobId,
-            StartAlbumDownloadRequestDto request,
-            EngineSupervisor supervisor,
-            CancellationToken ct) =>
-        {
-            try
-            {
-                var summary = await supervisor.StartAlbumDownloadAsync(jobId, request, ct);
+                var summary = await supervisor.StartFolderDownloadAsync(jobId, request, ct);
                 return summary != null
                     ? Results.Accepted($"/api/jobs/{summary.JobId}", summary)
                     : Results.NotFound();

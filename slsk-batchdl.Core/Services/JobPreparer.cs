@@ -80,30 +80,22 @@ public static class JobPreparer
     {
         var q   = aj.Query;
         bool amw = q.ArtistMaybeWrong;
-        int  min = q.MinTrackCount;
-        int  max = q.MaxTrackCount;
 
         if (search.ArtistMaybeWrong)                               amw = true;
-        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
-        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
 
-        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
-            aj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+        if (amw != q.ArtistMaybeWrong)
+            aj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw };
     }
 
     static void ApplySearchSettingsToAlbumAggregateQuery(AlbumAggregateJob aaj, SearchSettings search)
     {
         var q   = aaj.Query;
         bool amw = q.ArtistMaybeWrong;
-        int  min = q.MinTrackCount;
-        int  max = q.MaxTrackCount;
 
         if (search.ArtistMaybeWrong)                               amw = true;
-        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
-        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
 
-        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
-            aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+        if (amw != q.ArtistMaybeWrong)
+            aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw };
     }
 
     private static void PrepareJob(

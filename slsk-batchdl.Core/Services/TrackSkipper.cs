@@ -21,6 +21,7 @@ namespace Sldl.Core.Services;
     public struct TrackSkipperContext
     {
         public FileConditions? conditions;
+        public FolderConditions? folderConditions;
         public M3uEditor?      indexEditor;
         public bool            checkFileExists;
 
@@ -37,6 +38,7 @@ namespace Sldl.Core.Services;
                 checkFileExists = cond != null,
                 indexEditor     = ctx.IndexEditor,
                 conditions      = cond,
+                folderConditions = search.NecessaryFolderCond,
             };
         }
     }
@@ -101,7 +103,8 @@ namespace Sldl.Core.Services;
                 var parent = Path.GetDirectoryName(path);
                 if (!parents.Contains(parent) && DirectoryMatchesAlbum(parent, albumArtist, album, item, context, job))
                 {
-                    if (FileBasedSkipper<T>.DirectoryHasGoodCount(parent, job.Query.MinTrackCount, job.Query.MaxTrackCount))
+                    var folderCond = context.folderConditions ?? new FolderConditions();
+                    if (FileBasedSkipper<T>.DirectoryHasGoodCount(parent, folderCond.MinTrackCount, folderCond.MaxTrackCount))
                     {
                         foundPath = parent;
                         return true;
@@ -404,11 +407,12 @@ namespace Sldl.Core.Services;
 
             var files = Directory.GetFiles(t.DownloadPath, "*", SearchOption.AllDirectories);
 
-            if (job.Query.MaxTrackCount > -1 || job.Query.MinTrackCount > -1)
+            var folderCond = context.folderConditions ?? new FolderConditions();
+            if (folderCond.MaxTrackCount > -1 || folderCond.MinTrackCount > -1)
             {
                 int count = files.Count(x => Utils.IsMusicFile(x));
-                if (job.Query.MaxTrackCount > -1 && count > job.Query.MaxTrackCount) return false;
-                if (job.Query.MinTrackCount > -1 && count < job.Query.MinTrackCount) return false;
+                if (folderCond.MaxTrackCount > -1 && count > folderCond.MaxTrackCount) return false;
+                if (folderCond.MinTrackCount > -1 && count < folderCond.MinTrackCount) return false;
             }
 
             foreach (var path in files)

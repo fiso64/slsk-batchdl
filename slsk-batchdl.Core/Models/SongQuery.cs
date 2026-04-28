@@ -4,10 +4,9 @@ namespace Sldl.Core.Models;
         public string Artist { get; init; } = "";
         public string Title  { get; init; } = "";
         public string Album  { get; init; } = "";  // hint for search/filtering
-        public string URI    { get; init; } = "";  // used when IsDirectLink = true
+        public string URI    { get; init; } = "";  // optional source URI/ID metadata
         public int    Length { get; init; } = -1;  // seconds; -1 = unknown
         public bool   ArtistMaybeWrong { get; init; }
-        public bool   IsDirectLink     { get; init; }
 
         public SongQuery() { }
 
@@ -19,13 +18,10 @@ namespace Sldl.Core.Models;
             URI            = other.URI;
             Length         = other.Length;
             ArtistMaybeWrong = other.ArtistMaybeWrong;
-            IsDirectLink   = other.IsDirectLink;
         }
 
         public string ToKey()
         {
-            if (IsDirectLink)
-                return URI;
             // Keep numeric suffix compatible with old index files (TrackType.Normal = 0)
             return $"{Artist};{Album};{Title};{Length};0";
         }
@@ -34,9 +30,6 @@ namespace Sldl.Core.Models;
 
         public string ToString(bool noInfo)
         {
-            if (IsDirectLink)
-                return URI;
-
             string str = Artist;
 
             if (Title.Length > 0 || Album.Length > 0)

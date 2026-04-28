@@ -44,7 +44,6 @@ public class RealCaptureProjectionBenchmarks
             Album = trackQuery.Album.Length > 0 ? trackQuery.Album : trackQuery.Title,
             SearchHint = trackQuery.Title,
             ArtistMaybeWrong = trackQuery.ArtistMaybeWrong,
-            IsDirectLink = trackQuery.IsDirectLink,
         };
         userSuccessCounts = new ConcurrentDictionary<string, int>();
 

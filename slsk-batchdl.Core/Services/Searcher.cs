@@ -171,33 +171,6 @@ public partial class Searcher
         job.Results = searchJob.GetAlbumFolders(search).Items.ToList();
     }
 
-    // Populates job.Results from a direct slsk:// link (no network search).
-    public async Task SearchDirectLinkAlbum(AlbumJob job, CancellationToken ct)
-    {
-        var parts = job.Query.URI["slsk://".Length..].Split('/', 2);
-        var username = parts[0];
-        var directory = parts[1].TrimEnd('/').Replace('/', '\\');
-
-        var rawFiles = await GetAllFilesInFolder(username, directory, ct);
-        var response = new SearchResponse(username, -1, false, -1, -1, null);
-
-        var files = new List<SongJob>();
-        foreach (var (dir, file) in rawFiles)
-        {
-            var fullPath = dir.TrimEnd('\\') + '\\' + file.Filename;
-            var slFile = new Soulseek.File(file.Code, fullPath, file.Size, file.Extension);
-            var candidate = new FileCandidate(response, slFile);
-            var info = InferSongQuery(file.Filename, new SongQuery { Artist = job.Query.Artist, Album = job.Query.Album });
-            files.Add(new SongJob(info) { ResolvedTarget = candidate });
-        }
-
-        if (files.Count > 0)
-            job.Results = new List<AlbumFolder> { new AlbumFolder(username, directory, files) };
-        else
-            job.Results = new List<AlbumFolder>();
-    }
-
-
     // ── aggregate search ─────────────────────────────────────────────────────
 
     // Populates job.Songs: one SongJob per distinct inferred track version found.

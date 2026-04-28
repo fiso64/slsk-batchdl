@@ -144,17 +144,18 @@ namespace Sldl.Core.Extractors;
                 {
                     var artist = nameSection.SelectSingleNode(".//h3/span/a").InnerText.UnHtmlString().Trim();
                     var query  = new AlbumQuery { Artist = artist, Album = name };
+                    var folderCond = new FolderConditions();
 
                     if (extraction.SetAlbumMinTrackCount || extraction.SetAlbumMaxTrackCount)
                     {
                         var trackTable = doc.DocumentNode.SelectSingleNode("//*[@id='track_table']");
                         int n = trackTable.SelectNodes(".//tr").Count;
 
-                        if (extraction.SetAlbumMinTrackCount) query.MinTrackCount = n;
-                        if (extraction.SetAlbumMaxTrackCount) query.MaxTrackCount = n;
+                        if (extraction.SetAlbumMinTrackCount) folderCond.MinTrackCount = n;
+                        if (extraction.SetAlbumMaxTrackCount) folderCond.MaxTrackCount = n;
                     }
 
-                    jobs.Add(new AlbumJob(query));
+                    jobs.Add(new AlbumJob(query) { ExtractorFolderCond = folderCond });
                 }
                 else
                 {

@@ -175,8 +175,9 @@ namespace Tests.Unit
             var track1 = TestHelpers.CreateSlFile(@"ELO\Time\01. Twilight.flac", length: 209);
             var track2 = TestHelpers.CreateSlFile(@"ELO\Time\02. Yours Truly.flac", length: 200);
             var response = new SearchResponse("User1", 1, true, 1000, 0, [track1, track2]);
-            var query = new AlbumQuery { Artist = "ELO", Album = "Time", MaxTrackCount = 1 };
             var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            search.NecessaryFolderCond.MaxTrackCount = 1;
+            var query = new AlbumQuery { Artist = "ELO", Album = "Time" };
             var incremental = new IncrementalAlbumFolderProjector(query, search);
 
             var first = incremental.AddRangeAndGetChanges([(response, track1)]);

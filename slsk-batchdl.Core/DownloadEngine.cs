@@ -506,22 +506,20 @@ public class DownloadEngine
                 {
                     if (albumJob.Results.Count == 0)
                         albumJob.Results = [albumJob.ResolvedTarget];
-                    foundSomething = true;
-                }
-                else if (!albumJob.Query.IsDirectLink)
-                    await searcher!.SearchAlbum(albumJob, config.Search, responseData, job.Cts!.Token);
-                else
-                {
-                    try
+
+                    if (albumJob.ResolvedTargetNeedsInitialFolderRetrieval)
                     {
                         Events.RaiseJobFolderRetrieving(job);
-                        await searcher!.SearchDirectLinkAlbum(albumJob, job.Cts!.Token);
+                        await ProcessFolderRetrieval(albumJob.ResolvedTarget, albumJob);
+                        albumJob.ResolvedTargetNeedsInitialFolderRetrieval = false;
+                        if (albumJob.ResolvedTarget.Files.Count == 0)
+                            albumJob.Results.Clear();
                     }
-                    catch (UserOfflineException e)
-                    {
-                        Logger.Error("Error: " + e.Message);
-                    }
+
+                    foundSomething = true;
                 }
+                else
+                    await searcher!.SearchAlbum(albumJob, config.Search, responseData, job.Cts!.Token);
                 foundSomething = albumJob.Results.Count > 0;
             }
             else if (job is AggregateJob aggJob)
@@ -713,8 +711,9 @@ public class DownloadEngine
                 chosenFolder = job.Results[index];
 
                 // Verify track counts after full folder retrieval if needed.
+                var folderCond = config.Search.NecessaryFolderCond;
                 if (config.Transfer.AlbumTrackCountMaxRetries > 0
-                    && (job.Query.MaxTrackCount > 0 || (job.Query.MinTrackCount > 0 && job.Query.Album.Length > 0)))
+                    && (folderCond.MaxTrackCount > 0 || (folderCond.MinTrackCount > 0 && job.Query.Album.Length > 0)))
                 {
                     if (!retrievedFolders.Contains(chosenFolder.FolderPath))
                     {
@@ -724,10 +723,10 @@ public class DownloadEngine
                     }
                     int newCount = chosenFolder.Files.Count(af => !af.IsNotAudio);
                     bool trackCountFailed = false;
-                    if (job.Query.MaxTrackCount > 0 && newCount > job.Query.MaxTrackCount)
-                    { Logger.Info($"New file count ({newCount}) above maximum ({job.Query.MaxTrackCount}), skipping folder"); trackCountFailed = true; }
-                    if (job.Query.MinTrackCount > 0 && newCount < job.Query.MinTrackCount)
-                    { Logger.Info($"New file count ({newCount}) below minimum ({job.Query.MinTrackCount}), skipping folder"); trackCountFailed = true; }
+                    if (folderCond.MaxTrackCount > 0 && newCount > folderCond.MaxTrackCount)
+                    { Logger.Info($"New file count ({newCount}) above maximum ({folderCond.MaxTrackCount}), skipping folder"); trackCountFailed = true; }
+                    if (folderCond.MinTrackCount > 0 && newCount < folderCond.MinTrackCount)
+                    { Logger.Info($"New file count ({newCount}) below minimum ({folderCond.MinTrackCount}), skipping folder"); trackCountFailed = true; }
 
                     if (trackCountFailed)
                     {
@@ -743,9 +742,6 @@ public class DownloadEngine
                     }
                 }
             }
-
-            if (job.Query.IsDirectLink)
-                retrievedFolders.Add(chosenFolder.FolderPath);
 
             lastChosenFolder = chosenFolder;
             organizer.SetremoteBaseDir(chosenFolder.FolderPath);
@@ -1233,30 +1229,22 @@ public class DownloadEngine
     {
         var q   = aj.Query;
         bool amw = q.ArtistMaybeWrong;
-        int  min = q.MinTrackCount;
-        int  max = q.MaxTrackCount;
 
         if (search.ArtistMaybeWrong)                               amw = true;
-        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
-        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
 
-        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
-            aj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+        if (amw != q.ArtistMaybeWrong)
+            aj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw };
     }
 
     static void ApplySearchSettingsToAlbumAggregateQuery(AlbumAggregateJob aaj, SearchSettings search)
     {
         var q   = aaj.Query;
         bool amw = q.ArtistMaybeWrong;
-        int  min = q.MinTrackCount;
-        int  max = q.MaxTrackCount;
 
         if (search.ArtistMaybeWrong)                               amw = true;
-        if (search.NecessaryFolderCond.MinTrackCount != -1)        min = search.NecessaryFolderCond.MinTrackCount;
-        if (search.NecessaryFolderCond.MaxTrackCount != -1)        max = search.NecessaryFolderCond.MaxTrackCount;
 
-        if (amw != q.ArtistMaybeWrong || min != q.MinTrackCount || max != q.MaxTrackCount)
-            aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw, MinTrackCount = min, MaxTrackCount = max };
+        if (amw != q.ArtistMaybeWrong)
+            aaj.Query = new AlbumQuery(q) { ArtistMaybeWrong = amw };
     }
 
     static void AssignWorkflowId(Job job, Guid workflowId)

@@ -11,7 +11,7 @@ namespace Sldl.Core.Jobs;
         // SongQuery-shaped view of the album query (used for display and key computation).
         // Recomputed from Query so it stays current after preprocessing.
         public override SongQuery QueryTrack =>
-            new SongQuery { Artist = Query.Artist, Title = Query.Album, IsDirectLink = Query.IsDirectLink, URI = Query.URI };
+            new SongQuery { Artist = Query.Artist, Title = Query.Album, URI = Query.URI };
 
         protected override bool DefaultCanBeSkipped => true;
 
@@ -35,6 +35,10 @@ namespace Sldl.Core.Jobs;
         // SearchJob flow), this controls whether the engine may still browse the selected
         // folder for additional files during album download.
         public bool AllowBrowseResolvedTarget { get; set; } = true;
+
+        // Used by direct folder links: the target folder identity is known up front,
+        // but its file list must be browsed before album download starts.
+        public bool ResolvedTargetNeedsInitialFolderRetrieval { get; set; }
 
         // Set by the engine when the download phase completes.
         private string? _downloadPath;

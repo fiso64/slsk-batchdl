@@ -89,7 +89,7 @@ internal sealed class LocalCliBackend
         return Task.FromResult(stateStore.GetWorkflow(workflowId));
     }
 
-    public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetTrackResultsAsync(Guid jobId, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -104,7 +104,7 @@ internal sealed class LocalCliBackend
             snapshot.Items.Select(ToFileCandidateDto).ToList()));
     }
 
-    public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetAlbumResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
+    public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -120,33 +120,17 @@ internal sealed class LocalCliBackend
                 new AlbumFolderRefDto(folder.Username, folder.FolderPath),
                 folder.Username,
                 folder.FolderPath,
+                new PeerInfoDto(
+                    folder.Username,
+                    folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                    folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
                 folder.SearchFileCount,
                 folder.SearchAudioFileCount,
-                folder.SearchSortedAudioLengths.ToList(),
-                folder.SearchRepresentativeAudioFilename,
-                folder.HasSearchMetadata,
                 includeFiles
-                    ? folder.Files.Select(song => new SongJobPayloadDto(
-                        new SongQueryDto(
-                            song.Query.Artist,
-                            song.Query.Title,
-                            song.Query.Album,
-                            song.Query.URI,
-                            song.Query.Length,
-                            song.Query.ArtistMaybeWrong,
-                            song.Query.IsDirectLink),
-                        song.Candidates?.Count,
-                        song.DownloadPath,
-                        song.ResolvedTarget?.Username,
-                        song.ResolvedTarget?.Filename,
-                        song.ResolvedTarget?.Response.HasFreeUploadSlot,
-                        song.ResolvedTarget?.Response.UploadSpeed,
-                        song.ResolvedTarget?.File.Size,
-                        song.ResolvedTarget?.File.Extension,
-                        song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
-                        song.Id,
-                        song.DisplayId,
-                        song.Candidates?.Select(ToFileCandidateDto).ToList())).ToList()
+                    ? folder.Files
+                        .Where(song => song.ResolvedTarget != null)
+                        .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                        .ToList()
                     : null)).ToList()));
     }
 
@@ -179,9 +163,6 @@ internal sealed class LocalCliBackend
             snapshot.IsComplete,
             snapshot.Items.Select(album => new AggregateAlbumCandidateDto(ToAlbumQueryDto(album.Query), album.ItemName)).ToList()));
     }
-
-    public Task<IReadOnlyList<JobSummaryDto>?> StartExtractedResultAsync(Guid extractJobId, StartExtractedResultRequestDto request, CancellationToken ct = default)
-        => throw new NotSupportedException("Local interactive extraction result handling is owned by InteractiveCliCoordinator.");
 
     public Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
     {
@@ -225,35 +206,45 @@ internal sealed class LocalCliBackend
         }
     }
 
-    public Task<JobSummaryDto?> StartSongDownloadAsync(Guid searchJobId, StartSongDownloadRequestDto request, CancellationToken ct = default)
+    public Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid searchJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(searchJobId);
         if (searchJob?.Config == null)
-            return Task.FromResult<JobSummaryDto?>(null);
+            return Task.FromResult<IReadOnlyList<JobSummaryDto>?>(null);
 
-        var candidate = FindTrackCandidate(searchJob, request.Candidate);
-        if (candidate == null)
-            throw new ArgumentException("Requested candidate was not found in this search job.");
+        if (request.Files.Count == 0)
+            throw new ArgumentException("At least one file is required.");
 
-        var songJob = new SongJob(new SongQuery(searchJob.Query))
+        var summaries = new List<JobSummaryDto>();
+        foreach (var file in request.Files)
         {
-            ResolvedTarget = candidate,
-            ItemName = searchJob.ItemName,
-            WorkflowId = searchJob.WorkflowId,
-        };
+            var candidate = FindTrackCandidate(searchJob, file);
+            if (candidate == null)
+                throw new ArgumentException("Requested file was not found in this search job.");
 
-        var settings = SettingsCloner.Clone(searchJob.Config);
-        if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
-            settings.Output.ParentDir = request.OutputParentDir;
-        SettingsNormalizer.Normalize(settings);
+            var songJob = new SongJob(new SongQuery(searchJob.Query))
+            {
+                ResolvedTarget = candidate,
+                ItemName = searchJob.ItemName,
+                WorkflowId = searchJob.WorkflowId,
+            };
 
-        engine.Enqueue(songJob, settings);
-        return Task.FromResult<JobSummaryDto?>(stateStore.GetJobSummary(songJob.Id) ?? BuildSubmittedJobSummary(songJob));
+            var settings = SettingsCloner.Clone(defaultSubmitSettings ?? searchJob.Config);
+            DownloadSettingsPatchDtoMapper.ApplyTo(settings, request.Options?.DownloadSettings);
+            if (!string.IsNullOrWhiteSpace(request.Options?.OutputParentDir))
+                settings.Output.ParentDir = request.Options.OutputParentDir;
+            SettingsNormalizer.Normalize(settings);
+
+            engine.Enqueue(songJob, settings);
+            summaries.Add(stateStore.GetJobSummary(songJob.Id) ?? BuildSubmittedJobSummary(songJob));
+        }
+
+        return Task.FromResult<IReadOnlyList<JobSummaryDto>?>(summaries);
     }
 
-    public Task<JobSummaryDto?> StartAlbumDownloadAsync(Guid searchJobId, StartAlbumDownloadRequestDto request, CancellationToken ct = default)
+    public Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -271,14 +262,14 @@ internal sealed class LocalCliBackend
         var albumJob = new AlbumJob(new AlbumQuery(searchJob.AlbumQuery))
         {
             ResolvedTarget = folder,
-            AllowBrowseResolvedTarget = request.AllowBrowseResolvedTarget,
             ItemName = searchJob.ItemName,
             WorkflowId = searchJob.WorkflowId,
         };
 
-        var settings = SettingsCloner.Clone(searchJob.Config);
-        if (!string.IsNullOrWhiteSpace(request.OutputParentDir))
-            settings.Output.ParentDir = request.OutputParentDir;
+        var settings = SettingsCloner.Clone(defaultSubmitSettings ?? searchJob.Config);
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, request.Options?.DownloadSettings);
+        if (!string.IsNullOrWhiteSpace(request.Options?.OutputParentDir))
+            settings.Output.ParentDir = request.Options.OutputParentDir;
         SettingsNormalizer.Normalize(settings);
 
         engine.Enqueue(albumJob, settings);
@@ -330,13 +321,28 @@ internal sealed class LocalCliBackend
                 && string.Equals(folder.FolderPath, folderRef.FolderPath, StringComparison.Ordinal));
 
     private FileCandidate? FindTrackCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
-        => searchJob.Config == null
-            ? null
-            : searchJob.GetSortedTrackCandidates(searchJob.Config.Search, engine.UserSuccessCounts)
-                .Items
-                .FirstOrDefault(candidate =>
-                    string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
-                    && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
+    {
+        if (searchJob.Config == null)
+            return null;
+
+        var trackCandidate = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, engine.UserSuccessCounts)
+            .Items
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
+                && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
+
+        if (trackCandidate != null || searchJob.AlbumQuery == null)
+            return trackCandidate;
+
+        return searchJob.GetAlbumFolders(searchJob.Config.Search)
+            .Items
+            .SelectMany(folder => folder.Files)
+            .Select(song => song.ResolvedTarget)
+            .FirstOrDefault(candidate =>
+                candidate != null
+                && string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
+                && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
+    }
 
     private static JobSummaryDto BuildSubmittedJobSummary(Job job)
         => new(
@@ -359,21 +365,27 @@ internal sealed class LocalCliBackend
         => stateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);
 
     private static SongQueryDto ToSongQueryDto(SongQuery query)
-        => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong, query.IsDirectLink);
+        => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);
 
     private static AlbumQueryDto ToAlbumQueryDto(AlbumQuery query)
-        => new(query.Artist, query.Album, query.SearchHint, query.URI, query.ArtistMaybeWrong, query.IsDirectLink, query.MinTrackCount, query.MaxTrackCount);
+        => new(Optional(query.Artist), Optional(query.Album), Optional(query.SearchHint), Optional(query.URI), query.ArtistMaybeWrong);
+
+    private static string? Optional(string value)
+        => value.Length > 0 ? value : null;
+
+    private static int? Optional(int value)
+        => value >= 0 ? value : null;
 
     private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
         => new(
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
+            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
             candidate.File.Size,
             candidate.File.BitRate,
+            candidate.File.SampleRate,
             candidate.File.Length,
-            candidate.Response.HasFreeUploadSlot,
-            candidate.Response.UploadSpeed,
             candidate.File.Extension,
             candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
 
@@ -387,6 +399,7 @@ internal sealed class LocalCliBackend
             song.ResolvedTarget?.Response.HasFreeUploadSlot,
             song.ResolvedTarget?.Response.UploadSpeed,
             song.ResolvedTarget?.File.Size,
+            song.ResolvedTarget?.File.SampleRate,
             song.ResolvedTarget?.File.Extension,
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
@@ -401,10 +414,16 @@ internal sealed class LocalCliBackend
             new AlbumFolderRefDto(folder.Username, folder.FolderPath),
             folder.Username,
             folder.FolderPath,
+            new PeerInfoDto(
+                folder.Username,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
-            folder.SearchSortedAudioLengths.ToList(),
-            folder.SearchRepresentativeAudioFilename,
-            folder.HasSearchMetadata,
-            includeFiles ? folder.Files.Select(ToSongJobPayloadDto).ToList() : null);
+            includeFiles
+                ? folder.Files
+                    .Where(song => song.ResolvedTarget != null)
+                    .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                    .ToList()
+                : null);
 }

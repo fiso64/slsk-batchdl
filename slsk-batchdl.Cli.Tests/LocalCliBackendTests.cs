@@ -47,7 +47,7 @@ public class LocalCliBackendTests
 
             var submitted = await backend.SubmitTrackSearchJobAsync(
                 new SubmitTrackSearchJobRequestDto(
-                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                 cts.Token);
             engine.CompleteEnqueue();
 
@@ -57,7 +57,7 @@ public class LocalCliBackendTests
             Assert.AreEqual(1, jobs.Count);
             Assert.AreEqual(submitted.JobId, jobs[0].JobId);
 
-            var projection = await backend.GetTrackResultsAsync(submitted.JobId);
+            var projection = await backend.GetFileResultsAsync(submitted.JobId);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
@@ -119,7 +119,7 @@ public class LocalCliBackendTests
                 () => searchJob.State == JobState.Done,
                 "Timed out waiting for the album search to complete.");
 
-            var initialProjection = await backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
+            var initialProjection = await backend.GetFolderResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
             Assert.IsNotNull(initialProjection);
             Assert.AreEqual(1, initialProjection.Items.Count);
             Assert.AreEqual(1, initialProjection.Items[0].Files?.Count);
@@ -131,7 +131,7 @@ public class LocalCliBackendTests
 
             Assert.AreEqual(1, foundCount);
 
-            var expandedProjection = await backend.GetAlbumResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
+            var expandedProjection = await backend.GetFolderResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
             Assert.IsNotNull(expandedProjection);
             Assert.AreEqual(2, expandedProjection.Items[0].Files?.Count);
 
@@ -183,7 +183,7 @@ public class LocalCliBackendTests
 
             await backend.SubmitSongJobAsync(
                 new SubmitSongJobRequestDto(
-                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                 cts.Token);
 
             engine.CompleteEnqueue();

@@ -9,7 +9,7 @@ namespace Sldl.Core.Jobs;
 
         // SongQuery-shaped view for base-class helpers. Recomputed from Query so it stays current after preprocessing.
         public override SongQuery QueryTrack =>
-            new SongQuery { Artist = Query.Artist, Title = Query.Album, IsDirectLink = Query.IsDirectLink, URI = Query.URI };
+            new SongQuery { Artist = Query.Artist, Title = Query.Album, URI = Query.URI };
 
         protected override bool DefaultCanBeSkipped => false;
 

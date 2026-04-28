@@ -155,9 +155,6 @@ namespace Sldl.Core.Jobs;
 
         private static string? AlbumDedupKey(AlbumQuery query)
         {
-            if (query.IsDirectLink)
-                return query.URI.Length > 0 ? "uri:" + query.URI.Trim().ToUpperInvariant() : null;
-
             if (query.Album.Length == 0)
                 return null;
 
@@ -180,10 +177,7 @@ namespace Sldl.Core.Jobs;
             && a.Album == b.Album
             && a.SearchHint == b.SearchHint
             && a.URI == b.URI
-            && a.ArtistMaybeWrong == b.ArtistMaybeWrong
-            && a.IsDirectLink == b.IsDirectLink
-            && a.MinTrackCount == b.MinTrackCount
-            && a.MaxTrackCount == b.MaxTrackCount;
+            && a.ArtistMaybeWrong == b.ArtistMaybeWrong;
 
         private static bool ConditionsEqual(FileConditions? a, FileConditions? b)
             => a == null ? b == null : a.Equals(b);

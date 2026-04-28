@@ -114,7 +114,7 @@ namespace Tests.ExtractorTests2
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", config.Extraction);
 
             var slj = (SongJob)result;
-            Assert.IsTrue(slj.Query.IsDirectLink);
+            Assert.IsNotNull(slj.ResolvedTarget);
         }
 
         [TestMethod]
@@ -125,6 +125,10 @@ namespace Tests.ExtractorTests2
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", config.Extraction);
 
             Assert.IsInstanceOfType(result, typeof(AlbumJob));
+            var album = (AlbumJob)result;
+            Assert.IsNotNull(album.ResolvedTarget);
+            Assert.IsTrue(album.ResolvedTargetNeedsInitialFolderRetrieval);
+            Assert.IsFalse(album.AllowBrowseResolvedTarget);
         }
 
         [TestMethod]

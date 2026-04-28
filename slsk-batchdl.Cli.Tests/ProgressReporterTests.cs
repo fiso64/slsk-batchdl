@@ -64,45 +64,25 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void RemoteAlbumFolderConversion_PreservesPayloadFileFailureState()
+    public void RemoteAlbumFolderConversion_PreservesCandidateFileIdentity()
     {
         var reporter = new CliProgressReporter(new CliSettings());
         try
         {
-            var fileJobId = Guid.NewGuid();
-            var song = new SongJobPayloadDto(
-                new SongQueryDto("Artist", "Track", "", "", -1, false, false),
-                CandidateCount: 1,
-                DownloadPath: null,
-                ResolvedUsername: "user",
-                ResolvedFilename: @"Artist\Album\01. Artist - Track.flac",
-                ResolvedHasFreeUploadSlot: true,
-                ResolvedUploadSpeed: 100,
-                ResolvedSize: 100,
-                ResolvedExtension: ".flac",
-                ResolvedAttributes: null,
-                JobId: fileJobId,
-                DisplayId: 7,
-                Candidates: null,
-                State: nameof(JobState.Failed),
-                FailureReason: nameof(FailureReason.Cancelled),
-                FailureMessage: null);
+            var file = CreateFileCandidate("user", @"Artist\Album\01. Artist - Track.flac");
             var folder = new AlbumFolderDto(
                 new AlbumFolderRefDto("user", @"Artist\Album"),
                 "user",
                 @"Artist\Album",
-                SearchFileCount: 1,
-                SearchAudioFileCount: 1,
-                SearchSortedAudioLengths: [],
-                SearchRepresentativeAudioFilename: @"Artist\Album\01. Artist - Track.flac",
-                HasSearchMetadata: true,
-                Files: [song]);
+                new PeerInfoDto("user"),
+                FileCount: 1,
+                AudioFileCount: 1,
+                Files: [file]);
 
             var converted = (AlbumFolder)InvokePrivate(reporter, "ToAlbumFolder", folder)!;
 
             Assert.AreEqual(1, converted.Files.Count);
-            Assert.AreEqual(JobState.Failed, converted.Files[0].State);
-            Assert.AreEqual(FailureReason.Cancelled, converted.Files[0].FailureReason);
+            Assert.AreEqual(@"Artist\Album\01. Artist - Track.flac", converted.Files[0].ResolvedTarget?.Filename);
         }
         finally
         {
@@ -138,33 +118,15 @@ public class CliProgressReporterTests
                 new AlbumFolderRefDto("local", @"Artist\Album"),
                 "local",
                 @"Artist\Album",
-                SearchFileCount: 1,
-                SearchAudioFileCount: 1,
-                SearchSortedAudioLengths: [],
-                SearchRepresentativeAudioFilename: @"Artist\Album\01. Artist - Track.flac",
-                HasSearchMetadata: true,
-                Files:
-                [
-                    new SongJobPayloadDto(
-                        new SongQueryDto("Artist", "Track", "", "", -1, false, false),
-                        CandidateCount: 1,
-                        DownloadPath: null,
-                        ResolvedUsername: "local",
-                        ResolvedFilename: @"Artist\Album\01. Artist - Track.flac",
-                        ResolvedHasFreeUploadSlot: true,
-                        ResolvedUploadSpeed: 100,
-                        ResolvedSize: 100,
-                        ResolvedExtension: ".flac",
-                        ResolvedAttributes: null,
-                        JobId: fileJobId,
-                        DisplayId: 7,
-                        Candidates: null,
-                        State: nameof(JobState.Pending),
-                        FailureReason: null,
-                        FailureMessage: null)
-                ]);
+                new PeerInfoDto("local"),
+                FileCount: 1,
+                AudioFileCount: 1,
+                Files: [CreateFileCandidate("local", @"Artist\Album\01. Artist - Track.flac")]);
 
-            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(summary, folder));
+            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
+                summary,
+                folder,
+                [CreateSongPayload(fileJobId, nameof(JobState.Pending), null)]));
             Assert.IsTrue(HasBackendBarData(reporter, fileJobId));
 
             var failedSummary = summary with
@@ -195,7 +157,10 @@ public class CliProgressReporterTests
             var summary = CreateAlbumSummary(albumJobId, nameof(JobState.Downloading), null);
             var folder = CreateSingleFileAlbumFolder(fileJobId, nameof(JobState.Pending), null);
 
-            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(summary, folder));
+            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
+                summary,
+                folder,
+                [CreateSongPayload(fileJobId, nameof(JobState.Pending), null)]));
             Assert.IsTrue(HasBackendBarData(reporter, fileJobId));
 
             InvokePrivate(
@@ -283,29 +248,41 @@ public class CliProgressReporterTests
             new AlbumFolderRefDto("local", @"Artist\Album"),
             "local",
             @"Artist\Album",
-            SearchFileCount: 1,
-            SearchAudioFileCount: 1,
-            SearchSortedAudioLengths: [],
-            SearchRepresentativeAudioFilename: @"Artist\Album\01. Artist - Track.flac",
-            HasSearchMetadata: true,
-            Files:
-            [
-                new SongJobPayloadDto(
-                    new SongQueryDto("Artist", "Track", "", "", -1, false, false),
-                    CandidateCount: 1,
-                    DownloadPath: null,
-                    ResolvedUsername: "local",
-                    ResolvedFilename: @"Artist\Album\01. Artist - Track.flac",
-                    ResolvedHasFreeUploadSlot: true,
-                    ResolvedUploadSpeed: 100,
-                    ResolvedSize: 100,
-                    ResolvedExtension: ".flac",
-                    ResolvedAttributes: null,
-                    JobId: fileJobId,
-                    DisplayId: 7,
-                    Candidates: null,
-                    State: state,
-                    FailureReason: failureReason,
-                    FailureMessage: null)
-            ]);
+            new PeerInfoDto("local"),
+            FileCount: 1,
+            AudioFileCount: 1,
+            Files: [CreateFileCandidate("local", @"Artist\Album\01. Artist - Track.flac")]);
+
+    private static SongJobPayloadDto CreateSongPayload(Guid fileJobId, string state, string? failureReason)
+        => new(
+            new SongQueryDto("Artist", "Track", null, null, null, false),
+            CandidateCount: 1,
+            DownloadPath: null,
+            ResolvedUsername: "local",
+            ResolvedFilename: @"Artist\Album\01. Artist - Track.flac",
+            ResolvedHasFreeUploadSlot: true,
+            ResolvedUploadSpeed: 100,
+            ResolvedSize: 100,
+            ResolvedSampleRate: null,
+            ResolvedExtension: ".flac",
+            ResolvedAttributes: null,
+            JobId: fileJobId,
+            DisplayId: 7,
+            Candidates: null,
+            State: state,
+            FailureReason: failureReason,
+            FailureMessage: null);
+
+    private static FileCandidateDto CreateFileCandidate(string username, string filename)
+        => new(
+            new FileCandidateRefDto(username, filename),
+            username,
+            filename,
+            new PeerInfoDto(username, true, 100),
+            Size: 100,
+            BitRate: null,
+            SampleRate: null,
+            Length: null,
+            Extension: ".flac",
+            Attributes: null);
 }

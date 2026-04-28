@@ -352,22 +352,7 @@ internal static partial class Program
     }
 
     private static IEnumerable<SongJobPayloadDto> ResolvedAlbumSongs(AlbumJobPayloadDto album)
-    {
-        if (album.Results == null)
-            return [];
-
-        AlbumFolderDto? resolvedFolder = null;
-        if (!string.IsNullOrWhiteSpace(album.ResolvedFolderUsername)
-            && !string.IsNullOrWhiteSpace(album.ResolvedFolderPath))
-        {
-            resolvedFolder = album.Results.FirstOrDefault(folder =>
-                string.Equals(folder.Username, album.ResolvedFolderUsername, StringComparison.Ordinal)
-                && string.Equals(folder.FolderPath, album.ResolvedFolderPath, StringComparison.Ordinal));
-        }
-
-        resolvedFolder ??= album.Results.Count == 1 ? album.Results[0] : null;
-        return resolvedFolder?.Files?.Where(song => Utils.IsMusicFile(song.ResolvedFilename ?? "")) ?? [];
-    }
+        => album.Tracks?.Where(song => Utils.IsMusicFile(song.ResolvedFilename ?? "")) ?? [];
 
     internal static async Task PrintRemoteResultsAsync(
         ICliBackend backend,
@@ -392,6 +377,8 @@ internal static partial class Program
             {
                 SongJobPayloadDto song when song.CandidateCount.GetValueOrDefault() > 0
                     => ToSongJob(song),
+                SearchJobPayloadDto search when search.ResultCount > 0
+                    => await ToSearchResultsJobAsync(backend, summary.JobId, search, ct),
                 AlbumJobPayloadDto album when album.ResultCount > 0
                     => ToAlbumJob(album),
                 AggregateJobPayloadDto aggregate when aggregate.Songs.Count > 0
@@ -408,6 +395,32 @@ internal static partial class Program
             Printing.PrintResults(job, settings.PrintOption, settings.Search);
             printedAny = true;
         }
+    }
+
+    private static async Task<Job?> ToSearchResultsJobAsync(
+        ICliBackend backend,
+        Guid searchJobId,
+        SearchJobPayloadDto search,
+        CancellationToken ct)
+    {
+        if (search.AlbumQuery != null)
+        {
+            var folders = await backend.GetFolderResultsAsync(searchJobId, includeFiles: true, ct);
+            return folders == null
+                ? null
+                : new AlbumJob(ToAlbumQuery(search.AlbumQuery))
+                {
+                    Results = folders.Items.Select(ToAlbumFolder).ToList(),
+                };
+        }
+
+        var files = await backend.GetFileResultsAsync(searchJobId, ct);
+        return files == null
+            ? null
+            : new SongJob(ToSongQuery(search.Query))
+            {
+                Candidates = files.Items.Select(ToFileCandidate).ToList(),
+            };
     }
 
     internal static async Task PrintRemotePlannedOutputAsync(
@@ -516,7 +529,7 @@ internal static partial class Program
                 ["progress-json"] = cliSettings.ProgressJson,
                 ["no-progress"] = cliSettings.NoProgress,
             },
-            DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(args));
+            DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(args));
 
     private static IReadOnlyList<string>? SplitProfileNames(string? names)
         => string.IsNullOrWhiteSpace(names)
@@ -535,7 +548,7 @@ internal static partial class Program
         {
             Engine = SettingsCloner.Clone(engineSettings),
             DefaultDownload = SettingsCloner.Clone(rootSettings),
-            LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsDelta(args),
+            LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsPatch(args),
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
         };
 
@@ -552,13 +565,12 @@ internal static partial class Program
     {
         var job = new SongJob(new SongQuery
         {
-            Artist = song.Query.Artist,
-            Title = song.Query.Title,
-            Album = song.Query.Album,
-            URI = song.Query.Uri,
-            Length = song.Query.Length,
+            Artist = song.Query.Artist ?? "",
+            Title = song.Query.Title ?? "",
+            Album = song.Query.Album ?? "",
+            URI = song.Query.Uri ?? "",
+            Length = song.Query.Length ?? -1,
             ArtistMaybeWrong = song.Query.ArtistMaybeWrong,
-            IsDirectLink = song.Query.IsDirectLink,
         })
         {
             DownloadPath = song.DownloadPath,
@@ -579,11 +591,11 @@ internal static partial class Program
                 new FileCandidateRefDto(song.ResolvedUsername, song.ResolvedFilename),
                 song.ResolvedUsername,
                 song.ResolvedFilename,
+                new PeerInfoDto(song.ResolvedUsername, song.ResolvedHasFreeUploadSlot, song.ResolvedUploadSpeed),
                 song.ResolvedSize ?? 0,
                 null,
                 null,
-                song.ResolvedHasFreeUploadSlot,
-                song.ResolvedUploadSpeed,
+                null,
                 song.ResolvedExtension,
                 song.ResolvedAttributes));
         }
@@ -637,29 +649,32 @@ internal static partial class Program
             folder.FolderPath,
             folder.Files?.Select(ToSongJob).ToList() ?? []);
 
+    private static SongJob ToSongJob(FileCandidateDto file)
+    {
+        var candidate = ToFileCandidate(file);
+        var query = Searcher.InferSongQuery(candidate.Filename, new SongQuery());
+        return new SongJob(query) { ResolvedTarget = candidate };
+    }
+
     private static SongQuery ToSongQuery(SongQueryDto query)
         => new()
         {
-            Artist = query.Artist,
-            Title = query.Title,
-            Album = query.Album,
-            URI = query.Uri,
-            Length = query.Length,
+            Artist = query.Artist ?? "",
+            Title = query.Title ?? "",
+            Album = query.Album ?? "",
+            URI = query.Uri ?? "",
+            Length = query.Length ?? -1,
             ArtistMaybeWrong = query.ArtistMaybeWrong,
-            IsDirectLink = query.IsDirectLink,
         };
 
     private static AlbumQuery ToAlbumQuery(AlbumQueryDto query)
         => new()
         {
-            Artist = query.Artist,
-            Album = query.Album,
-            SearchHint = query.SearchHint,
-            URI = query.Uri,
+            Artist = query.Artist ?? "",
+            Album = query.Album ?? "",
+            SearchHint = query.SearchHint ?? "",
+            URI = query.Uri ?? "",
             ArtistMaybeWrong = query.ArtistMaybeWrong,
-            IsDirectLink = query.IsDirectLink,
-            MinTrackCount = query.MinTrackCount,
-            MaxTrackCount = query.MaxTrackCount,
         };
 
     private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
@@ -667,8 +682,8 @@ internal static partial class Program
             new SearchResponse(
                 candidate.Username,
                 -1,
-                candidate.HasFreeUploadSlot ?? false,
-                candidate.UploadSpeed ?? -1,
+                candidate.Peer.HasFreeUploadSlot ?? false,
+                candidate.Peer.UploadSpeed ?? -1,
                 -1,
                 null),
             new Soulseek.File(
