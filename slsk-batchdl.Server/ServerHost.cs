@@ -185,18 +185,29 @@ public static class ServerHost
                 : Results.NotFound();
         });
 
-        app.MapPost("/api/jobs", async (SubmitJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-        {
-            try
-            {
-                var summary = await supervisor.SubmitJobAsync(request, ct);
-                return Results.Accepted($"/api/jobs/{summary.JobId}", summary);
-            }
-            catch (ArgumentException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
-        });
+        app.MapPost("/api/jobs/extract", async (SubmitExtractJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/search/tracks", async (SubmitTrackSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitTrackSearchJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/search/albums", async (SubmitAlbumSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitAlbumSearchJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/downloads/song", async (SubmitSongJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitSongJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/downloads/album", async (SubmitAlbumJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitAlbumJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/aggregate/tracks", async (SubmitAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitAggregateJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/aggregate/albums", async (SubmitAlbumAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitAlbumAggregateJobAsync(request, ct)));
+
+        app.MapPost("/api/jobs/lists", async (SubmitJobListRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitJobListAsync(request, ct)));
 
         app.MapGet("/api/workflows", (EngineStateStore stateStore) => Results.Ok(stateStore.GetWorkflows()));
 
@@ -221,5 +232,18 @@ public static class ServerHost
         });
 
         app.MapHub<ServerEventHub>("/api/events");
+    }
+
+    private static async Task<IResult> SubmitJobAsync(Func<Task<JobSummaryDto>> submit)
+    {
+        try
+        {
+            var summary = await submit();
+            return Results.Accepted($"/api/jobs/{summary.JobId}", summary);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 }

@@ -15,6 +15,8 @@ public class SoulseekClientManager
 
     public ISoulseekClient? Client => _client;
 
+    public SoulseekClientStates State => _client?.State ?? SoulseekClientStates.None;
+
     public bool IsConnectedAndLoggedIn =>
         _client != null &&
         _client.State.HasFlag(SoulseekClientStates.Connected) &&

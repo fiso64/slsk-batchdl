@@ -64,6 +64,7 @@ public class DownloadEngine
     // ── public state (read by Searcher / Downloader) ─────────────────────────
 
     public ISoulseekClient? Client => _clientManager.Client;
+    public SoulseekClientStates ClientState => _clientManager.State;
     public bool IsConnectedAndLoggedIn => _clientManager.IsConnectedAndLoggedIn;
 
     // Session state (Decoupled)

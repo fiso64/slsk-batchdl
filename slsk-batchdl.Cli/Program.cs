@@ -96,14 +96,10 @@ internal static partial class Program
         }
         else
         {
-            await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = rootSettings.Extraction.Input,
-                        InputType = rootSettings.Extraction.InputType.ToString(),
-                    }),
+            await backend.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(
+                    rootSettings.Extraction.Input,
+                    rootSettings.Extraction.InputType.ToString()),
                 cts.Token);
             engine.CompleteEnqueue();
         }
@@ -209,13 +205,10 @@ internal static partial class Program
             }
         };
 
-        var request = new SubmitJobRequestDto(
-            new JobSpecDto
-            {
-                Kind = "extract",
-                Input = rootSettings.Extraction.Input,
-                InputType = rootSettings.Extraction.InputType.ToString(),
-            },
+        var request = new SubmitExtractJobRequestDto(
+            rootSettings.Extraction.Input,
+            rootSettings.Extraction.InputType.ToString(),
+            Options:
             BuildRemoteSubmissionOptions(args, cliSettings));
 
         RemoteInteractiveCliCoordinator? interactiveCoordinator = null;
@@ -227,7 +220,7 @@ internal static partial class Program
         }
         else
         {
-            submission = await backend.SubmitJobAsync(request, cts.Token);
+            submission = await backend.SubmitExtractJobAsync(request, cts.Token);
         }
 
         ConsoleInputManager.Reporter = cliReporter;

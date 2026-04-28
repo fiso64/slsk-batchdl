@@ -29,19 +29,42 @@ internal sealed class LocalCliBackend
         new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events);
     }
 
-    public Task<JobSummaryDto> SubmitJobAsync(SubmitJobRequestDto request, CancellationToken ct = default)
+    public Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateExtractJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitTrackSearchJobAsync(SubmitTrackSearchJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateTrackSearchJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumSearchJobAsync(SubmitAlbumSearchJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumSearchJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitSongJobAsync(SubmitSongJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateSongJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumJobAsync(SubmitAlbumJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAggregateJobAsync(SubmitAggregateJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateAggregateJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumAggregateJobAsync(SubmitAlbumAggregateJobRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumAggregateJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
+        => SubmitJobAsync(JobRequestMapper.CreateJobList(request), request.Options, ct);
+
+    private Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (defaultSubmitSettings == null)
             throw new NotSupportedException("Local CLI submissions require a default settings baseline.");
 
-        var job = JobRequestMapper.CreateJob(request.Job);
-        if (request.Options?.WorkflowId is Guid workflowId)
+        if (options?.WorkflowId is Guid workflowId)
             job.WorkflowId = workflowId;
 
         var settings = SettingsCloner.Clone(defaultSubmitSettings);
-        if (!string.IsNullOrWhiteSpace(request.Options?.OutputParentDir))
-            settings.Output.ParentDir = request.Options.OutputParentDir;
+        if (!string.IsNullOrWhiteSpace(options?.OutputParentDir))
+            settings.Output.ParentDir = options.OutputParentDir;
         SettingsNormalizer.Normalize(settings);
 
         engine.Enqueue(job, settings);

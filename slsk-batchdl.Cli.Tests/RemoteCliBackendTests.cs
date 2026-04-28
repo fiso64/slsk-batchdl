@@ -67,13 +67,9 @@ public class RemoteCliBackendTests
             backend.EventReceived += envelope => seenTypes.Add(envelope.Type);
             await backend.StartAsync();
 
-            var searchSummary = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }));
+            var searchSummary = await backend.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
 
@@ -148,15 +144,11 @@ public class RemoteCliBackendTests
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
-            var summary = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = "Artist Album",
-                        InputType = "String",
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await backend.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(
+                    "Artist Album",
+                    "String",
+                    Options: new SubmissionOptionsDto(
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(["-a", "--no-browse-folder"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
@@ -269,14 +261,10 @@ public class RemoteCliBackendTests
                 });
 
             var summary = await coordinator.StartAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = inputPath,
-                        InputType = "List",
-                    },
-                    new SubmissionOptionsDto(
+                new SubmitExtractJobRequestDto(
+                    inputPath,
+                    "List",
+                    Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
                         ProfileContext: new Dictionary<string, bool> { ["interactive"] = true },
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta([inputPath, "--input-type", "list", "--no-browse-folder"]))),
@@ -350,13 +338,9 @@ public class RemoteCliBackendTests
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
-            var searchSummary = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    }));
+            var searchSummary = await backend.SubmitAlbumSearchJobAsync(
+            new SubmitAlbumSearchJobRequestDto(
+                new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
             var projection = await backend.GetAlbumResultsAsync(searchSummary.JobId, includeFiles: false);
@@ -538,15 +522,11 @@ public class RemoteCliBackendTests
                 },
             };
 
-            var summary = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = "Artist - Track One",
-                        InputType = "String",
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await backend.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(
+                    "Artist - Track One",
+                    "String",
+                    Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta(["Artist - Track One", "--print-results"]))));
 
@@ -622,15 +602,11 @@ public class RemoteCliBackendTests
                 },
             };
 
-            var summary = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = inputPath,
-                        InputType = "List",
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await backend.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(
+                    inputPath,
+                    "List",
+                    Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsDelta([inputPath, "--input-type", "list", "--print-tracks"]))));
 
@@ -670,6 +646,65 @@ public class RemoteCliBackendTests
         finally
         {
             listener.Stop();
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteCliBackend_SubmitJobList_SerializesTypedChildItems()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-backend-list-test-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-backend-list-out-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist", "Album");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{filename}",
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+
+            var summary = await backend.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "batch",
+                    [
+                        new TrackSearchJobListItemDto(
+                            new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
+                    ]));
+
+            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
+
+            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, summary.WorkflowId, CanonicalRootsOnly: false, IncludeNonDefault: true));
+            Assert.IsTrue(jobs.Any(job => job.Kind == "job-list"));
+        }
+        finally
+        {
+            await app.StopAsync();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
         }
     }
 
@@ -723,13 +758,9 @@ public class RemoteCliBackendTests
     }
 
     private static async Task<JobSummaryDto> StartAlbumSearchAsync(ICliBackend backend, string artist, string album)
-        => await backend.SubmitJobAsync(
-            new SubmitJobRequestDto(
-                new JobSpecDto
-                {
-                    Kind = "search-album",
-                    AlbumQuery = new AlbumQueryDto(artist, album, "", "", false, false, -1, -1),
-                }));
+        => await backend.SubmitAlbumSearchJobAsync(
+            new SubmitAlbumSearchJobRequestDto(
+                new AlbumQueryDto(artist, album, "", "", false, false, -1, -1)));
 
     private static async Task<JobSummaryDto> StartFirstAlbumDownloadAsync(ICliBackend backend, Guid searchJobId)
     {

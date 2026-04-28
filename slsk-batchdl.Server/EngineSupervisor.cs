@@ -6,6 +6,7 @@ using Sldl.Core.Jobs;
 using Sldl.Core.Models;
 using Sldl.Core.Services;
 using Sldl.Core.Settings;
+using Soulseek;
 
 namespace Sldl.Server;
 
@@ -96,13 +97,13 @@ public sealed class EngineSupervisor
 
     public ServerStatusDto GetStatus()
     {
-        bool isConnectedAndLoggedIn;
+        SoulseekClientStates clientState;
         lock (engineGate)
-            isConnectedAndLoggedIn = currentEngine?.IsConnectedAndLoggedIn == true;
+            clientState = currentEngine?.ClientState ?? SoulseekClientStates.None;
 
         var stats = StateStore.GetStatistics();
         return new ServerStatusDto(
-            isConnectedAndLoggedIn,
+            ToSoulseekClientStatusDto(clientState),
             stats.TotalJobCount,
             stats.ActiveJobCount,
             stats.TotalWorkflowCount,
@@ -121,14 +122,53 @@ public sealed class EngineSupervisor
             .OrderBy(profile => profile.Name)
             .ToList();
 
-    public async Task<JobSummaryDto> SubmitJobAsync(SubmitJobRequestDto request, CancellationToken ct)
+    private static SoulseekClientStatusDto ToSoulseekClientStatusDto(SoulseekClientStates state)
+    {
+        var flags = Enum.GetValues<SoulseekClientStates>()
+            .Where(flag => flag != SoulseekClientStates.None && state.HasFlag(flag))
+            .Select(flag => flag.ToString())
+            .ToList();
+
+        bool isConnected = state.HasFlag(SoulseekClientStates.Connected);
+        bool isLoggedIn = state.HasFlag(SoulseekClientStates.LoggedIn);
+
+        return new SoulseekClientStatusDto(
+            state.ToString(),
+            flags,
+            isConnected && isLoggedIn);
+    }
+
+    public Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateExtractJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitTrackSearchJobAsync(SubmitTrackSearchJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateTrackSearchJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumSearchJobAsync(SubmitAlbumSearchJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumSearchJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitSongJobAsync(SubmitSongJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateSongJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumJobAsync(SubmitAlbumJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAggregateJobAsync(SubmitAggregateJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateAggregateJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitAlbumAggregateJobAsync(SubmitAlbumAggregateJobRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateAlbumAggregateJob(request), request.Options, ct);
+
+    public Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct)
+        => SubmitJobAsync(JobRequestMapper.CreateJobList(request), request.Options, ct);
+
+    private async Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
-        var job = JobRequestMapper.CreateJob(request.Job);
-        if (request.Options?.WorkflowId is Guid workflowId)
+        if (options?.WorkflowId is Guid workflowId)
             job.WorkflowId = workflowId;
-        jobSettingsResolver.SetWorkflowOptions(job.WorkflowId, request.Options);
+        jobSettingsResolver.SetWorkflowOptions(job.WorkflowId, options);
 
         var settings = jobSettingsResolver.Resolve(defaultDownloadSettings, job);
 

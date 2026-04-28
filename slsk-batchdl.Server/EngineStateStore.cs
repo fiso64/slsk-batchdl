@@ -171,7 +171,13 @@ public sealed class EngineStateStore
                 .Distinct()
                 .Count();
 
-            return new ServerStatusDto(false, totalJobCount, activeJobCount, totalWorkflowCount, activeWorkflowCount, 0);
+            return new ServerStatusDto(
+                new SoulseekClientStatusDto("None", [], false),
+                totalJobCount,
+                activeJobCount,
+                totalWorkflowCount,
+                activeWorkflowCount,
+                0);
         }
     }
 

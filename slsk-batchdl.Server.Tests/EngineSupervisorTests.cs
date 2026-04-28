@@ -28,13 +28,9 @@ public class EngineSupervisorTests
             var supervisor = CreateSupervisor(musicRoot, outputDir);
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }),
+            var searchSummary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -93,13 +89,9 @@ public class EngineSupervisorTests
             var supervisor = CreateSupervisor(musicRoot, outputDir);
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    }),
+            var searchSummary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -173,13 +165,9 @@ public class EngineSupervisorTests
                 configureEngine: settings => settings.MockFilesSlow = true);
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    }),
+            var searchSummary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -291,13 +279,9 @@ public class EngineSupervisorTests
 
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }),
+            var searchSummary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -337,13 +321,9 @@ public class EngineSupervisorTests
 
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }),
+            var searchSummary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -388,13 +368,9 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var searchSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "Track One", "", false, false, -1, -1),
-                    }),
+            var searchSummary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "Track One", "", false, false, -1, -1)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
@@ -466,15 +442,11 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var extractSummary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "extract",
-                        Input = "Artist Album",
-                        InputType = "String",
-                        AutoStartExtractedResult = false,
-                    }),
+            var extractSummary = await supervisor.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(
+                    "Artist Album",
+                    "String",
+                    AutoStartExtractedResult: false),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, extractSummary.JobId, "Done");
@@ -536,13 +508,9 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    },
+            var summary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
                     new SubmissionOptionsDto(ProfileContext: new Dictionary<string, bool>
                     {
                         ["interactive"] = true,
@@ -591,13 +559,9 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    }),
+            var summary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
@@ -658,13 +622,9 @@ public class EngineSupervisorTests
                 ]));
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-album",
-                        AlbumQuery = new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1),
-                    }),
+            var summary = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false, false, -1, -1)),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
@@ -711,14 +671,10 @@ public class EngineSupervisorTests
             Assert.AreEqual(1, profiles.Count);
             Assert.AreEqual("long-search", profiles[0].Name);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    },
-                    new SubmissionOptionsDto(ProfileNames: ["long-search"])),
+            var summary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    Options: new SubmissionOptionsDto(ProfileNames: ["long-search"])),
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
@@ -765,14 +721,10 @@ public class EngineSupervisorTests
             cliSettings.Search.MaxStaleTime = 222;
             cliSettings.Search.NecessaryCond.Formats = ["flac"];
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    Options: new SubmissionOptionsDto(
                         ProfileNames: ["short-search"],
                         DownloadSettings: DownloadSettingsDeltaMapper.FromDifference(baseline, cliSettings))),
                 CancellationToken.None);
@@ -817,14 +769,10 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    Options: new SubmissionOptionsDto(
                         ProfileNames: ["no-skip"],
                         DownloadSettings: new DownloadSettingsDeltaDto([
                             DownloadSettingsDeltaMapper.Set("Skip.SkipExisting", true),
@@ -870,14 +818,10 @@ public class EngineSupervisorTests
             });
             var runTask = supervisor.RunAsync(cts.Token);
 
-            var summary = await supervisor.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    },
-                    new SubmissionOptionsDto(
+            var summary = await supervisor.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
+                    Options: new SubmissionOptionsDto(
                         ProfileNames: ["base-command"],
                         DownloadSettings: new DownloadSettingsDeltaDto([
                             DownloadSettingsDeltaMapper.Append("Output.OnComplete", ["second"]),

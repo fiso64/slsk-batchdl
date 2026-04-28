@@ -61,9 +61,33 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         http.Dispose();
     }
 
-    public async Task<JobSummaryDto> SubmitJobAsync(SubmitJobRequestDto request, CancellationToken ct = default)
+    public async Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/extract", request, ct);
+
+    public async Task<JobSummaryDto> SubmitTrackSearchJobAsync(SubmitTrackSearchJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/search/tracks", request, ct);
+
+    public async Task<JobSummaryDto> SubmitAlbumSearchJobAsync(SubmitAlbumSearchJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/search/albums", request, ct);
+
+    public async Task<JobSummaryDto> SubmitSongJobAsync(SubmitSongJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/downloads/song", request, ct);
+
+    public async Task<JobSummaryDto> SubmitAlbumJobAsync(SubmitAlbumJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/downloads/album", request, ct);
+
+    public async Task<JobSummaryDto> SubmitAggregateJobAsync(SubmitAggregateJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/aggregate/tracks", request, ct);
+
+    public async Task<JobSummaryDto> SubmitAlbumAggregateJobAsync(SubmitAlbumAggregateJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/aggregate/albums", request, ct);
+
+    public async Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/lists", request, ct);
+
+    private async Task<JobSummaryDto> PostJobAsync<TRequest>(string url, TRequest request, CancellationToken ct)
     {
-        using var response = await http.PostAsJsonAsync("api/jobs", request, jsonOptions, ct);
+        using var response = await http.PostAsJsonAsync(url, request, jsonOptions, ct);
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<JobSummaryDto>(response, ct);
     }

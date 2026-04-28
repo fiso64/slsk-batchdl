@@ -45,13 +45,9 @@ public class LocalCliBackendTests
             var seenEvents = new ConcurrentBag<ServerEventEnvelopeDto>();
             backend.EventReceived += envelope => seenEvents.Add(envelope);
 
-            var submitted = await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "search-track",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }),
+            var submitted = await backend.SubmitTrackSearchJobAsync(
+                new SubmitTrackSearchJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
                 cts.Token);
             engine.CompleteEnqueue();
 
@@ -185,13 +181,9 @@ public class LocalCliBackendTests
             var seenTypes = new ConcurrentBag<string>();
             backend.EventReceived += envelope => seenTypes.Add(envelope.Type);
 
-            await backend.SubmitJobAsync(
-                new SubmitJobRequestDto(
-                    new JobSpecDto
-                    {
-                        Kind = "song",
-                        SongQuery = new SongQueryDto("Artist", "Track One", "", "", -1, false, false),
-                    }),
+            await backend.SubmitSongJobAsync(
+                new SubmitSongJobRequestDto(
+                    new SongQueryDto("Artist", "Track One", "", "", -1, false, false)),
                 cts.Token);
 
             engine.CompleteEnqueue();

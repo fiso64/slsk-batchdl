@@ -19,6 +19,18 @@ public static class ServerProtocol
         public const string Generic = "generic";
     }
 
+    public static class JobListItemKinds
+    {
+        public const string Extract = "extract";
+        public const string TrackSearch = "search-track";
+        public const string AlbumSearch = "search-album";
+        public const string Song = "song";
+        public const string Album = "album";
+        public const string Aggregate = "aggregate";
+        public const string AlbumAggregate = "album-aggregate";
+        public const string JobList = "job-list";
+    }
+
     public static class PresentationDisplayModes
     {
         public const string Node = "node";

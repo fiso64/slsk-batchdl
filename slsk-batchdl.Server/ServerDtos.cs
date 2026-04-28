@@ -15,7 +15,7 @@ public sealed record ServerInfoDto(
 /// Current daemon and engine activity counters.
 /// </summary>
 public sealed record ServerStatusDto(
-    bool IsConnectedAndLoggedIn,
+    SoulseekClientStatusDto SoulseekClient,
     int TotalJobCount,
     int ActiveJobCount,
     int TotalWorkflowCount,
@@ -23,53 +23,117 @@ public sealed record ServerStatusDto(
     int RestartCount);
 
 /// <summary>
-/// Request body for submitting a new root job.
+/// Current Soulseek client connection state.
 /// </summary>
-public sealed record SubmitJobRequestDto(
-    JobSpecDto Job,
+/// <param name="State">Combined Soulseek.NET client state string.</param>
+/// <param name="Flags">Individual Soulseek.NET state flag names.</param>
+/// <param name="IsReady">True when the client is both connected and logged in.</param>
+public sealed record SoulseekClientStatusDto(
+    string State,
+    IReadOnlyList<string> Flags,
+    bool IsReady);
+
+/// <summary>
+/// Starts an extract job from a URL, list path, CSV path, or free-text query.
+/// </summary>
+public sealed record SubmitExtractJobRequestDto(
+    string Input,
+    string? InputType = null,
+    bool? AutoStartExtractedResult = null,
     SubmissionOptionsDto? Options = null);
 
 /// <summary>
-/// Server job creation request. Kind selects which query fields are required. Prefer follow-up
-/// endpoints when starting work from an existing job result.
+/// Starts a track search job. Use result endpoints to inspect candidates and follow-up endpoints
+/// to start downloads from selected candidates.
 /// </summary>
-public sealed record JobSpecDto
-{
-    /// <summary>
-    /// Job kind. Use values from ServerProtocol.JobKinds plus search-track/search-album.
-    /// </summary>
-    public string Kind { get; init; } = "";
+public sealed record SubmitTrackSearchJobRequestDto(
+    SongQueryDto SongQuery,
+    bool IncludeFullResults = false,
+    SubmissionOptionsDto? Options = null);
 
-    public string? Name { get; init; }
+/// <summary>
+/// Starts an album search job. Use result endpoints to inspect folders and follow-up endpoints
+/// to start downloads from selected folders.
+/// </summary>
+public sealed record SubmitAlbumSearchJobRequestDto(
+    AlbumQueryDto AlbumQuery,
+    SubmissionOptionsDto? Options = null);
 
-    /// <summary>
-    /// Extract input, such as a URL, list path, CSV path, or free-text query.
-    /// </summary>
-    public string? Input { get; init; }
+/// <summary>
+/// Starts a direct song download job.
+/// </summary>
+public sealed record SubmitSongJobRequestDto(
+    SongQueryDto SongQuery,
+    SubmissionOptionsDto? Options = null);
 
-    /// <summary>
-    /// Optional explicit input type for extract jobs; normally omitted for auto-detection.
-    /// </summary>
-    public string? InputType { get; init; }
+/// <summary>
+/// Starts a direct album download job.
+/// </summary>
+public sealed record SubmitAlbumJobRequestDto(
+    AlbumQueryDto AlbumQuery,
+    SubmissionOptionsDto? Options = null);
 
-    /// <summary>
-    /// Overrides whether an extract job should immediately run its produced result.
-    /// </summary>
-    public bool? AutoStartExtractedResult { get; init; }
+/// <summary>
+/// Starts an aggregate track job.
+/// </summary>
+public sealed record SubmitAggregateJobRequestDto(
+    SongQueryDto SongQuery,
+    SubmissionOptionsDto? Options = null);
 
-    public SongQueryDto? SongQuery { get; init; }
-    public AlbumQueryDto? AlbumQuery { get; init; }
+/// <summary>
+/// Starts an aggregate album job.
+/// </summary>
+public sealed record SubmitAlbumAggregateJobRequestDto(
+    AlbumQueryDto AlbumQuery,
+    SubmissionOptionsDto? Options = null);
 
-    /// <summary>
-    /// For track searches, keeps the full result set instead of only projected candidates.
-    /// </summary>
-    public bool IncludeFullResults { get; init; }
+/// <summary>
+/// Starts a job-list root. Child items are typed with the "kind" discriminator because lists can
+/// contain mixed job shapes.
+/// </summary>
+public sealed record SubmitJobListRequestDto(
+    string? Name,
+    IReadOnlyList<JobListItemDto> Jobs,
+    SubmissionOptionsDto? Options = null);
 
-    /// <summary>
-    /// Child job specs for job-list submissions.
-    /// </summary>
-    public IReadOnlyList<JobSpecDto>? Jobs { get; init; }
-}
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ExtractJobListItemDto), ServerProtocol.JobListItemKinds.Extract)]
+[JsonDerivedType(typeof(TrackSearchJobListItemDto), ServerProtocol.JobListItemKinds.TrackSearch)]
+[JsonDerivedType(typeof(AlbumSearchJobListItemDto), ServerProtocol.JobListItemKinds.AlbumSearch)]
+[JsonDerivedType(typeof(SongJobListItemDto), ServerProtocol.JobListItemKinds.Song)]
+[JsonDerivedType(typeof(AlbumJobListItemDto), ServerProtocol.JobListItemKinds.Album)]
+[JsonDerivedType(typeof(AggregateJobListItemDto), ServerProtocol.JobListItemKinds.Aggregate)]
+[JsonDerivedType(typeof(AlbumAggregateJobListItemDto), ServerProtocol.JobListItemKinds.AlbumAggregate)]
+[JsonDerivedType(typeof(JobListJobListItemDto), ServerProtocol.JobListItemKinds.JobList)]
+public abstract record JobListItemDto;
+
+public sealed record ExtractJobListItemDto(
+    string Input,
+    string? InputType = null,
+    bool? AutoStartExtractedResult = null) : JobListItemDto;
+
+public sealed record TrackSearchJobListItemDto(
+    SongQueryDto SongQuery,
+    bool IncludeFullResults = false) : JobListItemDto;
+
+public sealed record AlbumSearchJobListItemDto(
+    AlbumQueryDto AlbumQuery) : JobListItemDto;
+
+public sealed record SongJobListItemDto(
+    SongQueryDto SongQuery) : JobListItemDto;
+
+public sealed record AlbumJobListItemDto(
+    AlbumQueryDto AlbumQuery) : JobListItemDto;
+
+public sealed record AggregateJobListItemDto(
+    SongQueryDto SongQuery) : JobListItemDto;
+
+public sealed record AlbumAggregateJobListItemDto(
+    AlbumQueryDto AlbumQuery) : JobListItemDto;
+
+public sealed record JobListJobListItemDto(
+    string? Name,
+    IReadOnlyList<JobListItemDto> Jobs) : JobListItemDto;
 
 /// <summary>
 /// Starts the result produced by a completed extract job. Mode "normal" runs the extracted job

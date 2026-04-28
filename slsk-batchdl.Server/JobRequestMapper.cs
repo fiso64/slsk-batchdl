@@ -6,23 +6,46 @@ namespace Sldl.Server;
 
 public static class JobRequestMapper
 {
-    public static Job CreateJob(JobSpecDto spec)
+    public static ExtractJob CreateExtractJob(SubmitExtractJobRequestDto request)
     {
-        string kind = spec.Kind.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(request.Input))
+            throw new ArgumentException("input is required for extract jobs");
 
-        return kind switch
+        InputType? inputType = null;
+        if (!string.IsNullOrWhiteSpace(request.InputType))
         {
-            ServerProtocol.JobKinds.Extract => CreateExtractJob(spec),
-            "search-track" => new SearchJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for search-track jobs")), spec.IncludeFullResults),
-            "search-album" => new SearchJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for search-album jobs"))),
-            ServerProtocol.JobKinds.Song => new SongJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for song jobs"))),
-            ServerProtocol.JobKinds.Album => new AlbumJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album jobs"))),
-            ServerProtocol.JobKinds.Aggregate => new AggregateJob(ToSongQuery(spec.SongQuery ?? throw new ArgumentException("songQuery is required for aggregate jobs"))),
-            ServerProtocol.JobKinds.AlbumAggregate => new AlbumAggregateJob(ToAlbumQuery(spec.AlbumQuery ?? throw new ArgumentException("albumQuery is required for album-aggregate jobs"))),
-            ServerProtocol.JobKinds.JobList => CreateJobList(spec),
-            _ => throw new ArgumentException($"Unsupported job kind '{spec.Kind}'")
-        };
+            if (!Enum.TryParse<InputType>(request.InputType, ignoreCase: true, out var parsed))
+                throw new ArgumentException($"Unsupported inputType '{request.InputType}'");
+            inputType = parsed;
+        }
+
+        var job = new ExtractJob(request.Input, inputType);
+        if (request.AutoStartExtractedResult.HasValue)
+            job.AutoProcessResult = request.AutoStartExtractedResult.Value;
+
+        return job;
     }
+
+    public static SearchJob CreateTrackSearchJob(SubmitTrackSearchJobRequestDto request)
+        => new(ToSongQuery(request.SongQuery), request.IncludeFullResults);
+
+    public static SearchJob CreateAlbumSearchJob(SubmitAlbumSearchJobRequestDto request)
+        => new(ToAlbumQuery(request.AlbumQuery));
+
+    public static SongJob CreateSongJob(SubmitSongJobRequestDto request)
+        => new(ToSongQuery(request.SongQuery));
+
+    public static AlbumJob CreateAlbumJob(SubmitAlbumJobRequestDto request)
+        => new(ToAlbumQuery(request.AlbumQuery));
+
+    public static AggregateJob CreateAggregateJob(SubmitAggregateJobRequestDto request)
+        => new(ToSongQuery(request.SongQuery));
+
+    public static AlbumAggregateJob CreateAlbumAggregateJob(SubmitAlbumAggregateJobRequestDto request)
+        => new(ToAlbumQuery(request.AlbumQuery));
+
+    public static JobList CreateJobList(SubmitJobListRequestDto request)
+        => CreateJobList(request.Name, request.Jobs);
 
     public static SongQuery ToSongQuery(SongQueryDto dto) => new()
     {
@@ -47,31 +70,28 @@ public static class JobRequestMapper
         MaxTrackCount = dto.MaxTrackCount,
     };
 
-    private static ExtractJob CreateExtractJob(JobSpecDto spec)
-    {
-        if (string.IsNullOrWhiteSpace(spec.Input))
-            throw new ArgumentException("input is required for extract jobs");
-
-        InputType? inputType = null;
-        if (!string.IsNullOrWhiteSpace(spec.InputType))
+    private static Job CreateJob(JobListItemDto item)
+        => item switch
         {
-            if (!Enum.TryParse<InputType>(spec.InputType, ignoreCase: true, out var parsed))
-                throw new ArgumentException($"Unsupported inputType '{spec.InputType}'");
-            inputType = parsed;
-        }
+            ExtractJobListItemDto extract => CreateExtractJob(new SubmitExtractJobRequestDto(
+                extract.Input,
+                extract.InputType,
+                extract.AutoStartExtractedResult)),
+            TrackSearchJobListItemDto search => new SearchJob(ToSongQuery(search.SongQuery), search.IncludeFullResults),
+            AlbumSearchJobListItemDto search => new SearchJob(ToAlbumQuery(search.AlbumQuery)),
+            SongJobListItemDto song => new SongJob(ToSongQuery(song.SongQuery)),
+            AlbumJobListItemDto album => new AlbumJob(ToAlbumQuery(album.AlbumQuery)),
+            AggregateJobListItemDto aggregate => new AggregateJob(ToSongQuery(aggregate.SongQuery)),
+            AlbumAggregateJobListItemDto aggregate => new AlbumAggregateJob(ToAlbumQuery(aggregate.AlbumQuery)),
+            JobListJobListItemDto list => CreateJobList(list.Name, list.Jobs),
+            _ => throw new ArgumentException($"Unsupported job-list item type '{item.GetType().Name}'")
+        };
 
-        var job = new ExtractJob(spec.Input, inputType);
-        if (spec.AutoStartExtractedResult.HasValue)
-            job.AutoProcessResult = spec.AutoStartExtractedResult.Value;
-
-        return job;
-    }
-
-    private static JobList CreateJobList(JobSpecDto spec)
+    private static JobList CreateJobList(string? name, IReadOnlyList<JobListItemDto> jobs)
     {
-        if (spec.Jobs == null || spec.Jobs.Count == 0)
+        if (jobs.Count == 0)
             throw new ArgumentException("job-list must contain at least one child job");
 
-        return new JobList(spec.Name, spec.Jobs.Select(CreateJob));
+        return new JobList(name, jobs.Select(CreateJob));
     }
 }

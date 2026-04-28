@@ -30,11 +30,10 @@ internal sealed class RemoteInteractiveCliCoordinator
         interactiveEnabled = cliSettings.InteractiveMode;
     }
 
-    public async Task<JobSummaryDto> StartAsync(SubmitJobRequestDto request, CancellationToken ct = default)
+    public async Task<JobSummaryDto> StartAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var job = request.Job with { AutoStartExtractedResult = false };
-        return await backend.SubmitJobAsync(request with { Job = job }, ct);
+        return await backend.SubmitExtractJobAsync(request with { AutoStartExtractedResult = false }, ct);
     }
 
     public async Task RunUntilCompleteAsync(Guid workflowId, CancellationToken ct = default)
