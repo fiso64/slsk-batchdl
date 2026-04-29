@@ -53,12 +53,20 @@ public static class ServerHost
             .ExcludeFromDescription();
 
         app.MapGet("/api/server/info", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetInfo()))
+            .WithTags("Server")
+            .WithSummary("Gets server identity and protocol information.")
             .Produces<ServerInfoDto>();
         app.MapGet("/api/server/status", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetStatus()))
+            .WithTags("Server")
+            .WithSummary("Gets current daemon and Soulseek client status.")
             .Produces<ServerStatusDto>();
         app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()))
+            .WithTags("Profiles")
+            .WithSummary("Lists configured download profiles.")
             .Produces<IReadOnlyList<ProfileSummaryDto>>();
         app.MapGet("/api/events/catalog", () => Results.Ok(ServerEventCatalog.All))
+            .WithTags("Events")
+            .WithSummary("Lists SignalR event types and their snapshot invalidation behavior.")
             .Produces<IReadOnlyList<ServerEventDescriptorDto>>();
 
         app.MapGet("/api/jobs", (
@@ -72,6 +80,9 @@ public static class ServerHost
             var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, canonicalRootsOnly, includeNonDefault));
             return Results.Ok(jobs);
         })
+            .WithTags("Jobs")
+            .WithSummary("Lists known jobs.")
+            .WithDescription("Use canonicalRootsOnly=true for root job lists in GUI views. Set includeNonDefault=true only when diagnostics or low-level child jobs are needed.")
             .Produces<IReadOnlyList<JobSummaryDto>>();
 
         app.MapGet("/api/jobs/{jobId:guid}", (Guid jobId, EngineStateStore stateStore) =>
@@ -79,6 +90,8 @@ public static class ServerHost
             var detail = stateStore.GetJobDetail(jobId);
             return detail != null ? Results.Ok(detail) : Results.NotFound();
         })
+            .WithTags("Jobs")
+            .WithSummary("Gets a job snapshot by id.")
             .Produces<JobDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -87,6 +100,9 @@ public static class ServerHost
             var results = supervisor.GetSearchRawResults(jobId, afterSequence);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
+            .WithTags("Search Results")
+            .WithSummary("Gets raw search responses for a search job.")
+            .WithDescription("Use afterSequence to incrementally fetch raw responses after the last seen sequence.")
             .Produces<IReadOnlyList<SearchRawResultDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -95,6 +111,8 @@ public static class ServerHost
             var results = supervisor.GetFileResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
+            .WithTags("Search Results")
+            .WithSummary("Gets file candidates for a search-like job.")
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -103,6 +121,9 @@ public static class ServerHost
             var results = supervisor.GetFolderResults(jobId, includeFiles);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
+            .WithTags("Search Results")
+            .WithSummary("Gets folder candidates for an album search-like job.")
+            .WithDescription("Set includeFiles=true only when the client needs selectable files. Folder file counts can come from search results and may not represent a full browse of the remote folder.")
             .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -111,6 +132,8 @@ public static class ServerHost
             var results = supervisor.GetAggregateTrackResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
+            .WithTags("Search Results")
+            .WithSummary("Gets aggregate track candidates.")
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -119,6 +142,8 @@ public static class ServerHost
             var results = supervisor.GetAggregateAlbumResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
+            .WithTags("Search Results")
+            .WithSummary("Gets aggregate album candidates.")
             .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -140,6 +165,9 @@ public static class ServerHost
                 return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
         })
+            .WithTags("Follow-up Jobs")
+            .WithSummary("Starts a folder retrieval job for a selected album result folder.")
+            .WithDescription("Retrieves the full remote folder contents for a selected folder result. Search responses can omit child items that did not match the original query.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
@@ -162,6 +190,9 @@ public static class ServerHost
                 return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
         })
+            .WithTags("Follow-up Jobs")
+            .WithSummary("Starts one or more file download jobs from selected search result files.")
+            .WithDescription("The source search job identifies where the candidate refs came from. Per-download settings belong in the request options, not in the original search job.")
             .Produces<IReadOnlyList<JobSummaryDto>>(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
@@ -184,6 +215,9 @@ public static class ServerHost
                 return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
         })
+            .WithTags("Follow-up Jobs")
+            .WithSummary("Starts an album/folder download job from a selected folder result.")
+            .WithDescription("The source search job identifies where the folder ref came from. Per-download settings belong in the request options, not in the original search job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
@@ -194,50 +228,71 @@ public static class ServerHost
                 ? Results.Accepted($"/api/jobs/{jobId}")
                 : Results.NotFound();
         })
+            .WithTags("Jobs")
+            .WithSummary("Cancels a job when cancellation is available.")
             .Produces(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/jobs/extract", async (SubmitExtractJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits an input extraction job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/search/tracks", async (SubmitTrackSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitTrackSearchJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits a track search job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/search/albums", async (SubmitAlbumSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitAlbumSearchJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits an album search job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/downloads/song", async (SubmitSongJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitSongJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits a single-file download job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/downloads/album", async (SubmitAlbumJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitAlbumJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits an album/folder download job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/aggregate/tracks", async (SubmitAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitAggregateJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits an aggregate track search job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/aggregate/albums", async (SubmitAlbumAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitAlbumAggregateJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits an aggregate album search job.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/lists", async (SubmitJobListRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitJobListAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits a job list from draft child jobs.")
+            .WithDescription("Job drafts are submission payloads only. Submitted children appear as normal runtime jobs in subsequent job/workflow snapshots.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapGet("/api/workflows", (EngineStateStore stateStore) => Results.Ok(stateStore.GetWorkflows()))
+            .WithTags("Workflows")
+            .WithSummary("Lists known workflows.")
             .Produces<IReadOnlyList<WorkflowSummaryDto>>();
 
         app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, EngineStateStore stateStore) =>
@@ -245,6 +300,8 @@ public static class ServerHost
             var workflow = stateStore.GetWorkflow(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
+            .WithTags("Workflows")
+            .WithSummary("Gets a workflow snapshot by id.")
             .Produces<WorkflowDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -253,6 +310,9 @@ public static class ServerHost
             var workflow = stateStore.GetPresentedWorkflow(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
+            .WithTags("Workflows")
+            .WithSummary("Gets the GUI-oriented presentation tree for a workflow.")
+            .WithDescription("This view applies server presentation policy: replaced extract jobs, embedded album track jobs, and root-visible nodes are arranged for display.")
             .Produces<PresentedWorkflowDto>()
             .Produces(StatusCodes.Status404NotFound);
 
@@ -263,6 +323,8 @@ public static class ServerHost
                 ? Results.Accepted($"/api/workflows/{workflowId}", new CancelWorkflowResponseDto(cancelled))
                 : Results.NotFound();
         })
+            .WithTags("Workflows")
+            .WithSummary("Cancels cancellable jobs in a workflow.")
             .Produces<CancelWorkflowResponseDto>(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound);
 
