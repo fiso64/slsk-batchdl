@@ -205,7 +205,6 @@ public class RemoteCliBackendTests
             {
                 MockFilesDir = musicRoot,
                 MockFilesReadTags = false,
-                MockFilesSlow = true,
             },
             DefaultDownload = new DownloadSettings
             {
@@ -248,7 +247,7 @@ public class RemoteCliBackendTests
 
                     try
                     {
-                        await Task.Delay(100);
+                        await Task.Delay(25);
                         Interlocked.Increment(ref pickerCalls);
                         var folder = request.Folders.First();
                         return new InteractiveModeManager.RunResult(
@@ -262,7 +261,8 @@ public class RemoteCliBackendTests
                     {
                         Interlocked.Decrement(ref activePickers);
                     }
-                });
+                },
+                pollInterval: TimeSpan.FromMilliseconds(10));
 
             var summary = await coordinator.StartAsync(
                 new SubmitExtractJobRequestDto(

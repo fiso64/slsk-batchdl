@@ -11,6 +11,7 @@ internal sealed class RemoteInteractiveCliCoordinator
     private readonly CliSettings cliSettings;
     private readonly CancellationToken appToken;
     private readonly Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? promptOverride;
+    private readonly TimeSpan pollInterval;
     private readonly SemaphoreSlim promptSemaphore = new(1, 1);
     private readonly HashSet<Guid> startedExtractResults = [];
     private readonly HashSet<Guid> handledAlbumSearches = [];
@@ -21,12 +22,14 @@ internal sealed class RemoteInteractiveCliCoordinator
         ICliBackend backend,
         CliSettings cliSettings,
         CancellationToken appToken,
-        Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? promptOverride = null)
+        Func<InteractiveAlbumPromptRequest, Task<InteractiveModeManager.RunResult>>? promptOverride = null,
+        TimeSpan? pollInterval = null)
     {
         this.backend = backend;
         this.cliSettings = cliSettings;
         this.appToken = appToken;
         this.promptOverride = promptOverride;
+        this.pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(150);
         interactiveEnabled = cliSettings.InteractiveMode;
     }
 
@@ -52,7 +55,8 @@ internal sealed class RemoteInteractiveCliCoordinator
                     return;
             }
 
-            await Task.Delay(150, ct);
+            if (pollInterval > TimeSpan.Zero)
+                await Task.Delay(pollInterval, ct);
         }
     }
 

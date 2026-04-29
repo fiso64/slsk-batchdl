@@ -95,7 +95,6 @@ public class CliEndToEndTests
                 Password = "test_pass",
                 MockFilesDir = musicRoot,
                 MockFilesReadTags = false,
-                MockFilesSlow = true,
             };
             var rootSettings = new DownloadSettings();
             rootSettings.Extraction.Input = listPath;
@@ -129,7 +128,7 @@ public class CliEndToEndTests
 
                     try
                     {
-                        await Task.Delay(150);
+                        await Task.Delay(25);
                         Interlocked.Increment(ref pickerCalls);
                         var folder = request.Folders.FirstOrDefault();
                         return new InteractiveModeManager.RunResult(
