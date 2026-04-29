@@ -11,7 +11,7 @@ namespace Sldl.Cli;
 
 public class UserInfoJson
 {
-    public string Username          { get; set; }
+    public string Username          { get; set; } = null!;
     public float  UploadSpeed       { get; set; }
     public bool   HasFreeUploadSlot { get; set; }
 
@@ -29,7 +29,7 @@ public class FileInfoJson
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int?   Length     { get; set; }
-    public string Filename   { get; set; }
+    public string Filename   { get; set; } = null!;
     public long   Size       { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int?   Bitrate    { get; set; }
@@ -53,14 +53,14 @@ public class FileInfoJson
 
 public class AlbumResultJson
 {
-    public UserInfoJson      User  { get; set; }
+    public UserInfoJson      User  { get; set; } = null!;
     public List<FileInfoJson> Files { get; set; } = new();
 }
 
 public class TrackResultJson
 {
-    public UserInfoJson User { get; set; }
-    public FileInfoJson File { get; set; }
+    public UserInfoJson User { get; set; } = null!;
+    public FileInfoJson File { get; set; } = null!;
 }
 
 public class TrackJson
@@ -121,13 +121,13 @@ public class TrackJson
 public class AggregateTrackJson
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string Artist { get; set; }
+    public string Artist { get; set; } = null!;
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string Title { get; set; }
+    public string Title { get; set; } = null!;
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string Album { get; set; }
+    public string Album { get; set; } = null!;
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int? Length { get; set; }

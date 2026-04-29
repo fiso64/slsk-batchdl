@@ -700,8 +700,9 @@ namespace Tests.Unit
             // Verified groups: 
             // 1. "Blue Sky" group (User1, User2)
             // 2. "Live Blue Sky" group (User3)
-            Assert.AreEqual(2, job.Songs.Count);
-            var shared = job.Songs.FirstOrDefault(s => s.Candidates.Count == 2);
+            var songs = job.Songs!;
+            Assert.AreEqual(2, songs.Count);
+            var shared = songs.FirstOrDefault(s => s.Candidates!.Count == 2);
             Assert.IsNotNull(shared, "Failed to aggregate shared track version across users.");
         }
         [TestMethod]
@@ -732,8 +733,9 @@ namespace Tests.Unit
             await searcher.SearchAggregate(job, config.Search, responseData, CancellationToken.None);
 
             // Should all three group into one job after inference handles the name variations.
-            Assert.AreEqual(1, job.Songs.Count, "Should group all name variations into a single SongJob.");
-            Assert.AreEqual(3, job.Songs[0].Candidates.Count);
+            var songs = job.Songs!;
+            Assert.AreEqual(1, songs.Count, "Should group all name variations into a single SongJob.");
+            Assert.AreEqual(3, songs.Single().Candidates!.Count);
         }
         [TestMethod]
         public async Task SearchAggregate_ResultsSortedByPopularity()
@@ -763,9 +765,10 @@ namespace Tests.Unit
             await searcher.SearchAggregate(job, config.Search, responseData, CancellationToken.None);
 
             // Version A has more shares (3) so it should be first, even though bitrate is lower.
-            Assert.AreEqual(2, job.Songs.Count);
-            Assert.AreEqual(3, job.Songs[0].Candidates.Count);
-            Assert.AreEqual(2, job.Songs[1].Candidates.Count);
+            var songs = job.Songs!;
+            Assert.AreEqual(2, songs.Count);
+            Assert.AreEqual(3, songs.ElementAt(0).Candidates!.Count);
+            Assert.AreEqual(2, songs.ElementAt(1).Candidates!.Count);
         }
 
         [TestMethod]

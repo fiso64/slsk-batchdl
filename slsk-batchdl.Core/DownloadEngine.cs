@@ -1268,6 +1268,7 @@ public class DownloadEngine
     void HandleAlbumFail(AlbumJob job, AlbumFolder folder, bool deleteDownloaded, DownloadSettings config)
     {
         var failedAlbumPath = config.Output.FailedAlbumPath;
+        var outputParentDir = config.Output.ParentDir;
 
         if (deleteDownloaded)
         {
@@ -1276,6 +1277,9 @@ public class DownloadEngine
         }
         else if (!string.IsNullOrEmpty(failedAlbumPath))
         {
+            if (string.IsNullOrEmpty(outputParentDir))
+                throw new InvalidOperationException("Cannot move failed album files because Output.ParentDir is not set.");
+
             Events.RaiseJobStatus(job, $"moving to {failedAlbumPath}");
             Logger.LogNonConsole(Logger.LogLevel.Info, $"[{job.DisplayId}] AlbumJob: Moving album files to {failedAlbumPath}");
         }
@@ -1291,12 +1295,16 @@ public class DownloadEngine
                 }
                 else if (!string.IsNullOrEmpty(failedAlbumPath))
                 {
-                    var newPath = Path.Join(failedAlbumPath, Path.GetRelativePath(config.Output.ParentDir, af.DownloadPath));
+                    var relativeBase = outputParentDir
+                        ?? throw new InvalidOperationException("Cannot move failed album files because Output.ParentDir is not set.");
+                    var newPath = Path.Join(failedAlbumPath, Path.GetRelativePath(relativeBase, af.DownloadPath));
                     Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
                     Utils.Move(af.DownloadPath, newPath);
                 }
 
-                Utils.DeleteAncestorsIfEmpty(Path.GetDirectoryName(af.DownloadPath)!, config.Output.ParentDir);
+                var downloadParent = Path.GetDirectoryName(af.DownloadPath);
+                if (!string.IsNullOrEmpty(downloadParent) && !string.IsNullOrEmpty(outputParentDir))
+                    Utils.DeleteAncestorsIfEmpty(downloadParent, outputParentDir);
             }
             catch (Exception e)
             {

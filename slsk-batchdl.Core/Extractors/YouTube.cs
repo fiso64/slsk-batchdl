@@ -585,10 +585,10 @@ namespace Sldl.Core.Extractors;
                 return songs.ToList();
             }
 
-            private async Task<List<string>> GetOldestArchiveUrls(string url, int limit)
+            private async Task<List<string>?> GetOldestArchiveUrls(string url, int limit)
             {
                 var url2 = $"http://web.archive.org/cdx/search/cdx?url={url}&fl=timestamp,original&filter=statuscode:200&sort=timestamp:asc&limit={limit}";
-                HttpResponseMessage response = null;
+                HttpResponseMessage? response = null;
                 for (int i = 0; i < 3; i++)
                 {
                     try { response = await _client.GetAsync(url2); break; }

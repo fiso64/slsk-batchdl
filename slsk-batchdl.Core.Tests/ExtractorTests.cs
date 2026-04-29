@@ -10,15 +10,15 @@ namespace Tests.Extractors
     [TestClass]
     public class StringExtractorTests
     {
-        private StringExtractor extractor;
-        private DownloadSettings config;
-        private List<string> testStrings;
+        private StringExtractor extractor = null!;
+        private DownloadSettings config = null!;
+        private List<string> testStrings = null!;
 
         // Expected SongQuery fields in song mode: (title, artist, album, length)
-        private List<(string title, string artist, string album, int length)> expectedSongs;
+        private List<(string title, string artist, string album, int length)> expectedSongs = null!;
 
         // Expected AlbumQuery fields in album mode: (album, artist)
-        private List<(string album, string artist)> expectedAlbums;
+        private List<(string album, string artist)> expectedAlbums = null!;
 
         [TestInitialize]
         public void Setup()

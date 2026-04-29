@@ -26,10 +26,10 @@ public class IndexEntry
 
 public class M3uEditor // todo: separate into M3uEditor and IndexEditor
 {
-    public string path { get; private set; }
+    public string path { get; private set; } = null!;
     public M3uOption option = M3uOption.Index;
-    string parent;
-    List<string> lines;
+    string parent = null!;
+    List<string> lines = null!;
     bool needFirstUpdate = false;
     int offset = 0;
     readonly JobList queue;
@@ -65,7 +65,7 @@ public class M3uEditor // todo: separate into M3uEditor and IndexEditor
             return;
 
         this.path = Utils.GetFullPath(path);
-        parent    = Utils.NormalizedPath(Path.GetDirectoryName(this.path));
+        parent    = Utils.NormalizedPath(Path.GetDirectoryName(this.path) ?? "");
 
         lines = ReadAllLines().ToList();
 

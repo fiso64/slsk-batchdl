@@ -421,6 +421,8 @@ namespace Sldl.Core.Extractors;
         {
             var albumId = GetAlbumIdFromUrl(url);
             var album   = await _client.Albums.Get(albumId);
+            if (album?.Tracks?.Items == null)
+                throw new Exception("Could not retrieve Spotify album tracks.");
 
             var songs = new List<SongJob>();
             foreach (var track in album.Tracks.Items)

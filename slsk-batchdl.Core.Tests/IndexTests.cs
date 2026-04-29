@@ -8,7 +8,7 @@ namespace Tests.Index
     [TestClass]
     public class IndexTests
     {
-        private string testM3uPath;
+        private string testM3uPath = null!;
 
         [TestInitialize]
         public void Setup()

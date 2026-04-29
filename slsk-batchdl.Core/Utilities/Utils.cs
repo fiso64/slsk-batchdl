@@ -245,16 +245,22 @@ public static partial class Utils
     {
         if (Path.GetFullPath(oldPath) != Path.GetFullPath(newPath))
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(newPath));
+            var newParent = Path.GetDirectoryName(newPath);
+            if (!string.IsNullOrEmpty(newParent))
+                Directory.CreateDirectory(newParent);
             Move(oldPath, newPath);
-            DeleteAncestorsIfEmpty(Path.GetDirectoryName(oldPath), recurseUntil);
+            var oldParent = Path.GetDirectoryName(oldPath);
+            if (!string.IsNullOrEmpty(oldParent))
+                DeleteAncestorsIfEmpty(oldParent, recurseUntil);
         }
     }
 
     public static void DeleteFileAndParentsIfEmpty(string filepath, string recurseUntil)
     {
         File.Delete(filepath);
-        DeleteAncestorsIfEmpty(Path.GetDirectoryName(filepath), recurseUntil);
+        var parent = Path.GetDirectoryName(filepath);
+        if (!string.IsNullOrEmpty(parent))
+            DeleteAncestorsIfEmpty(parent, recurseUntil);
     }
 
     public static bool EqualsAny(this string input, string[] values, StringComparison comparison = StringComparison.Ordinal)
@@ -616,7 +622,7 @@ public static partial class Utils
         return res != s;
     }
 
-    public static Dictionary<K, V> ToSafeDictionary<T, K, V>(this IEnumerable<T> source, Func<T, K> keySelector, Func<T, V> valSelector)
+    public static Dictionary<K, V> ToSafeDictionary<T, K, V>(this IEnumerable<T> source, Func<T, K> keySelector, Func<T, V> valSelector) where K : notnull
     {
         var d = new Dictionary<K, V>();
         foreach (var element in source)
@@ -792,7 +798,7 @@ public static partial class Utils
         return (null, inputTitle);
     }
 
-    public static bool SequenceEqualUpToPermutation<T>(this IEnumerable<T> list1, IEnumerable<T> list2)
+    public static bool SequenceEqualUpToPermutation<T>(this IEnumerable<T> list1, IEnumerable<T> list2) where T : notnull
     {
         var cnt = new Dictionary<T, int>();
         foreach (T s in list1)

@@ -432,8 +432,10 @@ namespace Tests.FileConditionsTests
 
             // Modifying copy does not affect original
             copy.MinBitrate = 320;
+            Assert.IsNotNull(copy.Formats);
             copy.Formats[0] = "ogg";
             Assert.AreEqual(128, original.MinBitrate);
+            Assert.IsNotNull(original.Formats);
             Assert.AreEqual("mp3", original.Formats[0]);
         }
 

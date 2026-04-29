@@ -649,10 +649,10 @@ public static class Printing
     static (string parents, List<string> props) FolderInfo(IEnumerable<SlFile> files)
     {
         int totalLengthInSeconds = files.Sum(f => f.Length ?? 0);
-        var sampleRates = files.Where(f => f.SampleRate.HasValue).Select(f => f.SampleRate.Value).OrderBy(r => r).ToList();
+        var sampleRates = files.Where(f => f.SampleRate.HasValue).Select(f => f.SampleRate.GetValueOrDefault()).OrderBy(r => r).ToList();
         int? modeSampleRate = sampleRates.GroupBy(rate => rate).OrderByDescending(g => g.Count()).Select(g => (int?)g.Key).FirstOrDefault();
 
-        var bitRates = files.Where(f => f.BitRate.HasValue).Select(f => f.BitRate.Value).ToList();
+        var bitRates = files.Where(f => f.BitRate.HasValue).Select(f => f.BitRate.GetValueOrDefault()).ToList();
         double? meanBitrate = bitRates.Count > 0 ? (double?)bitRates.Average() : null;
         double totalFileSizeInMB = files.Sum(f => f.Size) / (1024.0 * 1024.0);
 
