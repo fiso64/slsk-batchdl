@@ -38,8 +38,8 @@ public sealed class EngineEventDtoAdapter
             ToSongQueryDto(song.Query),
             song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
         events.DownloadStarted += (song, candidate) => publish("download.started", new DownloadStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query), ToFileCandidateDto(candidate)));
-        events.DownloadProgress += (song, transferred, total) => publish("download.progress", new DownloadProgressEventDto(song.Id, transferred, total));
-        events.DownloadStateChanged += (song, state) => publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, state.ToString()));
+        events.DownloadProgress += (song, transferred, total) => publish("download.progress", new DownloadProgressEventDto(song.Id, song.WorkflowId, transferred, total));
+        events.DownloadStateChanged += (song, state) => publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, song.WorkflowId, state.ToString()));
         events.StateChanged += song => publish("song.state-changed", new SongStateChangedEventDto(
             song.Id,
             song.DisplayId,
@@ -51,11 +51,11 @@ public sealed class EngineEventDtoAdapter
             song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null));
         events.AlbumDownloadStarted += (job, folder) => publish("album.download-started", new AlbumDownloadStartedEventDto(
             getSummary(job),
-            ToAlbumFolderDto(folder, includeFiles: true),
+            ToAlbumFolderDto(folder, includeFiles: false),
             folder.Files.Select(ToSongJobPayloadDto).ToList()));
         events.AlbumTrackDownloadStarted += (job, folder) => publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(
             getSummary(job),
-            ToAlbumFolderDto(folder, includeFiles: true),
+            ToAlbumFolderDto(folder, includeFiles: false),
             folder.Files.Select(ToSongJobPayloadDto).ToList()));
         events.AlbumDownloadCompleted += job => publish("album.download-completed", new AlbumDownloadCompletedEventDto(getSummary(job)));
         events.OnCompleteStart += song => publish("on-complete.started", new OnCompleteStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
@@ -64,9 +64,20 @@ public sealed class EngineEventDtoAdapter
             getSummary(job),
             job is JobList,
             job.Config.PrintOption,
-            pending.Select(ToSongJobPayloadDto).ToList(),
-            existing.Select(ToSongJobPayloadDto).ToList(),
-            notFound.Select(ToSongJobPayloadDto).ToList()));
+            pending.Count,
+            existing.Count,
+            notFound.Count,
+            SelectTrackBatchRows(pending, job.Config.PrintOption).ToList(),
+            SelectTrackBatchRows(existing, job.Config.PrintOption).ToList(),
+            SelectTrackBatchRows(notFound, job.Config.PrintOption).ToList()));
+    }
+
+    private static IEnumerable<SongJobPayloadDto> SelectTrackBatchRows(IReadOnlyList<SongJob> songs, PrintOption printOption)
+    {
+        bool needsFullRows = printOption.HasFlag(PrintOption.Tracks)
+            || (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
+        var selected = needsFullRows ? songs : songs.Take(10);
+        return selected.Select(ToSongJobPayloadDto);
     }
 
     public static SongQueryDto ToSongQueryDto(SongQuery query)
@@ -106,7 +117,7 @@ public sealed class EngineEventDtoAdapter
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
             song.DisplayId,
-            song.Candidates?.Select(ToFileCandidateDto).ToList(),
+            null,
             song.State.ToString(),
             song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
             song.FailureMessage);

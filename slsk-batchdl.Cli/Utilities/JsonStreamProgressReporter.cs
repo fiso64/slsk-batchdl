@@ -224,7 +224,10 @@ public class JsonStreamProgressReporter
 
         var data = new
         {
-            total = tracks.Count,
+            total = batch.PendingCount + batch.ExistingCount + batch.NotFoundCount,
+            pending = batch.PendingCount,
+            existing = batch.ExistingCount,
+            notFound = batch.NotFoundCount,
             tracks = tracks.Select((s, i) => new
             {
                 index = i,

@@ -32,6 +32,7 @@ public static class ServerHost
         });
 
         builder.Services.AddSignalR();
+        builder.Services.AddOpenApi();
         builder.Services.AddSingleton<EngineSupervisor>();
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<ServerEventBroadcaster>();
@@ -41,18 +42,24 @@ public static class ServerHost
         CoreLoggerBridge.Configure(app.Services, (options ?? app.Services.GetRequiredService<IOptions<ServerOptions>>().Value).Engine.LogLevel);
         _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
 
+        app.MapOpenApi("/api/openapi.json");
         MapEndpoints(app);
         return app;
     }
 
     private static void MapEndpoints(WebApplication app)
     {
-        app.MapGet("/", () => Results.Redirect("/api/server/info"));
+        app.MapGet("/", () => Results.Redirect("/api/server/info"))
+            .ExcludeFromDescription();
 
-        app.MapGet("/api/server/info", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetInfo()));
-        app.MapGet("/api/server/status", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetStatus()));
-        app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()));
-        app.MapGet("/api/events/catalog", () => Results.Ok(ServerEventCatalog.All));
+        app.MapGet("/api/server/info", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetInfo()))
+            .Produces<ServerInfoDto>();
+        app.MapGet("/api/server/status", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetStatus()))
+            .Produces<ServerStatusDto>();
+        app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()))
+            .Produces<IReadOnlyList<ProfileSummaryDto>>();
+        app.MapGet("/api/events/catalog", () => Results.Ok(ServerEventCatalog.All))
+            .Produces<IReadOnlyList<ServerEventDescriptorDto>>();
 
         app.MapGet("/api/jobs", (
             EngineStateStore stateStore,
@@ -64,43 +71,56 @@ public static class ServerHost
         {
             var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, canonicalRootsOnly, includeNonDefault));
             return Results.Ok(jobs);
-        });
+        })
+            .Produces<IReadOnlyList<JobSummaryDto>>();
 
         app.MapGet("/api/jobs/{jobId:guid}", (Guid jobId, EngineStateStore stateStore) =>
         {
             var detail = stateStore.GetJobDetail(jobId);
             return detail != null ? Results.Ok(detail) : Results.NotFound();
-        });
+        })
+            .Produces<JobDetailDto>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/raw", (Guid jobId, long afterSequence, EngineSupervisor supervisor) =>
         {
             var results = supervisor.GetSearchRawResults(jobId, afterSequence);
             return results != null ? Results.Ok(results) : Results.NotFound();
-        });
+        })
+            .Produces<IReadOnlyList<SearchRawResultDto>>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/results/files", (Guid jobId, EngineSupervisor supervisor) =>
         {
             var results = supervisor.GetFileResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
-        });
+        })
+            .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/results/folders", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
         {
             var results = supervisor.GetFolderResults(jobId, includeFiles);
             return results != null ? Results.Ok(results) : Results.NotFound();
-        });
+        })
+            .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", (Guid jobId, EngineSupervisor supervisor) =>
         {
             var results = supervisor.GetAggregateTrackResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
-        });
+        })
+            .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", (Guid jobId, EngineSupervisor supervisor) =>
         {
             var results = supervisor.GetAggregateAlbumResults(jobId);
             return results != null ? Results.Ok(results) : Results.NotFound();
-        });
+        })
+            .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/jobs/{jobId:guid}/retrieve-folder", async (
             Guid jobId,
@@ -117,9 +137,12 @@ public static class ServerHost
             }
             catch (ArgumentException ex)
             {
-                return Results.BadRequest(new { error = ex.Message });
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
-        });
+        })
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/{jobId:guid}/downloads/files", async (
             Guid jobId,
@@ -136,9 +159,12 @@ public static class ServerHost
             }
             catch (ArgumentException ex)
             {
-                return Results.BadRequest(new { error = ex.Message });
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
-        });
+        })
+            .Produces<IReadOnlyList<JobSummaryDto>>(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/{jobId:guid}/downloads/folder", async (
             Guid jobId,
@@ -155,62 +181,90 @@ public static class ServerHost
             }
             catch (ArgumentException ex)
             {
-                return Results.BadRequest(new { error = ex.Message });
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
             }
-        });
+        })
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/{jobId:guid}/cancel", (Guid jobId, EngineSupervisor supervisor) =>
         {
             return supervisor.CancelJob(jobId)
                 ? Results.Accepted($"/api/jobs/{jobId}")
                 : Results.NotFound();
-        });
+        })
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/jobs/extract", async (SubmitExtractJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/search/tracks", async (SubmitTrackSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitTrackSearchJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitTrackSearchJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/search/albums", async (SubmitAlbumSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitAlbumSearchJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitAlbumSearchJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/downloads/song", async (SubmitSongJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitSongJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitSongJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/downloads/album", async (SubmitAlbumJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitAlbumJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitAlbumJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/aggregate/tracks", async (SubmitAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitAggregateJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitAggregateJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/aggregate/albums", async (SubmitAlbumAggregateJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitAlbumAggregateJobAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitAlbumAggregateJobAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapPost("/api/jobs/lists", async (SubmitJobListRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
-            await SubmitJobAsync(() => supervisor.SubmitJobListAsync(request, ct)));
+            await SubmitJobAsync(() => supervisor.SubmitJobListAsync(request, ct)))
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
-        app.MapGet("/api/workflows", (EngineStateStore stateStore) => Results.Ok(stateStore.GetWorkflows()));
+        app.MapGet("/api/workflows", (EngineStateStore stateStore) => Results.Ok(stateStore.GetWorkflows()))
+            .Produces<IReadOnlyList<WorkflowSummaryDto>>();
 
         app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, EngineStateStore stateStore) =>
         {
             var workflow = stateStore.GetWorkflow(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
-        });
+        })
+            .Produces<WorkflowDetailDto>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/workflows/{workflowId:guid}/presentation", (Guid workflowId, EngineStateStore stateStore) =>
         {
             var workflow = stateStore.GetPresentedWorkflow(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
-        });
+        })
+            .Produces<PresentedWorkflowDto>()
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/workflows/{workflowId:guid}/cancel", (Guid workflowId, EngineSupervisor supervisor) =>
         {
             int cancelled = supervisor.CancelWorkflow(workflowId);
             return cancelled > 0
-                ? Results.Accepted($"/api/workflows/{workflowId}", new { cancelled })
+                ? Results.Accepted($"/api/workflows/{workflowId}", new CancelWorkflowResponseDto(cancelled))
                 : Results.NotFound();
-        });
+        })
+            .Produces<CancelWorkflowResponseDto>(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound);
 
         app.MapHub<ServerEventHub>("/api/events");
     }
@@ -224,7 +278,7 @@ public static class ServerHost
         }
         catch (ArgumentException ex)
         {
-            return Results.BadRequest(new { error = ex.Message });
+            return Results.BadRequest(new ApiErrorDto(ex.Message));
         }
     }
 }

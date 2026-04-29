@@ -143,7 +143,7 @@ internal sealed class RemoteInteractiveCliCoordinator
             return;
 
         var detail = await backend.GetJobDetailAsync(albumJobId, ct);
-        if (detail?.Summary.State == nameof(JobState.Done))
+        if (detail?.Summary.State == ServerProtocol.JobStates.Done)
             return;
 
         if (detail?.Payload is AlbumJobPayloadDto album
@@ -314,14 +314,14 @@ internal sealed class RemoteInteractiveCliCoordinator
         };
 
     private static bool IsActive(string state)
-        => state is nameof(JobState.Pending)
-            or nameof(JobState.Extracting)
-            or nameof(JobState.Searching)
-            or nameof(JobState.Downloading);
+        => state is ServerProtocol.JobStates.Pending
+            or ServerProtocol.JobStates.Extracting
+            or ServerProtocol.JobStates.Searching
+            or ServerProtocol.JobStates.Downloading;
 
     private static bool IsCompleted(string state)
-        => state is nameof(JobState.Done)
-            or nameof(JobState.AlreadyExists);
+        => state is ServerProtocol.JobStates.Done
+            or ServerProtocol.JobStates.AlreadyExists;
 
     private sealed class InteractiveAlbumSession
     {

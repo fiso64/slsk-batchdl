@@ -217,27 +217,45 @@ public sealed class EngineSupervisor
     public SearchResultSnapshotDto<FileCandidateDto>? GetFileResults(Guid jobId)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
-        if (searchJob?.Config == null)
+        if (searchJob?.Config != null)
+        {
+            var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts());
+            return new SearchResultSnapshotDto<FileCandidateDto>(
+                snapshot.Revision,
+                snapshot.IsComplete,
+                snapshot.Items.Select(ToFileCandidateDto).ToList());
+        }
+
+        var songJob = StateStore.GetJob<SongJob>(jobId);
+        if (songJob == null)
             return null;
 
-        var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, GetCurrentEngineUserSuccessCounts());
         return new SearchResultSnapshotDto<FileCandidateDto>(
-            snapshot.Revision,
-            snapshot.IsComplete,
-            snapshot.Items.Select(ToFileCandidateDto).ToList());
+            Revision: 0,
+            IsComplete: songJob.State is not (JobState.Pending or JobState.Searching),
+            Items: songJob.Candidates?.Select(ToFileCandidateDto).ToList() ?? []);
     }
 
     public SearchResultSnapshotDto<AlbumFolderDto>? GetFolderResults(Guid jobId, bool includeFiles)
     {
         var searchJob = StateStore.GetJob<SearchJob>(jobId);
-        if (searchJob?.Config == null)
+        if (searchJob?.Config != null)
+        {
+            var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
+            return new SearchResultSnapshotDto<AlbumFolderDto>(
+                snapshot.Revision,
+                snapshot.IsComplete,
+                snapshot.Items.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToList());
+        }
+
+        var albumJob = StateStore.GetJob<AlbumJob>(jobId);
+        if (albumJob == null)
             return null;
 
-        var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
         return new SearchResultSnapshotDto<AlbumFolderDto>(
-            snapshot.Revision,
-            snapshot.IsComplete,
-            snapshot.Items.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToList());
+            Revision: 0,
+            IsComplete: albumJob.State is not (JobState.Pending or JobState.Searching),
+            Items: albumJob.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToList());
     }
 
     public SearchResultSnapshotDto<AggregateTrackCandidateDto>? GetAggregateTrackResults(Guid jobId)
@@ -367,7 +385,7 @@ public sealed class EngineSupervisor
             null,
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, visualParentJobId, job.DisplayId, null),
+            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, visualParentJobId, job.DisplayId, null),
             []);
 
     private static SearchRawResultDto ToSearchRawResultDto(SearchRawResult result)

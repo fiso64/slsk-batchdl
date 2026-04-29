@@ -14,10 +14,11 @@ public class ServerEventCoalescerTests
             (type, payload) => published.Add((type, payload)),
             TimeSpan.FromHours(1));
         var jobId = Guid.NewGuid();
+        var workflowId = Guid.NewGuid();
 
-        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, 10, 100));
-        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, 20, 100));
-        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, 30, 100));
+        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, workflowId, 10, 100));
+        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, workflowId, 20, 100));
+        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, workflowId, 30, 100));
 
         Assert.AreEqual(0, published.Count);
 
@@ -39,10 +40,11 @@ public class ServerEventCoalescerTests
             (type, payload) => published.Add((type, payload)),
             TimeSpan.FromHours(1));
         var jobId = Guid.NewGuid();
+        var workflowId = Guid.NewGuid();
         var status = new object();
 
-        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, 10, 100));
-        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, 20, 100));
+        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, workflowId, 10, 100));
+        coalescer.Publish("download.progress", new DownloadProgressEventDto(jobId, workflowId, 20, 100));
         coalescer.Publish("download.state-changed", status);
 
         Assert.AreEqual(2, published.Count);

@@ -33,7 +33,7 @@ public class EngineSupervisorTests
                     new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var tracks = supervisor.GetFileResults(searchSummary.JobId);
             Assert.IsNotNull(tracks);
@@ -48,14 +48,14 @@ public class EngineSupervisorTests
             Assert.AreEqual(1, downloadSummary.Count);
             var downloadedSummary = downloadSummary[0];
             Assert.AreEqual(searchSummary.WorkflowId, downloadedSummary.WorkflowId);
-            Assert.AreEqual("node", downloadedSummary.Presentation.DisplayMode);
-            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.DisplayParentJobId);
+            Assert.AreEqual("node", downloadedSummary.Presentation.Mode);
+            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.ParentJobId);
 
-            await WaitForJobStateAsync(supervisor, downloadedSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, downloadedSummary.JobId, ServerProtocol.JobStates.Done);
 
             var detail = supervisor.StateStore.GetJobDetail(downloadedSummary.JobId);
             Assert.IsNotNull(detail);
-            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.DisplayParentJobId);
+            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.ParentJobId);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories);
             Assert.AreEqual(1, downloaded.Length);
@@ -96,7 +96,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var albums = supervisor.GetFolderResults(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(albums);
@@ -111,14 +111,14 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(downloadSummary);
             Assert.AreEqual(searchSummary.WorkflowId, downloadSummary.WorkflowId);
-            Assert.AreEqual("node", downloadSummary.Presentation.DisplayMode);
-            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.DisplayParentJobId);
+            Assert.AreEqual("node", downloadSummary.Presentation.Mode);
+            Assert.AreEqual(searchSummary.JobId, downloadSummary.Presentation.ParentJobId);
 
-            await WaitForJobStateAsync(supervisor, downloadSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, downloadSummary.JobId, ServerProtocol.JobStates.Done);
 
             var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
             Assert.IsNotNull(detail);
-            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.DisplayParentJobId);
+            Assert.AreEqual(searchSummary.JobId, detail.Summary.Presentation.ParentJobId);
 
             var presentedWorkflow = supervisor.StateStore.GetPresentedWorkflow(searchSummary.WorkflowId);
             Assert.IsNotNull(presentedWorkflow);
@@ -168,7 +168,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var files = supervisor.GetFileResults(searchSummary.JobId);
             Assert.IsNotNull(files);
@@ -183,7 +183,7 @@ public class EngineSupervisorTests
             Assert.AreEqual(1, downloads.Count);
             Assert.AreEqual(searchSummary.WorkflowId, downloads[0].WorkflowId);
 
-            await WaitForJobStateAsync(supervisor, downloads[0].JobId, "Done");
+            await WaitForJobStateAsync(supervisor, downloads[0].JobId, ServerProtocol.JobStates.Done);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -231,7 +231,7 @@ public class EngineSupervisorTests
                             Search: new SearchSettingsPatchDto(NoBrowseFolder: true)))),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
             var searchJob = supervisor.StateStore.GetJob<SearchJob>(searchSummary.JobId);
             Assert.IsNotNull(searchJob);
             Assert.IsTrue(searchJob.Config?.Search.NoBrowseFolder);
@@ -292,7 +292,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var albums = supervisor.GetFolderResults(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(albums);
@@ -308,19 +308,14 @@ public class EngineSupervisorTests
             await WaitForConditionAsync(
                 () =>
                 {
-                    var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
-                    var payload = detail?.Payload as AlbumJobPayloadDto;
-                    return payload?.Tracks?
-                        .Any(file => file.State == "Downloading") == true;
+                    return GetChildSongPayloads(supervisor, downloadSummary.JobId)
+                        .Any(file => file.State == ServerProtocol.JobStates.Downloading) == true;
                 },
                 "Timed out waiting for album file downloads to start.");
 
             var activeDetail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
             Assert.IsNotNull(activeDetail);
-            var activePayload = activeDetail.Payload as AlbumJobPayloadDto;
-            Assert.IsNotNull(activePayload);
-
-            var activeFiles = activePayload.Tracks?.ToList() ?? [];
+            var activeFiles = GetChildSongPayloads(supervisor, downloadSummary.JobId);
             var cancellableFile = activeFiles.FirstOrDefault(file =>
                 file.AvailableActions?.Any(action => action.Kind == "cancel") == true);
             Assert.IsNotNull(cancellableFile, "Active album payload files should expose cancel actions.");
@@ -330,7 +325,7 @@ public class EngineSupervisorTests
                 .Where(summary => summary.ParentJobId == downloadSummary.JobId)
                 .ToList();
             Assert.IsTrue(embeddedSongJobs.Count > 0, "Album payload songs should be registered jobs.");
-            Assert.IsTrue(embeddedSongJobs.All(summary => summary.Presentation.DisplayMode == "embedded"));
+            Assert.IsTrue(embeddedSongJobs.All(summary => summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Embedded));
             Assert.IsFalse(
                 supervisor.StateStore.GetJobs(new JobQuery(null, "song", downloadSummary.WorkflowId, CanonicalRootsOnly: false, IncludeNonDefault: false))
                     .Any(summary => summary.ParentJobId == downloadSummary.JobId),
@@ -341,30 +336,25 @@ public class EngineSupervisorTests
             await WaitForConditionAsync(
                 () =>
                 {
-                    var detail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
-                    var payload = detail?.Payload as AlbumJobPayloadDto;
-                    return payload?.Tracks?
-                        .Any(file => file.JobId == cancellableFile.JobId && file.State == "Failed" && file.FailureReason == "Cancelled") == true;
+                    return GetChildSongPayloads(supervisor, downloadSummary.JobId)
+                        .Any(file => file.JobId == cancellableFile.JobId && file.State == ServerProtocol.JobStates.Failed && file.FailureReason == ServerProtocol.FailureReasons.Cancelled) == true;
                 },
                 "Timed out waiting for embedded album file cancellation.");
 
             var cancelled = supervisor.CancelWorkflow(downloadSummary.WorkflowId);
             Assert.IsTrue(cancelled > 0, "CancelWorkflow should cancel the active album download job.");
 
-            await WaitForJobStateAsync(supervisor, downloadSummary.JobId, "Failed");
+            await WaitForJobStateAsync(supervisor, downloadSummary.JobId, ServerProtocol.JobStates.Failed);
 
             var cancelledDetail = supervisor.StateStore.GetJobDetail(downloadSummary.JobId);
             Assert.IsNotNull(cancelledDetail);
-            var cancelledPayload = cancelledDetail.Payload as AlbumJobPayloadDto;
-            Assert.IsNotNull(cancelledPayload);
-
-            var files = cancelledPayload.Tracks?.ToList() ?? [];
+            var files = GetChildSongPayloads(supervisor, downloadSummary.JobId);
             Assert.AreEqual(12, files.Count);
             Assert.IsFalse(
-                files.Any(file => file.State is "Pending" or "Searching" or "Downloading"),
+                files.Any(file => file.State is ServerProtocol.JobStates.Pending or ServerProtocol.JobStates.Searching or ServerProtocol.JobStates.Downloading),
                 "Cancelled album payload should not expose stale active file states.");
             Assert.IsTrue(
-                files.Any(file => file.State == "Failed" && file.FailureReason == "Cancelled"),
+                files.Any(file => file.State == ServerProtocol.JobStates.Failed && file.FailureReason == ServerProtocol.FailureReasons.Cancelled),
                 "Cancelled album payload should mark unfinished files as cancelled.");
 
             cts.Cancel();
@@ -406,7 +396,7 @@ public class EngineSupervisorTests
                     new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             CollectionAssert.Contains(seenJobIds.ToList(), searchSummary.JobId);
             CollectionAssert.Contains(seenWorkflowIds.ToList(), searchSummary.WorkflowId);
@@ -448,7 +438,7 @@ public class EngineSupervisorTests
                     new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
             await WaitForConditionAsync(
                 () => updates.Any(update => update.JobId == searchSummary.JobId && update.IsComplete),
                 "Timed out waiting for a completed search update.");
@@ -495,7 +485,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "Track One", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var beforeRetrieve = supervisor.GetFolderResults(searchSummary.JobId, includeFiles: true);
             Assert.IsNotNull(beforeRetrieve);
@@ -509,10 +499,10 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(retrieveSummary);
             Assert.AreEqual(searchSummary.WorkflowId, retrieveSummary.WorkflowId);
-            Assert.AreEqual("node", retrieveSummary.Presentation.DisplayMode);
-            Assert.AreEqual(searchSummary.JobId, retrieveSummary.Presentation.DisplayParentJobId);
+            Assert.AreEqual("node", retrieveSummary.Presentation.Mode);
+            Assert.AreEqual(searchSummary.JobId, retrieveSummary.Presentation.ParentJobId);
 
-            await WaitForJobStateAsync(supervisor, retrieveSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, retrieveSummary.JobId, ServerProtocol.JobStates.Done);
 
             var retrieveDetail = supervisor.StateStore.GetJobDetail(retrieveSummary.JobId);
             Assert.IsNotNull(retrieveDetail);
@@ -571,7 +561,7 @@ public class EngineSupervisorTests
                     AutoStartExtractedResult: false),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, extractSummary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, extractSummary.JobId, ServerProtocol.JobStates.Done);
 
             var extractDetail = supervisor.StateStore.GetJobDetail(extractSummary.JobId);
             Assert.IsNotNull(extractDetail);
@@ -589,7 +579,7 @@ public class EngineSupervisorTests
             Assert.AreEqual("search", started.Kind);
             Assert.AreEqual(extractSummary.WorkflowId, started.WorkflowId);
 
-            await WaitForJobStateAsync(supervisor, started.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, started.JobId, ServerProtocol.JobStates.Done);
 
             var presentedWorkflow = supervisor.StateStore.GetPresentedWorkflow(extractSummary.WorkflowId);
             Assert.IsNotNull(presentedWorkflow);
@@ -645,7 +635,7 @@ public class EngineSupervisorTests
                     })),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -692,7 +682,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -754,7 +744,7 @@ public class EngineSupervisorTests
                     new AlbumQueryDto("Artist", "Album", "", "", false)),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -804,7 +794,7 @@ public class EngineSupervisorTests
                     Options: new SubmissionOptionsDto(ProfileNames: ["long-search"])),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -856,7 +846,7 @@ public class EngineSupervisorTests
                         DownloadSettings: DownloadSettingsPatchDtoMapper.FromDifference(baseline, cliSettings))),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -905,7 +895,7 @@ public class EngineSupervisorTests
                             Skip: new SkipSettingsPatchDto(SkipExisting: true)))),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -954,7 +944,7 @@ public class EngineSupervisorTests
                                 OnComplete: new CollectionPatchDto<string>(Append: ["second"]))))),
                 CancellationToken.None);
 
-            await WaitForJobStateAsync(supervisor, summary.JobId, "Done");
+            await WaitForJobStateAsync(supervisor, summary.JobId, ServerProtocol.JobStates.Done);
 
             var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
@@ -1047,5 +1037,14 @@ public class EngineSupervisorTests
         }
 
         Assert.Fail(failureMessage);
+    }
+
+    private static List<SongJobPayloadDto> GetChildSongPayloads(EngineSupervisor supervisor, Guid parentJobId)
+    {
+        var parent = supervisor.StateStore.GetJobDetail(parentJobId);
+        return parent?.Children
+            .Select(child => supervisor.StateStore.GetJobDetail(child.JobId)?.Payload)
+            .OfType<SongJobPayloadDto>()
+            .ToList() ?? [];
     }
 }

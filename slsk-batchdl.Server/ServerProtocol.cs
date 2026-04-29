@@ -31,11 +31,42 @@ public static class ServerProtocol
         public const string JobList = "job-list";
     }
 
-    public static class PresentationDisplayModes
+    public static class JobPresentationModes
     {
         public const string Node = "node";
         public const string Embedded = "embedded";
         public const string Replaced = "replaced";
+    }
+
+    /// <summary>
+    /// Stable string values used by JobSummaryDto.State and job/event payload state fields.
+    /// </summary>
+    public static class JobStates
+    {
+        public const string Pending = "Pending";
+        public const string Done = "Done";
+        public const string Failed = "Failed";
+        public const string AlreadyExists = "AlreadyExists";
+        public const string NotFoundLastTime = "NotFoundLastTime";
+        public const string Skipped = "Skipped";
+        public const string Searching = "Searching";
+        public const string Downloading = "Downloading";
+        public const string Extracting = "Extracting";
+    }
+
+    /// <summary>
+    /// Stable string values used by JobSummaryDto.FailureReason and job/event payload failure reason fields.
+    /// </summary>
+    public static class FailureReasons
+    {
+        public const string None = "None";
+        public const string InvalidSearchString = "InvalidSearchString";
+        public const string OutOfDownloadRetries = "OutOfDownloadRetries";
+        public const string NoSuitableFileFound = "NoSuitableFileFound";
+        public const string AllDownloadsFailed = "AllDownloadsFailed";
+        public const string Other = "Other";
+        public const string ExtractionFailed = "ExtractionFailed";
+        public const string Cancelled = "Cancelled";
     }
 
     public static class ResourceActionKinds

@@ -36,9 +36,14 @@ public sealed class ServerEventBroadcaster : IDisposable
             DateTimeOffset.UtcNow,
             descriptor.Category,
             descriptor.SnapshotInvalidation,
+            GetWorkflowId(payload),
             payload);
 
-        _ = hubContext.Clients.All.SendAsync("serverEvent", envelope);
+        _ = descriptor.Category != ServerEventCatalog.StateCategory && envelope.WorkflowId is Guid workflowId
+            ? hubContext.Clients
+                .Groups(ServerEventHub.AllEventsGroup, ServerEventHub.WorkflowGroupName(workflowId))
+                .SendAsync("serverEvent", envelope)
+            : hubContext.Clients.All.SendAsync("serverEvent", envelope);
     }
 
     public void Dispose()
@@ -60,7 +65,37 @@ public sealed class ServerEventBroadcaster : IDisposable
             null,
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, null, job.DisplayId, null),
+            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, null, job.DisplayId, null),
             []);
 
+    private static Guid? GetWorkflowId(object payload)
+        => payload switch
+        {
+            JobSummaryDto summary => summary.WorkflowId,
+            WorkflowSummaryDto summary => summary.WorkflowId,
+            WorkflowDetailDto detail => detail.Summary.WorkflowId,
+            PresentedWorkflowDto workflow => workflow.Summary.WorkflowId,
+            JobDetailDto detail => detail.Summary.WorkflowId,
+            SearchUpdatedDto update => update.WorkflowId,
+            ExtractionStartedEventDto e => e.Summary.WorkflowId,
+            ExtractionFailedEventDto e => e.Summary.WorkflowId,
+            JobStartedEventDto e => e.Summary.WorkflowId,
+            JobCompletedEventDto e => e.Summary.WorkflowId,
+            JobStatusEventDto e => e.Summary.WorkflowId,
+            SongSearchingEventDto e => e.WorkflowId,
+            SongNotFoundEventDto e => e.WorkflowId,
+            SongFailedEventDto e => e.WorkflowId,
+            DownloadStartedEventDto e => e.WorkflowId,
+            DownloadProgressEventDto e => e.WorkflowId,
+            DownloadStateChangedEventDto e => e.WorkflowId,
+            SongStateChangedEventDto e => e.WorkflowId,
+            AlbumDownloadStartedEventDto e => e.Summary.WorkflowId,
+            AlbumTrackDownloadStartedEventDto e => e.Summary.WorkflowId,
+            AlbumDownloadCompletedEventDto e => e.Summary.WorkflowId,
+            JobFolderRetrievingEventDto e => e.Summary.WorkflowId,
+            OnCompleteStartedEventDto e => e.WorkflowId,
+            OnCompleteEndedEventDto e => e.WorkflowId,
+            TrackBatchResolvedEventDto e => e.Summary.WorkflowId,
+            _ => null,
+        };
 }

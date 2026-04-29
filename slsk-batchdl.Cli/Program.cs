@@ -78,12 +78,7 @@ internal static partial class Program
                 && envelope.Payload is TrackBatchResolvedEventDto batch
                 && !batch.PrintOption.HasFlag(PrintOption.Tracks))
             {
-                Printing.PrintTracksTbd(
-                    batch.Pending.Select(ToSongJob).ToList(),
-                    batch.Existing.Select(ToSongJob).ToList(),
-                    batch.NotFound.Select(ToSongJob).ToList(),
-                    batch.IsNormal,
-                    batch.PrintOption);
+                PrintTrackBatchResolved(batch);
             }
         };
 
@@ -196,12 +191,7 @@ internal static partial class Program
                 && envelope.Payload is TrackBatchResolvedEventDto batch
                 && !batch.PrintOption.HasFlag(PrintOption.Tracks))
             {
-                Printing.PrintTracksTbd(
-                    batch.Pending.Select(ToSongJob).ToList(),
-                    batch.Existing.Select(ToSongJob).ToList(),
-                    batch.NotFound.Select(ToSongJob).ToList(),
-                    batch.IsNormal,
-                    batch.PrintOption);
+                PrintTrackBatchResolved(batch);
             }
         };
 
@@ -222,6 +212,8 @@ internal static partial class Program
         {
             submission = await backend.SubmitExtractJobAsync(request, cts.Token);
         }
+
+        await backend.SubscribeWorkflowAsync(submission.WorkflowId, cts.Token);
 
         ConsoleInputManager.Reporter = cliReporter;
         ConsoleInputManager.OnCancelRequested = async () =>
@@ -300,6 +292,35 @@ internal static partial class Program
         }
     }
 
+    private static void PrintTrackBatchResolved(TrackBatchResolvedEventDto batch)
+    {
+        bool needsRows = (batch.PrintOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
+        if (needsRows)
+        {
+            Printing.PrintTracksTbd(
+                batch.Pending.Select(ToSongJob).ToList(),
+                batch.Existing.Select(ToSongJob).ToList(),
+                batch.NotFound.Select(ToSongJob).ToList(),
+                batch.IsNormal,
+                batch.PrintOption);
+            return;
+        }
+
+        if (batch.IsNormal && batch.PendingCount == 1 && batch.ExistingCount + batch.NotFoundCount == 0)
+            return;
+
+        string notFoundLastTime = batch.NotFoundCount > 0 ? $"{batch.NotFoundCount} not found" : "";
+        string alreadyExist = batch.ExistingCount > 0 ? $"{batch.ExistingCount} already exist" : "";
+        notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
+        string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
+        bool allSkipped = batch.ExistingCount + batch.NotFoundCount > batch.PendingCount;
+        Logger.Info($"Downloading {batch.PendingCount} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+
+        var preview = batch.Pending.Select(ToSongJob).ToList();
+        if (preview.Count > 0)
+            Printing.PrintTracks(preview, 10, fullInfo: false);
+    }
+
     internal static async Task PrintRemoteCompleteAsync(
         ICliBackend backend,
         Guid workflowId,
@@ -314,26 +335,10 @@ internal static partial class Program
 
         foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
         {
-            if (summary.Presentation.DisplayMode == ServerProtocol.PresentationDisplayModes.Embedded)
+            if (summary.Kind != ServerProtocol.JobKinds.Song)
                 continue;
 
-            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
-            switch (detail?.Payload)
-            {
-                case SongJobPayloadDto song:
-                    CountSong(song, summary, ref successes, ref fails);
-                    break;
-
-                case AggregateJobPayloadDto aggregate:
-                    foreach (var aggregateSong in aggregate.Songs)
-                        CountSong(aggregateSong, null, ref successes, ref fails);
-                    break;
-
-                case AlbumJobPayloadDto album:
-                    foreach (var albumSong in ResolvedAlbumSongs(album))
-                        CountSong(albumSong, null, ref successes, ref fails);
-                    break;
-            }
+            CountSummary(summary, ref successes, ref fails);
         }
 
         Printing.PrintComplete(successes, fails);
@@ -343,6 +348,17 @@ internal static partial class Program
     {
         string? stateText = song.State ?? summary?.State;
         if (!Enum.TryParse<JobState>(stateText, out var state))
+            return;
+
+        if (Printing.IsSuccessfulCompletion(state))
+            successes++;
+        else if (state == JobState.Failed)
+            fails++;
+    }
+
+    private static void CountSummary(JobSummaryDto summary, ref int successes, ref int fails)
+    {
+        if (!Enum.TryParse<JobState>(summary.State, out var state))
             return;
 
         if (Printing.IsSuccessfulCompletion(state))
@@ -376,13 +392,13 @@ internal static partial class Program
             Job? job = detail.Payload switch
             {
                 SongJobPayloadDto song when song.CandidateCount.GetValueOrDefault() > 0
-                    => ToSongJob(song),
+                    => await ToSongResultsJobAsync(backend, summary.JobId, song, ct),
                 SearchJobPayloadDto search when search.ResultCount > 0
                     => await ToSearchResultsJobAsync(backend, summary.JobId, search, ct),
                 AlbumJobPayloadDto album when album.ResultCount > 0
-                    => ToAlbumJob(album),
-                AggregateJobPayloadDto aggregate when aggregate.Songs.Count > 0
-                    => ToAggregateJob(aggregate),
+                    => await ToAlbumResultsJobAsync(backend, summary.JobId, album, ct),
+                AggregateJobPayloadDto aggregate when aggregate.SongCount > 0
+                    => await ToAggregateResultsJobAsync(backend, aggregate, detail.Children, ct),
                 _ => null,
             };
 
@@ -421,6 +437,56 @@ internal static partial class Program
             {
                 Candidates = files.Items.Select(ToFileCandidate).ToList(),
             };
+    }
+
+    private static async Task<Job?> ToSongResultsJobAsync(
+        ICliBackend backend,
+        Guid songJobId,
+        SongJobPayloadDto song,
+        CancellationToken ct)
+    {
+        var files = await backend.GetFileResultsAsync(songJobId, ct);
+        var job = ToSongJob(song);
+        job.Candidates = files?.Items.Select(ToFileCandidate).ToList();
+        return job;
+    }
+
+    private static async Task<Job?> ToAlbumResultsJobAsync(
+        ICliBackend backend,
+        Guid albumJobId,
+        AlbumJobPayloadDto album,
+        CancellationToken ct)
+    {
+        var folders = await backend.GetFolderResultsAsync(albumJobId, includeFiles: true, ct);
+        var job = ToAlbumJob(album);
+        job.Results = folders?.Items.Select(ToAlbumFolder).ToList() ?? [];
+        return job;
+    }
+
+    private static async Task<Job?> ToAggregateResultsJobAsync(
+        ICliBackend backend,
+        AggregateJobPayloadDto aggregate,
+        IReadOnlyList<JobSummaryDto> children,
+        CancellationToken ct)
+    {
+        var job = new AggregateJob(ToSongQuery(aggregate.Query));
+        foreach (var summary in children.Where(child => child.Kind == ServerProtocol.JobKinds.Song).OrderBy(child => child.DisplayId))
+        {
+            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+            if (detail?.Payload is not SongJobPayloadDto payload)
+                continue;
+
+            var song = ToSongJob(payload);
+            if (payload.CandidateCount.GetValueOrDefault() > 0)
+            {
+                var files = await backend.GetFileResultsAsync(summary.JobId, ct);
+                song.Candidates = files?.Items.Select(ToFileCandidate).ToList();
+            }
+
+            job.Songs.Add(song);
+        }
+
+        return job;
     }
 
     internal static async Task PrintRemotePlannedOutputAsync(
@@ -482,41 +548,29 @@ internal static partial class Program
                 plannedJobs.Add(ToAlbumJob(album, detail.Summary));
                 break;
 
-            case AggregateJobPayloadDto aggregate:
-                plannedJobs.Add(ToAggregateJob(aggregate));
+            case AggregateJobPayloadDto:
+                foreach (var child in ChildrenOf(detail, details))
+                    CollectRemotePlannedDownloads(child, details, plannedJobs, visited);
                 break;
 
             case AlbumAggregateJobPayloadDto albumAggregate:
                 plannedJobs.Add(ToAlbumAggregateJob(albumAggregate, detail.Summary));
                 break;
 
-            case JobListPayloadDto jobList:
-                var directSongIds = new HashSet<Guid>();
-                if (jobList.DirectSongs != null)
-                {
-                    foreach (var song in jobList.DirectSongs)
-                    {
-                        plannedJobs.Add(ToSongJob(song));
-                        if (song.JobId is Guid jobId)
-                            directSongIds.Add(jobId);
-                    }
-                }
-
-                var children = details.Values
-                    .Where(candidate => candidate.Summary.ParentJobId == detail.Summary.JobId)
-                    .OrderBy(candidate => candidate.Summary.DisplayId)
-                    .ToList();
-
-                foreach (var child in children)
-                {
-                    if (directSongIds.Contains(child.Summary.JobId))
-                        continue;
-
+            case JobListPayloadDto:
+                foreach (var child in ChildrenOf(detail, details))
                     CollectRemotePlannedDownloads(child, details, plannedJobs, visited);
-                }
                 break;
         }
     }
+
+    private static IReadOnlyList<JobDetailDto> ChildrenOf(
+        JobDetailDto detail,
+        IReadOnlyDictionary<Guid, JobDetailDto> details)
+        => details.Values
+            .Where(candidate => candidate.Summary.ParentJobId == detail.Summary.JobId)
+            .OrderBy(candidate => candidate.Summary.DisplayId)
+            .ToList();
 
     internal static SubmissionOptionsDto BuildRemoteSubmissionOptions(
         string[] args,
@@ -623,7 +677,7 @@ internal static partial class Program
     private static AggregateJob ToAggregateJob(AggregateJobPayloadDto aggregate)
         => new(ToSongQuery(aggregate.Query))
         {
-            Songs = aggregate.Songs.Select(ToSongJob).ToList(),
+            Songs = aggregate.Songs?.Select(ToSongJob).ToList() ?? [],
         };
 
     private static AlbumAggregateJob ToAlbumAggregateJob(AlbumAggregateJobPayloadDto albumAggregate, JobSummaryDto? summary = null)

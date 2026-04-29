@@ -85,11 +85,19 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public async Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/lists", request, ct);
 
+    public Task SubscribeWorkflowAsync(Guid workflowId, CancellationToken ct = default)
+        => connection.InvokeAsync("SubscribeWorkflow", workflowId, ct);
+
+    public Task SubscribeAllAsync(CancellationToken ct = default)
+        => connection.InvokeAsync("SubscribeAll", ct);
+
     private async Task<JobSummaryDto> PostJobAsync<TRequest>(string url, TRequest request, CancellationToken ct)
     {
         using var response = await http.PostAsJsonAsync(url, request, jsonOptions, ct);
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobSummaryDto>(response, ct);
+        var summary = await ReadRequiredAsync<JobSummaryDto>(response, ct);
+        await SubscribeWorkflowAsync(summary.WorkflowId, ct);
+        return summary;
     }
 
     public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)

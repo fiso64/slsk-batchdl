@@ -71,7 +71,7 @@ public class RemoteCliBackendTests
                 new SubmitTrackSearchJobRequestDto(
                     new SongQueryDto("Artist", "Track One", "", "", -1, false)));
 
-            await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(backend, searchSummary.JobId, ServerProtocol.JobStates.Done);
 
             var projection = await backend.GetFileResultsAsync(searchSummary.JobId);
             Assert.IsNotNull(projection);
@@ -87,9 +87,9 @@ public class RemoteCliBackendTests
             Assert.AreEqual(1, downloadSummary.Count);
             var downloadedSummary = downloadSummary[0];
             Assert.AreEqual(searchSummary.WorkflowId, downloadedSummary.WorkflowId);
-            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.DisplayParentJobId);
+            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.ParentJobId);
 
-            await WaitForJobStateAsync(backend, downloadedSummary.JobId, "Done");
+            await WaitForJobStateAsync(backend, downloadedSummary.JobId, ServerProtocol.JobStates.Done);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -346,7 +346,7 @@ public class RemoteCliBackendTests
             new SubmitAlbumSearchJobRequestDto(
                 new AlbumQueryDto("Artist", "Album", "", "", false)));
 
-            await WaitForJobStateAsync(backend, searchSummary.JobId, "Done");
+            await WaitForJobStateAsync(backend, searchSummary.JobId, ServerProtocol.JobStates.Done);
             var projection = await backend.GetFolderResultsAsync(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
@@ -360,15 +360,13 @@ public class RemoteCliBackendTests
             await WaitForConditionAsync(
                 async () =>
                 {
-                    var detail = await backend.GetJobDetailAsync(downloadSummary.JobId);
-                    var payload = detail?.Payload as AlbumJobPayloadDto;
-                    return payload?.Tracks?
-                        .Any(file => file.State == nameof(JobState.Downloading)) == true;
+                    return (await GetChildSongPayloadsAsync(backend, downloadSummary.JobId))
+                        .Any(file => file.State == ServerProtocol.JobStates.Downloading) == true;
                 },
                 "Timed out waiting for remote album file downloads to start.");
 
             Assert.IsTrue(await backend.CancelWorkflowAsync(downloadSummary.WorkflowId) > 0);
-            await WaitForJobStateAsync(backend, downloadSummary.JobId, nameof(JobState.Failed));
+            await WaitForJobStateAsync(backend, downloadSummary.JobId, ServerProtocol.JobStates.Failed);
 
             using var output = new StringWriter();
             Console.SetOut(output);
@@ -445,8 +443,8 @@ public class RemoteCliBackendTests
 
             var firstSearch = await StartAlbumSearchAsync(backend, "Artist One", "Album One");
             var secondSearch = await StartAlbumSearchAsync(backend, "Artist Two", "Album Two");
-            await WaitForJobStateAsync(backend, firstSearch.JobId, nameof(JobState.Done));
-            await WaitForJobStateAsync(backend, secondSearch.JobId, nameof(JobState.Done));
+            await WaitForJobStateAsync(backend, firstSearch.JobId, ServerProtocol.JobStates.Done);
+            await WaitForJobStateAsync(backend, secondSearch.JobId, ServerProtocol.JobStates.Done);
 
             var firstDownload = await StartFirstAlbumDownloadAsync(backend, firstSearch.JobId);
             var secondDownload = await StartFirstAlbumDownloadAsync(backend, secondSearch.JobId);
@@ -459,11 +457,11 @@ public class RemoteCliBackendTests
                 "A remote CLI scoped to one workflow must not cancel another workflow's display id.");
 
             Assert.IsTrue(await backend.CancelJobByDisplayIdAsync(firstDownload.DisplayId, firstDownload.WorkflowId));
-            await WaitForJobStateAsync(backend, firstDownload.JobId, nameof(JobState.Failed));
+            await WaitForJobStateAsync(backend, firstDownload.JobId, ServerProtocol.JobStates.Failed);
 
             var secondDetail = await backend.GetJobDetailAsync(secondDownload.JobId);
             Assert.AreNotEqual(
-                nameof(JobState.Failed),
+                ServerProtocol.JobStates.Failed,
                 secondDetail?.Summary.State,
                 "Cancelling the first workflow by display id must not fail the second workflow's job.");
 
@@ -751,14 +749,26 @@ public class RemoteCliBackendTests
     private static async Task WaitForAlbumFileDownloadToStartAsync(ICliBackend backend, Guid albumJobId)
     {
         await WaitForConditionAsync(
-            async () =>
-            {
-                var detail = await backend.GetJobDetailAsync(albumJobId);
-                var payload = detail?.Payload as AlbumJobPayloadDto;
-                return payload?.Tracks?
-                    .Any(file => file.State == nameof(JobState.Downloading)) == true;
-            },
-            "Timed out waiting for remote album file downloads to start.");
+                async () =>
+                {
+                    return (await GetChildSongPayloadsAsync(backend, albumJobId))
+                        .Any(file => file.State == ServerProtocol.JobStates.Downloading) == true;
+                },
+                "Timed out waiting for remote album file downloads to start.");
+    }
+
+    private static async Task<List<SongJobPayloadDto>> GetChildSongPayloadsAsync(ICliBackend backend, Guid parentJobId)
+    {
+        var parent = await backend.GetJobDetailAsync(parentJobId);
+        var payloads = new List<SongJobPayloadDto>();
+        foreach (var child in parent?.Children ?? [])
+        {
+            var detail = await backend.GetJobDetailAsync(child.JobId);
+            if (detail?.Payload is SongJobPayloadDto song)
+                payloads.Add(song);
+        }
+
+        return payloads;
     }
 
     private static async Task<JobSummaryDto> StartAlbumSearchAsync(ICliBackend backend, string artist, string album)

@@ -14,6 +14,8 @@ internal interface ICliBackend
     Task<JobSummaryDto> SubmitAggregateJobAsync(SubmitAggregateJobRequestDto request, CancellationToken ct = default);
     Task<JobSummaryDto> SubmitAlbumAggregateJobAsync(SubmitAlbumAggregateJobRequestDto request, CancellationToken ct = default);
     Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default);
+    Task SubscribeAllAsync(CancellationToken ct = default);
+    Task SubscribeWorkflowAsync(Guid workflowId, CancellationToken ct = default);
     Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default);
     Task<JobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default);
     Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default);

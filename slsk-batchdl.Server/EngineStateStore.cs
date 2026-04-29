@@ -385,6 +385,7 @@ public sealed class EngineStateStore
 
         SearchUpdated?.Invoke(new SearchUpdatedDto(
             searchJob.Id,
+            searchJob.WorkflowId,
             rawResult.Revision,
             searchJob.ResultCount,
             false));
@@ -408,6 +409,7 @@ public sealed class EngineStateStore
 
         SearchUpdated?.Invoke(new SearchUpdatedDto(
             searchJob.Id,
+            searchJob.WorkflowId,
             searchJob.Revision,
             searchJob.ResultCount,
             searchJob.IsComplete));
@@ -443,8 +445,8 @@ public sealed class EngineStateStore
     private static IReadOnlyList<PresentedJobNodeDto> BuildPresentedJobTree(IReadOnlyList<JobRecord> sourceRecords)
     {
         var visibleRecords = sourceRecords
-            .Where(record => record.Summary.Presentation.DisplayMode == ServerProtocol.PresentationDisplayModes.Node)
-            .OrderBy(record => record.Summary.Presentation.DisplayOrder)
+            .Where(record => record.Summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Node)
+            .OrderBy(record => record.Summary.Presentation.Order)
             .ThenBy(record => record.Summary.DisplayId)
             .ToList();
 
@@ -454,7 +456,7 @@ public sealed class EngineStateStore
 
         foreach (var record in visibleRecords)
         {
-            var presentationParentId = record.Summary.Presentation.DisplayParentJobId ?? record.ParentJobId;
+            var presentationParentId = record.Summary.Presentation.ParentJobId ?? record.ParentJobId;
             if (presentationParentId is Guid parentId && visibleIds.Contains(parentId))
             {
                 if (!childrenByParentId.TryGetValue(parentId, out var children))
@@ -495,9 +497,9 @@ public sealed class EngineStateStore
     }
 
     private static bool IsListedByDefault(JobSummaryDto summary)
-        => summary.Presentation.DisplayMode == ServerProtocol.PresentationDisplayModes.Node
-            && (summary.Presentation.DisplayParentJobId == null
-                || summary.Presentation.DisplayParentJobId == summary.ParentJobId);
+        => summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Node
+            && (summary.Presentation.ParentJobId == null
+                || summary.Presentation.ParentJobId == summary.ParentJobId);
 
     private JobRecord UpdateJobRecord(Job job)
     {
@@ -541,9 +543,9 @@ public sealed class EngineStateStore
         var displayParentJobId = visualParentJobId ?? parentJobId;
         string displayMode = job switch
         {
-            ExtractJob when job.State == JobState.Done && resultJobId != null => ServerProtocol.PresentationDisplayModes.Replaced,
-            SongJob when parentJobId is Guid parentId && IsEmbeddedSongParent(parentId) => ServerProtocol.PresentationDisplayModes.Embedded,
-            _ => ServerProtocol.PresentationDisplayModes.Node,
+            ExtractJob when job.State == JobState.Done && resultJobId != null => ServerProtocol.JobPresentationModes.Replaced,
+            SongJob when parentJobId is Guid parentId && IsEmbeddedSongParent(parentId) => ServerProtocol.JobPresentationModes.Embedded,
+            _ => ServerProtocol.JobPresentationModes.Node,
         };
 
         return new JobSummaryDto(
@@ -559,7 +561,7 @@ public sealed class EngineStateStore
             parentJobId,
             resultJobId,
             job.Config?.AppliedAutoProfiles?.OrderBy(x => x).ToList() ?? [],
-            new PresentationHintsDto(
+            new JobPresentationDto(
                 displayMode,
                 displayParentJobId,
                 job.DisplayId,
@@ -589,16 +591,17 @@ public sealed class EngineStateStore
                 albumJob.DownloadPath,
                 albumJob.ResolvedTarget?.Username,
                 albumJob.ResolvedTarget?.FolderPath,
-                albumJob.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles: true)).ToList(),
-                albumJob.ResolvedTarget?.Files.Select(ToSongJobPayloadDto).ToList()),
+                null,
+                null),
             AggregateJob aggregateJob => new AggregateJobPayloadDto(
                 ToSongQueryDto(aggregateJob.Query),
-                aggregateJob.Songs.Select(ToSongJobPayloadDto).ToList()),
+                aggregateJob.Songs.Count,
+                null),
             AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
                 ToAlbumQueryDto(albumAggregateJob.Query)),
             JobList jobList => new JobListPayloadDto(
                 jobList.Count,
-                jobList.Jobs.OfType<SongJob>().Select(ToSongJobPayloadDto).ToList()),
+                null),
             RetrieveFolderJob retrieveFolderJob => new RetrieveFolderJobPayloadDto(
                 retrieveFolderJob.TargetFolder.FolderPath,
                 retrieveFolderJob.TargetFolder.Username,
@@ -652,7 +655,7 @@ public sealed class EngineStateStore
             song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
             song.Id,
             song.DisplayId,
-            song.Candidates?.Select(ToFileCandidateDto).ToList(),
+            null,
             song.State.ToString(),
             song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
             song.FailureMessage,

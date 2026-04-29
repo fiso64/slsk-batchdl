@@ -53,6 +53,18 @@ internal sealed class LocalCliBackend
     public Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
         => SubmitJobAsync(JobRequestMapper.CreateJobList(request), request.Options, ct);
 
+    public Task SubscribeWorkflowAsync(Guid workflowId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
+    public Task SubscribeAllAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     private Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -94,14 +106,23 @@ internal sealed class LocalCliBackend
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
-        if (searchJob?.Config == null)
+        if (searchJob?.Config != null)
+        {
+            var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, engine.UserSuccessCounts);
+            return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(new(
+                snapshot.Revision,
+                snapshot.IsComplete,
+                snapshot.Items.Select(ToFileCandidateDto).ToList()));
+        }
+
+        var songJob = stateStore.GetJob<SongJob>(jobId);
+        if (songJob == null)
             return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(null);
 
-        var snapshot = searchJob.GetSortedTrackCandidates(searchJob.Config.Search, engine.UserSuccessCounts);
         return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(new(
-            snapshot.Revision,
-            snapshot.IsComplete,
-            snapshot.Items.Select(ToFileCandidateDto).ToList()));
+            Revision: 0,
+            IsComplete: songJob.State is not (JobState.Pending or JobState.Searching),
+            Items: songJob.Candidates?.Select(ToFileCandidateDto).ToList() ?? []));
     }
 
     public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
@@ -109,14 +130,38 @@ internal sealed class LocalCliBackend
         ct.ThrowIfCancellationRequested();
 
         var searchJob = stateStore.GetJob<SearchJob>(jobId);
-        if (searchJob?.Config == null)
+        if (searchJob?.Config != null)
+        {
+            var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
+            return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(new(
+                snapshot.Revision,
+                snapshot.IsComplete,
+                snapshot.Items.Select(folder => new AlbumFolderDto(
+                    new AlbumFolderRefDto(folder.Username, folder.FolderPath),
+                    folder.Username,
+                    folder.FolderPath,
+                    new PeerInfoDto(
+                        folder.Username,
+                        folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.HasFreeUploadSlot,
+                        folder.Files.FirstOrDefault()?.ResolvedTarget?.Response.UploadSpeed),
+                    folder.SearchFileCount,
+                    folder.SearchAudioFileCount,
+                    includeFiles
+                        ? folder.Files
+                            .Where(song => song.ResolvedTarget != null)
+                            .Select(song => ToFileCandidateDto(song.ResolvedTarget!))
+                            .ToList()
+                        : null)).ToList()));
+        }
+
+        var albumJob = stateStore.GetJob<AlbumJob>(jobId);
+        if (albumJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(null);
 
-        var snapshot = searchJob.GetAlbumFolders(searchJob.Config.Search);
         return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(new(
-            snapshot.Revision,
-            snapshot.IsComplete,
-            snapshot.Items.Select(folder => new AlbumFolderDto(
+            Revision: 0,
+            IsComplete: albumJob.State is not (JobState.Pending or JobState.Searching),
+            Items: albumJob.Results.Select(folder => new AlbumFolderDto(
                 new AlbumFolderRefDto(folder.Username, folder.FolderPath),
                 folder.Username,
                 folder.FolderPath,
@@ -310,8 +355,18 @@ internal sealed class LocalCliBackend
             DateTimeOffset.UtcNow,
             descriptor.Category,
             descriptor.SnapshotInvalidation,
+            GetWorkflowId(payload),
             payload));
     }
+
+    private static Guid? GetWorkflowId(object payload)
+        => payload switch
+        {
+            JobSummaryDto summary => summary.WorkflowId,
+            WorkflowSummaryDto summary => summary.WorkflowId,
+            SearchUpdatedDto update => update.WorkflowId,
+            _ => null,
+        };
 
     private AlbumFolder? FindAlbumFolder(SearchJob searchJob, AlbumFolderRefDto folderRef)
         => searchJob.Config == null
@@ -358,7 +413,7 @@ internal sealed class LocalCliBackend
             null,
             null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new PresentationHintsDto(ServerProtocol.PresentationDisplayModes.Node, null, job.DisplayId, null),
+            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, null, job.DisplayId, null),
             []);
 
     private JobSummaryDto GetSummary(Job job)

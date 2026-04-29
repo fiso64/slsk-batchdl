@@ -28,6 +28,7 @@ public class CliProgressReporter
     private readonly ConcurrentDictionary<Guid, string> _backendJobStatuses = new();
     private readonly ConcurrentDictionary<Guid, (string text, int pos)> _backendSavedState = new();
     private readonly ConcurrentDictionary<Guid, string> _backendPlainJobStatusLines = new();
+    private readonly ConcurrentDictionary<Guid, byte> _backendEmbeddedJobs = new();
 
     static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
 
@@ -157,6 +158,8 @@ public class CliProgressReporter
 
     private void ReportJobUpserted(JobSummaryDto summary)
     {
+        RememberBackendPresentation(summary);
+
         if (PlainMode)
             return;
 
@@ -316,10 +319,24 @@ public class CliProgressReporter
     }
 
     private static bool IsTerminalJobState(string state)
-        => state is nameof(JobState.Done)
-            or nameof(JobState.AlreadyExists)
-            or nameof(JobState.Failed)
-            or nameof(JobState.Skipped);
+        => state is ServerProtocol.JobStates.Done
+            or ServerProtocol.JobStates.AlreadyExists
+            or ServerProtocol.JobStates.Failed
+            or ServerProtocol.JobStates.Skipped;
+
+    private void RememberBackendPresentation(JobSummaryDto summary)
+    {
+        if (IsBackendEmbedded(summary))
+            _backendEmbeddedJobs[summary.JobId] = 0;
+        else
+            _backendEmbeddedJobs.TryRemove(summary.JobId, out _);
+    }
+
+    private bool IsBackendEmbedded(Guid jobId)
+        => _backendEmbeddedJobs.ContainsKey(jobId);
+
+    private static bool IsBackendEmbedded(JobSummaryDto summary)
+        => summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Embedded;
 
     private static string SongDisplay(SongJob song)
     {
@@ -347,7 +364,7 @@ public class CliProgressReporter
     }
 
     private static string TerminalLabel(SongStateChangedEventDto song)
-        => song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists)
+        => song.State is ServerProtocol.JobStates.Done or ServerProtocol.JobStates.AlreadyExists
             ? "Succeeded"
             : !string.IsNullOrWhiteSpace(song.FailureReason)
                 ? $"Failed [{song.FailureReason}]"
@@ -375,15 +392,21 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
+            if (IsBackendEmbedded(song.JobId))
+                return;
+
             Logger.Info($"Downloading: {song.Candidate.Username}\\..\\{System.IO.Path.GetFileName(song.Candidate.Filename)}");
             return;
         }
+
+        if (IsBackendEmbedded(song.JobId) && !_backendBars.ContainsKey(song.JobId))
+            return;
 
         var d = _backendBars.GetOrAdd(song.JobId, _ => new BarData { Bar = Printing.GetProgressBar() });
         d.StateLabel = "Queued";
         d.BaseText = $"{song.Candidate.Username}\\..\\{System.IO.Path.GetFileName(song.Candidate.Filename)}";
         d.Pct = 0;
-        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
+        Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: !IsBackendEmbedded(song.JobId));
     }
 
     private void ReportDownloadProgress(SongJob song, long bytesTransferred, long totalBytes)
@@ -431,13 +454,16 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
+            if (IsBackendEmbedded(song.JobId))
+                return;
+
             Logger.Info($"{TerminalLabel(song)}: {SongDisplay(song)}");
             return;
         }
 
         if (_backendBars.TryGetValue(song.JobId, out var d) && d.Bar != null)
         {
-            bool succeeded = song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists);
+            bool succeeded = song.State is ServerProtocol.JobStates.Done or ServerProtocol.JobStates.AlreadyExists;
             d.StateLabel = succeeded ? "Succeeded" : "Failed";
             if (succeeded)
                 d.Pct = 100;
@@ -514,6 +540,10 @@ public class CliProgressReporter
 
     private void ReportJobStarted(JobStartedEventDto job)
     {
+        RememberBackendPresentation(job.Summary);
+        if (IsBackendEmbedded(job.Summary))
+            return;
+
         string status = job.Summary.Kind == "retrieve-folder" ? "retrieving folder" : "searching";
 
         if (PlainMode)
@@ -759,7 +789,7 @@ public class CliProgressReporter
             if (!_backendBars.TryGetValue(song.JobId!.Value, out var data))
                 continue;
 
-            bool albumSucceeded = summary.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists);
+            bool albumSucceeded = summary.State is ServerProtocol.JobStates.Done or ServerProtocol.JobStates.AlreadyExists;
             data.StateLabel = albumSucceeded ? "Succeeded" : "Failed";
             if (albumSucceeded)
             {
@@ -917,6 +947,9 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
+            if (IsBackendEmbedded(song.JobId))
+                return;
+
             Logger.Info($"Searching: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
             return;
         }
@@ -928,6 +961,9 @@ public class CliProgressReporter
             Printing.RefreshOrPrint(existing.Bar, 0, BuildText(existing), print: false);
             return;
         }
+
+        if (IsBackendEmbedded(song.JobId))
+            return;
 
         bool isFirst = !_backendBars.ContainsKey(song.JobId);
         var d = _backendBars.GetOrAdd(song.JobId, _ => new BarData { Bar = Printing.GetProgressBar() });
@@ -955,6 +991,9 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
+            if (IsBackendEmbedded(song.JobId))
+                return;
+
             Logger.Info($"Not found: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
             return;
         }
@@ -983,7 +1022,10 @@ public class CliProgressReporter
     {
         if (PlainMode)
         {
-            Logger.Info($"{TerminalLabel(new SongStateChangedEventDto(song.JobId, song.DisplayId, song.WorkflowId, song.Query, nameof(JobState.Failed), song.FailureReason, null, null))}: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
+            if (IsBackendEmbedded(song.JobId))
+                return;
+
+            Logger.Info($"{TerminalLabel(new SongStateChangedEventDto(song.JobId, song.DisplayId, song.WorkflowId, song.Query, ServerProtocol.JobStates.Failed, song.FailureReason, null, null))}: [{song.DisplayId}] {song.Query.Artist} - {song.Query.Title}");
             return;
         }
 
@@ -1094,6 +1136,10 @@ public class CliProgressReporter
 
     private void ReportJobStatus(JobStatusEventDto job)
     {
+        RememberBackendPresentation(job.Summary);
+        if (IsBackendEmbedded(job.Summary))
+            return;
+
         if (PlainMode)
         {
             _backendJobStatuses[job.Summary.JobId] = job.Status;
@@ -1197,22 +1243,22 @@ public class CliProgressReporter
     {
         var data = new BarData { Bar = bar, BaseText = shortName, StateLabel = "Pending", Pct = 0 };
 
-        if (song.State is nameof(JobState.Done) or nameof(JobState.AlreadyExists))
+        if (song.State is ServerProtocol.JobStates.Done or ServerProtocol.JobStates.AlreadyExists)
         {
             data.StateLabel = "Succeeded";
             data.Pct = 100;
         }
-        else if (song.State == nameof(JobState.Failed))
+        else if (song.State == ServerProtocol.JobStates.Failed)
         {
             data.StateLabel = "Failed";
             if (!string.IsNullOrWhiteSpace(song.FailureReason))
                 data.BaseText += $" [{song.FailureReason}]";
         }
-        else if (song.State == nameof(JobState.Downloading))
+        else if (song.State == ServerProtocol.JobStates.Downloading)
         {
             data.StateLabel = "InProgress";
         }
-        else if (song.State == nameof(JobState.Searching))
+        else if (song.State == ServerProtocol.JobStates.Searching)
         {
             data.StateLabel = "Searching";
         }
