@@ -176,8 +176,7 @@ namespace Sldl.Core.Services
 
                 foreach (var file in user.Files)
                 {
-                    var path = file.Filename.ToLower();
-                    bool matches = query.Terms.All(term => path.Contains(term.ToLower()));
+                    bool matches = query.Terms.All(term => file.Filename.Contains(term, StringComparison.OrdinalIgnoreCase));
 
                     if (matches && (options.FileFilter?.Invoke(file) ?? true))
                     {
@@ -185,7 +184,7 @@ namespace Sldl.Core.Services
                     }
                 }
 
-                if (matchingFiles.Any())
+                if (matchingFiles.Count > 0)
                 {
                     var response = new SearchResponse(
                         username: user.Username,
@@ -394,7 +393,7 @@ namespace Sldl.Core.Services
                         else
                         {
                             var dummy = new byte[Math.Max(1, fileSize)];
-                            await outputStream.WriteAsync(dummy, 0, dummy.Length, ct);
+                            await outputStream.WriteAsync(dummy.AsMemory(0, dummy.Length), ct);
                         }
                         bytesTransferred = fileSize;
                     }
@@ -405,10 +404,10 @@ namespace Sldl.Core.Services
                         if (startOffset > 0) sourceStream.Seek(startOffset, SeekOrigin.Begin);
                         var buffer = new byte[chunkSize];
                         int bytesRead;
-                        while ((bytesRead = await sourceStream.ReadAsync(buffer, 0, chunkSize, ct)) > 0)
+                        while ((bytesRead = await sourceStream.ReadAsync(buffer.AsMemory(0, chunkSize), ct)) > 0)
                         {
                             ct.ThrowIfCancellationRequested();
-                            await outputStream.WriteAsync(buffer, 0, bytesRead, ct);
+                            await outputStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
                             await outputStream.FlushAsync(ct);
                             long prev = bytesTransferred;
                             bytesTransferred += bytesRead;
@@ -426,7 +425,7 @@ namespace Sldl.Core.Services
                         {
                             ct.ThrowIfCancellationRequested();
                             var currentChunk = (int)Math.Min(chunkSize, fileSize - bytesTransferred);
-                            await outputStream.WriteAsync(buffer, 0, currentChunk, ct);
+                            await outputStream.WriteAsync(buffer.AsMemory(0, currentChunk), ct);
                             await outputStream.FlushAsync(ct);
                             long prev = bytesTransferred;
                             bytesTransferred += currentChunk;

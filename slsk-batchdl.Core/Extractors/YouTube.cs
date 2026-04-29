@@ -33,7 +33,7 @@ namespace Sldl.Core.Extractors;
 
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
-            YouTube.apiKey = _yt.ApiKey ?? "";
+            YouTube.ApiKey = _yt.ApiKey ?? "";
 
             string name;
             List<SongJob>? deleted = null;
@@ -47,7 +47,7 @@ namespace Sldl.Core.Extractors;
             }
             if (!_yt.DeletedOnly)
             {
-                if (!string.IsNullOrEmpty(YouTube.apiKey))
+                if (!string.IsNullOrEmpty(YouTube.ApiKey))
                 {
                     Logger.Info("Loading YouTube playlist (API)");
                     (name, songs) = await YouTube.GetSongsApi(input, max, off);
@@ -89,7 +89,20 @@ namespace Sldl.Core.Extractors;
     {
         private static readonly YoutubeClient? youtube = new YoutubeClient();
         private static YouTubeService? youtubeService = null;
-        public static string apiKey = "";
+        private static string apiKey = "";
+
+        public static string ApiKey
+        {
+            get => apiKey;
+            set
+            {
+                var newValue = value ?? "";
+                if (apiKey == newValue) return;
+
+                apiKey = newValue;
+                youtubeService = null;
+            }
+        }
 
         public static async Task<(string, List<SongJob>)> GetSongsApi(string url, int max = int.MaxValue, int offset = 0)
         {
@@ -268,7 +281,7 @@ namespace Sldl.Core.Extractors;
             }
             catch
             {
-                if (apiKey.Length > 0)
+                if (ApiKey.Length > 0)
                 {
                     try
                     {
@@ -291,12 +304,12 @@ namespace Sldl.Core.Extractors;
         {
             if (youtubeService == null)
             {
-                if (apiKey.Length == 0)
+                if (ApiKey.Length == 0)
                     throw new Exception("No API key");
 
                 youtubeService = new YouTubeService(new BaseClientService.Initializer()
                 {
-                    ApiKey = apiKey,
+                    ApiKey = ApiKey,
                     ApplicationName = "slsk-batchdl"
                 });
             }

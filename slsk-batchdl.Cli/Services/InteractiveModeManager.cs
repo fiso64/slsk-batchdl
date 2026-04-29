@@ -179,9 +179,8 @@ public class InteractiveModeManager
                         folder.Files.RemoveAll(af => !af.ResolvedTarget!.Filename.StartsWith(subdir, StringComparison.OrdinalIgnoreCase));
 
                         string folderKey = username + '\\' + currentFolder;
-                        if (retrievedFolders.Contains(folderKey))
+                        if (retrievedFolders.Remove(folderKey))
                         {
-                            retrievedFolders.Remove(folderKey);
                             retrievedFolders.Add(username + '\\' + subdir);
                         }
 

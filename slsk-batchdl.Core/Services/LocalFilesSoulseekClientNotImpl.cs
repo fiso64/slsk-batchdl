@@ -285,6 +285,7 @@ namespace Sldl.Core.Services
 
         public void Dispose()
         {
+            GC.SuppressFinalize(this);
             return;
         }
     }

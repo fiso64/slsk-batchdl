@@ -803,15 +803,15 @@ public static partial class Utils
         var cnt = new Dictionary<T, int>();
         foreach (T s in list1)
         {
-            if (cnt.ContainsKey(s))
-                cnt[s]++;
+            if (cnt.TryGetValue(s, out int count))
+                cnt[s] = count + 1;
             else
-                cnt.Add(s, 1);
+                cnt[s] = 1;
         }
         foreach (T s in list2)
         {
-            if (cnt.ContainsKey(s))
-                cnt[s]--;
+            if (cnt.TryGetValue(s, out int count))
+                cnt[s] = count - 1;
             else
                 return false;
         }

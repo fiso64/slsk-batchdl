@@ -142,6 +142,7 @@ public static class JsonPrinter
         //WriteIndented = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
+    private static readonly JsonSerializerOptions _indentedOptions = new(_options) { WriteIndented = true };
 
     public static void PrintTrackResultJson(SongQuery query, IEnumerable<(SearchResponse, Soulseek.File)> results, bool printAll = false)
     {
@@ -215,8 +216,7 @@ public static class JsonPrinter
     public static void PrintIndexJson(IEnumerable<IndexEntry> entries)
     {
         var trackJsons = entries.Select(e => new TrackJson(e));
-        var options = new JsonSerializerOptions(_options) { WriteIndented = true };
-        var json = JsonSerializer.Serialize(trackJsons, options);
+        var json = JsonSerializer.Serialize(trackJsons, _indentedOptions);
         Console.WriteLine(json);
     }
 }
