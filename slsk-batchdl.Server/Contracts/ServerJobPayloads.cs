@@ -37,12 +37,14 @@ public sealed record ExtractJobPayloadDto(
 /// <summary>
 /// Payload for search jobs. Use the matching /results endpoint for the actual result items.
 /// </summary>
-/// <param name="Intent">Search intent, such as track or album.</param>
+/// <param name="QueryText">Raw text submitted to Soulseek.</param>
+/// <param name="DefaultFileProjection">Default file projection used by compatibility file-results endpoints.</param>
+/// <param name="DefaultFolderProjection">Default folder projection used by compatibility folder-results endpoints.</param>
 /// <param name="Revision">Current result revision for matching SearchResultSnapshotDto views.</param>
 public sealed record SearchJobPayloadDto(
-    string Intent,
-    SongQueryDto Query,
-    AlbumQueryDto? AlbumQuery,
+    string QueryText,
+    FileSearchProjectionRequestDto? DefaultFileProjection,
+    FolderSearchProjectionRequestDto? DefaultFolderProjection,
     int ResultCount,
     int Revision,
     bool IsComplete) : JobPayloadDto;
@@ -78,8 +80,8 @@ public sealed record SongJobPayloadDto(
     Guid? JobId = null,
     int? DisplayId = null,
     IReadOnlyList<FileCandidateDto>? Candidates = null,
-    string? State = null,
-    string? FailureReason = null,
+    ServerJobState? State = null,
+    ServerFailureReason? FailureReason = null,
     string? FailureMessage = null,
     long? BytesTransferred = null,
     long? TotalBytes = null,

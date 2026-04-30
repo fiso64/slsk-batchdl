@@ -262,8 +262,8 @@ public static partial class ProfileConditionEvaluator
 
         string mode = job switch
         {
-            SearchJob { Intent: SearchIntent.Album } => "album",
-            SearchJob { Intent: SearchIntent.Track } => "song",
+            SearchJob { DefaultFolderProjection: not null } => "album",
+            SearchJob { DefaultFileProjection: not null } => "song",
             AlbumAggregateJob => "album-aggregate",
             AlbumJob => "album",
             AggregateJob => "aggregate",

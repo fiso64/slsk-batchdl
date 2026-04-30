@@ -48,26 +48,13 @@ public partial class Searcher
         try
         {
             SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf)
-            {
-                if (job.Intent == SearchIntent.Album)
-                {
-                    return new SearchOptions(
-                        minimumResponseFileCount: 1,
-                        minimumPeerUploadSpeed: 1,
-                        removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
-                        searchTimeout: timeout,
-                        responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                        fileFilter: f => !Utils.IsMusicFile(f.Filename) || nec.FileSatisfies(f, job.FileMatchQuery, null));
-                }
-
-                return new SearchOptions(
-                    minimumResponseFileCount: 1,
-                    minimumPeerUploadSpeed: 1,
+                => new(
+                    minimumResponseFileCount: 0,
+                    minimumPeerUploadSpeed: 0,
                     searchTimeout: timeout,
                     removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
-                    responseFilter: r => r.UploadSpeed > 0 && nec.BannedUsersSatisfies(r),
-                    fileFilter: f => nec.FileSatisfies(f, job.Query, null) || job.IncludeFullResults);
-            }
+                    responseFilter: _ => true,
+                    fileFilter: _ => true);
 
             await concurrencySemaphore.WaitAsync(ct);
             try { await RunSearches(job.NetworkQuery, session.Results, getOpts, session.AddResponse, search, ct, onSearch); }

@@ -322,16 +322,16 @@ public class EngineSupervisorTests
             Assert.IsNotNull(activeAlbumPayload);
             Assert.IsTrue(activeAlbumPayload.SelectedFolderFileCount >= activeFiles.Count);
             var cancellableFile = activeFiles.FirstOrDefault(file =>
-                file.AvailableActions?.Any(action => action.Kind == "cancel") == true);
+                file.AvailableActions?.Any(action => action.Kind == ServerResourceActionKind.Cancel) == true);
             Assert.IsNotNull(cancellableFile, "Active album payload files should expose cancel actions.");
 
             var childSongJobs = supervisor.StateStore.GetJobs(
-                new JobQuery(null, "song", downloadSummary.WorkflowId, IncludeAll: true))
+                new JobQuery(null, ServerJobKind.Song, downloadSummary.WorkflowId, IncludeAll: true))
                 .Where(summary => summary.ParentJobId == downloadSummary.JobId)
                 .ToList();
             Assert.IsTrue(childSongJobs.Count > 0, "Album payload songs should be registered jobs.");
             Assert.IsFalse(
-                supervisor.StateStore.GetJobs(new JobQuery(null, "song", downloadSummary.WorkflowId, IncludeAll: false))
+                supervisor.StateStore.GetJobs(new JobQuery(null, ServerJobKind.Song, downloadSummary.WorkflowId, IncludeAll: false))
                     .Any(summary => summary.ParentJobId == downloadSummary.JobId),
                 "Album payload songs should stay out of the default job list.");
 
@@ -586,7 +586,7 @@ public class EngineSupervisorTests
                     new SubmissionOptionsDto(WorkflowId: extractSummary.WorkflowId)),
                 CancellationToken.None);
 
-            Assert.AreEqual("search", started.Kind);
+            Assert.AreEqual(ServerJobKind.Search, started.Kind);
             Assert.AreEqual(extractSummary.WorkflowId, started.WorkflowId);
 
             await WaitForJobStateAsync(supervisor, started.JobId, ServerProtocol.JobStates.Done);
@@ -1019,7 +1019,7 @@ public class EngineSupervisorTests
         };
     }
 
-    private static async Task WaitForJobStateAsync(EngineSupervisor supervisor, Guid jobId, string expectedState, int timeoutMs = 5000)
+    private static async Task WaitForJobStateAsync(EngineSupervisor supervisor, Guid jobId, ServerJobState expectedState, int timeoutMs = 5000)
     {
         using var timeout = new CancellationTokenSource(timeoutMs);
 

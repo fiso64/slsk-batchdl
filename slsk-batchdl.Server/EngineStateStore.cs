@@ -94,11 +94,11 @@ public sealed class EngineStateStore
             if (query.WorkflowId.HasValue)
                 filtered = filtered.Where(record => record.WorkflowId == query.WorkflowId.Value);
 
-            if (!string.IsNullOrWhiteSpace(query.Kind))
-                filtered = filtered.Where(record => string.Equals(record.Summary.Kind, query.Kind, StringComparison.OrdinalIgnoreCase));
+            if (query.Kind.HasValue)
+                filtered = filtered.Where(record => record.Summary.Kind == query.Kind.Value);
 
-            if (!string.IsNullOrWhiteSpace(query.State))
-                filtered = filtered.Where(record => string.Equals(record.Summary.State, query.State, StringComparison.OrdinalIgnoreCase));
+            if (query.State.HasValue)
+                filtered = filtered.Where(record => record.Summary.State == query.State.Value);
 
             var summaries = filtered
                 .OrderBy(record => record.Summary.DisplayId)
@@ -212,17 +212,17 @@ public sealed class EngineStateStore
         PublishJobAndWorkflowUpserts(changedJobs, changedWorkflows);
     }
 
-    public static string GetJobKind(Job job) => job switch
+    public static ServerJobKind GetJobKind(Job job) => job switch
     {
-        ExtractJob => ServerProtocol.JobKinds.Extract,
-        SearchJob => ServerProtocol.JobKinds.Search,
-        SongJob => ServerProtocol.JobKinds.Song,
-        AlbumJob => ServerProtocol.JobKinds.Album,
-        JobList => ServerProtocol.JobKinds.JobList,
-        RetrieveFolderJob => ServerProtocol.JobKinds.RetrieveFolder,
-        AggregateJob => ServerProtocol.JobKinds.Aggregate,
-        AlbumAggregateJob => ServerProtocol.JobKinds.AlbumAggregate,
-        _ => ServerProtocol.JobKinds.Generic,
+        ExtractJob => ServerJobKind.Extract,
+        SearchJob => ServerJobKind.Search,
+        SongJob => ServerJobKind.Song,
+        AlbumJob => ServerJobKind.Album,
+        JobList => ServerJobKind.JobList,
+        RetrieveFolderJob => ServerJobKind.RetrieveFolder,
+        AggregateJob => ServerJobKind.Aggregate,
+        AlbumAggregateJob => ServerJobKind.AlbumAggregate,
+        _ => ServerJobKind.Generic,
     };
 
     public void SetSourceJob(Guid jobId, Guid sourceJobId)
@@ -430,15 +430,15 @@ public sealed class EngineStateStore
 
         string title = workflowJobs.FirstOrDefault(record => !string.IsNullOrWhiteSpace(record.Summary.ItemName))?.Summary.ItemName
             ?? workflowJobs.First().Summary.QueryText
-            ?? workflowJobs.First().Summary.Kind;
+            ?? workflowJobs.First().Summary.Kind.ToWireString();
 
         int active = workflowJobs.Count(IsActiveRecord);
         int failed = workflowJobs.Count(record => IsState(record, JobState.Failed));
         int completed = workflowJobs.Count(record => !IsActiveRecord(record));
 
-        string state = active > 0 ? "active"
-            : failed == workflowJobs.Count ? "failed"
-            : "completed";
+        var state = active > 0 ? ServerWorkflowState.Active
+            : failed == workflowJobs.Count ? ServerWorkflowState.Failed
+            : ServerWorkflowState.Completed;
 
         return new WorkflowSummaryDto(workflow.Key, title, state, roots, active, failed, completed);
     }
@@ -540,10 +540,10 @@ public sealed class EngineStateStore
             job.DisplayId,
             job.WorkflowId,
             GetJobKind(job),
-            EffectiveState(job).ToString(),
+            ToServerJobState(EffectiveState(job)),
             job.ItemName,
             job.ToString(noInfo: true),
-            job.FailureReason != FailureReason.None ? job.FailureReason.ToString() : null,
+            ToServerFailureReason(job.FailureReason),
             job.FailureMessage,
             parentJobId,
             resultJobId,
@@ -561,9 +561,17 @@ public sealed class EngineStateStore
                 extractJob.Result?.Id,
                 ToJobDraft(extractJob.Result)),
             SearchJob searchJob => new SearchJobPayloadDto(
-                searchJob.Intent.ToString(),
-                ToSongQueryDto(searchJob.Query),
-                searchJob.AlbumQuery != null ? ToAlbumQueryDto(searchJob.AlbumQuery) : null,
+                searchJob.QueryText,
+                searchJob.DefaultFileProjection != null
+                    ? new FileSearchProjectionRequestDto(
+                        ToSongQueryDto(searchJob.DefaultFileProjection.Query),
+                        searchJob.DefaultFileProjection.IncludeFullResults)
+                    : null,
+                searchJob.DefaultFolderProjection != null
+                    ? new FolderSearchProjectionRequestDto(
+                        ToAlbumQueryDto(searchJob.DefaultFolderProjection.Query),
+                        searchJob.DefaultFolderProjection.IncludeFiles)
+                    : null,
                 searchJob.ResultCount,
                 searchJob.Revision,
                 searchJob.IsComplete),
@@ -589,7 +597,7 @@ public sealed class EngineStateStore
                 null),
             AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
                 ToAlbumQueryDto(albumAggregateJob.Query),
-                CountDescendants(albumAggregateJob.Id, ServerProtocol.JobKinds.Album)),
+                CountDescendants(albumAggregateJob.Id, ServerJobKind.Album)),
             JobList jobList => new JobListPayloadDto(
                 jobList.Count,
                 jobList.Jobs.Count(IsActiveJob),
@@ -612,9 +620,12 @@ public sealed class EngineStateStore
                 extract.Input,
                 extract.InputType?.ToString(),
                 extract.AutoProcessResult),
-            SearchJob search when search.Intent == SearchIntent.Album && search.AlbumQuery != null =>
-                new AlbumSearchJobDraftDto(ToAlbumQueryDto(search.AlbumQuery)),
-            SearchJob search => new TrackSearchJobDraftDto(ToSongQueryDto(search.Query), search.IncludeFullResults),
+            SearchJob search when search.DefaultFolderProjection != null =>
+                new AlbumSearchJobDraftDto(ToAlbumQueryDto(search.DefaultFolderProjection.Query)),
+            SearchJob search when search.DefaultFileProjection != null =>
+                new TrackSearchJobDraftDto(
+                    ToSongQueryDto(search.DefaultFileProjection.Query),
+                    search.DefaultFileProjection.IncludeFullResults),
             SongJob song => new SongJobDraftDto(ToSongQueryDto(song.Query)),
             AlbumJob album => new AlbumJobDraftDto(ToAlbumQueryDto(album.Query)),
             AggregateJob aggregate => new AggregateJobDraftDto(ToSongQueryDto(aggregate.Query)),
@@ -629,7 +640,7 @@ public sealed class EngineStateStore
             : [];
 
     private static ResourceActionDto CancelAction(Guid jobId)
-        => new(ServerProtocol.ResourceActionKinds.Cancel, "POST", $"/api/jobs/{jobId}/cancel");
+        => new(ServerResourceActionKind.Cancel, "POST", $"/api/jobs/{jobId}/cancel");
 
     private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
     {
@@ -653,8 +664,8 @@ public sealed class EngineStateStore
             song.Id,
             song.DisplayId,
             null,
-            song.State.ToString(),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            ToServerJobState(song.State),
+            ToServerFailureReason(song.FailureReason),
             song.FailureMessage,
             song.BytesTransferred,
             totalBytes,
@@ -721,7 +732,7 @@ public sealed class EngineStateStore
     private bool IsActiveJob(Job job)
         => IsActiveJobState(EffectiveState(job));
 
-    private int CountDescendants(Guid parentId, string? kind = null)
+    private int CountDescendants(Guid parentId, ServerJobKind? kind = null)
     {
         var children = records.Values
             .Where(record => record.ParentJobId == parentId)
@@ -735,10 +746,21 @@ public sealed class EngineStateStore
     }
 
     private static bool IsActiveRecord(JobRecord record)
-        => Enum.TryParse<JobState>(record.Summary.State, out var state) && IsActiveJobState(state);
+        => IsActiveServerJobState(record.Summary.State);
 
     private static bool IsState(JobRecord record, JobState state)
-        => string.Equals(record.Summary.State, state.ToString(), StringComparison.OrdinalIgnoreCase);
+        => record.Summary.State == ToServerJobState(state);
+
+    private static bool IsActiveServerJobState(ServerJobState state)
+        => state is ServerJobState.Pending or ServerJobState.Searching or ServerJobState.Downloading or ServerJobState.Extracting;
+
+    public static ServerJobState ToServerJobState(JobState state)
+        => Enum.Parse<ServerJobState>(state.ToString());
+
+    public static ServerFailureReason? ToServerFailureReason(FailureReason reason)
+        => reason == FailureReason.None
+            ? null
+            : Enum.Parse<ServerFailureReason>(reason.ToString());
 
     private static bool IsActiveJobState(JobState state)
         => state is JobState.Pending or JobState.Searching or JobState.Downloading or JobState.Extracting;

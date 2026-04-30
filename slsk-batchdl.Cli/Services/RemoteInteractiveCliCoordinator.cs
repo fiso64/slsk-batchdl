@@ -47,11 +47,11 @@ internal sealed class RemoteInteractiveCliCoordinator
             bool startedFollowUp = await ProcessWorkflowAsync(workflowId, ct);
 
             var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-            if (!startedFollowUp && (workflow?.Summary.State is "completed" or "failed"))
+            if (!startedFollowUp && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
             {
                 startedFollowUp = await ProcessWorkflowAsync(workflowId, ct);
                 workflow = await backend.GetWorkflowAsync(workflowId, ct);
-                if (!startedFollowUp && (workflow?.Summary.State is "completed" or "failed"))
+                if (!startedFollowUp && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
                     return;
             }
 
@@ -68,7 +68,7 @@ internal sealed class RemoteInteractiveCliCoordinator
         foreach (var summary in summaries.OrderBy(job => job.DisplayId))
         {
             ct.ThrowIfCancellationRequested();
-            if (summary.Kind == "extract"
+            if (summary.Kind == ServerJobKind.Extract
                 && IsCompleted(summary.State)
                 && summary.ResultJobId != null
                 && startedExtractResults.Add(summary.JobId))
@@ -92,7 +92,7 @@ internal sealed class RemoteInteractiveCliCoordinator
                 }
             }
 
-            if (summary.Kind == "search"
+            if (summary.Kind == ServerJobKind.Search
                 && IsCompleted(summary.State)
                 && handledAlbumSearches.Add(summary.JobId))
             {
@@ -100,7 +100,7 @@ internal sealed class RemoteInteractiveCliCoordinator
                 startedFollowUp = true;
             }
 
-            if (summary.Kind == "album"
+            if (summary.Kind == ServerJobKind.Album
                 && !IsActive(summary.State)
                 && interactiveAlbumSessions.TryGetValue(summary.JobId, out var session))
             {
@@ -122,16 +122,19 @@ internal sealed class RemoteInteractiveCliCoordinator
             return;
 
         var detail = await backend.GetJobDetailAsync(searchJobId, ct);
-        if (detail?.Payload is not SearchJobPayloadDto search || search.AlbumQuery == null)
+        if (detail?.Payload is not SearchJobPayloadDto search || search.DefaultFolderProjection == null)
             return;
 
-        var projection = await backend.GetFolderResultsAsync(searchJobId, includeFiles: true, ct);
+        var projection = await backend.GetFolderResultsAsync(
+            searchJobId,
+            search.DefaultFolderProjection with { IncludeFiles = true },
+            ct);
         var folders = projection?.Items.Select(InteractiveCliCoordinator.ToAlbumFolder).ToList() ?? [];
         if (folders.Count == 0)
             return;
 
         var promptJob = ToSearchJob(search);
-        var session = new InteractiveAlbumSession(searchJobId, promptJob, search.AlbumQuery, folders);
+        var session = new InteractiveAlbumSession(searchJobId, promptJob, search.DefaultFolderProjection.AlbumQuery, folders);
         var selected = await PromptForAlbumSelectionAsync(session);
         if (selected == null)
             return;
@@ -173,7 +176,8 @@ internal sealed class RemoteInteractiveCliCoordinator
         var summary = await backend.StartFolderDownloadAsync(
             session.SourceSearchJobId,
             new StartFolderDownloadRequestDto(
-                new AlbumFolderRefDto(selected.Username, selected.FolderPath)),
+                new AlbumFolderRefDto(selected.Username, selected.FolderPath),
+                AlbumQuery: session.Query),
             ct);
 
         if (summary == null)
@@ -219,7 +223,9 @@ internal sealed class RemoteInteractiveCliCoordinator
                         retrievedFolders: session.RetrievedFolders,
                         retrieveFolderCallback: async folder => await backend.RetrieveFolderAndWaitAsync(
                             session.SourceSearchJobId,
-                            new RetrieveFolderRequestDto(new AlbumFolderRefDto(folder.Username, folder.FolderPath)),
+                            new RetrieveFolderRequestDto(
+                                new AlbumFolderRefDto(folder.Username, folder.FolderPath),
+                                session.Query),
                             appToken),
                         filterStr: session.FilterStr);
 
@@ -254,23 +260,23 @@ internal sealed class RemoteInteractiveCliCoordinator
 
     private static SearchJob ToSearchJob(SearchJobPayloadDto payload)
     {
-        var job = payload.AlbumQuery != null
+        var job = payload.DefaultFolderProjection != null
             ? new SearchJob(new AlbumQuery
             {
-                Artist = payload.AlbumQuery.Artist ?? "",
-                Album = payload.AlbumQuery.Album ?? "",
-                SearchHint = payload.AlbumQuery.SearchHint ?? "",
-                URI = payload.AlbumQuery.Uri ?? "",
-                ArtistMaybeWrong = payload.AlbumQuery.ArtistMaybeWrong,
+                Artist = payload.DefaultFolderProjection.AlbumQuery.Artist ?? "",
+                Album = payload.DefaultFolderProjection.AlbumQuery.Album ?? "",
+                SearchHint = payload.DefaultFolderProjection.AlbumQuery.SearchHint ?? "",
+                URI = payload.DefaultFolderProjection.AlbumQuery.Uri ?? "",
+                ArtistMaybeWrong = payload.DefaultFolderProjection.AlbumQuery.ArtistMaybeWrong,
             })
             : new SearchJob(new SongQuery
             {
-                Artist = payload.Query.Artist ?? "",
-                Title = payload.Query.Title ?? "",
-                Album = payload.Query.Album ?? "",
-                URI = payload.Query.Uri ?? "",
-                Length = payload.Query.Length ?? -1,
-                ArtistMaybeWrong = payload.Query.ArtistMaybeWrong,
+                Artist = payload.DefaultFileProjection?.SongQuery?.Artist ?? "",
+                Title = payload.DefaultFileProjection?.SongQuery?.Title ?? payload.QueryText,
+                Album = payload.DefaultFileProjection?.SongQuery?.Album ?? "",
+                URI = payload.DefaultFileProjection?.SongQuery?.Uri ?? "",
+                Length = payload.DefaultFileProjection?.SongQuery?.Length ?? -1,
+                ArtistMaybeWrong = payload.DefaultFileProjection?.SongQuery?.ArtistMaybeWrong ?? false,
             });
 
         return job;
@@ -318,13 +324,13 @@ internal sealed class RemoteInteractiveCliCoordinator
             _ => draft,
         };
 
-    private static bool IsActive(string state)
+    private static bool IsActive(ServerJobState state)
         => state is ServerProtocol.JobStates.Pending
             or ServerProtocol.JobStates.Extracting
             or ServerProtocol.JobStates.Searching
             or ServerProtocol.JobStates.Downloading;
 
-    private static bool IsCompleted(string state)
+    private static bool IsCompleted(ServerJobState state)
         => state is ServerProtocol.JobStates.Done
             or ServerProtocol.JobStates.AlreadyExists;
 

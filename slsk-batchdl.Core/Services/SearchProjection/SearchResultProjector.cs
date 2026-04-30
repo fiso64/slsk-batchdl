@@ -76,8 +76,13 @@ public static partial class SearchResultProjector
         ConcurrentDictionary<string, int>? userSuccessCounts = null)
     {
         var sortQuery = AlbumFileMatchQuery(query);
+        var filteredResults = rawResults
+            .Where(result =>
+                search.NecessaryCond.BannedUsersSatisfies(result.Response)
+                && (!Utils.IsMusicFile(result.File.Filename)
+                    || search.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response)));
         var orderedResults = ResultSorter.OrderedResults(
-            rawResults.Select(x => (x.Response, x.File)),
+            filteredResults.Select(x => (x.Response, x.File)),
             sortQuery,
             search,
             userSuccessCounts ?? new ConcurrentDictionary<string, int>(),

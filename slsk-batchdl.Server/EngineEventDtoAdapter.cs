@@ -30,13 +30,13 @@ public sealed class EngineEventDtoAdapter
             song.DisplayId,
             song.WorkflowId,
             ToSongQueryDto(song.Query),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
+            EngineStateStore.ToServerFailureReason(song.FailureReason)));
         events.SongFailed += song => publish("song.failed", new SongFailedEventDto(
             song.Id,
             song.DisplayId,
             song.WorkflowId,
             ToSongQueryDto(song.Query),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null));
+            EngineStateStore.ToServerFailureReason(song.FailureReason)));
         events.DownloadStarted += (song, candidate) => publish("download.started", new DownloadStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query), ToFileCandidateDto(candidate)));
         events.DownloadProgress += (song, transferred, total) => publish("download.progress", new DownloadProgressEventDto(song.Id, song.WorkflowId, transferred, total));
         events.DownloadStateChanged += (song, state) => publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, song.WorkflowId, state.ToString()));
@@ -45,8 +45,8 @@ public sealed class EngineEventDtoAdapter
             song.DisplayId,
             song.WorkflowId,
             ToSongQueryDto(song.Query),
-            song.State.ToString(),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            EngineStateStore.ToServerJobState(song.State),
+            EngineStateStore.ToServerFailureReason(song.FailureReason),
             song.DownloadPath,
             song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null));
         events.AlbumDownloadStarted += (job, folder) => publish("album.download-started", new AlbumDownloadStartedEventDto(
@@ -118,8 +118,8 @@ public sealed class EngineEventDtoAdapter
             song.Id,
             song.DisplayId,
             null,
-            song.State.ToString(),
-            song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
+            EngineStateStore.ToServerJobState(song.State),
+            EngineStateStore.ToServerFailureReason(song.FailureReason),
             song.FailureMessage);
 
     public static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)

@@ -28,7 +28,7 @@ public class CliProgressReporter
     private readonly ConcurrentDictionary<Guid, string> _backendJobStatuses = new();
     private readonly ConcurrentDictionary<Guid, (string text, int pos)> _backendSavedState = new();
     private readonly ConcurrentDictionary<Guid, string> _backendPlainJobStatusLines = new();
-    private readonly ConcurrentDictionary<Guid, string> _backendJobKinds = new();
+    private readonly ConcurrentDictionary<Guid, ServerJobKind> _backendJobKinds = new();
     private readonly ConcurrentDictionary<Guid, byte> _backendInlineChildJobs = new();
 
     static readonly char[] SpinFrames = { '|', '/', '—', '\\' };
@@ -165,7 +165,7 @@ public class CliProgressReporter
         if (PlainMode)
             return;
 
-        if (summary.Kind == "album"
+        if (summary.Kind == ServerJobKind.Album
             && IsTerminalJobState(summary.State)
             && _backendAlbumBlocks.TryRemove(summary.JobId, out var block))
         {
@@ -286,10 +286,11 @@ public class CliProgressReporter
         _                 => job.GetType().Name + ": "
     };
 
-    private static string GetJobTypePrefix(string kind)
-        => string.IsNullOrWhiteSpace(kind)
-            ? "Job: "
-            : $"{char.ToUpperInvariant(kind[0])}{kind[1..]}Job: ";
+    private static string GetJobTypePrefix(ServerJobKind kind)
+    {
+        string kindText = kind.ToWireString();
+        return $"{char.ToUpperInvariant(kindText[0])}{kindText[1..]}Job: ";
+    }
 
     private static string ProfileSuffix(Job job)
     {
@@ -344,6 +345,18 @@ public class CliProgressReporter
         _                                  => "",
     };
 
+    static string FailureReasonLabel(ServerFailureReason? reason) => reason switch
+    {
+        ServerFailureReason.NoSuitableFileFound  => "No suitable file found",
+        ServerFailureReason.InvalidSearchString  => "Invalid search string",
+        ServerFailureReason.OutOfDownloadRetries => "Out of download retries",
+        ServerFailureReason.AllDownloadsFailed   => "All downloads failed",
+        ServerFailureReason.ExtractionFailed     => "Extraction failed",
+        ServerFailureReason.Cancelled            => "Cancelled",
+        ServerFailureReason.Other                => "Unknown error",
+        _                                        => "",
+    };
+
     private static string GetStateLabel(TransferStates s)
     {
         if (s.HasFlag(TransferStates.InProgress))   return "InProgress";
@@ -354,7 +367,7 @@ public class CliProgressReporter
         return "Requested";
     }
 
-    private static bool IsTerminalJobState(string state)
+    private static bool IsTerminalJobState(ServerJobState state)
         => state is ServerProtocol.JobStates.Done
             or ServerProtocol.JobStates.AlreadyExists
             or ServerProtocol.JobStates.Failed
@@ -373,10 +386,10 @@ public class CliProgressReporter
         => _backendInlineChildJobs.ContainsKey(jobId);
 
     private bool IsBackendInlineChild(JobSummaryDto summary)
-        => summary.Kind == ServerProtocol.JobKinds.Song
+        => summary.Kind == ServerJobKind.Song
             && summary.ParentJobId is Guid parentJobId
             && _backendJobKinds.TryGetValue(parentJobId, out var parentKind)
-            && parentKind is ServerProtocol.JobKinds.Album or ServerProtocol.JobKinds.Aggregate;
+            && parentKind is ServerJobKind.Album or ServerJobKind.Aggregate;
 
     private static string SongDisplay(SongJob song)
     {
@@ -406,8 +419,8 @@ public class CliProgressReporter
     private static string TerminalLabel(SongStateChangedEventDto song)
         => song.State is ServerProtocol.JobStates.Done or ServerProtocol.JobStates.AlreadyExists
             ? "Succeeded"
-            : !string.IsNullOrWhiteSpace(song.FailureReason)
-                ? $"Failed [{song.FailureReason}]"
+            : song.FailureReason != null
+                ? $"Failed [{FailureReasonLabel(song.FailureReason)}]"
                 : "Failed";
 
 
@@ -507,8 +520,8 @@ public class CliProgressReporter
             d.StateLabel = succeeded ? "Succeeded" : "Failed";
             if (succeeded)
                 d.Pct = 100;
-            else if (!string.IsNullOrWhiteSpace(song.FailureReason))
-                d.BaseText += $" [{song.FailureReason}]";
+            else if (song.FailureReason != null)
+                d.BaseText += $" [{FailureReasonLabel(song.FailureReason)}]";
             MarkBackendAlbumTrackCompleted(song.JobId);
             Printing.RefreshOrPrint(d.Bar, d.Pct, BuildText(d), print: false);
         }
@@ -585,7 +598,7 @@ public class CliProgressReporter
         if (IsBackendInlineChild(job.Summary))
             return;
 
-        string status = job.Summary.Kind == "retrieve-folder" ? "retrieving folder" : "searching";
+        string status = job.Summary.Kind == ServerJobKind.RetrieveFolder ? "retrieving folder" : "searching";
 
         if (PlainMode)
         {
@@ -848,10 +861,10 @@ public class CliProgressReporter
             }
             else
             {
-                var reason = !string.IsNullOrWhiteSpace(summary.FailureReason)
-                    ? summary.FailureReason
-                    : song.FailureReason;
-                if (!string.IsNullOrWhiteSpace(reason) && !data.BaseText.Contains($"[{reason}]", StringComparison.Ordinal))
+                var reason = FailureReasonLabel(summary.FailureReason) is { Length: > 0 } summaryReason
+                    ? summaryReason
+                    : FailureReasonLabel(song.FailureReason);
+                if (reason.Length > 0 && !data.BaseText.Contains($"[{reason}]", StringComparison.Ordinal))
                     data.BaseText += $" [{reason}]";
             }
 
@@ -935,8 +948,8 @@ public class CliProgressReporter
         if (PlainMode)
         {
             string status = job.Found
-                ? (job.Summary.Kind == "retrieve-folder" ? "found additional files in" : "found results")
-                : (job.Summary.Kind == "retrieve-folder" ? "no additional files found" : "no results found");
+                ? (job.Summary.Kind == ServerJobKind.RetrieveFolder ? "found additional files in" : "found results")
+                : (job.Summary.Kind == ServerJobKind.RetrieveFolder ? "no additional files found" : "no results found");
             string lockedMsg = !job.Found && job.LockedFileCount > 0 ? $" (Found {job.LockedFileCount} locked files)" : "";
             RefreshOrPrintJobLineWithProfileSuffix(
                 null,
@@ -952,17 +965,17 @@ public class CliProgressReporter
         if (!job.Found)
         {
             string lockedMsg = job.LockedFileCount > 0 ? $" (Found {job.LockedFileCount} locked files)" : "";
-            string prefix = job.Summary.Kind == "retrieve-folder" ? "no additional files found" : "no results found";
+            string prefix = job.Summary.Kind == ServerJobKind.RetrieveFolder ? "no additional files found" : "no results found";
             _backendJobStatuses[job.Summary.JobId] = prefix;
             RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job.Summary, $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{prefix}: {job.Summary.QueryText}{lockedMsg}", print: true);
             _backendJobBars.TryRemove(job.Summary.JobId, out _);
             _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
         }
-        else if (job.Summary.Kind != "album")
+        else if (job.Summary.Kind != ServerJobKind.Album)
         {
             if (bar != null)
             {
-                string prefix = job.Summary.Kind == "retrieve-folder" ? "found additional files in" : "found results";
+                string prefix = job.Summary.Kind == ServerJobKind.RetrieveFolder ? "found additional files in" : "found results";
                 _backendJobStatuses[job.Summary.JobId] = prefix;
                 RefreshOrPrintJobLineWithProfileSuffix(bar, 0, job.Summary, $"[{job.Summary.DisplayId}] {GetJobTypePrefix(job.Summary.Kind)}{prefix}: {job.Summary.QueryText}", print: true);
             }
@@ -1051,8 +1064,8 @@ public class CliProgressReporter
 
         if (!_backendBars.TryGetValue(song.JobId, out var d)) return;
         d.StateLabel = "Not found";
-        if (!string.IsNullOrWhiteSpace(song.FailureReason))
-            d.BaseText += $" [{song.FailureReason}]";
+        if (song.FailureReason != null)
+            d.BaseText += $" [{FailureReasonLabel(song.FailureReason)}]";
         MarkBackendAlbumTrackCompleted(song.JobId);
         Printing.RefreshOrPrint(d.Bar, 0, BuildText(d), print: true);
     }
@@ -1208,7 +1221,7 @@ public class CliProgressReporter
         _backendJobStatuses[job.Summary.JobId] = job.Status;
         if (_backendJobBars.TryGetValue(job.Summary.JobId, out var bar) && bar != null)
         {
-            if (job.Summary.Kind == "album" && _backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
+            if (job.Summary.Kind == ServerJobKind.Album && _backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
             {
                 int total = block.Songs.Count;
                 int done = BackendAlbumDoneCount(block);
@@ -1280,11 +1293,9 @@ public class CliProgressReporter
                 : null
         };
 
-        if (!string.IsNullOrWhiteSpace(dto.State)
-            && Enum.TryParse<JobState>(dto.State, out var state))
+        if (dto.State != null && Enum.TryParse<JobState>(dto.State.Value.ToString(), out var state))
             job.State = state;
-        if (!string.IsNullOrWhiteSpace(dto.FailureReason)
-            && Enum.TryParse<FailureReason>(dto.FailureReason, out var failureReason))
+        if (dto.FailureReason != null && Enum.TryParse<FailureReason>(dto.FailureReason.Value.ToString(), out var failureReason))
             job.FailureReason = failureReason;
         job.FailureMessage = dto.FailureMessage;
         job.DownloadPath = dto.DownloadPath;
@@ -1304,8 +1315,8 @@ public class CliProgressReporter
         else if (song.State == ServerProtocol.JobStates.Failed)
         {
             data.StateLabel = "Failed";
-            if (!string.IsNullOrWhiteSpace(song.FailureReason))
-                data.BaseText += $" [{song.FailureReason}]";
+            if (song.FailureReason != null)
+                data.BaseText += $" [{FailureReasonLabel(song.FailureReason)}]";
         }
         else if (song.State == ServerProtocol.JobStates.Downloading)
         {

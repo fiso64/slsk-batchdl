@@ -12,6 +12,13 @@ public sealed record SubmitExtractJobRequestDto(
     SubmissionOptionsDto? Options = null);
 
 /// <summary>
+/// Starts a generic Soulseek search from raw query text. Result endpoints decide how raw results are projected.
+/// </summary>
+public sealed record SubmitSearchJobRequestDto(
+    string QueryText,
+    SubmissionOptionsDto? Options = null);
+
+/// <summary>
 /// Starts a track search job. Use result endpoints to inspect candidates and follow-up endpoints
 /// to start downloads from selected candidates.
 /// </summary>
@@ -121,7 +128,8 @@ public sealed record SubmissionOptionsDto(
 /// Starts a folder retrieval job for an album result folder.
 /// </summary>
 public sealed record RetrieveFolderRequestDto(
-    AlbumFolderRefDto Folder);
+    AlbumFolderRefDto Folder,
+    AlbumQueryDto? AlbumQuery = null);
 
 /// <summary>
 /// Starts one or more downloads from selected search result files.
@@ -135,4 +143,31 @@ public sealed record StartFileDownloadsRequestDto(
 /// </summary>
 public sealed record StartFolderDownloadRequestDto(
     AlbumFolderRefDto Folder,
-    SubmissionOptionsDto? Options = null);
+    SubmissionOptionsDto? Options = null,
+    AlbumQueryDto? AlbumQuery = null);
+
+/// <summary>
+/// Projection options for viewing search results as file candidates.
+/// </summary>
+public sealed record FileSearchProjectionRequestDto(
+    SongQueryDto? SongQuery = null,
+    bool IncludeFullResults = false);
+
+/// <summary>
+/// Projection options for viewing search results as album folders.
+/// </summary>
+public sealed record FolderSearchProjectionRequestDto(
+    AlbumQueryDto AlbumQuery,
+    bool IncludeFiles = false);
+
+/// <summary>
+/// Projection options for grouping search results as aggregate track candidates.
+/// </summary>
+public sealed record AggregateTrackProjectionRequestDto(
+    SongQueryDto? SongQuery = null);
+
+/// <summary>
+/// Projection options for grouping search results as aggregate album candidates.
+/// </summary>
+public sealed record AggregateAlbumProjectionRequestDto(
+    AlbumQueryDto AlbumQuery);

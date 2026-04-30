@@ -26,6 +26,9 @@ public static class JobRequestMapper
         return job;
     }
 
+    public static SearchJob CreateSearchJob(SubmitSearchJobRequestDto request)
+        => new(request.QueryText);
+
     public static SearchJob CreateTrackSearchJob(SubmitTrackSearchJobRequestDto request)
         => new(ToSongQuery(request.SongQuery), request.IncludeFullResults);
 

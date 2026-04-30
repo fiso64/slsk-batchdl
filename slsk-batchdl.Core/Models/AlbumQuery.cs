@@ -5,6 +5,9 @@ namespace Sldl.Core.Models;
         public string Album  { get; init; } = "";
         // Optional song-title hint: used as the network search keyword when Album is empty,
         // but NOT used for folder-name matching. Allows "search albums by song title".
+        // TODO: Revisit AlbumQuery.SearchHint semantics. It may be cleaner for the hint
+        // to qualify folders that contain a matching track, while still showing all files
+        // from matching folders that were present in the search response.
         public string SearchHint { get; init; } = "";
         public string URI    { get; init; } = "";
         public bool   ArtistMaybeWrong { get; init; }

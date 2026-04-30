@@ -92,7 +92,7 @@ public sealed record SongNotFoundEventDto(
     int DisplayId,
     Guid WorkflowId,
     SongQueryDto Query,
-    string? FailureReason);
+    ServerFailureReason? FailureReason);
 
 /// <summary>
 /// Activity event emitted when a song job fails.
@@ -102,7 +102,7 @@ public sealed record SongFailedEventDto(
     int DisplayId,
     Guid WorkflowId,
     SongQueryDto Query,
-    string? FailureReason);
+    ServerFailureReason? FailureReason);
 
 /// <summary>
 /// Activity event emitted when a file transfer starts.
@@ -139,8 +139,8 @@ public sealed record SongStateChangedEventDto(
     int DisplayId,
     Guid WorkflowId,
     SongQueryDto Query,
-    string State,
-    string? FailureReason,
+    ServerJobState State,
+    ServerFailureReason? FailureReason,
     string? DownloadPath,
     FileCandidateDto? ChosenCandidate);
 

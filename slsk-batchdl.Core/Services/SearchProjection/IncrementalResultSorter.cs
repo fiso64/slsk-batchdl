@@ -9,6 +9,9 @@ namespace Sldl.Core.Services;
 public sealed class IncrementalResultSorter
 {
     private readonly ResultSorter.SortKeyContext keyContext;
+    private readonly SongQuery query;
+    private readonly SearchSettings search;
+    private readonly bool requireFileSatisfies;
     private readonly List<ResultSorter.SortEntry> entries = [];
     private readonly HashSet<string> seen = new(StringComparer.Ordinal);
     private int nextOriginalIndex;
@@ -19,8 +22,12 @@ public sealed class IncrementalResultSorter
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool albumMode = false,
         bool useInfer = false,
-        bool useLevenshtein = false)
+        bool useLevenshtein = false,
+        bool requireFileSatisfies = false)
     {
+        this.query = query;
+        this.search = search;
+        this.requireFileSatisfies = requireFileSatisfies;
         keyContext = ResultSorter.CreateSortKeyContext(
             [],
             query,
@@ -48,6 +55,9 @@ public sealed class IncrementalResultSorter
         {
             string key = response.Username + '\\' + file.Filename;
             if (!seen.Add(key))
+                continue;
+
+            if (requireFileSatisfies && !search.NecessaryCond.FileSatisfies(file, query, response))
                 continue;
 
             var entry = ResultSorter.CreateSortEntry(response, file, keyContext, nextOriginalIndex++);

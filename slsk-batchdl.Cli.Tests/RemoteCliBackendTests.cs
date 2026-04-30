@@ -112,6 +112,88 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    public async Task RemoteCliBackend_GenericSearchProjectsFilesAndFolders()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-generic-search-test-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "sldl-remote-generic-search-out-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
+        File.WriteAllText(Path.Combine(albumDir, "02. Artist - Track Two.mp3"), "b");
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{foldername}/{filename}",
+                },
+                Search =
+                {
+                    NoBrowseFolder = true,
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+
+            var searchSummary = await backend.SubmitSearchJobAsync(new SubmitSearchJobRequestDto("Artist Album"));
+            await WaitForJobStateAsync(backend, searchSummary.JobId, ServerProtocol.JobStates.Done);
+
+            var files = await backend.GetFileResultsAsync(
+                searchSummary.JobId,
+                new FileSearchProjectionRequestDto(new SongQueryDto("Artist", "Track One", "", "", -1, false)));
+            Assert.IsNotNull(files);
+            Assert.IsTrue(files.Items.Any(file => file.Filename.EndsWith("01. Artist - Track One.mp3", StringComparison.Ordinal)));
+
+            var albumQuery = new AlbumQueryDto("Artist", "Album", "", "", false);
+            var folders = await backend.GetFolderResultsAsync(
+                searchSummary.JobId,
+                new FolderSearchProjectionRequestDto(albumQuery, IncludeFiles: true));
+            Assert.IsNotNull(folders);
+            Assert.AreEqual(1, folders!.Items.Count);
+            Assert.AreEqual(2, folders.Items[0].Files!.Count);
+
+            var downloadSummary = await backend.StartFolderDownloadAsync(
+                searchSummary.JobId,
+                new StartFolderDownloadRequestDto(folders.Items[0].Ref, AlbumQuery: albumQuery));
+            Assert.IsNotNull(downloadSummary);
+            Assert.AreEqual(searchSummary.JobId, downloadSummary.SourceJobId);
+
+            await WaitForJobStateAsync(backend, downloadSummary.JobId, ServerProtocol.JobStates.Done);
+
+            var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                .Select(Path.GetFileName)
+                .OrderBy(x => x)
+                .ToArray();
+            CollectionAssert.AreEqual(new[] { "01. Artist - Track One.mp3", "02. Artist - Track Two.mp3" }, downloaded);
+        }
+        finally
+        {
+            await app.StopAsync();
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
     public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsDelta()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "sldl-remote-backend-album-test-" + Guid.NewGuid());
@@ -156,7 +238,7 @@ public class RemoteCliBackendTests
                     Options: new SubmissionOptionsDto(
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["-a", "--no-browse-folder"]))));
 
-            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
+            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -533,7 +615,7 @@ public class RemoteCliBackendTests
                         OutputParentDir: outputDir,
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["Artist - Track One", "--print-results"]))));
 
-            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
+            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             using var output = new StringWriter();
             Console.SetOut(output);
@@ -613,7 +695,7 @@ public class RemoteCliBackendTests
                         OutputParentDir: outputDir,
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--print-tracks"]))));
 
-            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
+            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             using var output = new StringWriter();
             Console.SetOut(output);
@@ -696,10 +778,10 @@ public class RemoteCliBackendTests
                             new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                     ]));
 
-            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
+            await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             var jobs = await backend.GetJobsAsync(new JobQuery(null, null, summary.WorkflowId, IncludeAll: true));
-            Assert.IsTrue(jobs.Any(job => job.Kind == "job-list"));
+            Assert.IsTrue(jobs.Any(job => job.Kind == ServerJobKind.JobList));
         }
         finally
         {
@@ -711,7 +793,7 @@ public class RemoteCliBackendTests
         }
     }
 
-    private static async Task WaitForJobStateAsync(ICliBackend backend, Guid jobId, string expectedState, int timeoutMs = 5000)
+    private static async Task WaitForJobStateAsync(ICliBackend backend, Guid jobId, ServerJobState expectedState, int timeoutMs = 5000)
     {
         using var timeout = new CancellationTokenSource(timeoutMs);
 
@@ -727,7 +809,7 @@ public class RemoteCliBackendTests
         Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'.");
     }
 
-    private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, string expectedState, int timeoutMs = 5000)
+    private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
     {
         using var timeout = new CancellationTokenSource(timeoutMs);
 

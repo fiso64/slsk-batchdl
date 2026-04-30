@@ -288,7 +288,7 @@ internal static partial class Program
         {
             ct.ThrowIfCancellationRequested();
             var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-            if (workflow?.Summary.State is "completed" or "failed")
+            if (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
                 return;
 
             await Task.Delay(200, ct);
@@ -361,7 +361,7 @@ internal static partial class Program
         if (!visited.Add(summary.JobId))
             return (0, 0);
 
-        if (summary.Kind == ServerProtocol.JobKinds.Song)
+        if (summary.Kind == ServerJobKind.Song)
         {
             int successes = 0;
             int fails = 0;
@@ -387,8 +387,8 @@ internal static partial class Program
 
     private static void CountSong(SongJobPayloadDto song, JobSummaryDto? summary, ref int successes, ref int fails)
     {
-        string? stateText = song.State ?? summary?.State;
-        if (!Enum.TryParse<JobState>(stateText, out var state))
+        var serverState = song.State ?? summary?.State;
+        if (!TryToCoreJobState(serverState, out var state))
             return;
 
         if (Printing.IsSuccessfulCompletion(state))
@@ -399,7 +399,7 @@ internal static partial class Program
 
     private static void CountSummary(JobSummaryDto summary, ref int successes, ref int fails)
     {
-        if (!Enum.TryParse<JobState>(summary.State, out var state))
+        if (!TryToCoreJobState(summary.State, out var state))
             return;
 
         if (Printing.IsSuccessfulCompletion(state))
@@ -460,21 +460,26 @@ internal static partial class Program
         SearchJobPayloadDto search,
         CancellationToken ct)
     {
-        if (search.AlbumQuery != null)
+        if (search.DefaultFolderProjection != null)
         {
-            var folders = await backend.GetFolderResultsAsync(searchJobId, includeFiles: true, ct);
+            var folders = await backend.GetFolderResultsAsync(
+                searchJobId,
+                search.DefaultFolderProjection with { IncludeFiles = true },
+                ct);
             return folders == null
                 ? null
-                : new AlbumJob(ToAlbumQuery(search.AlbumQuery))
+                : new AlbumJob(ToAlbumQuery(search.DefaultFolderProjection.AlbumQuery))
                 {
                     Results = folders.Items.Select(ToAlbumFolder).ToList(),
                 };
         }
 
-        var files = await backend.GetFileResultsAsync(searchJobId, ct);
+        var fileProjection = search.DefaultFileProjection
+            ?? new FileSearchProjectionRequestDto(new SongQueryDto(null, search.QueryText, null, null, null, false));
+        var files = await backend.GetFileResultsAsync(searchJobId, fileProjection, ct);
         return files == null
             ? null
-            : new SongJob(ToSongQuery(search.Query))
+            : new SongJob(ToSongQuery(fileProjection.SongQuery ?? new SongQueryDto(null, search.QueryText, null, null, null, false)))
             {
                 Candidates = files.Items.Select(ToFileCandidate).ToList(),
             };
@@ -511,7 +516,7 @@ internal static partial class Program
         CancellationToken ct)
     {
         var job = new AggregateJob(ToSongQuery(aggregate.Query));
-        foreach (var summary in children.Where(child => child.Kind == ServerProtocol.JobKinds.Song).OrderBy(child => child.DisplayId))
+        foreach (var summary in children.Where(child => child.Kind == ServerJobKind.Song).OrderBy(child => child.DisplayId))
         {
             var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
             if (detail?.Payload is not SongJobPayloadDto payload)
@@ -575,8 +580,8 @@ internal static partial class Program
 
         foreach (var child in detail.Children)
         {
-            if (detail.Summary.Kind == ServerProtocol.JobKinds.Album
-                && child.Kind == ServerProtocol.JobKinds.Song)
+            if (detail.Summary.Kind == ServerJobKind.Album
+                && child.Kind == ServerJobKind.Song)
                 continue;
 
             await LoadRemoteJobTreeAsync(backend, child.JobId, details, ct);
@@ -750,13 +755,35 @@ internal static partial class Program
         return job;
     }
 
-    private static void ApplyJobOutcome(Job job, string? state, string? failureReason, string? failureMessage)
+    private static void ApplyJobOutcome(Job job, ServerJobState? state, ServerFailureReason? failureReason, string? failureMessage)
     {
-        if (!string.IsNullOrWhiteSpace(state) && Enum.TryParse<JobState>(state, out var parsedState))
+        if (TryToCoreJobState(state, out var parsedState))
             job.State = parsedState;
-        if (!string.IsNullOrWhiteSpace(failureReason) && Enum.TryParse<FailureReason>(failureReason, out var parsedFailureReason))
+        if (TryToCoreFailureReason(failureReason, out var parsedFailureReason))
             job.FailureReason = parsedFailureReason;
         job.FailureMessage = failureMessage;
+    }
+
+    private static bool TryToCoreJobState(ServerJobState? state, out JobState coreState)
+    {
+        if (state == null)
+        {
+            coreState = default;
+            return false;
+        }
+
+        return Enum.TryParse(state.Value.ToString(), out coreState);
+    }
+
+    private static bool TryToCoreFailureReason(ServerFailureReason? reason, out FailureReason coreReason)
+    {
+        if (reason == null)
+        {
+            coreReason = default;
+            return false;
+        }
+
+        return Enum.TryParse(reason.Value.ToString(), out coreReason);
     }
 
     private static AlbumFolder ToAlbumFolder(AlbumFolderDto folder)

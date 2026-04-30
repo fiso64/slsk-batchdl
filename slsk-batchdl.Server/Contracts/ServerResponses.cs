@@ -59,16 +59,16 @@ public sealed record CancelWorkflowResponseDto(
 /// <param name="Method">HTTP method to invoke.</param>
 /// <param name="Href">Server-relative URL for the action.</param>
 public sealed record ResourceActionDto(
-    string Kind,
+    ServerResourceActionKind Kind,
     string Method,
     string Href);
 
 /// <summary>
 /// Lightweight job list item. Fetch JobDetailDto for a selected job's typed payload.
 /// </summary>
-/// <param name="Kind">Stable job kind string. Use ServerProtocol.JobKinds constants in .NET clients.</param>
-/// <param name="State">Stable job state string. Use ServerProtocol.JobStates constants in .NET clients.</param>
-/// <param name="FailureReason">Stable failure reason string when State is failed. Use ServerProtocol.FailureReasons constants in .NET clients.</param>
+/// <param name="Kind">Stable job kind.</param>
+/// <param name="State">Stable job state.</param>
+/// <param name="FailureReason">Stable failure reason when State is failed.</param>
 /// <param name="ParentJobId">Execution parent. Parent cancellation propagates to this job.</param>
 /// <param name="ResultJobId">For extract jobs, the semantic result job produced by extraction.</param>
 /// <param name="SourceJobId">Provenance link for independently submitted follow-up jobs, such as downloads started from search results.</param>
@@ -77,11 +77,11 @@ public sealed record JobSummaryDto(
     Guid JobId,
     int DisplayId,
     Guid WorkflowId,
-    string Kind,
-    string State,
+    ServerJobKind Kind,
+    ServerJobState State,
     string? ItemName,
     string? QueryText,
-    string? FailureReason,
+    ServerFailureReason? FailureReason,
     string? FailureMessage,
     Guid? ParentJobId,
     Guid? ResultJobId,
@@ -103,7 +103,7 @@ public sealed record JobDetailDto(
 public sealed record WorkflowSummaryDto(
     Guid WorkflowId,
     string Title,
-    string State,
+    ServerWorkflowState State,
     IReadOnlyList<Guid> RootJobIds,
     int ActiveJobCount,
     int FailedJobCount,
@@ -137,7 +137,7 @@ public sealed record WorkflowTreeDto(
 /// When true, includes every matching job as a flat list. Default lists return only execution roots where ParentJobId is null.
 /// </param>
 public sealed record JobQuery(
-    string? State,
-    string? Kind,
+    ServerJobState? State,
+    ServerJobKind? Kind,
     Guid? WorkflowId,
     bool IncludeAll);

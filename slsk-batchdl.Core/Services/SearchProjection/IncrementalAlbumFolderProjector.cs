@@ -10,6 +10,7 @@ public sealed class IncrementalAlbumFolderProjector
 {
     private readonly AlbumQuery query;
     private readonly SearchSettings search;
+    private readonly SongQuery sortQuery;
     private readonly IncrementalResultSorter sorter;
     private readonly Dictionary<string, AlbumFolderSignature> previousSignatures = new(StringComparer.Ordinal);
     private List<AlbumFolder> previousSnapshot = [];
@@ -21,8 +22,9 @@ public sealed class IncrementalAlbumFolderProjector
     {
         this.query = query;
         this.search = search;
+        sortQuery = SearchResultProjector.AlbumFileMatchQuery(query);
         sorter = new IncrementalResultSorter(
-            SearchResultProjector.AlbumFileMatchQuery(query),
+            sortQuery,
             search,
             userSuccessCounts ?? new ConcurrentDictionary<string, int>(),
             albumMode: true);
@@ -31,7 +33,15 @@ public sealed class IncrementalAlbumFolderProjector
     public int Count => sorter.Count;
 
     public int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
-        => sorter.AddRange(results);
+        => sorter.AddRange(results.Where(ProjectionFilter));
+
+    // TODO: Revisit AlbumQuery.SearchHint semantics. It may be cleaner for the hint
+    // to qualify folders that contain a matching track, while still showing all files
+    // from matching folders that were present in the search response.
+    private bool ProjectionFilter((SearchResponse Response, SlFile File) result)
+        => search.NecessaryCond.BannedUsersSatisfies(result.Response)
+            && (!Utils.IsMusicFile(result.File.Filename)
+                || search.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response));
 
     public AlbumFolderProjectionChanges AddRangeAndGetChanges(IEnumerable<(SearchResponse Response, SlFile File)> results)
     {

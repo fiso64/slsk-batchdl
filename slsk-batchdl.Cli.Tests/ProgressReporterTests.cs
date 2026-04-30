@@ -103,7 +103,7 @@ public class CliProgressReporterTests
                 albumJobId,
                 DisplayId: 6,
                 WorkflowId: workflowId,
-                Kind: "album",
+                Kind: ServerJobKind.Album,
                 State: ServerProtocol.JobStates.Downloading,
                 ItemName: "Artist Album",
                 QueryText: "Artist Album",
@@ -363,12 +363,12 @@ public class CliProgressReporterTests
             .Invoke(reporter, [args[1]])!;
     }
 
-    private static JobSummaryDto CreateAlbumSummary(Guid jobId, string state, string? failureReason)
+    private static JobSummaryDto CreateAlbumSummary(Guid jobId, ServerJobState state, ServerFailureReason? failureReason)
         => new(
             jobId,
             DisplayId: 6,
             WorkflowId: Guid.NewGuid(),
-            Kind: "album",
+            Kind: ServerJobKind.Album,
             State: state,
             ItemName: "Artist Album",
             QueryText: "Artist Album",
@@ -385,7 +385,7 @@ public class CliProgressReporterTests
             jobId,
             DisplayId: 7,
             WorkflowId: workflowId,
-            Kind: "song",
+            Kind: ServerJobKind.Song,
             State: ServerProtocol.JobStates.Searching,
             ItemName: "Artist - Track",
             QueryText: "Artist - Track",
@@ -397,7 +397,7 @@ public class CliProgressReporterTests
             AppliedAutoProfiles: [],
             AvailableActions: []);
 
-    private static AlbumFolderDto CreateSingleFileAlbumFolder(Guid fileJobId, string state, string? failureReason)
+    private static AlbumFolderDto CreateSingleFileAlbumFolder(Guid fileJobId, ServerJobState state, ServerFailureReason? failureReason)
         => new(
             new AlbumFolderRefDto("local", @"Artist\Album"),
             "local",
@@ -407,7 +407,7 @@ public class CliProgressReporterTests
             AudioFileCount: 1,
             Files: [CreateFileCandidate("local", @"Artist\Album\01. Artist - Track.flac")]);
 
-    private static SongJobPayloadDto CreateSongPayload(Guid fileJobId, string state, string? failureReason)
+    private static SongJobPayloadDto CreateSongPayload(Guid fileJobId, ServerJobState state, ServerFailureReason? failureReason)
         => new(
             new SongQueryDto("Artist", "Track", null, null, null, false),
             CandidateCount: 1,

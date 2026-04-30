@@ -1,33 +1,140 @@
+using System.Text.Json.Serialization;
+
 namespace Sldl.Server;
 
 /// <summary>
-/// Stable string values used by the server wire protocol. Keep DTOs string-based for simple JSON
-/// clients, but use these constants inside .NET consumers instead of scattering literals.
+/// Runtime job kind returned by job and workflow endpoints.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerJobKind>))]
+public enum ServerJobKind
+{
+    /// <summary>Input extraction job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Extract)]
+    Extract,
+    /// <summary>Search job. Track and album searches share this runtime kind.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Search)]
+    Search,
+    /// <summary>Single-file download job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Song)]
+    Song,
+    /// <summary>Folder or album download job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Album)]
+    Album,
+    /// <summary>Aggregate track search job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Aggregate)]
+    Aggregate,
+    /// <summary>Aggregate album search job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.AlbumAggregate)]
+    AlbumAggregate,
+    /// <summary>Container job that owns child jobs.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.JobList)]
+    JobList,
+    /// <summary>Folder-browse job used to fully load a search result folder.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.RetrieveFolder)]
+    RetrieveFolder,
+    /// <summary>Fallback kind for unknown or unmapped core jobs.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.Generic)]
+    Generic,
+}
+
+/// <summary>
+/// Runtime job state returned by job, workflow, and event DTOs.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerJobState>))]
+public enum ServerJobState
+{
+    /// <summary>Job has not started running yet.</summary>
+    Pending,
+    /// <summary>Job completed successfully.</summary>
+    Done,
+    /// <summary>Job completed unsuccessfully.</summary>
+    Failed,
+    /// <summary>Job was skipped because the target already exists.</summary>
+    AlreadyExists,
+    /// <summary>Job was skipped because the item was previously marked not found.</summary>
+    NotFoundLastTime,
+    /// <summary>Job was skipped by user or configuration decision.</summary>
+    Skipped,
+    /// <summary>Job is searching Soulseek results.</summary>
+    Searching,
+    /// <summary>Job is downloading.</summary>
+    Downloading,
+    /// <summary>Job is extracting input into follow-up jobs.</summary>
+    Extracting,
+}
+
+/// <summary>
+/// Aggregate workflow state returned by workflow endpoints.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerWorkflowState>))]
+public enum ServerWorkflowState
+{
+    /// <summary>At least one workflow job is still active.</summary>
+    [JsonStringEnumMemberName("active")]
+    Active,
+    /// <summary>Workflow has finished and at least one job failed.</summary>
+    [JsonStringEnumMemberName("failed")]
+    Failed,
+    /// <summary>Workflow has finished without failures.</summary>
+    [JsonStringEnumMemberName("completed")]
+    Completed,
+}
+
+/// <summary>
+/// Stable failure reason returned by job and event DTOs.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerFailureReason>))]
+public enum ServerFailureReason
+{
+    /// <summary>No failure reason.</summary>
+    None,
+    /// <summary>The job could not form a valid search string.</summary>
+    InvalidSearchString,
+    /// <summary>The job exhausted download retry attempts.</summary>
+    OutOfDownloadRetries,
+    /// <summary>No acceptable candidate file or folder was found.</summary>
+    NoSuitableFileFound,
+    /// <summary>All attempted downloads failed.</summary>
+    AllDownloadsFailed,
+    /// <summary>Failure did not match a more specific reason.</summary>
+    Other,
+    /// <summary>Input extraction failed.</summary>
+    ExtractionFailed,
+    /// <summary>Job was cancelled.</summary>
+    Cancelled,
+}
+
+/// <summary>
+/// Action identifiers used by ResourceActionDto.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerResourceActionKind>))]
+public enum ServerResourceActionKind
+{
+    /// <summary>Resource can be cancelled through the supplied HTTP method and URL.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.ResourceActionKinds.Cancel)]
+    Cancel,
+}
+
+/// <summary>
+/// Stable string values used by server wire formats and JSON discriminators.
+/// Prefer the typed protocol enums for normal DTO fields in .NET code.
 /// </summary>
 public static class ServerProtocol
 {
     /// <summary>
-    /// Runtime job kinds returned by job and workflow endpoints.
+    /// Runtime job kind wire values used by JSON serialization and polymorphic discriminators.
+    /// Prefer <see cref="ServerJobKind"/> in .NET consumer code.
     /// </summary>
     public static class JobKinds
     {
-        /// <summary>Input extraction job.</summary>
         public const string Extract = "extract";
-        /// <summary>Search job, including track and album searches.</summary>
         public const string Search = "search";
-        /// <summary>Single-file download job.</summary>
         public const string Song = "song";
-        /// <summary>Folder or album download job.</summary>
         public const string Album = "album";
-        /// <summary>Aggregate track search job.</summary>
         public const string Aggregate = "aggregate";
-        /// <summary>Aggregate album search job.</summary>
         public const string AlbumAggregate = "album-aggregate";
-        /// <summary>Container job that owns child jobs.</summary>
         public const string JobList = "job-list";
-        /// <summary>Folder-browse job used to fully load a search result folder.</summary>
         public const string RetrieveFolder = "retrieve-folder";
-        /// <summary>Fallback kind for unknown or unmapped core jobs.</summary>
         public const string Generic = "generic";
     }
 
@@ -56,51 +163,36 @@ public static class ServerProtocol
     }
 
     /// <summary>
-    /// Stable string values used by JobSummaryDto.State and job/event payload state fields.
+    /// Compatibility aliases for <see cref="ServerJobState"/> values.
+    /// Prefer <see cref="ServerJobState"/> directly in new .NET code.
     /// </summary>
     public static class JobStates
     {
-        /// <summary>Job has not started running yet.</summary>
-        public const string Pending = "Pending";
-        /// <summary>Job completed successfully.</summary>
-        public const string Done = "Done";
-        /// <summary>Job completed unsuccessfully.</summary>
-        public const string Failed = "Failed";
-        /// <summary>Job was skipped because the target already exists.</summary>
-        public const string AlreadyExists = "AlreadyExists";
-        /// <summary>Job was skipped because the item was previously marked not found.</summary>
-        public const string NotFoundLastTime = "NotFoundLastTime";
-        /// <summary>Job was skipped by user/config decision.</summary>
-        public const string Skipped = "Skipped";
-        /// <summary>Job is searching Soulseek results.</summary>
-        public const string Searching = "Searching";
-        /// <summary>Job is downloading.</summary>
-        public const string Downloading = "Downloading";
-        /// <summary>Job is extracting input into follow-up jobs.</summary>
-        public const string Extracting = "Extracting";
+        public const ServerJobState Pending = ServerJobState.Pending;
+        public const ServerJobState Done = ServerJobState.Done;
+        public const ServerJobState Failed = ServerJobState.Failed;
+        public const ServerJobState AlreadyExists = ServerJobState.AlreadyExists;
+        public const ServerJobState NotFoundLastTime = ServerJobState.NotFoundLastTime;
+        public const ServerJobState Skipped = ServerJobState.Skipped;
+        public const ServerJobState Searching = ServerJobState.Searching;
+        public const ServerJobState Downloading = ServerJobState.Downloading;
+        public const ServerJobState Extracting = ServerJobState.Extracting;
     }
 
     /// <summary>
-    /// Stable string values used by JobSummaryDto.FailureReason and job/event payload failure reason fields.
+    /// Compatibility aliases for <see cref="ServerFailureReason"/> values.
+    /// Prefer <see cref="ServerFailureReason"/> directly in new .NET code.
     /// </summary>
     public static class FailureReasons
     {
-        /// <summary>No failure reason.</summary>
-        public const string None = "None";
-        /// <summary>The job could not form a valid search string.</summary>
-        public const string InvalidSearchString = "InvalidSearchString";
-        /// <summary>The job exhausted download retry attempts.</summary>
-        public const string OutOfDownloadRetries = "OutOfDownloadRetries";
-        /// <summary>No acceptable candidate file or folder was found.</summary>
-        public const string NoSuitableFileFound = "NoSuitableFileFound";
-        /// <summary>All attempted downloads failed.</summary>
-        public const string AllDownloadsFailed = "AllDownloadsFailed";
-        /// <summary>Failure did not match a more specific reason.</summary>
-        public const string Other = "Other";
-        /// <summary>Input extraction failed.</summary>
-        public const string ExtractionFailed = "ExtractionFailed";
-        /// <summary>Job was cancelled.</summary>
-        public const string Cancelled = "Cancelled";
+        public const ServerFailureReason None = ServerFailureReason.None;
+        public const ServerFailureReason InvalidSearchString = ServerFailureReason.InvalidSearchString;
+        public const ServerFailureReason OutOfDownloadRetries = ServerFailureReason.OutOfDownloadRetries;
+        public const ServerFailureReason NoSuitableFileFound = ServerFailureReason.NoSuitableFileFound;
+        public const ServerFailureReason AllDownloadsFailed = ServerFailureReason.AllDownloadsFailed;
+        public const ServerFailureReason Other = ServerFailureReason.Other;
+        public const ServerFailureReason ExtractionFailed = ServerFailureReason.ExtractionFailed;
+        public const ServerFailureReason Cancelled = ServerFailureReason.Cancelled;
     }
 
     /// <summary>
@@ -111,4 +203,22 @@ public static class ServerProtocol
         /// <summary>Resource can be cancelled through the supplied HTTP method and URL.</summary>
         public const string Cancel = "cancel";
     }
+}
+
+public static class ServerProtocolEnumExtensions
+{
+    public static string ToWireString(this ServerJobKind kind)
+        => kind switch
+        {
+            ServerJobKind.Extract => ServerProtocol.JobKinds.Extract,
+            ServerJobKind.Search => ServerProtocol.JobKinds.Search,
+            ServerJobKind.Song => ServerProtocol.JobKinds.Song,
+            ServerJobKind.Album => ServerProtocol.JobKinds.Album,
+            ServerJobKind.Aggregate => ServerProtocol.JobKinds.Aggregate,
+            ServerJobKind.AlbumAggregate => ServerProtocol.JobKinds.AlbumAggregate,
+            ServerJobKind.JobList => ServerProtocol.JobKinds.JobList,
+            ServerJobKind.RetrieveFolder => ServerProtocol.JobKinds.RetrieveFolder,
+            ServerJobKind.Generic => ServerProtocol.JobKinds.Generic,
+            _ => kind.ToString(),
+        };
 }

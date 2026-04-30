@@ -71,8 +71,8 @@ public static class ServerHost
 
         app.MapGet("/api/jobs", (
             EngineStateStore stateStore,
-            string? state,
-            string? kind,
+            ServerJobState? state,
+            ServerJobKind? kind,
             Guid? workflowId,
             bool includeAll = false) =>
         {
@@ -115,15 +115,51 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
+        app.MapPost("/api/jobs/{jobId:guid}/results/files/project", (Guid jobId, FileSearchProjectionRequestDto request, EngineSupervisor supervisor) =>
+        {
+            var results = supervisor.GetFileResults(jobId, request);
+            return results != null ? Results.Ok(results) : Results.NotFound();
+        })
+            .WithTags("Search Results")
+            .WithSummary("Projects search results as file candidates.")
+            .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
+            .Produces(StatusCodes.Status404NotFound);
+
         app.MapGet("/api/jobs/{jobId:guid}/results/folders", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
         {
-            var results = supervisor.GetFolderResults(jobId, includeFiles);
-            return results != null ? Results.Ok(results) : Results.NotFound();
+            try
+            {
+                var results = supervisor.GetFolderResults(jobId, includeFiles);
+                return results != null ? Results.Ok(results) : Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
+            }
         })
             .WithTags("Search Results")
             .WithSummary("Gets folder candidates for an album search-like job.")
             .WithDescription("Set includeFiles=true only when the client needs selectable files. Folder file counts can come from search results and may not represent a full browse of the remote folder.")
             .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/jobs/{jobId:guid}/results/folders/project", (Guid jobId, FolderSearchProjectionRequestDto request, EngineSupervisor supervisor) =>
+        {
+            try
+            {
+                var results = supervisor.GetFolderResults(jobId, request);
+                return results != null ? Results.Ok(results) : Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
+            }
+        })
+            .WithTags("Search Results")
+            .WithSummary("Projects search results as album folders.")
+            .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", (Guid jobId, EngineSupervisor supervisor) =>
@@ -136,14 +172,50 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
+        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-tracks/project", (Guid jobId, AggregateTrackProjectionRequestDto request, EngineSupervisor supervisor) =>
+        {
+            var results = supervisor.GetAggregateTrackResults(jobId, request);
+            return results != null ? Results.Ok(results) : Results.NotFound();
+        })
+            .WithTags("Search Results")
+            .WithSummary("Projects search results as aggregate track candidates.")
+            .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
+            .Produces(StatusCodes.Status404NotFound);
+
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", (Guid jobId, EngineSupervisor supervisor) =>
         {
-            var results = supervisor.GetAggregateAlbumResults(jobId);
-            return results != null ? Results.Ok(results) : Results.NotFound();
+            try
+            {
+                var results = supervisor.GetAggregateAlbumResults(jobId);
+                return results != null ? Results.Ok(results) : Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
+            }
         })
             .WithTags("Search Results")
             .WithSummary("Gets aggregate album candidates.")
             .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-albums/project", (Guid jobId, AggregateAlbumProjectionRequestDto request, EngineSupervisor supervisor) =>
+        {
+            try
+            {
+                var results = supervisor.GetAggregateAlbumResults(jobId, request);
+                return results != null ? Results.Ok(results) : Results.NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new ApiErrorDto(ex.Message));
+            }
+        })
+            .WithTags("Search Results")
+            .WithSummary("Projects search results as aggregate album candidates.")
+            .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/jobs/{jobId:guid}/retrieve-folder", async (
@@ -248,6 +320,14 @@ public static class ServerHost
             await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)))
             .WithTags("Job Submission")
             .WithSummary("Submits an input extraction job.")
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+
+        app.MapPost("/api/jobs/search", async (SubmitSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
+            await SubmitJobAsync(() => supervisor.SubmitSearchJobAsync(request, ct)))
+            .WithTags("Job Submission")
+            .WithSummary("Submits a generic Soulseek search job.")
+            .WithDescription("The search stores raw Soulseek results. Use projection endpoints to view those results as files, album folders, or aggregate candidates.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 

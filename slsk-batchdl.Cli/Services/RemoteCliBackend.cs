@@ -64,6 +64,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public async Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/extract", request, ct);
 
+    public async Task<JobSummaryDto> SubmitSearchJobAsync(SubmitSearchJobRequestDto request, CancellationToken ct = default)
+        => await PostJobAsync("api/jobs/search", request, ct);
+
     public async Task<JobSummaryDto> SubmitTrackSearchJobAsync(SubmitTrackSearchJobRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/search/tracks", request, ct);
 
@@ -104,8 +107,8 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     {
         var url = "api/jobs"
             + $"?includeAll={query.IncludeAll.ToString().ToLowerInvariant()}"
-            + QueryPart("state", query.State)
-            + QueryPart("kind", query.Kind)
+            + QueryPart("state", query.State?.ToString())
+            + QueryPart("kind", query.Kind?.ToWireString())
             + QueryPart("workflowId", query.WorkflowId?.ToString());
 
         return await http.GetFromJsonAsync<IReadOnlyList<JobSummaryDto>>(url, jsonOptions, ct) ?? [];
@@ -138,6 +141,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return await ReadRequiredAsync<SearchResultSnapshotDto<FileCandidateDto>>(response, ct);
     }
 
+    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, FileSearchProjectionRequestDto request, CancellationToken ct = default)
+        => await PostOptionalAsync<SearchResultSnapshotDto<FileCandidateDto>, FileSearchProjectionRequestDto>($"api/jobs/{jobId}/results/files/project", request, ct);
+
     public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
     {
         using var response = await http.GetAsync($"api/jobs/{jobId}/results/folders?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
@@ -146,6 +152,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchResultSnapshotDto<AlbumFolderDto>>(response, ct);
     }
+
+    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, FolderSearchProjectionRequestDto request, CancellationToken ct = default)
+        => await PostOptionalAsync<SearchResultSnapshotDto<AlbumFolderDto>, FolderSearchProjectionRequestDto>($"api/jobs/{jobId}/results/folders/project", request, ct);
 
     public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
     {
@@ -156,6 +165,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>>(response, ct);
     }
 
+    public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, AggregateTrackProjectionRequestDto request, CancellationToken ct = default)
+        => await PostOptionalAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>, AggregateTrackProjectionRequestDto>($"api/jobs/{jobId}/results/aggregate-tracks/project", request, ct);
+
     public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
     {
         using var response = await http.GetAsync($"api/jobs/{jobId}/results/aggregate-albums", ct);
@@ -164,6 +176,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
     }
+
+    public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, AggregateAlbumProjectionRequestDto request, CancellationToken ct = default)
+        => await PostOptionalAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>, AggregateAlbumProjectionRequestDto>($"api/jobs/{jobId}/results/aggregate-albums/project", request, ct);
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
         => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/retrieve-folder", request, ct);
@@ -299,9 +314,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     private static string QueryPart(string name, string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : $"&{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
 
-    private static bool IsActiveState(string state)
-        => state is nameof(Sldl.Core.JobState.Pending)
-            or nameof(Sldl.Core.JobState.Searching)
-            or nameof(Sldl.Core.JobState.Downloading)
-            or nameof(Sldl.Core.JobState.Extracting);
+    private static bool IsActiveState(ServerJobState state)
+        => state is ServerJobState.Pending
+            or ServerJobState.Searching
+            or ServerJobState.Downloading
+            or ServerJobState.Extracting;
 }
