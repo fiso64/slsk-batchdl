@@ -301,7 +301,17 @@ public class RemoteCliBackendTests
                     NoBrowseFolder = true,
                 },
             },
-            Profiles = ProfileCatalog.Empty,
+            Profiles = new ProfileCatalog
+            {
+                AutoProfiles =
+                [
+                    new SettingsProfile
+                    {
+                        Name = "interactive-context",
+                        Condition = "interactive",
+                    },
+                ],
+            },
         }, url);
 
         try

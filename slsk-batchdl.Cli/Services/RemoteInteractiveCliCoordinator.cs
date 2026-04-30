@@ -16,6 +16,7 @@ internal sealed class RemoteInteractiveCliCoordinator
     private readonly HashSet<Guid> startedExtractResults = [];
     private readonly HashSet<Guid> handledAlbumSearches = [];
     private readonly Dictionary<Guid, InteractiveAlbumSession> interactiveAlbumSessions = [];
+    private SubmissionOptionsDto? rootOptions;
     private bool interactiveEnabled;
 
     public RemoteInteractiveCliCoordinator(
@@ -36,6 +37,7 @@ internal sealed class RemoteInteractiveCliCoordinator
     public async Task<JobSummaryDto> StartAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        rootOptions = request.Options;
         return await backend.SubmitExtractJobAsync(request with { AutoStartExtractedResult = false }, ct);
     }
 
@@ -77,7 +79,7 @@ internal sealed class RemoteInteractiveCliCoordinator
                 if (detail?.Payload is ExtractJobPayloadDto { ResultDraft: not null } extract)
                 {
                     var draft = ToInteractiveDraft(extract.ResultDraft);
-                    var options = new SubmissionOptionsDto(WorkflowId: summary.WorkflowId);
+                    var options = OptionsForWorkflow(summary.WorkflowId);
                     if (draft is JobListJobDraftDto list)
                     {
                         foreach (var child in list.Jobs)
@@ -134,7 +136,12 @@ internal sealed class RemoteInteractiveCliCoordinator
             return;
 
         var promptJob = ToSearchJob(search);
-        var session = new InteractiveAlbumSession(searchJobId, promptJob, search.DefaultFolderProjection.AlbumQuery, folders);
+        var session = new InteractiveAlbumSession(
+            searchJobId,
+            promptJob,
+            search.DefaultFolderProjection.AlbumQuery,
+            folders,
+            OptionsForWorkflow(detail.Summary.WorkflowId));
         var selected = await PromptForAlbumSelectionAsync(session);
         if (selected == null)
             return;
@@ -177,6 +184,7 @@ internal sealed class RemoteInteractiveCliCoordinator
             session.SourceSearchJobId,
             new StartFolderDownloadRequestDto(
                 new AlbumFolderRefDto(selected.Username, selected.FolderPath),
+                Options: session.Options,
                 AlbumQuery: session.Query),
             ct);
 
@@ -324,6 +332,9 @@ internal sealed class RemoteInteractiveCliCoordinator
             _ => draft,
         };
 
+    private SubmissionOptionsDto OptionsForWorkflow(Guid workflowId)
+        => (rootOptions ?? new SubmissionOptionsDto()) with { WorkflowId = workflowId };
+
     private static bool IsActive(ServerJobState state)
         => state is ServerProtocol.JobStates.Pending
             or ServerProtocol.JobStates.Extracting
@@ -340,16 +351,23 @@ internal sealed class RemoteInteractiveCliCoordinator
         public Job PromptJob { get; }
         public AlbumQueryDto Query { get; }
         public List<AlbumFolder> Folders { get; }
+        public SubmissionOptionsDto Options { get; }
         public HashSet<string> ExcludedFolderKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> RetrievedFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string? FilterStr { get; set; }
 
-        public InteractiveAlbumSession(Guid sourceSearchJobId, Job promptJob, AlbumQueryDto query, List<AlbumFolder> folders)
+        public InteractiveAlbumSession(
+            Guid sourceSearchJobId,
+            Job promptJob,
+            AlbumQueryDto query,
+            List<AlbumFolder> folders,
+            SubmissionOptionsDto options)
         {
             SourceSearchJobId = sourceSearchJobId;
             PromptJob = promptJob;
             Query = query;
             Folders = folders;
+            Options = options;
         }
     }
 }
