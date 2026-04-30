@@ -87,7 +87,8 @@ public class RemoteCliBackendTests
             Assert.AreEqual(1, downloadSummary.Count);
             var downloadedSummary = downloadSummary[0];
             Assert.AreEqual(searchSummary.WorkflowId, downloadedSummary.WorkflowId);
-            Assert.AreEqual(searchSummary.JobId, downloadedSummary.Presentation.ParentJobId);
+            Assert.IsNull(downloadedSummary.ParentJobId);
+            Assert.AreEqual(searchSummary.JobId, downloadedSummary.SourceJobId);
 
             await WaitForJobStateAsync(backend, downloadedSummary.JobId, ServerProtocol.JobStates.Done);
 
@@ -697,7 +698,7 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, "completed");
 
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, summary.WorkflowId, CanonicalRootsOnly: false, IncludeNonDefault: true));
+            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, summary.WorkflowId, IncludeAll: true));
             Assert.IsTrue(jobs.Any(job => job.Kind == "job-list"));
         }
         finally

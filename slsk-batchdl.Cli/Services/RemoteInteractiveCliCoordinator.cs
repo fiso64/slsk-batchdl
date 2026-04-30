@@ -63,11 +63,9 @@ internal sealed class RemoteInteractiveCliCoordinator
     private async Task<bool> ProcessWorkflowAsync(Guid workflowId, CancellationToken ct)
     {
         bool startedFollowUp = false;
-        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-        if (workflow == null)
-            return false;
+        var summaries = await GetWorkflowJobsAsync(workflowId, ct);
 
-        foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
+        foreach (var summary in summaries.OrderBy(job => job.DisplayId))
         {
             ct.ThrowIfCancellationRequested();
             if (summary.Kind == "extract"
@@ -114,6 +112,9 @@ internal sealed class RemoteInteractiveCliCoordinator
 
         return startedFollowUp;
     }
+
+    private async Task<IReadOnlyList<JobSummaryDto>> GetWorkflowJobsAsync(Guid workflowId, CancellationToken ct)
+        => await backend.GetJobsAsync(new JobQuery(null, null, workflowId, IncludeAll: true), ct);
 
     private async Task HandleCompletedSearchAsync(Guid searchJobId, CancellationToken ct)
     {

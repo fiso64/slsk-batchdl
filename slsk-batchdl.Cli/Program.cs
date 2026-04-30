@@ -52,9 +52,12 @@ internal static partial class Program
         if (string.IsNullOrEmpty(rootSettings.Extraction.Input))
         {
             var diagnostic = new DiagnosticService(clientManager);
-            try {
+            try
+            {
                 await diagnostic.PerformNoInputActions(rootSettings.PrintOption, rootSettings.Output.IndexFilePath, cts.Token);
-            } catch (Exception ex) {
+            }
+            catch (Exception ex)
+            {
                 Logger.Fatal($"Diagnostic action failed: {ex.Message}");
             }
             return;
@@ -335,13 +338,51 @@ internal static partial class Program
 
         foreach (var summary in workflow.Jobs.OrderBy(job => job.DisplayId))
         {
-            if (summary.Kind != ServerProtocol.JobKinds.Song)
-                continue;
-
-            CountSummary(summary, ref successes, ref fails);
+            var counts = await CountRemoteCompletedSongsAsync(backend, summary, ct);
+            successes += counts.Successes;
+            fails += counts.Fails;
         }
 
         Printing.PrintComplete(successes, fails);
+    }
+
+    private static async Task<(int Successes, int Fails)> CountRemoteCompletedSongsAsync(
+        ICliBackend backend,
+        JobSummaryDto summary,
+        CancellationToken ct)
+        => await CountRemoteCompletedSongsAsync(backend, summary, new HashSet<Guid>(), ct);
+
+    private static async Task<(int Successes, int Fails)> CountRemoteCompletedSongsAsync(
+        ICliBackend backend,
+        JobSummaryDto summary,
+        HashSet<Guid> visited,
+        CancellationToken ct)
+    {
+        if (!visited.Add(summary.JobId))
+            return (0, 0);
+
+        if (summary.Kind == ServerProtocol.JobKinds.Song)
+        {
+            int successes = 0;
+            int fails = 0;
+            CountSummary(summary, ref successes, ref fails);
+            return (successes, fails);
+        }
+
+        var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
+        if (detail == null)
+            return (0, 0);
+
+        int childSuccesses = 0;
+        int childFails = 0;
+        foreach (var child in detail.Children.OrderBy(job => job.DisplayId))
+        {
+            var counts = await CountRemoteCompletedSongsAsync(backend, child, visited, ct);
+            childSuccesses += counts.Successes;
+            childFails += counts.Fails;
+        }
+
+        return (childSuccesses, childFails);
     }
 
     private static void CountSong(SongJobPayloadDto song, JobSummaryDto? summary, ref int successes, ref int fails)
@@ -501,14 +542,10 @@ internal static partial class Program
 
         var details = new Dictionary<Guid, JobDetailDto>();
         foreach (var summary in workflow.Jobs)
-        {
-            var detail = await backend.GetJobDetailAsync(summary.JobId, ct);
-            if (detail != null)
-                details[summary.JobId] = detail;
-        }
+            await LoadRemoteJobTreeAsync(backend, summary.JobId, details, ct);
 
         var roots = details.Values
-            .Where(detail => detail.Summary.ParentJobId == null)
+            .Where(detail => workflow.Jobs.Any(root => root.JobId == detail.Summary.JobId))
             .OrderBy(detail => detail.Summary.DisplayId)
             .ToList();
 
@@ -519,6 +556,31 @@ internal static partial class Program
 
         if (plannedJobs.Count > 0 && settings.PrintTracks)
             Printing.PrintPlannedDownloads(plannedJobs, settings);
+    }
+
+    private static async Task LoadRemoteJobTreeAsync(
+        ICliBackend backend,
+        Guid jobId,
+        Dictionary<Guid, JobDetailDto> details,
+        CancellationToken ct)
+    {
+        if (details.ContainsKey(jobId))
+            return;
+
+        var detail = await backend.GetJobDetailAsync(jobId, ct);
+        if (detail == null)
+            return;
+
+        details[jobId] = detail;
+
+        foreach (var child in detail.Children)
+        {
+            if (detail.Summary.Kind == ServerProtocol.JobKinds.Album
+                && child.Kind == ServerProtocol.JobKinds.Song)
+                continue;
+
+            await LoadRemoteJobTreeAsync(backend, child.JobId, details, ct);
+        }
     }
 
     private static void CollectRemotePlannedDownloads(

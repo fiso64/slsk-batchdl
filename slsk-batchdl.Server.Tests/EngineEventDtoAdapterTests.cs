@@ -60,8 +60,8 @@ public class EngineEventDtoAdapterTests
             job.FailureMessage,
             null,
             null,
+            null,
             [],
-            new JobPresentationDto("node", null, job.DisplayId, null),
             []);
 
     private static void Raise(EngineEvents events, string methodName, params object[] args)

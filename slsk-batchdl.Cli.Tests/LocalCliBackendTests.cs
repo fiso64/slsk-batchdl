@@ -53,7 +53,7 @@ public class LocalCliBackendTests
 
             await engine.RunAsync(cts.Token);
 
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, "search", null, CanonicalRootsOnly: false, IncludeNonDefault: true));
+            var jobs = await backend.GetJobsAsync(new JobQuery(null, "search", null, IncludeAll: true));
             Assert.AreEqual(1, jobs.Count);
             Assert.AreEqual(submitted.JobId, jobs[0].JobId);
 

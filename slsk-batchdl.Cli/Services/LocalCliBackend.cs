@@ -335,9 +335,14 @@ internal sealed class LocalCliBackend
 
     public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
-        var jobs = await GetJobsAsync(new JobQuery(null, null, workflowId, CanonicalRootsOnly: false, IncludeNonDefault: true), ct);
-        var match = jobs.FirstOrDefault(job => job.DisplayId == displayId);
-        return match != null && await CancelJobAsync(match.JobId, ct);
+        ct.ThrowIfCancellationRequested();
+
+        var job = engine.GetJob(displayId);
+        if (job == null || (workflowId.HasValue && job.WorkflowId != workflowId.Value))
+            return false;
+
+        job.Cancel();
+        return await Task.FromResult(true);
     }
 
     public Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)
@@ -412,8 +417,8 @@ internal sealed class LocalCliBackend
             job.FailureMessage,
             null,
             null,
+            null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, null, job.DisplayId, null),
             []);
 
     private JobSummaryDto GetSummary(Job job)

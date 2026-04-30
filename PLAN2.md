@@ -5,7 +5,7 @@
 Implemented so far:
 - `slsk-batchdl.Server` exists as a long-lived daemon host.
 - An `EngineSupervisor` sits above `DownloadEngine` and owns the stable submission queue and engine lifetime.
-- `EngineStateStore` tracks canonical jobs/workflows plus server-owned presentation hints.
+- `EngineStateStore` tracks canonical jobs/workflows and exposes factual relationship fields.
 - HTTP endpoints exist for:
   - server info/status
   - jobs list/detail/cancel
@@ -72,10 +72,12 @@ Immediate next likely steps:
   - Multiple executable jobs can belong to one workflow.
   - This covers interactive search -> retrieve-folder -> album download -> retry flows cleanly.
 
-- Keep the **canonical job graph** truthful over the wire.
+- Keep **job relationships** truthful over the wire.
+  - `ParentJobId` means execution ownership; parent cancellation propagates to the child.
+  - `ResultJobId` means an extract job produced another semantic job.
+  - `SourceJobId` means a follow-up job was started from another job's result/selection, but is independently owned.
   - Do not fake parent/child relationships just to simplify UI rendering.
-  - `ExtractJob -> ResultJob`, `RetrieveFolderJob`, and other real relationships should remain factual in the API.
-  - Any flattening for CLI/GUI should be expressed through presentation hints, not by mutating the graph model.
+  - Default job/workflow lists return execution roots (`ParentJobId == null`); `includeAll=true` returns every matching job as a flat list.
 
 - Local CLI and thin CLI should share the same presentation/orchestration model.
   - Rendering logic should target a shared client-facing DTO/event model.
@@ -232,37 +234,21 @@ Use GUIDs as the real API identifiers.
 - expose `Job.Id` and `WorkflowId`
 - expose `DisplayId` only as display metadata, not as primary identity
 
-### Presentation hint DTOs
+### Relationship Fields
 
-Alongside canonical graph fields, include server-computed presentation hints so clients do not all have to reinvent the same flattening logic.
+The server exposes relationship facts rather than GUI presentation hints:
 
-Examples:
+- `ParentJobId`: execution/ownership parent. Use job detail or the workflow tree to navigate direct children.
+- `ResultJobId`: semantic output produced by an extract job.
+- `SourceJobId`: provenance for independently submitted follow-up jobs, such as downloads started from a search result.
 
-- `IsHiddenFromRoot`
-- `VisualParentJobId`
-- `VisualOrder`
-- `ReplaceWithJobId`
+Clients decide visual replacement/flattening themselves. For example, a UI may visually replace a completed extract job with its `ResultJobId`, but the server still returns both root jobs so the relationship remains auditable.
 
-The canonical graph remains factual even when these hints recommend a flattened/root-friendly view.
+## Workflow Tree
 
-## Presentation Projection
-
-- The server should maintain both:
-  - canonical job graph facts
-  - presentation-oriented visibility/grouping hints
-
-- Canonical facts come from Core events:
-  - `JobRegistered`
-  - `JobResultCreated`
-  - `RetrieveFolderJobStarted`
-  - state/progress/completion events
-
-- Presentation rules should be server-owned, not Core-owned.
-  - Successful `ExtractJob`s can be hidden from the default root list after their result job appears.
-  - Extracted result jobs can appear as sibling/root-visible items in the visual model while still preserving the canonical relationship.
-  - `RetrieveFolderJob`s should stay nested under their owning album/search context in the visual model.
-
-This keeps Core factual while still giving GUI/thin CLI the shape they actually want.
+- `GET /api/workflows/{workflowId}/tree` returns a recursive execution tree built only from `ParentJobId`.
+- Follow-up jobs started from search results remain workflow roots in that tree and carry `SourceJobId`.
+- Album payload song jobs are execution children of the album/aggregate job, so they are visible when reading that job detail or the workflow tree, not in default root job lists.
 
 ## Live Event Stream
 

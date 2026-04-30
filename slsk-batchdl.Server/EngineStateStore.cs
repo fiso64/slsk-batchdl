@@ -12,7 +12,7 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, JobRecord> records = [];
     private readonly Dictionary<Guid, Guid?> parentJobIds = [];
     private readonly Dictionary<Guid, Guid> resultJobIds = [];
-    private readonly Dictionary<Guid, Guid> visualParentJobIds = [];
+    private readonly Dictionary<Guid, Guid> sourceJobIds = [];
     private readonly HashSet<Guid> infrastructureFailedJobs = [];
     private readonly HashSet<Guid> executionCompletedJobs = [];
 
@@ -69,6 +69,9 @@ public sealed class EngineStateStore
     {
         lock (gate)
         {
+            if (jobs.TryGetValue(jobId, out var job))
+                UpdateJobRecord(job);
+
             if (!records.TryGetValue(jobId, out var record))
                 return null;
 
@@ -97,13 +100,10 @@ public sealed class EngineStateStore
             if (!string.IsNullOrWhiteSpace(query.State))
                 filtered = filtered.Where(record => string.Equals(record.Summary.State, query.State, StringComparison.OrdinalIgnoreCase));
 
-            if (query.CanonicalRootsOnly)
-                filtered = filtered.Where(record => record.ParentJobId == null);
-
             var summaries = filtered
                 .OrderBy(record => record.Summary.DisplayId)
+                .Where(record => query.IncludeAll || IsDefaultRoot(record))
                 .Select(record => record.Summary)
-                .Where(summary => query.IncludeNonDefault || IsListedByDefault(summary))
                 .ToList();
 
             return summaries;
@@ -122,7 +122,7 @@ public sealed class EngineStateStore
         }
     }
 
-    public WorkflowDetailDto? GetWorkflow(Guid workflowId)
+    public WorkflowDetailDto? GetWorkflow(Guid workflowId, bool includeAll = false)
     {
         lock (gate)
         {
@@ -136,13 +136,14 @@ public sealed class EngineStateStore
 
             var summary = BuildWorkflowSummary(workflowJobs.GroupBy(record => record.WorkflowId).Single());
             var jobSummaries = workflowJobs
+                .Where(record => includeAll || IsDefaultRoot(record))
                 .Select(record => record.Summary)
                 .ToList();
             return new WorkflowDetailDto(summary, jobSummaries);
         }
     }
 
-    public PresentedWorkflowDto? GetPresentedWorkflow(Guid workflowId)
+    public WorkflowTreeDto? GetWorkflowTree(Guid workflowId)
     {
         lock (gate)
         {
@@ -154,7 +155,7 @@ public sealed class EngineStateStore
                 return null;
 
             var summary = BuildWorkflowSummary(workflowJobs.GroupBy(record => record.WorkflowId).Single());
-            return new PresentedWorkflowDto(summary, BuildPresentedJobTree(workflowJobs));
+            return new WorkflowTreeDto(summary, BuildWorkflowJobTree(workflowJobs));
         }
     }
 
@@ -224,11 +225,11 @@ public sealed class EngineStateStore
         _ => ServerProtocol.JobKinds.Generic,
     };
 
-    public void SetVisualParent(Guid jobId, Guid visualParentJobId)
+    public void SetSourceJob(Guid jobId, Guid sourceJobId)
     {
         lock (gate)
         {
-            visualParentJobIds[jobId] = visualParentJobId;
+            sourceJobIds[jobId] = sourceJobId;
             if (jobs.TryGetValue(jobId, out var job))
                 UpdateJobRecord(job);
         }
@@ -422,7 +423,7 @@ public sealed class EngineStateStore
     {
         var workflowJobs = workflow.OrderBy(record => record.Summary.DisplayId).ToList();
         var roots = workflowJobs
-            .Where(record => record.ParentJobId == null)
+            .Where(IsDefaultRoot)
             .OrderBy(record => record.Summary.DisplayId)
             .Select(record => record.Id)
             .ToList();
@@ -442,12 +443,10 @@ public sealed class EngineStateStore
         return new WorkflowSummaryDto(workflow.Key, title, state, roots, active, failed, completed);
     }
 
-    private static IReadOnlyList<PresentedJobNodeDto> BuildPresentedJobTree(IReadOnlyList<JobRecord> sourceRecords)
+    private static IReadOnlyList<WorkflowJobNodeDto> BuildWorkflowJobTree(IReadOnlyList<JobRecord> sourceRecords)
     {
         var visibleRecords = sourceRecords
-            .Where(record => record.Summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Node)
-            .OrderBy(record => record.Summary.Presentation.Order)
-            .ThenBy(record => record.Summary.DisplayId)
+            .OrderBy(record => record.Summary.DisplayId)
             .ToList();
 
         var visibleIds = visibleRecords.Select(record => record.Id).ToHashSet();
@@ -456,8 +455,7 @@ public sealed class EngineStateStore
 
         foreach (var record in visibleRecords)
         {
-            var presentationParentId = record.Summary.Presentation.ParentJobId ?? record.ParentJobId;
-            if (presentationParentId is Guid parentId && visibleIds.Contains(parentId))
+            if (record.ParentJobId is Guid parentId && visibleIds.Contains(parentId))
             {
                 if (!childrenByParentId.TryGetValue(parentId, out var children))
                 {
@@ -474,32 +472,30 @@ public sealed class EngineStateStore
         }
 
         return roots
-            .Select(root => BuildPresentedNode(root, childrenByParentId, []))
+            .Select(root => BuildWorkflowJobNode(root, childrenByParentId, []))
             .ToList();
     }
 
-    private static PresentedJobNodeDto BuildPresentedNode(
+    private static WorkflowJobNodeDto BuildWorkflowJobNode(
         JobRecord record,
         IReadOnlyDictionary<Guid, List<JobRecord>> childrenByParentId,
         HashSet<Guid> visited)
     {
         if (!visited.Add(record.Id))
-            return new PresentedJobNodeDto(record.Summary, []);
+            return new WorkflowJobNodeDto(record.Summary, []);
 
         var children = childrenByParentId.TryGetValue(record.Id, out var childRecords)
             ? childRecords
-                .Select(child => BuildPresentedNode(child, childrenByParentId, visited))
+                .Select(child => BuildWorkflowJobNode(child, childrenByParentId, visited))
                 .ToList()
             : [];
 
         visited.Remove(record.Id);
-        return new PresentedJobNodeDto(record.Summary, children);
+        return new WorkflowJobNodeDto(record.Summary, children);
     }
 
-    private static bool IsListedByDefault(JobSummaryDto summary)
-        => summary.Presentation.Mode == ServerProtocol.JobPresentationModes.Node
-            && (summary.Presentation.ParentJobId == null
-                || summary.Presentation.ParentJobId == summary.ParentJobId);
+    private static bool IsDefaultRoot(JobRecord record)
+        => record.ParentJobId == null;
 
     private JobRecord UpdateJobRecord(Job job)
     {
@@ -537,16 +533,7 @@ public sealed class EngineStateStore
     {
         var parentJobId = parentJobIds.GetValueOrDefault(job.Id);
         Guid? resultJobId = resultJobIds.TryGetValue(job.Id, out var resultId) ? resultId : null;
-        Guid? visualParentJobId = visualParentJobIds.TryGetValue(job.Id, out var visualParentId)
-            ? visualParentId
-            : null;
-        var displayParentJobId = visualParentJobId ?? parentJobId;
-        string displayMode = job switch
-        {
-            ExtractJob when job.State == JobState.Done && resultJobId != null => ServerProtocol.JobPresentationModes.Replaced,
-            SongJob when parentJobId is Guid parentId && IsEmbeddedSongParent(parentId) => ServerProtocol.JobPresentationModes.Embedded,
-            _ => ServerProtocol.JobPresentationModes.Node,
-        };
+        Guid? sourceJobId = sourceJobIds.TryGetValue(job.Id, out var sourceId) ? sourceId : null;
 
         return new JobSummaryDto(
             job.Id,
@@ -560,16 +547,12 @@ public sealed class EngineStateStore
             job.FailureMessage,
             parentJobId,
             resultJobId,
+            sourceJobId,
             job.Config?.AppliedAutoProfiles?.OrderBy(x => x).ToList() ?? [],
-            new JobPresentationDto(
-                displayMode,
-                displayParentJobId,
-                job.DisplayId,
-                resultJobId),
             BuildActions(job));
     }
 
-    private static JobPayloadDto BuildPayload(Job job)
+    private JobPayloadDto BuildPayload(Job job)
         => job switch
         {
             ExtractJob extractJob => new ExtractJobPayloadDto(
@@ -591,16 +574,28 @@ public sealed class EngineStateStore
                 albumJob.DownloadPath,
                 albumJob.ResolvedTarget?.Username,
                 albumJob.ResolvedTarget?.FolderPath,
+                albumJob.ResolvedTarget?.Files.Count,
+                albumJob.ResolvedTarget?.Files.Count(IsTerminalSong),
+                albumJob.ResolvedTarget?.Files.Count(IsSuccessfulSong),
+                albumJob.ResolvedTarget?.Files.Count(IsFailedOrSkippedSong),
                 null,
                 null),
             AggregateJob aggregateJob => new AggregateJobPayloadDto(
                 ToSongQueryDto(aggregateJob.Query),
                 aggregateJob.Songs.Count,
+                aggregateJob.Songs.Count(IsTerminalSong),
+                aggregateJob.Songs.Count(IsSuccessfulSong),
+                aggregateJob.Songs.Count(IsFailedOrSkippedSong),
                 null),
             AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
-                ToAlbumQueryDto(albumAggregateJob.Query)),
+                ToAlbumQueryDto(albumAggregateJob.Query),
+                CountDescendants(albumAggregateJob.Id, ServerProtocol.JobKinds.Album)),
             JobList jobList => new JobListPayloadDto(
                 jobList.Count,
+                jobList.Jobs.Count(IsActiveJob),
+                jobList.Jobs.Count(IsTerminalJob),
+                jobList.Jobs.Count(IsSuccessfulJob),
+                jobList.Jobs.Count(IsFailedOrSkippedJob),
                 null),
             RetrieveFolderJob retrieveFolderJob => new RetrieveFolderJobPayloadDto(
                 retrieveFolderJob.TargetFolder.FolderPath,
@@ -628,10 +623,6 @@ public sealed class EngineStateStore
             _ => null,
         };
 
-    private bool IsEmbeddedSongParent(Guid parentJobId)
-        => jobs.TryGetValue(parentJobId, out var parent)
-            && parent is AlbumJob or AggregateJob;
-
     private static IReadOnlyList<ResourceActionDto> BuildActions(Job job)
         => IsActiveJobState(job.State) && job.Cts != null && !job.Cts.IsCancellationRequested
             ? [CancelAction(job.Id)]
@@ -641,7 +632,13 @@ public sealed class EngineStateStore
         => new(ServerProtocol.ResourceActionKinds.Cancel, "POST", $"/api/jobs/{jobId}/cancel");
 
     private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
-        => new(
+    {
+        long? totalBytes = song.FileSize > 0 ? song.FileSize : song.ResolvedTarget?.File.Size;
+        double? progressPercent = totalBytes > 0
+            ? Math.Round((double)song.BytesTransferred / totalBytes.Value * 100, 2)
+            : null;
+
+        return new SongJobPayloadDto(
             ToSongQueryDto(song.Query),
             song.Candidates?.Count,
             song.DownloadPath,
@@ -659,7 +656,11 @@ public sealed class EngineStateStore
             song.State.ToString(),
             song.FailureReason != FailureReason.None ? song.FailureReason.ToString() : null,
             song.FailureMessage,
+            song.BytesTransferred,
+            totalBytes,
+            progressPercent,
             BuildActions(song));
+    }
 
     private static SongQueryDto ToSongQueryDto(SongQuery query) => new(
         Optional(query.Artist),
@@ -720,6 +721,19 @@ public sealed class EngineStateStore
     private bool IsActiveJob(Job job)
         => IsActiveJobState(EffectiveState(job));
 
+    private int CountDescendants(Guid parentId, string? kind = null)
+    {
+        var children = records.Values
+            .Where(record => record.ParentJobId == parentId)
+            .ToList();
+
+        int count = children.Count(record => kind == null || record.Summary.Kind == kind);
+        foreach (var child in children)
+            count += CountDescendants(child.Id, kind);
+
+        return count;
+    }
+
     private static bool IsActiveRecord(JobRecord record)
         => Enum.TryParse<JobState>(record.Summary.State, out var state) && IsActiveJobState(state);
 
@@ -728,6 +742,24 @@ public sealed class EngineStateStore
 
     private static bool IsActiveJobState(JobState state)
         => state is JobState.Pending or JobState.Searching or JobState.Downloading or JobState.Extracting;
+
+    private static bool IsTerminalJob(Job job)
+        => !IsActiveJobState(job.State);
+
+    private static bool IsSuccessfulJob(Job job)
+        => job.State is JobState.Done or JobState.AlreadyExists;
+
+    private static bool IsFailedOrSkippedJob(Job job)
+        => job.State is JobState.Failed or JobState.Skipped or JobState.NotFoundLastTime;
+
+    private static bool IsTerminalSong(SongJob song)
+        => IsSuccessfulSong(song) || IsFailedOrSkippedSong(song);
+
+    private static bool IsSuccessfulSong(SongJob song)
+        => song.State is JobState.Done or JobState.AlreadyExists;
+
+    private static bool IsFailedOrSkippedSong(SongJob song)
+        => song.State is JobState.Failed or JobState.Skipped or JobState.NotFoundLastTime;
 
     private sealed record JobRecord(
         Guid Id,

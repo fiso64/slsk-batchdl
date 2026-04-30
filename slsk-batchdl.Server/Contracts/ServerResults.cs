@@ -1,7 +1,7 @@
 namespace Sldl.Server;
 
 /// <summary>
-/// Song query shape used by search, download, and embedded song payloads.
+/// Song query shape used by search, download, and song payloads.
 /// </summary>
 /// <param name="Artist">Expected artist name, or null when unknown.</param>
 /// <param name="Title">Expected track title, or null for artist-level searches.</param>

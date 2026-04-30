@@ -53,25 +53,6 @@ public sealed record CancelWorkflowResponseDto(
     int Cancelled);
 
 /// <summary>
-/// Server-provided recommended presentation for general clients. Canonical execution relationships remain on
-/// JobSummaryDto.ParentJobId and JobSummaryDto.ResultJobId.
-/// </summary>
-/// <param name="Mode">
-/// One of ServerProtocol.JobPresentationModes: node, embedded, or replaced.
-/// </param>
-/// <param name="ParentJobId">
-/// Recommended parent for presentation trees. May differ from JobSummaryDto.ParentJobId.
-/// </param>
-/// <param name="ReplacementJobId">
-/// For replaced jobs, the job that should appear instead in presentation views.
-/// </param>
-public sealed record JobPresentationDto(
-    string Mode,
-    Guid? ParentJobId,
-    int Order,
-    Guid? ReplacementJobId);
-
-/// <summary>
 /// Discoverable mutation affordance. Clients should prefer this over hard-coding job states.
 /// </summary>
 /// <param name="Kind">Action kind, for example ServerProtocol.ResourceActionKinds.Cancel.</param>
@@ -88,8 +69,9 @@ public sealed record ResourceActionDto(
 /// <param name="Kind">Stable job kind string. Use ServerProtocol.JobKinds constants in .NET clients.</param>
 /// <param name="State">Stable job state string. Use ServerProtocol.JobStates constants in .NET clients.</param>
 /// <param name="FailureReason">Stable failure reason string when State is failed. Use ServerProtocol.FailureReasons constants in .NET clients.</param>
-/// <param name="ParentJobId">Canonical execution parent, not necessarily the presentation parent.</param>
+/// <param name="ParentJobId">Execution parent. Parent cancellation propagates to this job.</param>
 /// <param name="ResultJobId">For extract jobs, the semantic result job produced by extraction.</param>
+/// <param name="SourceJobId">Provenance link for independently submitted follow-up jobs, such as downloads started from search results.</param>
 /// <param name="AvailableActions">Actions currently valid for this job.</param>
 public sealed record JobSummaryDto(
     Guid JobId,
@@ -103,12 +85,12 @@ public sealed record JobSummaryDto(
     string? FailureMessage,
     Guid? ParentJobId,
     Guid? ResultJobId,
+    Guid? SourceJobId,
     IReadOnlyList<string> AppliedAutoProfiles,
-    JobPresentationDto Presentation,
     IReadOnlyList<ResourceActionDto> AvailableActions);
 
 /// <summary>
-/// Canonical selected-job snapshot: summary, typed payload, and canonical child summaries.
+/// Selected-job snapshot: summary, typed payload, and direct child summaries for client navigation.
 /// </summary>
 public sealed record JobDetailDto(
     JobSummaryDto Summary,
@@ -128,39 +110,34 @@ public sealed record WorkflowSummaryDto(
     int CompletedJobCount);
 
 /// <summary>
-/// Canonical workflow snapshot containing all job summaries in the workflow.
+/// Workflow snapshot containing execution-root job summaries unless IncludeAll is requested.
 /// </summary>
 public sealed record WorkflowDetailDto(
     WorkflowSummaryDto Summary,
     IReadOnlyList<JobSummaryDto> Jobs);
 
 /// <summary>
-/// GUI-oriented recursive job tree node. Presentation may omit or replace jobs that still exist
-/// in WorkflowDetailDto.
+/// Recursive execution tree node built from ParentJobId relationships.
 /// </summary>
-public sealed record PresentedJobNodeDto(
+public sealed record WorkflowJobNodeDto(
     JobSummaryDto Summary,
-    IReadOnlyList<PresentedJobNodeDto> Children);
+    IReadOnlyList<WorkflowJobNodeDto> Children);
 
 /// <summary>
-/// GUI-oriented workflow snapshot. Prefer this for navigation trees and job lists in the UI.
+/// Workflow snapshot shaped as an execution tree.
 /// </summary>
-public sealed record PresentedWorkflowDto(
+public sealed record WorkflowTreeDto(
     WorkflowSummaryDto Summary,
-    IReadOnlyList<PresentedJobNodeDto> Jobs);
+    IReadOnlyList<WorkflowJobNodeDto> Jobs);
 
 /// <summary>
 /// Query parameters for listing jobs.
 /// </summary>
-/// <param name="CanonicalRootsOnly">
-/// When true, returns only jobs without a canonical ParentJobId. This is not presentation root filtering.
-/// </param>
-/// <param name="IncludeNonDefault">
-/// When true, includes embedded/replaced/non-default presentation jobs that the default list hides.
+/// <param name="IncludeAll">
+/// When true, includes every matching job as a flat list. Default lists return only execution roots where ParentJobId is null.
 /// </param>
 public sealed record JobQuery(
     string? State,
     string? Kind,
     Guid? WorkflowId,
-    bool CanonicalRootsOnly,
-    bool IncludeNonDefault);
+    bool IncludeAll);

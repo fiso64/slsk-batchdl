@@ -64,8 +64,8 @@ public sealed class ServerEventBroadcaster : IDisposable
             job.FailureMessage,
             null,
             null,
+            null,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, null, job.DisplayId, null),
             []);
 
     private static Guid? GetWorkflowId(object payload)
@@ -74,7 +74,7 @@ public sealed class ServerEventBroadcaster : IDisposable
             JobSummaryDto summary => summary.WorkflowId,
             WorkflowSummaryDto summary => summary.WorkflowId,
             WorkflowDetailDto detail => detail.Summary.WorkflowId,
-            PresentedWorkflowDto workflow => workflow.Summary.WorkflowId,
+            WorkflowTreeDto workflow => workflow.Summary.WorkflowId,
             JobDetailDto detail => detail.Summary.WorkflowId,
             SearchUpdatedDto update => update.WorkflowId,
             ExtractionStartedEventDto e => e.Summary.WorkflowId,

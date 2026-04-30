@@ -53,6 +53,7 @@ public class OpenApiContractTests
             StringAssert.Contains(json, nameof(SubmitAlbumJobRequestDto));
             StringAssert.Contains(json, nameof(AlbumJobPayloadDto));
             StringAssert.Contains(json, nameof(FileCandidateDto));
+            StringAssert.Contains(json, nameof(WorkflowTreeDto));
             StringAssert.Contains(json, nameof(ApiErrorDto));
             StringAssert.Contains(json, "discriminator");
             StringAssert.Contains(json, "kind");

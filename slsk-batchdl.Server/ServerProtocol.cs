@@ -56,20 +56,6 @@ public static class ServerProtocol
     }
 
     /// <summary>
-    /// Presentation modes used by <see cref="JobPresentationDto"/>.
-    /// They describe where a GUI should display a job, not how the core engine stores it.
-    /// </summary>
-    public static class JobPresentationModes
-    {
-        /// <summary>Display as a normal node in the containing job list or workflow.</summary>
-        public const string Node = "node";
-        /// <summary>Display inside its parent job's detail view, not as a root/list node.</summary>
-        public const string Embedded = "embedded";
-        /// <summary>Hide this job when its replacement job is present.</summary>
-        public const string Replaced = "replaced";
-    }
-
-    /// <summary>
     /// Stable string values used by JobSummaryDto.State and job/event payload state fields.
     /// </summary>
     public static class JobStates

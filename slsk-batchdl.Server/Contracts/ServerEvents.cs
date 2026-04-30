@@ -132,7 +132,7 @@ public sealed record DownloadStateChangedEventDto(
     string State);
 
 /// <summary>
-/// Activity event emitted when an embedded or standalone song job changes state.
+/// Activity event emitted when a song job changes state.
 /// </summary>
 public sealed record SongStateChangedEventDto(
     Guid JobId,

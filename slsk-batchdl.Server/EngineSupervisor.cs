@@ -194,6 +194,20 @@ public sealed class EngineSupervisor
         return true;
     }
 
+    public bool CancelJobByDisplayId(Guid workflowId, int displayId)
+    {
+        DownloadEngine? engine;
+        lock (engineGate)
+            engine = currentEngine;
+
+        var job = engine?.GetJob(displayId);
+        if (job == null || job.WorkflowId != workflowId)
+            return false;
+
+        job.Cancel();
+        return true;
+    }
+
     public int CancelWorkflow(Guid workflowId)
     {
         DownloadEngine? engine;
@@ -371,7 +385,7 @@ public sealed class EngineSupervisor
         return engine?.UserSuccessCounts ?? new ConcurrentDictionary<string, int>();
     }
 
-    private static JobSummaryDto BuildSubmittedJobSummary(Job job, Guid? visualParentJobId = null)
+    private static JobSummaryDto BuildSubmittedJobSummary(Job job, Guid? sourceJobId = null)
         => new(
             job.Id,
             job.DisplayId,
@@ -384,8 +398,8 @@ public sealed class EngineSupervisor
             job.FailureMessage,
             null,
             null,
+            sourceJobId,
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            new JobPresentationDto(ServerProtocol.JobPresentationModes.Node, visualParentJobId, job.DisplayId, null),
             []);
 
     private static SearchRawResultDto ToSearchRawResultDto(SearchRawResult result)
@@ -492,7 +506,7 @@ public sealed class EngineSupervisor
         CancellationToken ct)
     {
         followUpJob.WorkflowId = sourceJob.WorkflowId;
-        StateStore.SetVisualParent(followUpJob.Id, sourceJobId);
+        StateStore.SetSourceJob(followUpJob.Id, sourceJobId);
         if (isolateOptions)
             jobSettingsResolver.SetJobOptions(followUpJob.Id, options);
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings), ct);

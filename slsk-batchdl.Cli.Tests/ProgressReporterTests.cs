@@ -111,8 +111,8 @@ public class CliProgressReporterTests
                 FailureMessage: null,
                 ParentJobId: null,
                 ResultJobId: null,
+                SourceJobId: null,
                 AppliedAutoProfiles: [],
-                Presentation: new JobPresentationDto("node", null, 6, null),
                 AvailableActions: []);
             var folder = new AlbumFolderDto(
                 new AlbumFolderRefDto("local", @"Artist\Album"),
@@ -179,7 +179,7 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void RemoteEmbeddedSongEvents_DoNotCreateStandaloneProgressLines()
+    public void RemoteAlbumChildSongEvents_DoNotCreateStandaloneProgressLines()
     {
         var reporter = new CliProgressReporter(new CliSettings());
         try
@@ -187,14 +187,15 @@ public class CliProgressReporterTests
             var workflowId = Guid.NewGuid();
             var albumJobId = Guid.NewGuid();
             var fileJobId = Guid.NewGuid();
-            var embeddedSummary = CreateSongSummary(
-                fileJobId,
-                workflowId,
-                ServerProtocol.JobPresentationModes.Embedded,
-                albumJobId);
+            var albumSummary = CreateAlbumSummary(albumJobId, ServerProtocol.JobStates.Downloading, null) with
+            {
+                WorkflowId = workflowId,
+            };
+            var childSummary = CreateSongSummary(fileJobId, workflowId, albumJobId);
 
-            InvokePrivate(reporter, "ReportJobUpserted", embeddedSummary);
-            InvokePrivate(reporter, "ReportJobStarted", new JobStartedEventDto(embeddedSummary));
+            InvokePrivate(reporter, "ReportJobUpserted", albumSummary);
+            InvokePrivate(reporter, "ReportJobUpserted", childSummary);
+            InvokePrivate(reporter, "ReportJobStarted", new JobStartedEventDto(childSummary));
             InvokePrivate(reporter, "ReportSongSearching", new SongSearchingEventDto(
                 fileJobId,
                 DisplayId: 7,
@@ -217,7 +218,7 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void RemoteEmbeddedDownloadStart_UpdatesAlbumTrackBarWithoutStandaloneJobLine()
+    public void RemoteAlbumChildDownloadStart_UpdatesAlbumTrackBarWithoutStandaloneJobLine()
     {
         var reporter = new CliProgressReporter(new CliSettings());
         try
@@ -229,13 +230,10 @@ public class CliProgressReporterTests
             {
                 WorkflowId = workflowId,
             };
-            var embeddedSummary = CreateSongSummary(
-                fileJobId,
-                workflowId,
-                ServerProtocol.JobPresentationModes.Embedded,
-                albumJobId);
+            var childSummary = CreateSongSummary(fileJobId, workflowId, albumJobId);
 
-            InvokePrivate(reporter, "ReportJobUpserted", embeddedSummary);
+            InvokePrivate(reporter, "ReportJobUpserted", albumSummary);
+            InvokePrivate(reporter, "ReportJobUpserted", childSummary);
             InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
                 albumSummary,
                 CreateSingleFileAlbumFolder(fileJobId, ServerProtocol.JobStates.Pending, null),
@@ -249,6 +247,44 @@ public class CliProgressReporterTests
 
             Assert.IsFalse(HasBackendJobBar(reporter, fileJobId));
             Assert.IsTrue(HasBackendBarData(reporter, fileJobId));
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
+    [TestMethod]
+    public void RemoteAlbumChildTerminalState_StillCountsTowardAlbumProgressAfterBarRemoval()
+    {
+        var reporter = new CliProgressReporter(new CliSettings());
+        try
+        {
+            var workflowId = Guid.NewGuid();
+            var albumJobId = Guid.NewGuid();
+            var fileJobId = Guid.NewGuid();
+            var albumSummary = CreateAlbumSummary(albumJobId, ServerProtocol.JobStates.Downloading, null) with
+            {
+                WorkflowId = workflowId,
+            };
+
+            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
+                albumSummary,
+                CreateSingleFileAlbumFolder(fileJobId, ServerProtocol.JobStates.Pending, null),
+                [CreateSongPayload(fileJobId, ServerProtocol.JobStates.Pending, null)]));
+
+            InvokePrivate(reporter, "ReportStateChanged", new SongStateChangedEventDto(
+                fileJobId,
+                DisplayId: 7,
+                workflowId,
+                new SongQueryDto("Artist", "Track", null, null, null, false),
+                ServerProtocol.JobStates.Done,
+                FailureReason: null,
+                DownloadPath: @"out\Track.flac",
+                ChosenCandidate: null));
+
+            Assert.IsFalse(HasBackendBarData(reporter, fileJobId));
+            Assert.AreEqual(1, GetBackendAlbumDoneCount(reporter, albumJobId));
         }
         finally
         {
@@ -314,6 +350,19 @@ public class CliProgressReporterTests
         return (bool)bars.GetType().GetMethod("TryGetValue")!.Invoke(bars, args)!;
     }
 
+    private static int GetBackendAlbumDoneCount(CliProgressReporter reporter, Guid albumJobId)
+    {
+        var blocks = typeof(CliProgressReporter)
+            .GetField("_backendAlbumBlocks", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(reporter)!;
+
+        object?[] args = [albumJobId, null];
+        Assert.IsTrue((bool)blocks.GetType().GetMethod("TryGetValue")!.Invoke(blocks, args)!);
+        return (int)typeof(CliProgressReporter)
+            .GetMethod("BackendAlbumDoneCount", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(reporter, [args[1]])!;
+    }
+
     private static JobSummaryDto CreateAlbumSummary(Guid jobId, string state, string? failureReason)
         => new(
             jobId,
@@ -327,11 +376,11 @@ public class CliProgressReporterTests
             FailureMessage: null,
             ParentJobId: null,
             ResultJobId: null,
+            SourceJobId: null,
             AppliedAutoProfiles: [],
-            Presentation: new JobPresentationDto("node", null, 6, null),
             AvailableActions: []);
 
-    private static JobSummaryDto CreateSongSummary(Guid jobId, Guid workflowId, string presentationMode, Guid? parentJobId)
+    private static JobSummaryDto CreateSongSummary(Guid jobId, Guid workflowId, Guid? parentJobId)
         => new(
             jobId,
             DisplayId: 7,
@@ -344,8 +393,8 @@ public class CliProgressReporterTests
             FailureMessage: null,
             ParentJobId: parentJobId,
             ResultJobId: null,
+            SourceJobId: null,
             AppliedAutoProfiles: [],
-            Presentation: new JobPresentationDto(presentationMode, parentJobId, 7, null),
             AvailableActions: []);
 
     private static AlbumFolderDto CreateSingleFileAlbumFolder(Guid fileJobId, string state, string? failureReason)

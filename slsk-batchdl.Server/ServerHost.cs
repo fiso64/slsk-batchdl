@@ -74,15 +74,14 @@ public static class ServerHost
             string? state,
             string? kind,
             Guid? workflowId,
-            bool canonicalRootsOnly = false,
-            bool includeNonDefault = false) =>
+            bool includeAll = false) =>
         {
-            var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, canonicalRootsOnly, includeNonDefault));
+            var jobs = stateStore.GetJobs(new JobQuery(state, kind, workflowId, includeAll));
             return Results.Ok(jobs);
         })
             .WithTags("Jobs")
             .WithSummary("Lists known jobs.")
-            .WithDescription("Use canonicalRootsOnly=true for root job lists in GUI views. Set includeNonDefault=true only when diagnostics or low-level child jobs are needed.")
+            .WithDescription("Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every matching job.")
             .Produces<IReadOnlyList<JobSummaryDto>>();
 
         app.MapGet("/api/jobs/{jobId:guid}", (Guid jobId, EngineStateStore stateStore) =>
@@ -233,6 +232,18 @@ public static class ServerHost
             .Produces(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound);
 
+        app.MapPost("/api/workflows/{workflowId:guid}/jobs/display/{displayId:int}/cancel", (Guid workflowId, int displayId, EngineSupervisor supervisor) =>
+        {
+            return supervisor.CancelJobByDisplayId(workflowId, displayId)
+                ? Results.Accepted($"/api/workflows/{workflowId}")
+                : Results.NotFound();
+        })
+            .WithTags("Workflows")
+            .WithSummary("Cancels a workflow job by display id.")
+            .WithDescription("Convenience endpoint for CLI-style cancellation prompts. Normal GUI clients should prefer AvailableActions on known job ids.")
+            .Produces(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound);
+
         app.MapPost("/api/jobs/extract", async (SubmitExtractJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitExtractJobAsync(request, ct)))
             .WithTags("Job Submission")
@@ -295,25 +306,26 @@ public static class ServerHost
             .WithSummary("Lists known workflows.")
             .Produces<IReadOnlyList<WorkflowSummaryDto>>();
 
-        app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, EngineStateStore stateStore) =>
+        app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, bool? includeAll, EngineStateStore stateStore) =>
         {
-            var workflow = stateStore.GetWorkflow(workflowId);
+            var workflow = stateStore.GetWorkflow(workflowId, includeAll == true);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
             .WithTags("Workflows")
             .WithSummary("Gets a workflow snapshot by id.")
+            .WithDescription("Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every workflow job. Use /tree for the same jobs grouped by ParentJobId.")
             .Produces<WorkflowDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/workflows/{workflowId:guid}/presentation", (Guid workflowId, EngineStateStore stateStore) =>
+        app.MapGet("/api/workflows/{workflowId:guid}/tree", (Guid workflowId, EngineStateStore stateStore) =>
         {
-            var workflow = stateStore.GetPresentedWorkflow(workflowId);
+            var workflow = stateStore.GetWorkflowTree(workflowId);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
             .WithTags("Workflows")
-            .WithSummary("Gets the GUI-oriented presentation tree for a workflow.")
-            .WithDescription("This view applies server presentation policy: replaced extract jobs, embedded album track jobs, and root-visible nodes are arranged for display.")
-            .Produces<PresentedWorkflowDto>()
+            .WithSummary("Gets the execution tree for a workflow.")
+            .WithDescription("This tree is built only from ParentJobId relationships. Follow-up jobs started from search results remain workflow roots and expose SourceJobId instead.")
+            .Produces<WorkflowTreeDto>()
             .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/workflows/{workflowId:guid}/cancel", (Guid workflowId, EngineSupervisor supervisor) =>

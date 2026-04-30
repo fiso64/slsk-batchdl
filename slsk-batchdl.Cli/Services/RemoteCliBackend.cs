@@ -103,8 +103,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)
     {
         var url = "api/jobs"
-            + $"?canonicalRootsOnly={query.CanonicalRootsOnly.ToString().ToLowerInvariant()}"
-            + $"&includeNonDefault={query.IncludeNonDefault.ToString().ToLowerInvariant()}"
+            + $"?includeAll={query.IncludeAll.ToString().ToLowerInvariant()}"
             + QueryPart("state", query.State)
             + QueryPart("kind", query.Kind)
             + QueryPart("workflowId", query.WorkflowId?.ToString());
@@ -208,7 +207,16 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
 
     public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
-        var jobs = await GetJobsAsync(new JobQuery(null, null, workflowId, CanonicalRootsOnly: false, IncludeNonDefault: true), ct);
+        if (workflowId is Guid id)
+        {
+            using var response = await http.PostAsync($"api/workflows/{id}/jobs/display/{displayId}/cancel", null, ct);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return false;
+            await EnsureSuccessAsync(response, ct);
+            return true;
+        }
+
+        var jobs = await GetJobsAsync(new JobQuery(null, null, null, IncludeAll: true), ct);
         var match = jobs.FirstOrDefault(job => job.DisplayId == displayId);
         return match != null && await CancelJobAsync(match.JobId, ct);
     }
