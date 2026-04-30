@@ -240,6 +240,10 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
+            await WaitForConditionAsync(
+                () => Task.FromResult(Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length >= 2),
+                "Timed out waiting for extracted album downloads to appear on disk.");
+
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
                 .OrderBy(x => x)

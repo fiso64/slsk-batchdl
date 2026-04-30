@@ -13,7 +13,7 @@ public static class ServerHost
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(consoleOptions =>
         {
-            consoleOptions.SingleLine = true;
+            consoleOptions.SingleLine = false;
             consoleOptions.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
         });
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
@@ -134,9 +134,9 @@ public static class ServerHost
                 var results = supervisor.GetFolderResults(jobId, includeFiles);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Search Results")
@@ -153,9 +153,9 @@ public static class ServerHost
                 var results = supervisor.GetFolderResults(jobId, request);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Search Results")
@@ -191,9 +191,9 @@ public static class ServerHost
                 var results = supervisor.GetAggregateAlbumResults(jobId);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Search Results")
@@ -209,9 +209,9 @@ public static class ServerHost
                 var results = supervisor.GetAggregateAlbumResults(jobId, request);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Search Results")
@@ -233,9 +233,9 @@ public static class ServerHost
                     ? Results.Accepted($"/api/jobs/{summary.JobId}", summary)
                     : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Follow-up Jobs")
@@ -258,9 +258,9 @@ public static class ServerHost
                     ? Results.Accepted($"/api/jobs/{jobId}", summaries)
                     : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Follow-up Jobs")
@@ -283,9 +283,9 @@ public static class ServerHost
                     ? Results.Accepted($"/api/jobs/{summary.JobId}", summary)
                     : Results.NotFound();
             }
-            catch (ArgumentException ex)
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
-                return Results.BadRequest(new ApiErrorDto(ex.Message));
+                return BadRequest(ex);
             }
         })
             .WithTags("Follow-up Jobs")
@@ -432,9 +432,22 @@ public static class ServerHost
             var summary = await submit();
             return Results.Accepted($"/api/jobs/{summary.JobId}", summary);
         }
-        catch (ArgumentException ex)
+        catch (Exception ex) when (TryCreateBadRequest(ex, out _))
         {
-            return Results.BadRequest(new ApiErrorDto(ex.Message));
+            return BadRequest(ex);
         }
+    }
+
+    private static IResult BadRequest(Exception ex)
+    {
+        TryCreateBadRequest(ex, out var error);
+        return Results.BadRequest(new ApiErrorDto(error));
+    }
+
+    private static bool TryCreateBadRequest(Exception ex, out string error)
+    {
+        error = ex.Message;
+        return ex is ArgumentException
+            || ex.Message.StartsWith("Input error:", StringComparison.Ordinal);
     }
 }

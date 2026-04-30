@@ -43,7 +43,14 @@ internal static partial class Program
 
         if (remoteSettings.IsEnabled)
         {
-            await RunRemoteAsync(bindArgs, rootSettings, cliSettings, remoteSettings, cts);
+            try
+            {
+                await RunRemoteAsync(bindArgs, rootSettings, cliSettings, remoteSettings, cts);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Logger.Fatal(ex.Message);
+            }
             return;
         }
 

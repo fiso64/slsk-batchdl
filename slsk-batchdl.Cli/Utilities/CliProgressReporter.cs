@@ -169,9 +169,7 @@ public class CliProgressReporter
             && IsTerminalJobState(summary.State)
             && _backendAlbumBlocks.TryRemove(summary.JobId, out var block))
         {
-            CompleteRemainingBackendAlbumBars(block, summary);
-            _backendJobBars.TryRemove(summary.JobId, out _);
-            _backendJobStatuses.TryRemove(summary.JobId, out _);
+            CompleteBackendAlbumBlock(summary.JobId, block, summary);
         }
     }
 
@@ -784,11 +782,10 @@ public class CliProgressReporter
         if (_albumBlocks.TryGetValue(job, out var block))
         {
             int total = block.Songs.Count;
-            int done  = block.Songs.Count(s => s.State is JobState.Done or JobState.AlreadyExists or JobState.Failed or JobState.Skipped);
             if (_jobBars.TryGetValue(job, out var headerBar) && headerBar != null)
             {
                 _jobStatuses.TryGetValue(job, out var status);
-                try { headerBar.Refresh(100, AlbumHeaderText(job, done, total, status)); } catch { }
+                try { headerBar.Refresh(100, AlbumHeaderText(job, total, total, status)); } catch { }
             }
             _albumBlocks.TryRemove(job, out _);
         }
@@ -810,23 +807,28 @@ public class CliProgressReporter
             return;
         }
 
-        if (_backendAlbumBlocks.TryGetValue(job.Summary.JobId, out var block))
+        if (_backendAlbumBlocks.TryRemove(job.Summary.JobId, out var block))
         {
-            CompleteRemainingBackendAlbumBars(block, job.Summary);
-            int total = block.Songs.Count;
-            int done = BackendAlbumDoneCount(block);
-            if (_backendJobBars.TryGetValue(job.Summary.JobId, out var headerBar) && headerBar != null)
-            {
-                _backendJobStatuses.TryGetValue(job.Summary.JobId, out var status);
-                try { headerBar.Refresh(100, AlbumHeaderText(job.Summary, done, total, status)); } catch { }
-            }
-            _backendAlbumBlocks.TryRemove(job.Summary.JobId, out _);
+            CompleteBackendAlbumBlock(job.Summary.JobId, block, job.Summary);
         }
         _backendJobBars.TryRemove(job.Summary.JobId, out _);
         _backendJobStatuses.TryRemove(job.Summary.JobId, out _);
 
         if (!Console.IsOutputRedirected && !_cli.NoProgress)
             Printing.WriteLine();
+    }
+
+    private void CompleteBackendAlbumBlock(Guid albumJobId, BackendAlbumBlock block, JobSummaryDto summary)
+    {
+        CompleteRemainingBackendAlbumBars(block, summary);
+        int total = block.Songs.Count;
+        if (_backendJobBars.TryGetValue(albumJobId, out var headerBar) && headerBar != null)
+        {
+            _backendJobStatuses.TryGetValue(albumJobId, out var status);
+            try { headerBar.Refresh(100, AlbumHeaderText(summary, total, total, status)); } catch { }
+        }
+        _backendJobBars.TryRemove(albumJobId, out _);
+        _backendJobStatuses.TryRemove(albumJobId, out _);
     }
 
     private void InitializeBackendAlbumBlock(JobSummaryDto summary, IReadOnlyList<SongJobPayloadDto>? tracks)
@@ -850,6 +852,8 @@ public class CliProgressReporter
     {
         foreach (var song in block.Songs.Where(song => song.JobId.HasValue))
         {
+            block.CompletedSongIds.TryAdd(song.JobId!.Value, 0);
+
             if (!_backendBars.TryGetValue(song.JobId!.Value, out var data))
                 continue;
 

@@ -308,7 +308,20 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
             return;
 
         var body = await response.Content.ReadAsStringAsync(ct);
-        throw new InvalidOperationException($"Server request failed with {(int)response.StatusCode} {response.ReasonPhrase}: {body}");
+        var detail = TryReadApiError(body) ?? body;
+        throw new InvalidOperationException($"Server request failed with {(int)response.StatusCode} {response.ReasonPhrase}: {detail}");
+    }
+
+    private static string? TryReadApiError(string body)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<ApiErrorDto>(body)?.Error;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     private static string QueryPart(string name, string? value)
