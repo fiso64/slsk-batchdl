@@ -292,6 +292,49 @@ public class CliProgressReporterTests
         }
     }
 
+    [TestMethod]
+    public void RemoteAlbumChildTerminalStates_CanArriveConcurrently()
+    {
+        var reporter = new CliProgressReporter(new CliSettings());
+        try
+        {
+            var workflowId = Guid.NewGuid();
+            var albumJobId = Guid.NewGuid();
+            var albumSummary = CreateAlbumSummary(albumJobId, ServerProtocol.JobStates.Downloading, null) with
+            {
+                WorkflowId = workflowId,
+            };
+            var fileJobIds = Enumerable.Range(0, 32).Select(_ => Guid.NewGuid()).ToArray();
+            var tracks = fileJobIds
+                .Select(id => CreateSongPayload(id, ServerProtocol.JobStates.Pending, null))
+                .ToList();
+
+            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
+                albumSummary,
+                CreateSingleFileAlbumFolder(fileJobIds[0], ServerProtocol.JobStates.Pending, null),
+                tracks));
+
+            Parallel.ForEach(fileJobIds, fileJobId =>
+            {
+                InvokePrivate(reporter, "ReportStateChanged", new SongStateChangedEventDto(
+                    fileJobId,
+                    DisplayId: 7,
+                    workflowId,
+                    new SongQueryDto("Artist", "Track", null, null, null, false),
+                    ServerProtocol.JobStates.Failed,
+                    ServerProtocol.FailureReasons.Cancelled,
+                    DownloadPath: null,
+                    ChosenCandidate: null));
+            });
+
+            Assert.AreEqual(fileJobIds.Length, GetBackendAlbumDoneCount(reporter, albumJobId));
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
     private static object? InvokePrivate(object target, string name, params object[] args)
     {
         var argTypes = args.Select(a => a.GetType()).ToArray();

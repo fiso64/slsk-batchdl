@@ -53,7 +53,7 @@ public class CliProgressReporter
     {
         public JobSummaryDto Summary = default!;
         public List<SongJobPayloadDto> Songs = new();
-        public HashSet<Guid> CompletedSongIds = new();
+        public ConcurrentDictionary<Guid, byte> CompletedSongIds = new();
     }
 
     private readonly CancellationTokenSource _tickCts = new();
@@ -241,7 +241,7 @@ public class CliProgressReporter
             if (song.JobId is not Guid jobId)
                 continue;
 
-            if (block.CompletedSongIds.Contains(jobId))
+            if (block.CompletedSongIds.ContainsKey(jobId))
             {
                 done++;
                 continue;
@@ -264,7 +264,7 @@ public class CliProgressReporter
         foreach (var block in _backendAlbumBlocks.Values)
         {
             if (block.Songs.Any(song => song.JobId == songJobId))
-                block.CompletedSongIds.Add(songJobId);
+                block.CompletedSongIds.TryAdd(songJobId, 0);
         }
     }
 
