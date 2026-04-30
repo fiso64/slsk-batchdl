@@ -36,11 +36,13 @@ public static class ServerHost
         builder.Services.AddSingleton<EngineSupervisor>();
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<ServerEventBroadcaster>();
+        builder.Services.AddSingleton<ServerProgressLogReporter>();
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
         var app = builder.Build();
         CoreLoggerBridge.Configure(app.Services, (options ?? app.Services.GetRequiredService<IOptions<ServerOptions>>().Value).Engine.LogLevel);
         _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
+        _ = app.Services.GetRequiredService<ServerProgressLogReporter>();
 
         app.MapOpenApi("/api/openapi.json");
         MapEndpoints(app);
