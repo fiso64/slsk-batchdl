@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Extensions.Logging;
 using Soulseek;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
@@ -17,7 +18,7 @@ public class StaleDownloadTests
     private static readonly TimeSpan SignalTimeout = TimeSpan.FromSeconds(2);
 
     [TestMethod]
-    public async Task SongDownload_ChosenResultCancelsAfterMaxStaleTimeWithoutActivity()
+    public async Task SongDownload_ChosenResultFailsAfterMaxStaleTimeWithoutActivity()
     {
         var outputDir = CreateOutputDir();
         var (response, candidate) = CreateCandidate("stalled-user", @"Music\Test Artist - Test Song.mp3");
@@ -35,6 +36,9 @@ public class StaleDownloadTests
             ResolvedTarget = candidate,
         };
         var engine = CreateEngine(engineSettings, client, clock);
+        StaleDownloadException? attemptException = null;
+        engine.Events.DownloadAttemptFailed += (_, _, _, _, _, ex) =>
+            attemptException = ex as StaleDownloadException;
 
         using var runCts = new CancellationTokenSource();
         var runTask = Start(engine, song, settings, runCts.Token);
@@ -52,7 +56,10 @@ public class StaleDownloadTests
             Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
 
             await runTask.WaitAsync(SignalTimeout);
-            AssertCancelled(song);
+            AssertFailed(song, JobFailureReason.AllDownloadsFailed);
+            Assert.AreEqual(JobCancellationSource.None, song.CancellationSource);
+            StringAssert.Contains(song.FailureMessage, "Download attempt became stale");
+            Assert.IsNotNull(attemptException);
         }
         finally
         {
@@ -64,7 +71,7 @@ public class StaleDownloadTests
     }
 
     [TestMethod]
-    public async Task SongDownload_QueuedResultCancelsAfterMaxStaleTimeWithoutActivity()
+    public async Task SongDownload_QueuedResultFailsAfterMaxStaleTimeWithoutActivity()
     {
         var outputDir = CreateOutputDir();
         var (response, candidate) = CreateCandidate("queued-user", @"Music\Test Artist - Queued Song.mp3");
@@ -90,6 +97,9 @@ public class StaleDownloadTests
             ResolvedTarget = candidate,
         };
         var engine = CreateEngine(engineSettings, client, clock);
+        StaleDownloadException? attemptException = null;
+        engine.Events.DownloadAttemptFailed += (_, _, _, _, _, ex) =>
+            attemptException = ex as StaleDownloadException;
 
         using var runCts = new CancellationTokenSource();
         var runTask = Start(engine, song, settings, runCts.Token);
@@ -102,12 +112,73 @@ public class StaleDownloadTests
             Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
 
             await runTask.WaitAsync(SignalTimeout);
-            AssertCancelled(song);
+            AssertFailed(song, JobFailureReason.AllDownloadsFailed);
+            Assert.AreEqual(JobCancellationSource.None, song.CancellationSource);
+            StringAssert.Contains(song.FailureMessage, "Download attempt became stale");
+            Assert.IsNotNull(attemptException);
         }
         finally
         {
             runCts.Cancel();
             releaseQueued.TrySetResult();
+            await IgnoreRunCancellation(runTask);
+            DeleteOutputDir(outputDir);
+        }
+    }
+
+    [TestMethod]
+    public async Task SongDownload_StaleCandidateTriesNextCandidate()
+    {
+        var outputDir = CreateOutputDir();
+        var staleFile = TestHelpers.CreateSlFile(@"Music\Test Artist - Test Song.mp3", size: 5000, length: 180);
+        var goodFile = TestHelpers.CreateSlFile(@"Shares\Test Artist - Test Song.mp3", size: 5000, length: 180);
+        var staleResponse = CreateResponse("stale-user", staleFile);
+        var goodResponse = CreateResponse("good-user", goodFile);
+        var staleCandidate = new FileCandidate(staleResponse, staleFile);
+        var goodCandidate = new FileCandidate(goodResponse, goodFile);
+        var downloadGate = new TestHelpers.DownloadGate();
+        var client = new ClientTests.MockSoulseekClient([staleResponse, goodResponse])
+        {
+            BeforeDownloadCompletesAsync = (username, filename, ct) =>
+                username == "stale-user"
+                    ? downloadGate.BlockAsync(username, filename, ct)
+                    : Task.CompletedTask,
+        };
+
+        var clock = new ManualTimeProvider();
+        var engineSettings = CreateEngineSettings();
+        var settings = CreateSettings(outputDir);
+        settings.Transfer.MaxDownloadRetries = 2;
+        var song = new SongJob(new SongQuery { Artist = "Test Artist", Title = "Test Song" })
+        {
+            Candidates = [staleCandidate, goodCandidate],
+        };
+        var engine = CreateEngine(engineSettings, client, clock);
+        StaleDownloadException? attemptException = null;
+        engine.Events.DownloadAttemptFailed += (_, candidate, _, _, _, ex) =>
+        {
+            if (candidate.Username == "stale-user")
+                attemptException = ex as StaleDownloadException;
+        };
+
+        using var runCts = new CancellationTokenSource();
+        var runTask = Start(engine, song, settings, runCts.Token);
+        try
+        {
+            await downloadGate.WaitForStartedCountAsync(1);
+
+            clock.Advance(MaxStaleTime);
+            Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
+
+            await runTask.WaitAsync(SignalTimeout);
+            Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
+            Assert.AreEqual("good-user", song.ChosenCandidate?.Username);
+            Assert.IsNotNull(attemptException);
+        }
+        finally
+        {
+            runCts.Cancel();
+            downloadGate.ReleaseAll();
             await IgnoreRunCancellation(runTask);
             DeleteOutputDir(outputDir);
         }
@@ -221,7 +292,7 @@ public class StaleDownloadTests
     }
 
     [TestMethod]
-    public async Task AlbumDownload_StaleTrackCancelsAlbum()
+    public async Task AlbumDownload_StaleFolderFailsAfterRetriesExhausted()
     {
         var outputDir = CreateOutputDir();
         var file = TestHelpers.CreateSlFile(@"Music\Test Artist\Test Album\01. Test Artist - Test Song.mp3", size: 5000, length: 180);
@@ -244,6 +315,12 @@ public class StaleDownloadTests
         var engineSettings = CreateEngineSettings();
         var settings = CreateSettings(outputDir);
         var engine = CreateEngine(engineSettings, client, clock);
+        var warnings = new List<string>();
+        engine.Events.JobMessage += (job, level, _, message) =>
+        {
+            if (ReferenceEquals(job, album) && level == LogLevel.Warning)
+                warnings.Add(message);
+        };
 
         using var runCts = new CancellationTokenSource();
         var runTask = Start(engine, album, settings, runCts.Token);
@@ -256,10 +333,15 @@ public class StaleDownloadTests
             Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
 
             await runTask.WaitAsync(SignalTimeout);
-            AssertCancelled(album);
-            Assert.AreEqual(JobCancellationSource.InternalEngine, album.CancellationSource);
-            StringAssert.Contains(album.FailureMessage, "Album download became stale");
-            Assert.IsTrue(album.TrackJobs.Any(song => song.FailureReason == JobFailureReason.Cancelled));
+            AssertFailed(album, JobFailureReason.AllDownloadsFailed);
+            Assert.AreEqual(JobCancellationSource.None, album.CancellationSource);
+            Assert.IsTrue(album.TrackJobs.Any(song =>
+                song.TerminalOutcome == JobTerminalOutcome.Failed
+                && song.FailureReason == JobFailureReason.AllDownloadsFailed
+                && StaleDownloadException.IsStaleFailureMessage(song.FailureMessage)));
+            Assert.IsTrue(warnings.Any(message =>
+                message.Contains("album candidate became stale", StringComparison.Ordinal)
+                && message.Contains("no more album candidates will be tried", StringComparison.Ordinal)));
         }
         finally
         {
@@ -271,7 +353,69 @@ public class StaleDownloadTests
     }
 
     [TestMethod]
-    public async Task AggregateDownload_StaleChildCancelsAggregate()
+    public async Task AlbumDownload_StaleFolderTriesNextFolder()
+    {
+        var outputDir = CreateOutputDir();
+        var staleFile = TestHelpers.CreateSlFile(@"Music\Test Artist\Test Album\01. Test Artist - Test Song.mp3", size: 5000, length: 180);
+        var goodFile = TestHelpers.CreateSlFile(@"Shares\Test Artist\Test Album\01. Test Artist - Test Song.mp3", size: 5000, length: 180);
+        var staleResponse = CreateResponse("stale-album-user", staleFile);
+        var goodResponse = CreateResponse("good-album-user", goodFile);
+        var staleFolder = CreateAlbumFolder(staleResponse, staleFile);
+        var goodFolder = CreateAlbumFolder(goodResponse, goodFile);
+        var album = new AlbumJob(new AlbumQuery { Artist = "Test Artist", Album = "Test Album" })
+        {
+            Results = [staleFolder, goodFolder],
+            SkipResolvedTargetTrackCountVerification = true,
+        };
+
+        var downloadGate = new TestHelpers.DownloadGate();
+        var client = new ClientTests.MockSoulseekClient([staleResponse, goodResponse])
+        {
+            BeforeDownloadCompletesAsync = (username, filename, ct) =>
+                username == "stale-album-user"
+                    ? downloadGate.BlockAsync(username, filename, ct)
+                    : Task.CompletedTask,
+        };
+        var clock = new ManualTimeProvider();
+        var engineSettings = CreateEngineSettings();
+        var settings = CreateSettings(outputDir);
+        settings.Transfer.MaxDownloadRetries = 2;
+        var engine = CreateEngine(engineSettings, client, clock);
+        var warnings = new List<string>();
+        engine.Events.JobMessage += (job, level, _, message) =>
+        {
+            if (ReferenceEquals(job, album) && level == LogLevel.Warning)
+                warnings.Add(message);
+        };
+
+        using var runCts = new CancellationTokenSource();
+        var runTask = Start(engine, album, settings, runCts.Token);
+        try
+        {
+            await downloadGate.WaitForStartedCountAsync(1);
+
+            clock.Advance(MaxStaleTime);
+            Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
+
+            await runTask.WaitAsync(SignalTimeout);
+            Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);
+            Assert.AreSame(goodFolder, album.ResolvedTarget);
+            Assert.IsTrue(album.TrackJobs.All(song => song.TerminalOutcome == JobTerminalOutcome.Succeeded));
+            Assert.IsTrue(warnings.Any(message =>
+                message.Contains("album candidate became stale", StringComparison.Ordinal)
+                && message.Contains("trying next album candidate", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            runCts.Cancel();
+            downloadGate.ReleaseAll();
+            await IgnoreRunCancellation(runTask);
+            DeleteOutputDir(outputDir);
+        }
+    }
+
+    [TestMethod]
+    public async Task AggregateDownload_StaleChildFailsAggregate()
     {
         var outputDir = CreateOutputDir();
         var file = TestHelpers.CreateSlFile(@"Music\Test Artist - Test Song.mp3", size: 5000, length: 180);
@@ -300,8 +444,10 @@ public class StaleDownloadTests
             Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
 
             await runTask.WaitAsync(SignalTimeout);
-            AssertCancelled(aggregate);
-            Assert.IsTrue(aggregate.Songs.Any(song => song.FailureReason == JobFailureReason.Cancelled));
+            AssertFailed(aggregate, JobFailureReason.AllDownloadsFailed);
+            Assert.IsTrue(aggregate.Songs.Any(song =>
+                song.FailureReason == JobFailureReason.AllDownloadsFailed
+                && StaleDownloadException.IsStaleFailureMessage(song.FailureMessage)));
         }
         finally
         {
@@ -313,7 +459,7 @@ public class StaleDownloadTests
     }
 
     [TestMethod]
-    public async Task AlbumAggregateDownload_StaleTrackCancelsAlbumAggregate()
+    public async Task AlbumAggregateDownload_StaleTrackFailsAlbumAggregate()
     {
         var outputDir = CreateOutputDir();
         var file = TestHelpers.CreateSlFile(@"Music\Test Artist\Test Album\01. Test Artist - Test Song.mp3", size: 5000, length: 180);
@@ -343,8 +489,10 @@ public class StaleDownloadTests
             Assert.AreEqual(1, engine.RunStaleDownloadCheckForTesting());
 
             await runTask.WaitAsync(SignalTimeout);
-            AssertCancelled(aggregate);
-            Assert.IsTrue(aggregate.Albums.SelectMany(album => album.TrackJobs).Any(song => song.FailureReason == JobFailureReason.Cancelled));
+            AssertFailed(aggregate, JobFailureReason.AllDownloadsFailed);
+            Assert.IsTrue(aggregate.Albums.SelectMany(album => album.TrackJobs).Any(song =>
+                song.FailureReason == JobFailureReason.AllDownloadsFailed
+                && StaleDownloadException.IsStaleFailureMessage(song.FailureMessage)));
         }
         finally
         {
@@ -551,11 +699,11 @@ public class StaleDownloadTests
     private static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private static void AssertCancelled(Job job)
+    private static void AssertFailed(Job job, JobFailureReason reason)
     {
         Assert.AreEqual(JobLifecycleState.Terminal, job.LifecycleState);
-        Assert.AreEqual(JobTerminalOutcome.Cancelled, job.TerminalOutcome);
-        Assert.AreEqual(JobFailureReason.Cancelled, job.FailureReason);
+        Assert.AreEqual(JobTerminalOutcome.Failed, job.TerminalOutcome);
+        Assert.AreEqual(reason, job.FailureReason);
     }
 
     private static async Task IgnoreRunCancellation(Task runTask)

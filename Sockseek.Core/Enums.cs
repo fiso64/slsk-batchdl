@@ -71,8 +71,8 @@ namespace Sockseek.Core;
         /// <summary>The user requested global cancellation of all engine jobs.</summary>
         UserRequestedAllJobs = 4,
         /// <summary>
-        /// The engine cancelled the job internally, for example because an engine-owned
-        /// timeout/watchdog such as stale-download detection caused a terminal cancellation.
+        /// The engine cancelled the job internally. This is for terminal cancellations only;
+        /// retryable transfer-attempt watchdogs should surface as download failures instead.
         /// </summary>
         InternalEngine = 5,
     }

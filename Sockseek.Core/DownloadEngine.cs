@@ -2151,6 +2151,27 @@ public class DownloadEngine
             ctx.PlaylistEditor?.Update();
             return new(false, JobOutcome.AwaitingSelection(), null, failedFolder ?? lastChosenFolder);
         }
+
+        void ReportStaleAlbumCandidateIfNeeded(AlbumFolder folder, bool wasPreselected, bool willTryNextFolder)
+        {
+            var staleTrack = TrackJobsFor(folder)
+                .FirstOrDefault(song => StaleDownloadException.IsStaleFailureMessage(song.FailureMessage));
+            if (staleTrack == null)
+                return;
+
+            var action = willTryNextFolder
+                ? "trying next album candidate"
+                : wasPreselected && job.DownloadBehavior == DownloadBehavior.Manual
+                    ? "returning to album selection"
+                    : "no more album candidates will be tried";
+            var folderDisplay = $"{folder.Username}\\{folder.FolderPath}";
+            Events.RaiseJobMessage(
+                job,
+                LogLevel.Warning,
+                null,
+                $"album candidate became stale; {action}: {folderDisplay}\n    Error: {staleTrack.FailureMessage}");
+        }
+
         while (job.Results.Count > 0 && !config.Output.AlbumArtOnly)
         {
             bool wasPreselected = job.ResolvedTarget != null;
@@ -2309,7 +2330,11 @@ public class DownloadEngine
             }
             catch (OperationCanceledException)
             {
+                var willTryNextFolder = !wasPreselected
+                    && tried < config.Transfer.MaxDownloadRetries
+                    && job.Results.Count > 1;
                 MarkUnfinishedAlbumFilesCancelled(job, chosenFolder);
+                ReportStaleAlbumCandidateIfNeeded(chosenFolder, wasPreselected, willTryNextFolder);
 
                 HandleIncompleteAlbum(job, chosenFolder, config.ResolveIncompleteAlbumAction(), config);
 
@@ -2354,11 +2379,7 @@ public class DownloadEngine
         {
             var source = CancellationSourceForDerivedCancellation(job, cancelledTracks.Cast<Job>().ToArray());
             MarkUnfinishedAlbumFilesCancelled(job, folder);
-            return JobOutcome.Cancelled(
-                source,
-                source == JobCancellationSource.InternalEngine
-                    ? StaleAlbumFailureMessage(cancelledTracks)
-                    : null);
+            return JobOutcome.Cancelled(source);
         }
 
         var failedSong = tracks.FirstOrDefault(song =>
@@ -2372,20 +2393,6 @@ public class DownloadEngine
             : JobOutcome.Failed(
                 failedSong.FailureReason == JobFailureReason.None ? JobFailureReason.AllDownloadsFailed : failedSong.FailureReason,
                 failedSong.FailureMessage);
-    }
-
-    static string StaleAlbumFailureMessage(IReadOnlyList<SongJob> cancelledTracks)
-    {
-        var staleTracks = cancelledTracks
-            .Where(song => song.CancellationSource == JobCancellationSource.InternalEngine)
-            .ToList();
-
-        return staleTracks.Count switch
-        {
-            1 => $"Album download became stale because track '{staleTracks[0]}' stopped making progress.",
-            > 1 => $"Album download became stale because {staleTracks.Count} tracks stopped making progress.",
-            _ => "Album download became stale because one or more tracks stopped making progress.",
-        };
     }
 
     void HandleIncompleteAlbumIfNeeded(
@@ -2588,6 +2595,9 @@ public class DownloadEngine
 
     static string JobLogKind(Job job) => SockseekLog.JobTypeName(job);
 
+    static Job? DownloadParentFor(SongJob song, Job job)
+        => ReferenceEquals(song, job) ? null : job;
+
 
     /// <summary>
     /// Searches for candidates for <paramref name="song"/> then downloads the best one.
@@ -2637,7 +2647,8 @@ public class DownloadEngine
                                     config.Transfer,
                                     config.Output.ParentDir,
                                     cts.Token,
-                                    target.PublishToDuplicateCache)
+                                    target.PublishToDuplicateCache,
+                                    DownloadParentFor(song, job))
                                 .ContinueWith(t =>
                                 {
                                     if (t.IsCompletedSuccessfully)
@@ -2722,7 +2733,8 @@ public class DownloadEngine
                     config.Transfer,
                     config.Output.ParentDir,
                     cts.Token,
-                    target.PublishToDuplicateCache);
+                    target.PublishToDuplicateCache,
+                    DownloadParentFor(song, job));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Sockseek.Core;
+using Sockseek.Core.Services;
 
 namespace Sockseek.Api;
 
@@ -325,6 +326,9 @@ public sealed class JobActivityLogFormatter
                 var showAlbumTrackInLive = ShowTerminalKindInLive(albumTrackKind);
                 if (albumTrackKind == ActivityLogDisplayKind.AlbumTrackFailed)
                 {
+                    if (StaleDownloadException.IsStaleFailureMessage(song.FailureMessage))
+                        return null;
+
                     albumTrackKind = ActivityLogDisplayKind.Status;
                     albumTrackLevel ??= LogLevel.Warning;
                     showAlbumTrackInLive = true;

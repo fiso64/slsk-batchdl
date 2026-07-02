@@ -55,7 +55,7 @@ public class StaleDownloadCoordinatorTests
     }
 
     [TestMethod]
-    public void QueuedAttempt_CancelsAfterMaxStaleTimeWithoutActivity()
+    public void QueuedAttempt_CancelsTransferAfterMaxStaleTimeWithoutActivity()
     {
         using var scenario = new Scenario();
         var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
@@ -67,7 +67,7 @@ public class StaleDownloadCoordinatorTests
 
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(attempt);
+        AssertStaleTransferCancelled(attempt);
         Assert.IsFalse(scenario.Registry.Downloads.ContainsKey(attempt.Download.Candidate.Filename));
     }
 
@@ -90,7 +90,7 @@ public class StaleDownloadCoordinatorTests
 
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(attempt);
+        AssertStaleTransferCancelled(attempt);
     }
 
     [TestMethod]
@@ -109,7 +109,7 @@ public class StaleDownloadCoordinatorTests
 
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(attempt);
+        AssertStaleTransferCancelled(attempt);
     }
 
     [TestMethod]
@@ -124,7 +124,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
 
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(attempt);
+        AssertStaleTransferCancelled(attempt);
     }
 
     [TestMethod]
@@ -146,8 +146,8 @@ public class StaleDownloadCoordinatorTests
 
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(2, scenario.CancelStaleDownloads());
-        AssertCancelled(queued);
-        AssertCancelled(active);
+        AssertStaleTransferCancelled(queued);
+        AssertStaleTransferCancelled(active);
     }
 
     [TestMethod]
@@ -170,7 +170,7 @@ public class StaleDownloadCoordinatorTests
 
         scenario.Advance(MaxStaleTime);
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(queued);
+        AssertStaleTransferCancelled(queued);
     }
 
     [TestMethod]
@@ -187,7 +187,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
 
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(stalled);
+        AssertStaleTransferCancelled(stalled);
         Assert.IsFalse(active.Download.Cts.IsCancellationRequested);
     }
 
@@ -205,7 +205,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
 
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
-        AssertCancelled(queued);
+        AssertStaleTransferCancelled(queued);
         Assert.IsFalse(otherUser.Download.Cts.IsCancellationRequested);
     }
 
@@ -223,10 +223,35 @@ public class StaleDownloadCoordinatorTests
         Assert.IsFalse(attempt.Download.Cts.IsCancellationRequested);
     }
 
-    private static void AssertCancelled(AttemptHandle attempt)
+    [TestMethod]
+    public void StaleCoordinator_DoesNotWriteUserFacingAttemptLogs()
     {
-        Assert.IsTrue(attempt.Song.Cts?.IsCancellationRequested == true);
+        SockseekLog.RemoveNonFileOutputs();
+        var entries = new List<SockseekLog.StructuredLogEntry>();
+        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry));
+        try
+        {
+            using var scenario = new Scenario();
+            scenario.Start("user-a", @"Music\Artist - Song.mp3");
+
+            scenario.Advance(MaxStaleTime);
+            Assert.AreEqual(1, scenario.CancelStaleDownloads());
+
+            Assert.IsFalse(entries.Any(entry => entry.CategoryName == SockseekLog.Categories.Jobs),
+                "The coordinator is only the watchdog; Downloader/album orchestration own user-facing stale diagnostics.");
+        }
+        finally
+        {
+            SockseekLog.RemoveNonFileOutputs();
+        }
+    }
+
+    private static void AssertStaleTransferCancelled(AttemptHandle attempt)
+    {
+        Assert.IsFalse(attempt.Song.Cts?.IsCancellationRequested == true);
         Assert.IsTrue(attempt.Download.Cts.IsCancellationRequested);
+        Assert.IsTrue(attempt.Download.IsStaleCancelled);
+        Assert.AreEqual((int)MaxStaleTime.TotalMilliseconds, attempt.Download.StaleMaxStaleTimeMs);
     }
 
     private static string FindRepositoryRoot()
@@ -263,7 +288,7 @@ public class StaleDownloadCoordinatorTests
         public SessionRegistry Registry { get; } = new();
         public StaleDownloadCoordinator Coordinator { get; }
 
-        public AttemptHandle Start(string username, string filename)
+        public AttemptHandle Start(string username, string filename, Job? parentJob = null)
         {
             var response = new SearchResponse(username, 1, true, 100_000, 0, []);
             var file = TestHelpers.CreateSlFile(filename, size: 50_000, length: 180);
@@ -272,7 +297,7 @@ public class StaleDownloadCoordinatorTests
             {
                 Cts = new CancellationTokenSource(),
             };
-            var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource());
+            var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource(), parentJob);
             Registry.Downloads[candidate.Filename] = activeDownload;
             var activityReady = new TaskCompletionSource<StaleDownloadCoordinator.PeerTransferActivity>(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

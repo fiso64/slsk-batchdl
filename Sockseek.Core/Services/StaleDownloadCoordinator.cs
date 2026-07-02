@@ -20,7 +20,7 @@ internal sealed class StaleDownloadCoordinator
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    // Arms stale cancellation only for the Soulseek peer-transfer call. Search,
+    // Arms stale detection only for the Soulseek peer-transfer call. Search,
     // setup, fallback, organization, and on-complete work must stay outside this scope.
     internal async Task<T> WatchPeerTransferAsync<T>(
         ActiveDownload download,
@@ -125,11 +125,7 @@ internal sealed class StaleDownloadCoordinator
         foreach (var attempt in staleAttempts)
         {
             var download = attempt.Download;
-            SockseekLog.Jobs.Info(
-                download.Song,
-                $"cancelling stale download after {attempt.MaxStaleTimeMs}ms without activity: " +
-                $"{download.Song} ({download.Candidate.Username}\\{download.Candidate.Filename})");
-            try { download.Song.Cts?.Cancel(); } catch { }
+            download.MarkStaleCancelled(attempt.MaxStaleTimeMs);
             try { download.Cts.Cancel(); } catch { }
             registry.Downloads.TryRemove(download.Candidate.Filename, out _);
         }

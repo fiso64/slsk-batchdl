@@ -864,7 +864,7 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void EventLogger_InternalEngineCancelledAlbum_PrintsStaleTerminalLine()
+    public void EventLogger_InternalEngineCancelledAlbum_PrintsCancelledLine()
     {
         SockseekLog.RemoveNonFileOutputs();
         var messages = new List<string>();
@@ -874,16 +874,13 @@ public class CliProgressReporterTests
         var summary = CreateAlbumSummary(albumId, ExpectedJobStatus.Failed, ServerProtocol.FailureReasons.Cancelled) with
         {
             CancellationSource = ServerJobCancellationSource.InternalEngine,
-            FailureMessage = "Album download became stale because track 'Artist - Song' stopped making progress.",
         };
         var eventLogger = new EventLogger(null!);
 
         InvokePrivate(eventLogger, "HandleEvent", Envelope("job.upserted", summary));
 
         Assert.AreEqual(1, messages.Count);
-        Assert.AreEqual(
-            JobLog("[6] AlbumJob: cancelled: Artist Album\n    Error: Album download became stale because track 'Artist - Song' stopped making progress."),
-            messages[0]);
+        Assert.AreEqual(JobLog("[6] AlbumJob: cancelled: Artist Album"), messages[0]);
     }
 
     [TestMethod]

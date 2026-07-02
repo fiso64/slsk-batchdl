@@ -55,7 +55,8 @@ public class Downloader
         TransferSettings transfer,
         string? parentDir,
         CancellationToken? ct = null,
-        bool publishToDuplicateCache = true)
+        bool publishToDuplicateCache = true,
+        Job? parentJob = null)
     {
         string fileKey = candidate.Username + '\\' + candidate.Filename;
 
@@ -110,6 +111,23 @@ public class Downloader
             }
         );
 
+        ActiveDownload? activeDownload = null;
+        void DeleteIncompleteDownloadAfterFailure()
+        {
+            if (!File.Exists(incompleteOutputPath))
+                return;
+
+            try
+            {
+                Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, parentDir ?? "");
+                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: deleted incomplete download '{incompleteOutputPath}' after failure");
+            }
+            catch (Exception ex)
+            {
+                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: failed to delete incomplete download '{incompleteOutputPath}' after failure: {ex.Message}");
+            }
+        }
+
         try
         {
             using var downloadCts = ct != null
@@ -119,7 +137,7 @@ public class Downloader
             using var outputStream = new FileStream(incompleteOutputPath, FileMode.Create);
 
             song.FileSize = candidate.File.Size;
-            var activeDownload = new ActiveDownload(song, candidate, downloadCts);
+            activeDownload = new ActiveDownload(song, candidate, downloadCts, parentJob);
             downloadRegistry.Downloads.TryAdd(candidate.Filename, activeDownload);
 
             events.RaiseDownloadStarted(song, candidate);
@@ -174,20 +192,20 @@ public class Downloader
                 }
             }
         }
+        catch (OperationCanceledException) when (activeDownload?.IsStaleCancelled == true)
+        {
+            DeleteIncompleteDownloadAfterFailure();
+
+            var staleException = new StaleDownloadException(
+                candidate,
+                activeDownload.StaleMaxStaleTimeMs ?? song.Config?.Search.MaxStaleTime ?? 30_000);
+            if (parentJob is not AlbumJob || song.IsNotAudio)
+                events.RaiseDownloadAttemptFailed(song, candidate, incompleteOutputPath, 1, 1, staleException);
+            throw staleException;
+        }
         catch
         {
-            if (File.Exists(incompleteOutputPath))
-            {
-                try
-                {
-                    Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, parentDir ?? "");
-                    SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: deleted incomplete download '{incompleteOutputPath}' after failure");
-                }
-                catch (Exception ex)
-                {
-                    SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: failed to delete incomplete download '{incompleteOutputPath}' after failure: {ex.Message}");
-                }
-            }
+            DeleteIncompleteDownloadAfterFailure();
             
             if (downloadRegistry.Downloads.TryRemove(candidate.Filename, out var ad) && ad.IsManuallySkipped)
                 return FileDownloadOutcome.ManuallySkipped(candidate);
