@@ -437,6 +437,7 @@ public sealed class JobActivityLogFormatter
 
     private static LogLevel? LogLevelForTerminalSummary(JobSummaryDto summary)
         => IsCascadeCancellation(summary.TerminalOutcome, summary.FailureReason, summary.CancellationSource)
+            && !IsVisibleInternalAlbumCancellation(summary)
             ? LogLevel.Debug
             : null;
 
@@ -458,6 +459,12 @@ public sealed class JobActivityLogFormatter
     private static bool IsCancellationOutcome(ServerJobTerminalOutcome outcome, ServerJobFailureReason? failureReason)
         => outcome == ServerJobTerminalOutcome.Cancelled
             || (outcome == ServerJobTerminalOutcome.Failed && failureReason == ServerProtocol.FailureReasons.Cancelled);
+
+    private static bool IsVisibleInternalAlbumCancellation(JobSummaryDto summary)
+        => summary.Kind == ServerJobKind.Album
+            && summary.TerminalOutcome == ServerJobTerminalOutcome.Cancelled
+            && summary.FailureReason == ServerProtocol.FailureReasons.Cancelled
+            && summary.CancellationSource == ServerJobCancellationSource.InternalEngine;
 
     private static LogLevel LogLevelForNonTerminalSummary(JobSummaryDto summary)
         => IsDebugOnlyLifecycleActivity(summary) ? LogLevel.Debug : LogLevel.Information;

@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Sockseek.Core;
 using Sockseek.Core.Extractors;
 using Sockseek.Core.Jobs;
@@ -76,6 +77,57 @@ public class SockseekLogTests
             "[info] [jobs] job message",
             "[debug] [soulseek] soulseek message",
         }, sinkMessages);
+    }
+
+    [TestMethod]
+    public void JobLog_EmitsStructuredJobContext()
+    {
+        var entries = new List<SockseekLog.StructuredLogEntry>();
+        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry));
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+
+        SockseekLog.Jobs.Info(song, "running fallback: Artist - Track");
+
+        Assert.AreEqual(1, entries.Count);
+        var entry = entries[0];
+        Assert.AreEqual(LogLevel.Information, entry.Level);
+        Assert.AreEqual(SockseekLog.Categories.Jobs, entry.CategoryName);
+        Assert.AreEqual($"[{song.DisplayId}] SongJob: running fallback: Artist - Track", entry.Message);
+
+        var context = entry.Context as SockseekLog.JobLogContext;
+        Assert.IsNotNull(context);
+        Assert.AreEqual(song.DisplayId, context.DisplayId);
+        Assert.AreEqual("SongJob", context.JobType);
+        Assert.AreEqual("running fallback: Artist - Track", context.Message);
+        Assert.IsTrue(context.ShowInLive);
+    }
+
+    [TestMethod]
+    public void UserFacingJobLogs_DoNotUseRawJobShapedSockseekLogStrings()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var coreRoot = Path.Combine(repositoryRoot, "Sockseek.Core");
+        var forbiddenPatterns = new[]
+        {
+            new Regex("SockseekLog\\.Jobs\\.(Info|Warn|Error)\\s*\\(\\s*(?:\\$@?|@\\$)\"\\s*\\[", RegexOptions.Singleline),
+            new Regex("SockseekLog\\.Jobs\\.(Info|Warn|Error)\\s*\\(\\s*(?:\\$@?|@\\$)\"\\s*\\{(?:OnCompleteLogPrefix|logPrefix)\\b", RegexOptions.Singleline),
+        };
+
+        var offenders = Directory.EnumerateFiles(coreRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !PathContainsSegment(path, "bin") && !PathContainsSegment(path, "obj"))
+            .SelectMany(path =>
+            {
+                var text = File.ReadAllText(path);
+                return forbiddenPatterns
+                    .SelectMany(pattern => pattern.Matches(text).Cast<Match>())
+                    .Select(match => $"{Path.GetRelativePath(repositoryRoot, path)}:{LineNumber(text, match.Index)}");
+            })
+            .Distinct()
+            .OrderBy(line => line)
+            .ToList();
+
+        if (offenders.Count > 0)
+            Assert.Fail("Use SockseekLog.Jobs.Info/Warn/Error(job, message) for job-shaped user-facing logs:\n" + string.Join("\n", offenders));
     }
 
     [TestMethod]
@@ -269,4 +321,25 @@ public class SockseekLogTests
         => typeof(SockseekLog)
             .GetMethod("HandleUnobservedTaskException", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [args]);
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Sockseek.Core", "Sockseek.Core.csproj")))
+                return directory.FullName;
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not find repository root.");
+    }
+
+    private static bool PathContainsSegment(string path, string segment)
+        => path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(part => string.Equals(part, segment, StringComparison.OrdinalIgnoreCase));
+
+    private static int LineNumber(string text, int index)
+        => text[..index].Count(ch => ch == '\n') + 1;
 }

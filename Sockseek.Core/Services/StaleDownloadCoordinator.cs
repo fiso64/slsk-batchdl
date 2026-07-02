@@ -105,7 +105,8 @@ internal sealed class StaleDownloadCoordinator
         {
             var download = attempt.Download;
             SockseekLog.Jobs.Info(
-                $"[{download.Song.DisplayId}] SongJob: cancelling stale download after {attempt.MaxStaleTimeMs}ms without activity: " +
+                download.Song,
+                $"cancelling stale download after {attempt.MaxStaleTimeMs}ms without activity: " +
                 $"{download.Song} ({download.Candidate.Username}\\{download.Candidate.Filename})");
             try { download.Song.Cts?.Cancel(); } catch { }
             try { download.Cts.Cancel(); } catch { }

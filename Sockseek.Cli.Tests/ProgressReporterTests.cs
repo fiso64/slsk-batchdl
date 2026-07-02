@@ -631,6 +631,25 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void CliOutputEvent_FromLogEntry_MapsCoreJobLogContext()
+    {
+        var outputEvent = CliOutputEvent.FromLogEntry(new SockseekLog.StructuredLogEntry(
+            LogLevel.Information,
+            SockseekLog.Categories.Jobs,
+            "[3] SongJob: cancelling stale download",
+            Context: new SockseekLog.JobLogContext(3, "SongJob", "cancelling stale download")));
+
+        var jobLog = outputEvent as CliOutputEvent.JobLog;
+        Assert.IsNotNull(jobLog);
+        Assert.AreEqual(LogLevel.Information, jobLog.Level);
+        Assert.AreEqual(TerminalLogKind.Status, jobLog.Line.Kind);
+        Assert.AreEqual(3, jobLog.Line.DisplayId);
+        Assert.AreEqual("SongJob", jobLog.Line.JobType);
+        Assert.AreEqual("cancelling stale download", jobLog.Line.Message);
+        Assert.AreEqual("[003] SongJob: cancelling stale download", CliLogStyle.FormatOutputEventText(outputEvent));
+    }
+
+    [TestMethod]
     public void CliLogStyle_FormatsMixedOutputEventsInGivenOrder()
     {
         var firstFailure = new CliOutputEvent.JobLog(new TerminalLogLine(
@@ -842,6 +861,29 @@ public class CliProgressReporterTests
 
         Assert.AreEqual(1, messages.Count);
         Assert.AreEqual(JobLog("[6] AlbumJob: cancelled: Artist Album"), messages[0]);
+    }
+
+    [TestMethod]
+    public void EventLogger_InternalEngineCancelledAlbum_PrintsStaleTerminalLine()
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        var messages = new List<string>();
+        SockseekLog.AddConsole(writer: (message, _) => messages.Add(message));
+
+        var albumId = Guid.NewGuid();
+        var summary = CreateAlbumSummary(albumId, ExpectedJobStatus.Failed, ServerProtocol.FailureReasons.Cancelled) with
+        {
+            CancellationSource = ServerJobCancellationSource.InternalEngine,
+            FailureMessage = "Album download became stale because track 'Artist - Song' stopped making progress.",
+        };
+        var eventLogger = new EventLogger(null!);
+
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("job.upserted", summary));
+
+        Assert.AreEqual(1, messages.Count);
+        Assert.AreEqual(
+            JobLog("[6] AlbumJob: cancelled: Artist Album\n    Error: Album download became stale because track 'Artist - Song' stopped making progress."),
+            messages[0]);
     }
 
     [TestMethod]

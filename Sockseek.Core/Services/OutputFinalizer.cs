@@ -71,7 +71,7 @@ internal sealed class OutputFinalizer
             }
             catch (FileOrganizationException ex)
             {
-                SockseekLog.Jobs.Error($"[{song.DisplayId}] SongJob: {ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
+                SockseekLog.Jobs.Error(song, $"{ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
                 CleanupStagedDownloadAfterOrganizationFailure(song, parentJob.Config.Output);
                 return OutputFinalizationResult.Failed(ex);
             }
@@ -103,7 +103,7 @@ internal sealed class OutputFinalizer
             }
             catch (FileOrganizationException ex)
             {
-                SockseekLog.Jobs.Error($"[{album.DisplayId}] AlbumJob: {ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
+                SockseekLog.Jobs.Error(album, $"{ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
                 return OutputFinalizationResult.Failed(ex);
             }
         }
@@ -158,7 +158,7 @@ internal sealed class OutputFinalizer
         }
         catch (Exception ex)
         {
-            SockseekLog.Jobs.Warn($"[{song.DisplayId}] SongJob: failed to clean staged file '{song.DownloadPath}' after organization failure: {SockseekLog.ExceptionSummary(ex)}");
+            SockseekLog.Jobs.Warn(song, $"failed to clean staged file '{song.DownloadPath}' after organization failure: {SockseekLog.ExceptionSummary(ex)}");
         }
     }
 }

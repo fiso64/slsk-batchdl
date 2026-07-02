@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using Sockseek.Core.Jobs;
 
 namespace Sockseek.Core;
 
@@ -19,6 +20,14 @@ public static class SockseekLog
         ConsoleColor? Color = null,
         LogRouting Routing = LogRouting.All,
         object? Context = null);
+
+    public sealed record JobLogContext(
+        int DisplayId,
+        string JobType,
+        string Message,
+        string? Source = null,
+        string? Highlight = null,
+        bool ShowInLive = true);
 
     public static class Categories
     {
@@ -78,6 +87,12 @@ public static class SockseekLog
         public void Warn(string message, ConsoleColor? color = null) => SockseekLog.Warn(message, color, CategoryName);
         public void Error(string message, ConsoleColor? color = null) => SockseekLog.Error(message, color, CategoryName);
         public void Fatal(string message, ConsoleColor? color = null) => SockseekLog.Fatal(message, color, CategoryName);
+        public void Info(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true)
+            => SockseekLog.JobInfo(job, message, color, jobType, source, highlight, showInLive, CategoryName);
+        public void Warn(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true)
+            => SockseekLog.JobWarn(job, message, color, jobType, source, highlight, showInLive, CategoryName);
+        public void Error(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true)
+            => SockseekLog.JobError(job, message, color, jobType, source, highlight, showInLive, CategoryName);
         public void Error(Exception exception, string message, ConsoleColor? color = null) => SockseekLog.Error(exception, message, color, CategoryName);
         public void Fatal(Exception exception, string message, ConsoleColor? color = null) => SockseekLog.Fatal(exception, message, color, CategoryName);
         public void Write(LogLevel level, string message, ConsoleColor? color = null) => SockseekLog.Write(level, message, color, CategoryName);
@@ -218,6 +233,15 @@ public static class SockseekLog
     public static void Write(LogLevel level, string message, ConsoleColor? color = null, string? categoryName = null, [CallerFilePath] string callerFilePath = "")
         => Log(level, message, LogRouting.All, color, categoryName: categoryName, callerFilePath: callerFilePath);
 
+    public static void JobInfo(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true, string? categoryName = null)
+        => JobLog(LogLevel.Information, job, message, color, jobType, source, highlight, showInLive, categoryName ?? Categories.Jobs);
+
+    public static void JobWarn(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true, string? categoryName = null)
+        => JobLog(LogLevel.Warning, job, message, color, jobType, source, highlight, showInLive, categoryName ?? Categories.Jobs);
+
+    public static void JobError(Job job, string message, ConsoleColor? color = null, string? jobType = null, string? source = null, string? highlight = null, bool showInLive = true, string? categoryName = null)
+        => JobLog(LogLevel.Error, job, message, color, jobType, source, highlight, showInLive, categoryName ?? Categories.Jobs);
+
     public static void Write(StructuredLogEntry entry)
     {
         foreach (var provider in SnapshotProviders())
@@ -335,6 +359,41 @@ public static class SockseekLog
         var entry = new StructuredLogEntry(level, categoryName, message, color, routing);
         Write(entry);
     }
+
+    private static void JobLog(
+        LogLevel level,
+        Job job,
+        string message,
+        ConsoleColor? color,
+        string? jobType,
+        string? source,
+        string? highlight,
+        bool showInLive,
+        string categoryName)
+    {
+        var displayId = job.EnsureDisplayId();
+        var resolvedJobType = jobType ?? JobTypeName(job);
+        var context = new JobLogContext(displayId, resolvedJobType, message, source, highlight, showInLive);
+        Write(new StructuredLogEntry(
+            level,
+            categoryName,
+            $"[{displayId}] {resolvedJobType}: {message}",
+            color,
+            Context: context));
+    }
+
+    public static string JobTypeName(Job job) => job switch
+    {
+        SongJob => "SongJob",
+        AlbumJob => "AlbumJob",
+        AlbumAggregateJob => "AlbumAggregateJob",
+        AggregateJob => "AggregateJob",
+        SearchJob => "SearchJob",
+        RetrieveFolderJob => "RetrieveFolderJob",
+        ExtractJob => "ExtractJob",
+        JobList => "Job List",
+        _ => job.GetType().Name,
+    };
 
     private static string CategoryFor(string callerFilePath)
     {

@@ -35,6 +35,22 @@ internal abstract record CliOutputEvent
             };
         }
 
+        if (entry.Context is SockseekLog.JobLogContext jobLogContext)
+        {
+            return new JobLog(
+                new TerminalLogLine(
+                    TerminalLogKind.Status,
+                    $"core:{jobLogContext.DisplayId}",
+                    jobLogContext.DisplayId,
+                    jobLogContext.JobType,
+                    jobLogContext.Message,
+                    jobLogContext.Source,
+                    jobLogContext.Highlight,
+                    jobLogContext.ShowInLive),
+                entry.Level,
+                entry.Color);
+        }
+
         if (entry.Context is CliOutputEvent outputEvent)
             return outputEvent;
 

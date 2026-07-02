@@ -125,7 +125,7 @@ public static class OnCompleteExecutor
             string preparedCommand = PrepareCommandString(config.Command, onCompleteContext, prevCommandResult, firstCommandResult);
             if (string.IsNullOrWhiteSpace(preparedCommand))
             {
-                SockseekLog.Jobs.Warn($"{OnCompleteLogPrefix(job, song)} skipping on-complete action {i + 1} because the prepared command is empty after variable replacement.");
+                SockseekLog.Jobs.Warn(OnCompleteLogJob(job, song), $"skipping on-complete action {i + 1} because the prepared command is empty after variable replacement.");
                 continue;
             }
 
@@ -155,11 +155,11 @@ public static class OnCompleteExecutor
 
             if (currentResult == null)
             {
-                SockseekLog.Jobs.Error($"{OnCompleteLogPrefix(job, song)} execution failed for on-complete command {i + 1}. Stopping further on-complete actions for this item.");
+                SockseekLog.Jobs.Error(OnCompleteLogJob(job, song), $"execution failed for on-complete command {i + 1}. Stopping further on-complete actions for this item.");
                 return;
             }
 
-            if (ProcessCommandResult(currentResult.Value, config, song, job, OnCompleteLogPrefix(job, song)))
+            if (ProcessCommandResult(currentResult.Value, config, song, job))
                 needUpdateIndex = true;
 
             prevCommandResult = currentResult;
@@ -277,6 +277,9 @@ public static class OnCompleteExecutor
             _ => $"[{job.DisplayId}] {job.GetType().Name}:",
         };
     }
+
+    private static Job OnCompleteLogJob(Job job, SongJob? song)
+        => song ?? job;
 
     private static CommandConfig ParseCommand(string rawCommand)
     {
@@ -621,15 +624,17 @@ public static class OnCompleteExecutor
         => string.IsNullOrWhiteSpace(output) ? null : output.Trim().Trim('"');
 
     // Returns true if the index needs updating.
-    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job, string logPrefix)
+    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job)
     {
         bool needsUpdate = false;
+        var logJob = OnCompleteLogJob(job, song);
+        var logPrefix = OnCompleteLogPrefix(job, song);
 
         if (config.UseOutputToUpdateIndex && !string.IsNullOrWhiteSpace(result.Stdout))
         {
             if (result.StdoutTruncated)
             {
-                SockseekLog.Jobs.Warn($"{logPrefix} ignored on-complete stdout for index update because command output exceeded the capture limit.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
+                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout for index update because command output exceeded the capture limit.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
                 return needsUpdate;
             }
 
@@ -646,12 +651,12 @@ public static class OnCompleteExecutor
             }
             else if (!string.IsNullOrWhiteSpace(result.Stdout))
             {
-                SockseekLog.Jobs.Warn($"{logPrefix} ignored on-complete stdout for index update. In 3.0 stdout can update the path using '<ignored>;<path>', but cannot mutate job state.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
+                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout for index update. In 3.0 stdout can update the path using '<ignored>;<path>', but cannot mutate job state.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
             }
         }
 
         if (result.ExitCode != 0)
-            SockseekLog.Jobs.Warn($"{logPrefix} on-complete command exited with code {result.ExitCode}. {FormatCommandOutputForLog(result)}");
+            SockseekLog.Jobs.Warn(logJob, $"on-complete command exited with code {result.ExitCode}. {FormatCommandOutputForLog(result)}");
 
         return needsUpdate;
     }

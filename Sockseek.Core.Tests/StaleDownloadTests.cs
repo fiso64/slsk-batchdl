@@ -149,6 +149,8 @@ public class StaleDownloadTests
 
             await runTask.WaitAsync(SignalTimeout);
             AssertCancelled(album);
+            Assert.AreEqual(JobCancellationSource.InternalEngine, album.CancellationSource);
+            StringAssert.Contains(album.FailureMessage, "Album download became stale");
             Assert.IsTrue(album.TrackJobs.Any(song => song.FailureReason == JobFailureReason.Cancelled));
         }
         finally

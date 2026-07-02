@@ -133,13 +133,14 @@ namespace Tests.OnCompleteExecutorTests
                     stderr: "'win-notify-send.wrong.cmd' is not recognized\r\n" + new string('e', 900));
                 var config = CreateCommandConfig();
                 var job = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+                var displayId = job.EnsureDisplayId();
 
-                var needsUpdate = InvokeProcessCommandResult(result, config, null, job, "[4] AlbumJob:");
+                var needsUpdate = InvokeProcessCommandResult(result, config, null, job);
 
                 Assert.IsFalse(needsUpdate);
                 var warning = entries.Single(entry => entry.Level == LogLevel.Warning);
                 Assert.AreEqual(SockseekLog.Categories.Jobs, warning.CategoryName);
-                StringAssert.Contains(warning.Message, "[4] AlbumJob: on-complete command exited with code 1.");
+                StringAssert.Contains(warning.Message, $"[{displayId}] AlbumJob: on-complete command exited with code 1.");
                 StringAssert.Contains(warning.Message, "Stdout:");
                 StringAssert.Contains(warning.Message, "Stderr:");
                 StringAssert.Contains(warning.Message, "\n    Stderr:\n");
@@ -180,7 +181,7 @@ namespace Tests.OnCompleteExecutorTests
                 };
                 var job = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
 
-                var needsUpdate = InvokeProcessCommandResult(result, config, song, job, "[4] AlbumJob:");
+                var needsUpdate = InvokeProcessCommandResult(result, config, song, job);
 
                 Assert.IsFalse(needsUpdate);
                 Assert.AreEqual("C:/old/path.flac", song.DownloadPath);
@@ -223,10 +224,10 @@ namespace Tests.OnCompleteExecutorTests
             return config;
         }
 
-        private static bool InvokeProcessCommandResult(object result, object config, SongJob? song, Job job, string logPrefix)
+        private static bool InvokeProcessCommandResult(object result, object config, SongJob? song, Job job)
         {
             var method = typeof(OnCompleteExecutor).GetMethod("ProcessCommandResult", BindingFlags.NonPublic | BindingFlags.Static)!;
-            return (bool)method.Invoke(null, new[] { result, config, song, job, logPrefix })!;
+            return (bool)method.Invoke(null, new[] { result, config, song, job })!;
         }
     }
 

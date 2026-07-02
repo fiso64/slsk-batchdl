@@ -229,7 +229,7 @@ public partial class FileManager
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
             try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, output.ParentDir); }
-            catch (Exception ex) { SockseekLog.Jobs.Error($"[{file.DisplayId}] SongJob: failed to move non-audio file from '{file.DownloadPath}' to '{newFilePath}' for parent job [{job.DisplayId}]: {ex}"); return; }
+            catch (Exception ex) { SockseekLog.Jobs.Error(file, $"failed to move non-audio file from '{file.DownloadPath}' to '{newFilePath}' for parent job [{job.DisplayId}]: {ex}"); return; }
         }
 
         file.DownloadPath = newFilePath;
