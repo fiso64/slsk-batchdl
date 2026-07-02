@@ -93,19 +93,17 @@ public class Downloader
 
         SockseekLog.Soulseek.Debug($"Downloading: {song} from '{candidate.Username}\\{candidate.Filename}' to '{incompleteOutputPath}'");
 
-        Guid? staleAttemptId = null;
+        StaleDownloadCoordinator.PeerTransferActivity? staleActivity = null;
         var transferOptions = new TransferOptions(
             disposeOutputStreamOnCompletion: false,
             stateChanged: (state) =>
             {
-                if (staleAttemptId is { } attemptId)
-                    staleDownloads.ReportState(attemptId, state.Transfer);
+                staleActivity?.ReportState(state.Transfer);
                 events.RaiseDownloadStateChanged(song, state.Transfer.State);
             },
             progressUpdated: (progress) =>
             {
-                if (staleAttemptId is { } attemptId)
-                    staleDownloads.ReportProgress(attemptId, progress.Transfer);
+                staleActivity?.ReportProgress(progress.Transfer);
                 if (downloadRegistry.Downloads.TryGetValue(candidate.Filename, out var x))
                     x.Song.BytesTransferred = progress.PreviousBytesTransferred;
                 events.RaiseDownloadProgress(song, progress.PreviousBytesTransferred, candidate.File.Size > 0 ? candidate.File.Size : 0);
@@ -123,9 +121,6 @@ public class Downloader
             song.FileSize = candidate.File.Size;
             var activeDownload = new ActiveDownload(song, candidate, downloadCts);
             downloadRegistry.Downloads.TryAdd(candidate.Filename, activeDownload);
-            staleAttemptId = staleDownloads.Register(
-                activeDownload,
-                song.Config?.Search.MaxStaleTime ?? 30_000);
 
             events.RaiseDownloadStarted(song, candidate);
 
@@ -135,12 +130,26 @@ public class Downloader
             {
                 try
                 {
-                    await client.DownloadAsync(candidate.Username, candidate.Filename,
-                        () => Task.FromResult((Stream)outputStream),
-                        candidate.File.Size == -1 ? null : candidate.File.Size,
-                        startOffset: outputStream.Position,
-                        options: transferOptions,
-                        cancellationToken: downloadCts.Token);
+                    await staleDownloads.WatchPeerTransferAsync(
+                        activeDownload,
+                        song.Config?.Search.MaxStaleTime ?? 30_000,
+                        async activity =>
+                        {
+                            staleActivity = activity;
+                            try
+                            {
+                                return await client.DownloadAsync(candidate.Username, candidate.Filename,
+                                    () => Task.FromResult((Stream)outputStream),
+                                    candidate.File.Size == -1 ? null : candidate.File.Size,
+                                    startOffset: outputStream.Position,
+                                    options: transferOptions,
+                                    cancellationToken: downloadCts.Token);
+                            }
+                            finally
+                            {
+                                staleActivity = null;
+                            }
+                        });
                     break;
                 }
                 catch (Exception e) when (e is not OperationCanceledException)
@@ -184,11 +193,6 @@ public class Downloader
                 return FileDownloadOutcome.ManuallySkipped(candidate);
 
             throw;
-        }
-        finally
-        {
-            if (staleAttemptId is { } attemptId)
-                staleDownloads.Complete(attemptId);
         }
 
 

@@ -20,7 +20,28 @@ internal sealed class StaleDownloadCoordinator
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public Guid Register(ActiveDownload download, int maxStaleTimeMs)
+    // Arms stale cancellation only for the Soulseek peer-transfer call. Search,
+    // setup, fallback, organization, and on-complete work must stay outside this scope.
+    internal async Task<T> WatchPeerTransferAsync<T>(
+        ActiveDownload download,
+        int maxStaleTimeMs,
+        Func<PeerTransferActivity, Task<T>> transfer)
+    {
+        ArgumentNullException.ThrowIfNull(download);
+        ArgumentNullException.ThrowIfNull(transfer);
+
+        var attemptId = BeginPeerTransfer(download, maxStaleTimeMs);
+        try
+        {
+            return await transfer(new PeerTransferActivity(this, attemptId));
+        }
+        finally
+        {
+            CompletePeerTransfer(attemptId);
+        }
+    }
+
+    private Guid BeginPeerTransfer(ActiveDownload download, int maxStaleTimeMs)
     {
         var attempt = new Attempt(
             Guid.NewGuid(),
@@ -35,13 +56,13 @@ internal sealed class StaleDownloadCoordinator
         return attempt.Id;
     }
 
-    public void ReportState(Guid attemptId, Transfer transfer)
+    private void ReportState(Guid attemptId, Transfer transfer)
         => ReportActivity(attemptId, transfer);
 
-    public void ReportProgress(Guid attemptId, Transfer transfer)
+    private void ReportProgress(Guid attemptId, Transfer transfer)
         => ReportActivity(attemptId, transfer);
 
-    public void Complete(Guid attemptId)
+    private void CompletePeerTransfer(Guid attemptId)
     {
         bool removed;
         lock (gate)
@@ -258,6 +279,24 @@ internal sealed class StaleDownloadCoordinator
 
     private static TaskCompletionSource NewSignal()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal readonly struct PeerTransferActivity
+    {
+        private readonly StaleDownloadCoordinator coordinator;
+        private readonly Guid attemptId;
+
+        internal PeerTransferActivity(StaleDownloadCoordinator coordinator, Guid attemptId)
+        {
+            this.coordinator = coordinator;
+            this.attemptId = attemptId;
+        }
+
+        public void ReportState(Transfer transfer)
+            => coordinator.ReportState(attemptId, transfer);
+
+        public void ReportProgress(Transfer transfer)
+            => coordinator.ReportProgress(attemptId, transfer);
+    }
 
     private sealed class Attempt
     {

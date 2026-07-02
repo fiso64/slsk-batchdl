@@ -4,6 +4,9 @@ using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using System.Text.RegularExpressions;
+using Directory = System.IO.Directory;
+using File = System.IO.File;
 
 namespace Tests.Core;
 
@@ -13,10 +16,49 @@ public class StaleDownloadCoordinatorTests
     private static readonly TimeSpan MaxStaleTime = TimeSpan.FromSeconds(5);
 
     [TestMethod]
+    public void StaleCoordinator_IsOnlyArmedByDownloaderPeerTransferScope()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var coreRoot = Path.Combine(repositoryRoot, "Sockseek.Core");
+        var forbiddenPatterns = new[]
+        {
+            new Regex(@"\bstaleDownloads\.(Register|Complete|ReportState|ReportProgress)\s*\(", RegexOptions.Singleline),
+            new Regex(@"\.BeginPeerTransfer\s*\(", RegexOptions.Singleline),
+            new Regex(@"\.CompletePeerTransfer\s*\(", RegexOptions.Singleline),
+        };
+        var watchPattern = new Regex(@"\.WatchPeerTransferAsync\s*\(", RegexOptions.Singleline);
+        var allowedWatchFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(coreRoot, "Services", "Downloader.cs"),
+            Path.Combine(coreRoot, "Services", "StaleDownloadCoordinator.cs"),
+        };
+
+        var offenders = Directory.EnumerateFiles(coreRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !PathContainsSegment(path, "bin") && !PathContainsSegment(path, "obj"))
+            .SelectMany(path =>
+            {
+                var text = File.ReadAllText(path);
+                var matches = forbiddenPatterns
+                    .SelectMany(pattern => pattern.Matches(text).Cast<Match>());
+
+                if (!allowedWatchFiles.Contains(path))
+                    matches = matches.Concat(watchPattern.Matches(text).Cast<Match>());
+
+                return matches.Select(match => $"{Path.GetRelativePath(repositoryRoot, path)}:{LineNumber(text, match.Index)}");
+            })
+            .Distinct()
+            .OrderBy(line => line)
+            .ToList();
+
+        if (offenders.Count > 0)
+            Assert.Fail("Stale cancellation must only be armed by Downloader via StaleDownloadCoordinator.WatchPeerTransferAsync:\n" + string.Join("\n", offenders));
+    }
+
+    [TestMethod]
     public void QueuedAttempt_CancelsAfterMaxStaleTimeWithoutActivity()
     {
-        var scenario = new Scenario();
-        var attempt = scenario.Register("user-a", @"Music\Artist - Song.mp3");
+        using var scenario = new Scenario();
+        var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
         scenario.ReportState(attempt, TransferStates.Queued, bytesTransferred: 0);
 
         scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
@@ -32,8 +74,8 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void StateChangesBeforeMaxStaleTimeRefreshDeadline()
     {
-        var scenario = new Scenario();
-        var attempt = scenario.Register("user-a", @"Music\Artist - Song.mp3");
+        using var scenario = new Scenario();
+        var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
         scenario.ReportState(attempt, TransferStates.Queued, bytesTransferred: 0);
 
         scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
@@ -54,8 +96,8 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void ProgressBeforeMaxStaleTimeRefreshesInProgressDeadline()
     {
-        var scenario = new Scenario();
-        var attempt = scenario.Register("user-a", @"Music\Artist - Song.mp3");
+        using var scenario = new Scenario();
+        var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
         scenario.ReportState(attempt, TransferStates.InProgress, bytesTransferred: 0);
 
         scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
@@ -73,8 +115,8 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void UnchangedStateAndBytesDoNotRefreshDeadline()
     {
-        var scenario = new Scenario();
-        var attempt = scenario.Register("user-a", @"Music\Artist - Song.mp3");
+        using var scenario = new Scenario();
+        var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
         scenario.ReportState(attempt, TransferStates.Queued, bytesTransferred: 0);
 
         scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
@@ -88,9 +130,9 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void QueuedAttemptUsesFreshActivityFromSameUserSibling()
     {
-        var scenario = new Scenario();
-        var queued = scenario.Register("user-a", @"Music\Artist - Queued.mp3");
-        var active = scenario.Register("user-a", @"Music\Artist - Active.mp3");
+        using var scenario = new Scenario();
+        var queued = scenario.Start("user-a", @"Music\Artist - Queued.mp3");
+        var active = scenario.Start("user-a", @"Music\Artist - Active.mp3");
         scenario.ReportState(queued, TransferStates.Queued | TransferStates.Remotely, bytesTransferred: 0);
         scenario.ReportState(active, TransferStates.InProgress, bytesTransferred: 0);
 
@@ -111,15 +153,15 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void QueuedAttemptUsesFreshActivityFromCompletedSameUserSibling()
     {
-        var scenario = new Scenario();
-        var queued = scenario.Register("user-a", @"Music\Artist - Queued.mp3");
-        var active = scenario.Register("user-a", @"Music\Artist - Active.mp3");
+        using var scenario = new Scenario();
+        var queued = scenario.Start("user-a", @"Music\Artist - Queued.mp3");
+        var active = scenario.Start("user-a", @"Music\Artist - Active.mp3");
         scenario.ReportState(queued, TransferStates.Queued | TransferStates.Remotely, bytesTransferred: 0);
         scenario.ReportState(active, TransferStates.InProgress, bytesTransferred: 0);
 
         scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
         scenario.ReportProgress(active, bytesTransferred: 4096);
-        scenario.Coordinator.Complete(active.Id);
+        scenario.Complete(active);
         scenario.Advance(TimeSpan.FromMilliseconds(1));
 
         Assert.AreEqual(0, scenario.CancelStaleDownloads(),
@@ -134,9 +176,9 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void InProgressAttemptDoesNotUseSiblingActivity()
     {
-        var scenario = new Scenario();
-        var stalled = scenario.Register("user-a", @"Music\Artist - Stalled.mp3");
-        var active = scenario.Register("user-a", @"Music\Artist - Active.mp3");
+        using var scenario = new Scenario();
+        var stalled = scenario.Start("user-a", @"Music\Artist - Stalled.mp3");
+        var active = scenario.Start("user-a", @"Music\Artist - Active.mp3");
         scenario.ReportState(stalled, TransferStates.InProgress, bytesTransferred: 0);
         scenario.ReportState(active, TransferStates.InProgress, bytesTransferred: 0);
 
@@ -152,9 +194,9 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void ActivityFromDifferentUserDoesNotProtectQueuedAttempt()
     {
-        var scenario = new Scenario();
-        var queued = scenario.Register("user-a", @"Music\Artist - Queued.mp3");
-        var otherUser = scenario.Register("user-b", @"Music\Artist - Other.mp3");
+        using var scenario = new Scenario();
+        var queued = scenario.Start("user-a", @"Music\Artist - Queued.mp3");
+        var otherUser = scenario.Start("user-b", @"Music\Artist - Other.mp3");
         scenario.ReportState(queued, TransferStates.Queued | TransferStates.Remotely, bytesTransferred: 0);
         scenario.ReportState(otherUser, TransferStates.InProgress, bytesTransferred: 0);
 
@@ -170,10 +212,10 @@ public class StaleDownloadCoordinatorTests
     [TestMethod]
     public void CompletedAttemptIsRemovedFromStaleTracking()
     {
-        var scenario = new Scenario();
-        var attempt = scenario.Register("user-a", @"Music\Artist - Song.mp3");
+        using var scenario = new Scenario();
+        var attempt = scenario.Start("user-a", @"Music\Artist - Song.mp3");
         scenario.ReportState(attempt, TransferStates.Queued, bytesTransferred: 0);
-        scenario.Coordinator.Complete(attempt.Id);
+        scenario.Complete(attempt);
 
         scenario.Advance(MaxStaleTime);
 
@@ -187,9 +229,31 @@ public class StaleDownloadCoordinatorTests
         Assert.IsTrue(attempt.Download.Cts.IsCancellationRequested);
     }
 
-    private sealed class Scenario
+    private static string FindRepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "Sockseek.sln")))
+                return dir.FullName;
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root containing Sockseek.sln.");
+    }
+
+    private static bool PathContainsSegment(string path, string segment)
+        => path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(part => part.Equals(segment, StringComparison.OrdinalIgnoreCase));
+
+    private static int LineNumber(string text, int index)
+        => text.AsSpan(0, index).Count('\n') + 1;
+
+    private sealed class Scenario : IDisposable
     {
         private readonly ManualTimeProvider clock = new();
+        private readonly List<AttemptHandle> attempts = [];
 
         public Scenario()
         {
@@ -199,7 +263,7 @@ public class StaleDownloadCoordinatorTests
         public SessionRegistry Registry { get; } = new();
         public StaleDownloadCoordinator Coordinator { get; }
 
-        public AttemptHandle Register(string username, string filename)
+        public AttemptHandle Start(string username, string filename)
         {
             var response = new SearchResponse(username, 1, true, 100_000, 0, []);
             var file = TestHelpers.CreateSlFile(filename, size: 50_000, length: 180);
@@ -210,15 +274,36 @@ public class StaleDownloadCoordinatorTests
             };
             var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource());
             Registry.Downloads[candidate.Filename] = activeDownload;
-            var attemptId = Coordinator.Register(activeDownload, (int)MaxStaleTime.TotalMilliseconds);
-            return new AttemptHandle(attemptId, song, activeDownload);
+            var activityReady = new TaskCompletionSource<StaleDownloadCoordinator.PeerTransferActivity>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var task = Coordinator.WatchPeerTransferAsync(
+                activeDownload,
+                (int)MaxStaleTime.TotalMilliseconds,
+                async activity =>
+                {
+                    activityReady.TrySetResult(activity);
+                    await release.Task;
+                    return true;
+                });
+
+            var attempt = new AttemptHandle(
+                song,
+                activeDownload,
+                activityReady.Task.GetAwaiter().GetResult(),
+                release,
+                task);
+            attempts.Add(attempt);
+            return attempt;
         }
 
         public void ReportState(AttemptHandle attempt, TransferStates state, long bytesTransferred)
-            => Coordinator.ReportState(attempt.Id, CreateTransfer(attempt, state, bytesTransferred));
+            => attempt.Activity.ReportState(CreateTransfer(attempt, state, bytesTransferred));
 
         public void ReportProgress(AttemptHandle attempt, long bytesTransferred)
-            => Coordinator.ReportProgress(attempt.Id, CreateTransfer(attempt, TransferStates.InProgress, bytesTransferred));
+            => attempt.Activity.ReportProgress(CreateTransfer(attempt, TransferStates.InProgress, bytesTransferred));
+
+        public void Complete(AttemptHandle attempt)
+            => attempt.Complete();
 
         public int CancelStaleDownloads()
             => Coordinator.CancelStaleDownloads();
@@ -236,9 +321,27 @@ public class StaleDownloadCoordinatorTests
                 attempt.Download.Candidate.File.Size,
                 0,
                 bytesTransferred);
+
+        public void Dispose()
+        {
+            foreach (var attempt in attempts)
+                attempt.Complete();
+        }
     }
 
-    private sealed record AttemptHandle(Guid Id, SongJob Song, ActiveDownload Download);
+    private sealed record AttemptHandle(
+        SongJob Song,
+        ActiveDownload Download,
+        StaleDownloadCoordinator.PeerTransferActivity Activity,
+        TaskCompletionSource Release,
+        Task Task)
+    {
+        public void Complete()
+        {
+            Release.TrySetResult();
+            Task.GetAwaiter().GetResult();
+        }
+    }
 
     private sealed class ManualTimeProvider : TimeProvider
     {

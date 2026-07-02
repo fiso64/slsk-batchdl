@@ -3,6 +3,7 @@ using Soulseek;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 
 using Directory = System.IO.Directory;
@@ -107,6 +108,113 @@ public class StaleDownloadTests
         {
             runCts.Cancel();
             releaseQueued.TrySetResult();
+            await IgnoreRunCancellation(runTask);
+            DeleteOutputDir(outputDir);
+        }
+    }
+
+    [TestMethod]
+    public async Task SongDownload_DownloadStartedWorkIsOutsideStaleWindow()
+    {
+        var outputDir = CreateOutputDir();
+        var (response, candidate) = CreateCandidate("started-user", @"Music\Test Artist - Started Song.mp3");
+        var client = new ClientTests.MockSoulseekClient([response]);
+        var clock = new ManualTimeProvider();
+        var engineSettings = CreateEngineSettings();
+        var settings = CreateSettings(outputDir);
+        var song = new SongJob(new SongQuery { Artist = "Test Artist", Title = "Started Song" })
+        {
+            ResolvedTarget = candidate,
+            Config = settings,
+            Cts = new CancellationTokenSource(),
+        };
+        var registry = new SessionRegistry();
+        var events = new EngineEvents();
+        var staleDownloads = new StaleDownloadCoordinator(registry, clock);
+        var downloader = new Downloader(
+            client,
+            TestHelpers.CreateMockClientManager(client, engineSettings),
+            registry,
+            events,
+            staleDownloads);
+        var started = NewSignal();
+        var releaseStarted = NewSignal();
+        events.DownloadStarted += (_, _) =>
+        {
+            started.TrySetResult();
+            releaseStarted.Task.GetAwaiter().GetResult();
+        };
+        var outputPath = Path.Combine(outputDir, "started.mp3");
+
+        using var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(song.Cts.Token);
+        var downloadTask = Task.Run(() => downloader.DownloadFile(
+            candidate,
+            outputPath,
+            song,
+            settings.Transfer,
+            settings.Output.ParentDir,
+            downloadCts.Token));
+        try
+        {
+            await started.Task.WaitAsync(SignalTimeout);
+
+            clock.Advance(MaxStaleTime);
+            Assert.AreEqual(0, staleDownloads.CancelStaleDownloads(),
+                "Work before the Soulseek transfer is established must not be part of stale cancellation.");
+            Assert.IsFalse(song.Cts?.IsCancellationRequested == true);
+
+            releaseStarted.TrySetResult();
+            var outcome = await downloadTask.WaitAsync(SignalTimeout);
+            Assert.AreEqual(FileDownloadStatus.Completed, outcome.Status);
+        }
+        finally
+        {
+            downloadCts.Cancel();
+            releaseStarted.TrySetResult();
+            try { await IgnoreRunCancellation(downloadTask.WaitAsync(SignalTimeout)); }
+            catch (TimeoutException) { }
+            DeleteOutputDir(outputDir);
+        }
+    }
+
+    [TestMethod]
+    public async Task SongDownload_FallbackWorkIsOutsideStaleWindow()
+    {
+        var outputDir = CreateOutputDir();
+        var client = new ClientTests.MockSoulseekClient([]);
+        var clock = new ManualTimeProvider();
+        var engineSettings = CreateEngineSettings();
+        var settings = CreateSettings(outputDir);
+        var fallback = new BlockingFallback();
+        var song = new SongJob(new SongQuery { Artist = "Test Artist", Title = "Fallback Song" })
+        {
+            Candidates = [],
+        };
+        var engine = CreateEngine(engineSettings, client, clock, fallback);
+
+        using var runCts = new CancellationTokenSource();
+        var runTask = Start(engine, song, settings, runCts.Token);
+        try
+        {
+            await fallback.Started.WaitAsync(SignalTimeout);
+
+            clock.Advance(MaxStaleTime);
+            Assert.AreEqual(0, engine.RunStaleDownloadCheckForTesting(),
+                "Fallback download work must not be part of Soulseek stale cancellation.");
+            Assert.IsFalse(song.Cts?.IsCancellationRequested == true);
+
+            var fallbackPath = Path.Combine(outputDir, "fallback.mp3");
+            await System.IO.File.WriteAllBytesAsync(fallbackPath, [1, 2, 3], runCts.Token);
+            fallback.Release(fallbackPath);
+            await runTask.WaitAsync(SignalTimeout);
+
+            Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
+            Assert.AreEqual(SongDownloadSource.Fallback, song.DownloadSource);
+        }
+        finally
+        {
+            runCts.Cancel();
+            fallback.Release(null);
             await IgnoreRunCancellation(runTask);
             DeleteOutputDir(outputDir);
         }
@@ -372,11 +480,13 @@ public class StaleDownloadTests
     private static DownloadEngine CreateEngine(
         EngineSettings engineSettings,
         ClientTests.MockSoulseekClient client,
-        ManualTimeProvider clock)
+        ManualTimeProvider clock,
+        ISongDownloadFallback? songDownloadFallback = null)
     {
         var engine = new DownloadEngine(
             engineSettings,
             TestHelpers.CreateMockClientManager(client, engineSettings),
+            songDownloadFallback: songDownloadFallback,
             timeProvider: clock);
         engine.AutomaticStaleChecksEnabled = false;
         return engine;
@@ -453,6 +563,38 @@ public class StaleDownloadTests
         try { await runTask; }
         catch (OperationCanceledException) { }
         catch (AggregateException ex) when (ex.InnerExceptions.All(inner => inner is OperationCanceledException)) { }
+    }
+
+    private sealed class BlockingFallback : ISongDownloadFallback
+    {
+        private readonly TaskCompletionSource started = NewSignal();
+        private readonly TaskCompletionSource release = NewSignal();
+        private string? downloadPath;
+
+        public Task Started => started.Task;
+
+        public bool CanRun(SongJob song, DownloadSettings settings)
+            => true;
+
+        public async Task<JobOutcome?> TryDownloadAsync(
+            SongJob song,
+            DownloadSettings settings,
+            FileManager organizer,
+            IJobLog? log,
+            CancellationToken ct)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            return string.IsNullOrWhiteSpace(downloadPath)
+                ? null
+                : JobOutcome.Done(downloadPath, downloadSource: SongDownloadSource.Fallback);
+        }
+
+        public void Release(string? path)
+        {
+            downloadPath = path;
+            release.TrySetResult();
+        }
     }
 
     private sealed class SameUserQueuedSiblingProbe
