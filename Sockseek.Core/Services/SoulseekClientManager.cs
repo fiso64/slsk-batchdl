@@ -143,10 +143,9 @@ public class SoulseekClientManager : IDisposable
 
             if (!IsConnectedAndLoggedIn)
             {
-                if (!loginSettings.UseRandomLogin && (string.IsNullOrEmpty(loginSettings.Username) || string.IsNullOrEmpty(loginSettings.Password)))
-                {
-                    SockseekLog.Soulseek.Error("No soulseek username or password provided for login.");
-                }
+                var missingCredentialMessage = GetMissingCredentialMessage(loginSettings);
+                if (missingCredentialMessage != null)
+                    throw new InvalidOperationException(missingCredentialMessage);
 
                 await LoginInternalAsync(_client, loginSettings, cancellationToken);
                 _readyTcs.TrySetResult();
@@ -205,6 +204,27 @@ public class SoulseekClientManager : IDisposable
             e = e.InnerException;
         }
         return false;
+    }
+
+    private string? GetMissingCredentialMessage(EngineSettings settings)
+    {
+        if (settings.UseRandomLogin
+            || !string.IsNullOrWhiteSpace(settings.MockFilesDir)
+            || !string.IsNullOrWhiteSpace(_initialSettings.MockFilesDir))
+        {
+            return null;
+        }
+
+        var missingUsername = string.IsNullOrWhiteSpace(settings.Username);
+        var missingPassword = string.IsNullOrWhiteSpace(settings.Password);
+
+        return (missingUsername, missingPassword) switch
+        {
+            (true, true) => "Missing Soulseek username and password. Provide --user and --pass, or configure username/password.",
+            (true, false) => "Missing Soulseek username. Provide --user, or configure username.",
+            (false, true) => "Missing Soulseek password. Provide --pass, or configure password.",
+            _ => null,
+        };
     }
 
     private async Task MonitorConnectionLoopAsync(CancellationToken ct)
@@ -337,8 +357,8 @@ public class SoulseekClientManager : IDisposable
     /// </summary>
     private async Task LoginInternalAsync(ISoulseekClient client, EngineSettings settings, CancellationToken cancellationToken)
     {
-        string user = settings.Username;
-        string pass = settings.Password;
+        string user = settings.Username ?? "";
+        string pass = settings.Password ?? "";
 
         if (settings.UseRandomLogin)
         {

@@ -26,6 +26,7 @@ namespace Tests.ClientTests
         private int failingSearches;
 
         public int SearchesCancelledMidDelay { get; private set; }
+        public int ConnectCallCount;
         public int SearchCallCount;
         public int DownloadCallCount;
         public int BrowseCallCount;
@@ -146,6 +147,8 @@ namespace Tests.ClientTests
 
         public Task ConnectAsync(string address, int port, string username, string password, CancellationToken? cancellationToken = null)
         {
+            Interlocked.Increment(ref ConnectCallCount);
+
             if (ConnectException != null)
             {
                 State = SoulseekClientStates.None;

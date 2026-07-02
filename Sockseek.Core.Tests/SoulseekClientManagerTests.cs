@@ -89,6 +89,39 @@ public class SoulseekClientManagerTests
         }
     }
 
+    [DataTestMethod]
+    [DataRow(null, null, "Missing Soulseek username and password.")]
+    [DataRow("bbbbbbb", null, "Missing Soulseek password.")]
+    public async Task EnsureConnectedAndLoggedInAsync_FailsCleanly_WhenCredentialsAreMissing(
+        string? username,
+        string? password,
+        string expectedMessage)
+    {
+        var settings = new EngineSettings
+        {
+            Username = username,
+            Password = password,
+        };
+        var mockClient = new MockSoulseekClient(
+            new(),
+            initialState: SoulseekClientStates.None);
+        var manager = new SoulseekClientManager(settings, mockClient);
+
+        try
+        {
+            var ex = await Assert.ThrowsExceptionAsync<SoulseekConnectionUnavailableException>(
+                () => manager.EnsureConnectedAndLoggedInAsync(settings));
+
+            StringAssert.Contains(ex.Message, expectedMessage);
+            Assert.IsFalse(ex.Message.Contains("--random-login", StringComparison.Ordinal), "Missing credential errors should not advertise --random-login.");
+            Assert.AreEqual(0, mockClient.ConnectCallCount, "Missing credentials should fail before ConnectAsync.");
+        }
+        finally
+        {
+            manager.Dispose();
+        }
+    }
+
     [TestMethod]
     public async Task KickedFromServer_MarksFatal_WhenAutoReconnectDisabled()
     {
