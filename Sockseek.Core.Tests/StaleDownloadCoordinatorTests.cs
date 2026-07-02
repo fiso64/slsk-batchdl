@@ -109,6 +109,29 @@ public class StaleDownloadCoordinatorTests
     }
 
     [TestMethod]
+    public void QueuedAttemptUsesFreshActivityFromCompletedSameUserSibling()
+    {
+        var scenario = new Scenario();
+        var queued = scenario.Register("user-a", @"Music\Artist - Queued.mp3");
+        var active = scenario.Register("user-a", @"Music\Artist - Active.mp3");
+        scenario.ReportState(queued, TransferStates.Queued | TransferStates.Remotely, bytesTransferred: 0);
+        scenario.ReportState(active, TransferStates.InProgress, bytesTransferred: 0);
+
+        scenario.Advance(MaxStaleTime - TimeSpan.FromMilliseconds(1));
+        scenario.ReportProgress(active, bytesTransferred: 4096);
+        scenario.Coordinator.Complete(active.Id);
+        scenario.Advance(TimeSpan.FromMilliseconds(1));
+
+        Assert.AreEqual(0, scenario.CancelStaleDownloads(),
+            "A queued attempt should inherit recent activity from a same-user sibling even after that sibling completes.");
+        Assert.IsFalse(queued.Download.Cts.IsCancellationRequested);
+
+        scenario.Advance(MaxStaleTime);
+        Assert.AreEqual(1, scenario.CancelStaleDownloads());
+        AssertCancelled(queued);
+    }
+
+    [TestMethod]
     public void InProgressAttemptDoesNotUseSiblingActivity()
     {
         var scenario = new Scenario();

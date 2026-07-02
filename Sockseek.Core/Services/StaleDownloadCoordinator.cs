@@ -9,6 +9,9 @@ internal sealed class StaleDownloadCoordinator
     private readonly TimeProvider timeProvider;
     private readonly object gate = new();
     private readonly Dictionary<Guid, Attempt> attempts = new();
+    // Keep recent peer activity after an attempt completes, so queued same-user
+    // siblings don't become stale the moment the active transfer leaves tracking.
+    private readonly Dictionary<string, long> latestActivityByUser = new(StringComparer.OrdinalIgnoreCase);
     private TaskCompletionSource deadlinesChanged = NewSignal();
 
     public StaleDownloadCoordinator(IDownloadRegistry registry, TimeProvider? timeProvider = null)
@@ -132,7 +135,11 @@ internal sealed class StaleDownloadCoordinator
             attempt.BytesTransferred = transfer.BytesTransferred;
 
             if (changed)
-                attempt.LastOwnActivityTimestamp = timeProvider.GetTimestamp();
+            {
+                var now = timeProvider.GetTimestamp();
+                attempt.LastOwnActivityTimestamp = now;
+                latestActivityByUser[attempt.Download.Candidate.Username] = now;
+            }
         }
 
         if (changed)
@@ -182,18 +189,18 @@ internal sealed class StaleDownloadCoordinator
 
     private Dictionary<string, long> GetLatestActivityByUser()
     {
-        var latestActivityByUser = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var latest = new Dictionary<string, long>(latestActivityByUser, StringComparer.OrdinalIgnoreCase);
         foreach (var attempt in attempts.Values)
         {
             var username = attempt.Download.Candidate.Username;
-            if (!latestActivityByUser.TryGetValue(username, out var latestActivity)
+            if (!latest.TryGetValue(username, out var latestActivity)
                 || attempt.LastOwnActivityTimestamp > latestActivity)
             {
-                latestActivityByUser[username] = attempt.LastOwnActivityTimestamp;
+                latest[username] = attempt.LastOwnActivityTimestamp;
             }
         }
 
-        return latestActivityByUser;
+        return latest;
     }
 
     private static long GetReferenceTimestamp(
