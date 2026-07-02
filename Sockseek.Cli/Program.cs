@@ -27,11 +27,11 @@ internal static partial class Program
             return (int)CliExitCode.Success;
 
         SockseekLog.SetupExceptionHandling();
-        AddInitialConsoleLogSink(args);
+        using var output = CliOutputController.Install(args);
 
         try
         {
-            return (int)await MainCore(args);
+            return (int)await MainCore(args, output);
         }
         catch (Exception ex)
         {
@@ -41,6 +41,12 @@ internal static partial class Program
     }
 
     internal static async Task<CliExitCode> MainCore(string[] args)
+    {
+        using var output = CliOutputController.CreateDetached();
+        return await MainCore(args, output);
+    }
+
+    internal static async Task<CliExitCode> MainCore(string[] args, CliOutputController output)
     {
         bool daemonMode = args.Length > 0 && string.Equals(args[0], "daemon", StringComparison.OrdinalIgnoreCase);
         var bindArgs = daemonMode ? args.Skip(1).ToArray() : args;
@@ -120,7 +126,7 @@ internal static partial class Program
             SockseekLog.AddOrReplaceFile(engineSettings.LogFilePath, engineSettings.LogLevel < LogLevel.Debug ? engineSettings.LogLevel : LogLevel.Debug);
 
         SockseekLog.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? LogLevel.Error : engineSettings.LogLevel);
-        if (ShouldUseLiveRendering(cliSettings))
+        if (CliOutputController.WouldUseLiveRendering(cliSettings))
             engineSettings.ReportIntervalProgress = false;
 
         if (daemonMode)
@@ -155,7 +161,7 @@ internal static partial class Program
         {
             try
             {
-                return await RunRemoteAsync(bindArgs, engineSettings, rootSettings, cliSettings, remoteSettings, cts);
+                return await RunRemoteAsync(bindArgs, engineSettings, rootSettings, cliSettings, remoteSettings, output, cts);
             }
             catch (SockseekApiRequestException ex)
             {
@@ -216,8 +222,8 @@ internal static partial class Program
             new JsonStreamProgressReporter(Console.Out).Attach(backend);
         else if (ShouldAttachHumanProgressReporter(rootSettings.PrintOption))
         {
-            cliReporter = new CliProgressReporter(cliSettings);
-            AttachLiveLogSinkIfNeeded(cliReporter, engineSettings.LogLevel);
+            output.ConfigureLiveRendering(cliSettings, engineSettings.LogLevel);
+            cliReporter = new CliProgressReporter(cliSettings, output);
             cliReporter.Attach(backend);
         }
 
@@ -423,76 +429,7 @@ internal static partial class Program
     }
 
     internal static bool ArgsRequestProgressJson(IReadOnlyList<string> args)
-    {
-        for (var i = 0; i < args.Count; i++)
-        {
-            var arg = args[i];
-            if (arg.Equals("--progress-json", StringComparison.OrdinalIgnoreCase))
-                return i + 1 >= args.Count || !args[i + 1].Equals("false", StringComparison.OrdinalIgnoreCase);
-
-            if (arg.StartsWith("--progress-json=", StringComparison.OrdinalIgnoreCase))
-                return !arg["--progress-json=".Length..].Equals("false", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return false;
-    }
-
-    private static void AddInitialConsoleLogSink(IReadOnlyList<string> args)
-    {
-        if (ArgsRequestProgressJson(args))
-        {
-            SockseekLog.AddStructuredConsoleSink((_, message) => Console.Error.WriteLine(message));
-            return;
-        }
-
-        SockseekLog.AddStructuredConsoleSink((entry, message) =>
-        {
-            WriteConsoleLog(entry, message);
-        });
-    }
-
-    private static ConsoleColor ConsoleColorFor(LogLevel level) => level switch
-    {
-        LogLevel.Error or LogLevel.Critical => ConsoleColor.Red,
-        LogLevel.Warning => ConsoleColor.DarkYellow,
-        _ => ConsoleColor.Gray,
-    };
-
-    private static void WriteConsoleLog(SockseekLog.StructuredLogEntry entry, string message)
-    {
-        if (entry.Routing == SockseekLog.LogRouting.ConsoleOnly)
-        {
-            if (entry.Level >= LogLevel.Error)
-                Console.Error.WriteLine(entry.Message);
-            else
-                Printing.WriteLine(entry.Message, entry.Color ?? ConsoleColorFor(entry.Level));
-            return;
-        }
-
-        if (entry.Level >= LogLevel.Error)
-        {
-            Console.Error.WriteLine(message);
-            return;
-        }
-
-        var messageColor = entry.Color ?? ConsoleColorFor(entry.Level);
-
-        if (entry.Level != LogLevel.Information)
-            Printing.Write($"[{ShortLogLevel(entry.Level)}] ", ConsoleColorFor(entry.Level));
-        Printing.Write($"[{entry.CategoryName}] ", ConsoleColor.DarkGray);
-        Printing.WriteLine(entry.Message, messageColor);
-    }
-
-    private static string ShortLogLevel(LogLevel level) => level switch
-    {
-        LogLevel.Trace => "trace",
-        LogLevel.Debug => "debug",
-        LogLevel.Information => "info",
-        LogLevel.Warning => "warn",
-        LogLevel.Error => "error",
-        LogLevel.Critical => "critical",
-        _ => level.ToString().ToLowerInvariant(),
-    };
+        => CliOutputController.ArgsRequestProgressJson(args);
 
     private static void ApplyMockFilesDefaults(EngineSettings engineSettings, DownloadSettings downloadSettings)
     {
@@ -516,6 +453,7 @@ internal static partial class Program
         DownloadSettings rootSettings,
         CliSettings cliSettings,
         RemoteSettings remoteSettings,
+        CliOutputController output,
         CancellationTokenSource cts)
     {
         if (string.IsNullOrWhiteSpace(rootSettings.Extraction.Input))
@@ -532,8 +470,8 @@ internal static partial class Program
             new JsonStreamProgressReporter(Console.Out).Attach(backend);
         else if (ShouldAttachHumanProgressReporter(rootSettings.PrintOption))
         {
-            cliReporter = new CliProgressReporter(cliSettings);
-            AttachLiveLogSinkIfNeeded(cliReporter, engineSettings.LogLevel);
+            output.ConfigureLiveRendering(cliSettings, engineSettings.LogLevel);
+            cliReporter = new CliProgressReporter(cliSettings, output);
             cliReporter.Attach(backend);
         }
 
@@ -1251,11 +1189,6 @@ internal static partial class Program
             ? null
             : names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-    private static bool ShouldUseLiveRendering(CliSettings cliSettings)
-        => !cliSettings.NoProgress
-            && !cliSettings.ProgressJson
-            && !Console.IsOutputRedirected;
-
     private static void LogCliSessionStart(RemoteSettings remoteSettings)
     {
         if (remoteSettings.IsEnabled)
@@ -1277,15 +1210,6 @@ internal static partial class Program
 
         SockseekLog.Cli.Debug($"Exiting CLI session in local mode with code {(int)exitCode} ({exitCode})");
         return exitCode;
-    }
-
-    private static void AttachLiveLogSinkIfNeeded(CliProgressReporter reporter, LogLevel minimumLevel)
-    {
-        if (!reporter.UsesLiveRendering)
-            return;
-
-        SockseekLog.RemoveConsoleOutputs();
-        reporter.AttachLogSink(minimumLevel);
     }
 
     private static async Task RunDaemonAsync(

@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Spectre.Console;
 using Soulseek;
 using Sockseek.Core;
@@ -15,7 +14,7 @@ namespace Sockseek.Cli;
 public class CliProgressReporter
 {
     private readonly CliSettings _cli;
-    private readonly TerminalLiveRenderer? _live;
+    private readonly CliOutputController _output;
 
     private readonly ConcurrentDictionary<Guid, BarData> _bars = new();
     private readonly ConcurrentDictionary<Guid, AlbumBlock> _albumBlocks = new();
@@ -64,52 +63,28 @@ public class CliProgressReporter
         set
         {
             _isPaused = value;
-            if (_live != null)
-                _live.IsPaused = value;
-            else
-                Printing.SetBuffering(value);
+            _output.IsPaused = value;
         }
     }
 
-    private bool LiveMode => _live != null;
+    private bool LiveMode => _output.UsesLiveRendering;
 
     public bool UsesLiveRendering => LiveMode;
 
     public CliProgressReporter(CliSettings cli)
+        : this(cli, null)
+    {
+    }
+
+    internal CliProgressReporter(CliSettings cli, CliOutputController? output)
     {
         _cli = cli;
-        if (!cli.NoProgress && !Console.IsOutputRedirected)
-            _live = new TerminalLiveRenderer();
+        _output = output ?? CliOutputController.CreateDetached(cli);
     }
 
     public void Stop()
     {
-        _live?.Dispose();
-    }
-
-    public void AttachLogSink(LogLevel minimumLevel)
-    {
-        if (_live == null)
-            return;
-
-        SockseekLog.AddStructuredConsoleSink(WriteLiveLog, minimumLevel);
-    }
-
-    private void WriteLiveLog(SockseekLog.StructuredLogEntry entry, string message)
-    {
-        if (_live == null)
-            return;
-
-        if (entry.Context is TerminalLogLine line)
-        {
-            if (!line.ShowInLive)
-                return;
-
-            _live.Log(line);
-            return;
-        }
-
-        _live.Log(entry);
+        _output.StopLiveRendering();
     }
 
     public void ReportSyntheticJobFailure(int displayId, string jobType, string name, string failureReason)
@@ -220,7 +195,7 @@ public class CliProgressReporter
                 ReportSearchRateLimited(rl);
                 break;
             case "search.resumed":
-                _live?.SetRateLimited(null);
+                _output.SetRateLimited(null);
                 break;
         }
     }
@@ -235,13 +210,16 @@ public class CliProgressReporter
             _terminalJobs.TryRemove(summary.JobId, out _);
 
         if (!IsInfrastructureJobKind(summary.Kind))
-            _live?.UpsertJob(new TerminalJobRecord(
+        {
+            _output.StartLiveRenderingIfNeeded();
+            _output.UpsertJobRecord(new TerminalJobRecord(
                 summary.JobId.ToString(),
                 summary.DisplayId,
                 GetJobTypeLabel(summary.Kind),
                 status.Label,
                 status.Category,
                 summary.ParentJobId?.ToString()));
+        }
 
         if (status.IsTerminal)
         {
@@ -489,8 +467,8 @@ public class CliProgressReporter
         string? displayName = null,
         TerminalFileMetadata? metadata = null)
     {
-        if (_live == null) return;
-        _live.Upsert(new JobView(
+        if (!LiveMode) return;
+        _output.UpsertJob(new JobView(
             summary.JobId.ToString(),
             summary.DisplayId,
             GetJobTypeLabel(summary.Kind),
@@ -507,18 +485,18 @@ public class CliProgressReporter
 
     private void UpsertLiveSong(Guid jobId, int displayId, string name, string state, int? percent = null, long? speedBps = null, TerminalFileMetadata? metadata = null)
     {
-        _live?.Upsert(new JobView(jobId.ToString(), displayId, "Song", name, state,
+        _output.UpsertJob(new JobView(jobId.ToString(), displayId, "Song", name, state,
             Percent: percent,
             SpeedBytesPerSecond: speedBps,
             Metadata: metadata,
             ParentId: GetContainerParentId(jobId)));
     }
 
-    private void RemoveLiveJob(Guid jobId) => _live?.Remove(jobId.ToString());
+    private void RemoveLiveJob(Guid jobId) => _output.RemoveJob(jobId.ToString());
 
     private void UpsertLiveAlbum(Guid albumId, AlbumBlock block)
     {
-        if (_live == null) return;
+        if (!LiveMode) return;
 
         int done = AlbumDoneCount(block);
         var songs = AlbumSongsSnapshot(block);
@@ -973,7 +951,7 @@ public class CliProgressReporter
     {
         if (LiveMode)
         {
-            _live!.SetRateLimited(rateLimit.ResetsAt);
+            _output.SetRateLimited(rateLimit.ResetsAt);
             return;
         }
 

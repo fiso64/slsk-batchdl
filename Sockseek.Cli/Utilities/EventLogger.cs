@@ -38,7 +38,9 @@ internal sealed class EventLogger
     private void Write(ActivityLogEntry entry)
     {
         var context = entry.Display is { } display
-            ? new TerminalLogLine(TerminalKind(display.Kind), "", display.DisplayId, display.JobType, display.Message, display.Source, display.Highlight, display.ShowInLive)
+            ? new CliOutputEvent.JobLog(
+                new TerminalLogLine(TerminalKind(display.Kind), "", display.DisplayId, display.JobType, display.Message, display.Source, display.Highlight, display.ShowInLive),
+                entry.Level)
             : null;
 
         SockseekLog.Write(new SockseekLog.StructuredLogEntry(

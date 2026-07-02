@@ -25,6 +25,13 @@ public class CliProgressReporterTests
         SockseekLog.RemoveNonFileOutputs();
     }
 
+    private static TerminalLogLine JobLogLine(SockseekLog.StructuredLogEntry entry)
+    {
+        var jobLog = entry.Context as CliOutputEvent.JobLog;
+        Assert.IsNotNull(jobLog);
+        return jobLog.Line;
+    }
+
     [TestMethod]
     public void EventLogger_HandledEventTypes_AreCataloged()
     {
@@ -347,7 +354,7 @@ public class CliProgressReporterTests
                 CreateFileCandidate("user", @"Music\Artist\Song.flac"))));
 
         Assert.AreEqual(1, entries.Count);
-        var line = (TerminalLogLine)entries[0].Context!;
+        var line = JobLogLine(entries[0]);
         Assert.IsFalse(line.ShowInLive);
         Assert.AreEqual("downloading: Artist - Song: user\\Music\\Artist\\Song.flac", line.Message);
     }
@@ -373,7 +380,7 @@ public class CliProgressReporterTests
             "List")));
 
         Assert.AreEqual(1, entries.Count);
-        var line = (TerminalLogLine)entries[0].Context!;
+        var line = JobLogLine(entries[0]);
         Assert.IsTrue(line.ShowInLive);
         Assert.AreEqual("List", line.Source);
         Assert.AreEqual("Failed", line.Highlight);
@@ -406,7 +413,7 @@ public class CliProgressReporterTests
             ChosenCandidate: candidate)));
 
         Assert.AreEqual(1, entries.Count);
-        var line = (TerminalLogLine)entries[0].Context!;
+        var line = JobLogLine(entries[0]);
         Assert.IsTrue(line.ShowInLive);
         Assert.AreEqual("succeeded", line.Highlight);
         Assert.AreEqual("succeeded: Artist - Song: user\\Music\\Artist\\Song.flac", line.Message);
@@ -466,7 +473,7 @@ public class CliProgressReporterTests
             ChosenCandidate: candidate)));
 
         Assert.AreEqual(1, entries.Count);
-        var line = (TerminalLogLine)entries[0].Context!;
+        var line = JobLogLine(entries[0]);
         Assert.IsFalse(line.ShowInLive);
         Assert.AreEqual("already exists", line.Highlight);
     }
@@ -512,7 +519,7 @@ public class CliProgressReporterTests
             ChosenCandidate: candidate)));
 
         Assert.AreEqual(1, entries.Count);
-        var line = (TerminalLogLine)entries[0].Context!;
+        var line = JobLogLine(entries[0]);
         Assert.AreEqual("Album Track", line.JobType);
         Assert.AreEqual(TerminalLogKind.AlbumTrackDownloaded, line.Kind);
         Assert.AreEqual("succeeded: Artist Album: 01. Artist - Track.flac", line.Message);
@@ -534,11 +541,11 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void TerminalLiveRenderer_DimsStructuredProcessLogPrefixes()
+    public void CliLogStyle_DimsStructuredProcessLogPrefixes()
     {
         Assert.AreEqual(
             "[grey][[debug]] [[soulseek]] [/]" + "Logging in",
-            TerminalLiveRenderer.FormatProcessLogMarkup(new TerminalProcessLogLine(
+            CliLogStyle.FormatProcessLogMarkup(new TerminalProcessLogLine(
                 LogLevel.Debug,
                 SockseekLog.Categories.Soulseek,
                 "Logging in",
@@ -546,11 +553,11 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void TerminalLiveRenderer_ColorsStatusAfterStructuredSourcePrefix()
+    public void CliLogStyle_ColorsStatusAfterStructuredSourcePrefix()
     {
         Assert.AreEqual(
             "[grey][[002]] [/]" + "ExtractJob: Spotify: [red]Failed[/]: https://open.spotify.com/playlist/123",
-            TerminalLiveRenderer.FormatLogMarkup(new TerminalLogLine(
+            CliLogStyle.FormatTerminalLogMarkup(new TerminalLogLine(
                 TerminalLogKind.JobFailed,
                 "",
                 2,
@@ -561,10 +568,106 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void TerminalLiveRenderer_SourcePrefixText_IsMeasuredSeparately()
+    public void CliLogStyle_UsesSeverityColorForLevelLabelOnly()
     {
-        Assert.AreEqual("Spotify: ", TerminalLiveRenderer.SourcePrefixText("Spotify"));
-        Assert.AreEqual("", TerminalLiveRenderer.SourcePrefixText(null));
+        Assert.AreEqual(ConsoleColor.Red, CliLogStyle.LevelColor(LogLevel.Error));
+        Assert.AreEqual(ConsoleColor.Gray, CliLogStyle.MessageColor(LogLevel.Error));
+        Assert.AreEqual(ConsoleColor.DarkGray, CliLogStyle.TerminalIdColor);
+    }
+
+    [TestMethod]
+    public void CliLogStyle_FormatsTerminalLogContextLikeLiveRenderer()
+    {
+        var originalOut = Console.Out;
+        using var output = new StringWriter();
+        var line = new TerminalLogLine(
+            TerminalLogKind.Status,
+            "",
+            4,
+            "ExtractJob",
+            "String: Input: Artist 2 - Album 2");
+
+        try
+        {
+            Console.SetOut(output);
+
+            CliLogStyle.WriteConsoleLog(new SockseekLog.StructuredLogEntry(
+                LogLevel.Information,
+                SockseekLog.Categories.Jobs,
+                "[4] ExtractJob: String: Input: Artist 2 - Album 2",
+                Context: new CliOutputEvent.JobLog(line)));
+
+            Assert.AreEqual(
+                "[004] ExtractJob: String: Input: Artist 2 - Album 2" + Environment.NewLine,
+                output.ToString());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+    }
+
+    [TestMethod]
+    public void CliOutputEvent_FromLogEntry_PreservesExplicitJobLogSeverity()
+    {
+        var line = new TerminalLogLine(
+            TerminalLogKind.JobFailed,
+            "",
+            21,
+            "AlbumJob",
+            "failed [No matching results]: Album 9",
+            Highlight: "failed");
+
+        var outputEvent = CliOutputEvent.FromLogEntry(new SockseekLog.StructuredLogEntry(
+            LogLevel.Error,
+            SockseekLog.Categories.Jobs,
+            "[21] AlbumJob: failed [No matching results]: Album 9",
+            Context: new CliOutputEvent.JobLog(line)));
+
+        var jobLog = outputEvent as CliOutputEvent.JobLog;
+        Assert.IsNotNull(jobLog);
+        Assert.AreEqual(LogLevel.Error, jobLog.Level);
+        Assert.AreSame(line, jobLog.Line);
+    }
+
+    [TestMethod]
+    public void CliLogStyle_FormatsMixedOutputEventsInGivenOrder()
+    {
+        var firstFailure = new CliOutputEvent.JobLog(new TerminalLogLine(
+            TerminalLogKind.JobFailed,
+            "",
+            21,
+            "AlbumJob",
+            "failed [No matching results]: Album 9"));
+        var completed = new CliOutputEvent.ProcessLog(new TerminalProcessLogLine(
+            LogLevel.Information,
+            SockseekLog.Categories.Cli,
+            "Completed: 0 succeeded, 10 failed.",
+            SockseekLog.LogRouting.All));
+        var secondFailure = new CliOutputEvent.JobLog(new TerminalLogLine(
+            TerminalLogKind.JobFailed,
+            "",
+            22,
+            "AlbumJob",
+            "failed [No matching results]: Album 10"));
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "[021] AlbumJob: failed [No matching results]: Album 9",
+                "[cli] Completed: 0 succeeded, 10 failed.",
+                "[022] AlbumJob: failed [No matching results]: Album 10",
+            },
+            new CliOutputEvent[] { firstFailure, completed, secondFailure }
+                .Select(CliLogStyle.FormatOutputEventText)
+                .ToArray());
+    }
+
+    [TestMethod]
+    public void CliLogStyle_SourcePrefixText_IsMeasuredSeparately()
+    {
+        Assert.AreEqual("Spotify: ", CliLogStyle.SourcePrefixText("Spotify"));
+        Assert.AreEqual("", CliLogStyle.SourcePrefixText(null));
     }
 
     [TestMethod]

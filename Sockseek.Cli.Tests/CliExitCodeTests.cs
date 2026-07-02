@@ -158,6 +158,65 @@ public class CliExitCodeTests
     }
 
     [TestMethod]
+    public async Task Main_MissingCredentials_WritesCleanErrorWithoutEmptyProgressSummary()
+    {
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        try
+        {
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
+
+            var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "blah"]);
+
+            Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
+            StringAssert.Contains(stdout.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
+            var combined = stdout.ToString() + stderr.ToString();
+            Assert.IsFalse(combined.Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
+            Assert.IsFalse(combined.Contains("--random-login", StringComparison.Ordinal), "Credential guidance must not advertise random login.");
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+            SockseekLog.RemoveNonFileOutputs();
+        }
+    }
+
+    [TestMethod]
+    public async Task Main_ProgressJsonMissingCredentials_WritesHumanLogsToStderrOnly()
+    {
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        try
+        {
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
+
+            var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "blah", "--progress-json"]);
+
+            Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
+            Assert.AreEqual("", stdout.ToString());
+            StringAssert.Contains(stderr.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
+            Assert.IsFalse(stderr.ToString().Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+            SockseekLog.RemoveNonFileOutputs();
+        }
+    }
+
+    [TestMethod]
     public async Task Main_ProgressJson_WritesOnlyJsonLinesToStdout()
     {
         var originalOut = Console.Out;
