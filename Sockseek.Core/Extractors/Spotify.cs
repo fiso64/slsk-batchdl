@@ -37,7 +37,8 @@ namespace Sockseek.Core.Extractors;
             if (string.IsNullOrEmpty(_spotify.ClientId) || string.IsNullOrEmpty(_spotify.ClientSecret))
                 throw new Exception("Spotify client ID and secret are required. Create a Spotify developer app and pass --spotify-id and --spotify-secret.");
 
-            spotifyClient = new Spotify(_spotify.ClientId ?? "", _spotify.ClientSecret ?? "", _spotify.Token ?? "", _spotify.Refresh ?? "", context.Log);
+            using var spotifySession = new Spotify(_spotify.ClientId ?? "", _spotify.ClientSecret ?? "", _spotify.Token ?? "", _spotify.Refresh ?? "", context.Log);
+            spotifyClient = spotifySession;
             await spotifyClient.Authorize(needLogin, extraction.RemoveTracksFromSource);
 
             Job result;
@@ -185,7 +186,7 @@ namespace Sockseek.Core.Extractors;
     }
 
 
-    public class Spotify
+    public class Spotify : IDisposable
     {
         private EmbedIOAuthServer? _server;
         private readonly string _clientId;
@@ -528,7 +529,7 @@ namespace Sockseek.Core.Extractors;
             return (p.Name ?? "", p.Id ?? playlistId, songs);
         }
 
-        private string GetPlaylistIdFromUrl(string url)
+        private static string GetPlaylistIdFromUrl(string url)
         {
             var uri      = new Uri(url);
             var segments = uri.Segments;
@@ -566,10 +567,16 @@ namespace Sockseek.Core.Extractors;
             return albumJob;
         }
 
-        private string GetAlbumIdFromUrl(string url)
+        private static string GetAlbumIdFromUrl(string url)
         {
             var uri      = new Uri(url);
             var segments = uri.Segments;
             return segments[^1].TrimEnd('/');
+        }
+
+        public void Dispose()
+        {
+            _server?.Dispose();
+            GC.SuppressFinalize(this);
         }
     }

@@ -20,7 +20,7 @@ namespace Sockseek.Core.Models;
         {
             try
             {
-                var tagFile = TagLib.File.Create(path);
+                using var tagFile = TagLib.File.Create(path);
                 Path = tagFile.Name;
                 SetFromTagLib(tagFile);
             }

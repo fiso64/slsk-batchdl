@@ -1,6 +1,7 @@
 using Sockseek.Core.Models;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Settings;
+using System.Globalization;
 
 namespace Sockseek.Core.Extractors;
     public class StringExtractor : IExtractor, IInputMatcher
@@ -94,7 +95,7 @@ namespace Sockseek.Core.Extractors;
                 {
                     case "title":   _title  = value; break;
                     case "artist":  _artist = value; break;
-                    case "length":  _length = int.Parse(value); break;
+                    case "length":  _length = int.Parse(value, CultureInfo.InvariantCulture); break;
                     case "album":   _album  = value; break;
                     case "artist-maybe-wrong":
                         if (value == "true") _artistMaybeWrong = true;
@@ -106,12 +107,12 @@ namespace Sockseek.Core.Extractors;
                             _maxCount = -1;
                         }
                         else if (value.Last() == '-')
-                            _maxCount = int.Parse(value[..^1]);
+                            _maxCount = int.Parse(value[..^1], CultureInfo.InvariantCulture);
                         else if (value.Last() == '+')
-                            _minCount = int.Parse(value[..^1]);
+                            _minCount = int.Parse(value[..^1], CultureInfo.InvariantCulture);
                         else
                         {
-                            _minCount = int.Parse(value);
+                            _minCount = int.Parse(value, CultureInfo.InvariantCulture);
                             _maxCount = _minCount;
                         }
                         break;

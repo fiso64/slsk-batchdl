@@ -9,6 +9,9 @@ using Soulseek;
 
 namespace Sockseek.Cli;
 
+// TODO [LIFETIME]: Make the interactive coordinator disposable as part of CLI run-scope ownership.
+// It owns a promptSemaphore today, while callers also start background RunUntilCompleteAsync work.
+// Dispose should be coordinated with that background task and the tests that construct coordinators directly.
 internal sealed class InteractiveCliCoordinator
 {
     private readonly ICliBackend backend;

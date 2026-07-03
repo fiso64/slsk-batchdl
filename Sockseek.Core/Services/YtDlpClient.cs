@@ -23,10 +23,10 @@ public sealed class YtDlpSongDownloadFallback(IYtDlpClient client) : ISongDownlo
             return null;
 
         var results = await client.SearchAsync(song.Query, log, ct);
-        var result = results.FirstOrDefault();
-        if (result == null)
+        if (results.Count == 0)
             return null;
 
+        var result = results[0];
         var sourceName = string.IsNullOrWhiteSpace(result.Title)
             ? $"{song.Query.Artist} - {song.Query.Title}"
             : result.Title;

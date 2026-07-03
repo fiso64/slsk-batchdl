@@ -15,7 +15,7 @@ using Sockseek.Core.Settings;
 namespace Sockseek.Core.Services;
 
 
-public partial class Searcher
+public partial class Searcher : IDisposable
 {
     private readonly ISoulseekClient client;
     private readonly IUserStats userStats;
@@ -35,10 +35,17 @@ public partial class Searcher
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
 
+    public void Dispose()
+    {
+        rateSemaphore.Dispose();
+        concurrencySemaphore.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
 
     // ── raw search job ──────────────────────────────────────────────────────
 
-    private void InitializeDiscoveryProgress(Job job)
+    private static void InitializeDiscoveryProgress(Job job)
     {
         if (job.Discovery is { RawResultCount: 0, LockedFileCount: 0 })
             return;
@@ -457,8 +464,8 @@ public partial class Searcher
         {
             if (aname.Length > 0)
             {
-                var s = parts.Select((p, i) => (p, i)).Where(x => x.p.ContainsIgnoreCase(aname));
-                if (s.Any())
+                var s = parts.Select((p, i) => (p, i)).Where(x => x.p.ContainsIgnoreCase(aname)).ToList();
+                if (s.Count > 0)
                 {
                     int pos = s.MinBy(x => Math.Abs(x.p.Length - aname.Length)).i;
                     artist = parts[pos];
@@ -468,8 +475,8 @@ public partial class Searcher
             {
                 int artistPos2 = artist == defaultQuery.Artist ? -1 :
                     parts.Select((p, i) => (p, i)).FirstOrDefault(x => x.p == artist).i;
-                var ss = parts.Select((p, i) => (p, i)).Where(x => x.i != artistPos2 && x.p.ContainsIgnoreCase(tname));
-                if (ss.Any())
+                var ss = parts.Select((p, i) => (p, i)).Where(x => x.i != artistPos2 && x.p.ContainsIgnoreCase(tname)).ToList();
+                if (ss.Count > 0)
                     title = parts[ss.MinBy(x => Math.Abs(x.p.Length - tname.Length)).i];
             }
         }

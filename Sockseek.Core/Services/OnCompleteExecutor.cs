@@ -331,7 +331,7 @@ public static class OnCompleteExecutor
         return -1;
     }
 
-    private static IEnumerable<string> SplitOptionTokens(string optionText)
+    private static string[] SplitOptionTokens(string optionText)
         => string.IsNullOrWhiteSpace(optionText)
             ? []
             : optionText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

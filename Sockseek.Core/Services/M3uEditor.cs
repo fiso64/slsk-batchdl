@@ -82,7 +82,7 @@ public class M3uEditor
 
     private void LoadPreviousResults()
     {
-        if (lines.Count == 0 || !lines.Any(x => x.Trim() != ""))
+        if (lines.Count == 0 || !lines.Any(x => !string.IsNullOrWhiteSpace(x)))
             return;
 
         bool useOldFormat = lines[0].StartsWith("#Sockseek:");

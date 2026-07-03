@@ -119,7 +119,7 @@ public static partial class Utils
     {
         fname = fname.Replace('\\', Path.DirectorySeparatorChar);
         var directoryName = Path.GetDirectoryName(fname);
-        if (directoryName == null || directoryName == String.Empty)
+        if (string.IsNullOrEmpty(directoryName))
         {
             return String.Empty;
         }
@@ -756,7 +756,11 @@ public static partial class Utils
 
     public static string GreatestCommonPath(IEnumerable<string> paths)
     {
-        string? path = paths.FirstOrDefault();
+        using var enumerator = paths.GetEnumerator();
+        if (!enumerator.MoveNext())
+            return "";
+
+        string? path = enumerator.Current;
 
         if (path == null || path.Length == 0)
             return "";
@@ -777,26 +781,29 @@ public static partial class Utils
 
         int index = path.Length;
 
-        foreach (var p in paths.Skip(1))
+        while (enumerator.MoveNext())
+        {
+            var p = enumerator.Current;
             index = commonPathIndex(path, p, index);
+        }
 
         return path[..index];
     }
 
     public static string GreatestCommonDirectory(IEnumerable<string> paths)
     {
-        if (paths.Skip(1).Any())
-            return NormalizedPath(GreatestCommonPath(paths));
-        else
-            return NormalizedPath(Path.GetDirectoryName(paths.First().TrimEnd('/').TrimEnd('\\')) ?? "");
+        var pathList = paths as IReadOnlyList<string> ?? paths.ToArray();
+        return pathList.Count > 1
+            ? NormalizedPath(GreatestCommonPath(pathList))
+            : NormalizedPath(Path.GetDirectoryName(pathList[0].TrimEnd('/').TrimEnd('\\')) ?? "");
     }
 
     public static string GreatestCommonDirectorySlsk(IEnumerable<string> paths)
     {
-        if (paths.Skip(1).Any())
-            return Utils.GreatestCommonPath(paths).Replace('/', '\\').TrimEnd('\\');
-        else
-            return Utils.GetDirectoryNameSlsk(paths.First()).Replace('/', '\\').TrimEnd('\\');
+        var pathList = paths as IReadOnlyList<string> ?? paths.ToArray();
+        return pathList.Count > 1
+            ? Utils.GreatestCommonPath(pathList).Replace('/', '\\').TrimEnd('\\')
+            : Utils.GetDirectoryNameSlsk(pathList[0]).Replace('/', '\\').TrimEnd('\\');
     }
 
     public static string NormalizedPath(string path)

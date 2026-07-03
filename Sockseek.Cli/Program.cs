@@ -155,7 +155,7 @@ internal static partial class Program
 
         LogCliSessionStart(remoteSettings);
 
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
 
         if (remoteSettings.IsEnabled)
         {
@@ -419,7 +419,7 @@ internal static partial class Program
         {
             SockseekLog.Trace("Main: Entered finally block. Disposing clientManager...");
             engine.Cancel();
-            cts.Cancel();
+            await cts.CancelAsync();
             cliReporter?.Stop();
             clientManager.Dispose();
             Printing.SetBuffering(false);
@@ -673,7 +673,7 @@ internal static partial class Program
         }
         finally
         {
-            cts.Cancel();
+            await cts.CancelAsync();
             cliReporter?.Stop();
         }
     }
@@ -1256,7 +1256,7 @@ internal static partial class Program
 
         try
         {
-            var listener = new System.Net.Sockets.TcpListener(ipAddress, daemonSettings.ListenPort);
+            using var listener = new System.Net.Sockets.TcpListener(ipAddress, daemonSettings.ListenPort);
             listener.Start();
             listener.Stop();
         }

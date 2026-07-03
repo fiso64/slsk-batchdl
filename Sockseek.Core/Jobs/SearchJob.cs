@@ -17,7 +17,6 @@ public sealed record AggregateAlbumProjection(AlbumQuery Query);
 public class SearchJob : Job
 {
     private readonly Lock _projectionCacheLock = new();
-    private readonly Dictionary<string, (int Revision, bool IsComplete, object Value)> _projectionCache = [];
     private readonly Dictionary<string, object> _incrementalProjectionStates = [];
 
     public string QueryText { get; }

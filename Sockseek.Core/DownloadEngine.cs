@@ -24,6 +24,11 @@ namespace Sockseek.Core;
 // 1. Break this class into isolated services (e.g., IJobPipeline, IQueueOrchestrator).
 // 2. Inject dependencies (ISearcher, IDownloader) via constructor injection.
 // This will drastically improve maintainability and make the orchestration logic actually unit-testable.
+//
+// TODO [ARCHITECTURE]: Define explicit engine/service lifetime ownership.
+// DownloadEngine currently owns app-wide cancellation, a Searcher with disposable throttling
+// semaphores, and background stale-download work. Refactor this into an async-disposable
+// run scope so completion, cancellation, and server-host shutdown all dispose the same graph.
 public class DownloadEngine
 {
     private Searcher? searcher = null;
@@ -607,7 +612,7 @@ public class DownloadEngine
             Events.RaiseEngineCompleted(Queue);
 
         SockseekLog.Jobs.Debug("Exiting RunAsync");
-        appCts.Cancel();
+        await appCts.CancelAsync();
     }
 
 
@@ -2680,7 +2685,7 @@ public class DownloadEngine
                     if (fastDownload?.Status == FileDownloadStatus.Completed && fastDownload.Result != null)
                     {
                         // Fast download won — cancel the search.
-                        searchCts.Cancel();
+                        await searchCts.CancelAsync();
                         try { await searchTask; } catch (OperationCanceledException) { }
 
                         var result = fastDownload.Result;
@@ -3442,7 +3447,7 @@ public class DownloadEngine
             if (cancelGroupOnFail && ShouldCancelGroupOnEmbeddedOutcome(outcome))
             {
                 CommitOutcome(song, outcome);
-                groupCts.Cancel();
+                await groupCts.CancelAsync();
                 throw new OperationCanceledException();
             }
 
@@ -3457,7 +3462,7 @@ public class DownloadEngine
 
             if (cancelGroupOnFail && ShouldCancelGroupOnEmbeddedOutcome(finalOutcome))
             {
-                groupCts.Cancel();
+                await groupCts.CancelAsync();
                 throw new OperationCanceledException();
             }
 
@@ -3472,7 +3477,7 @@ public class DownloadEngine
         }
         catch (OperationCanceledException) when (!groupCts.IsCancellationRequested && cancelGroupOnFail)
         {
-            groupCts.Cancel();
+            await groupCts.CancelAsync();
             throw;
         }
         finally

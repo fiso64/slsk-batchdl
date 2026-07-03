@@ -585,6 +585,9 @@ public sealed class EngineSupervisor
 
     private DownloadEngine CreateEngine()
     {
+        // TODO [LIFETIME]: Move engine, client-manager, and state-store attachment into an
+        // async-disposable run scope. The supervisor currently transfers ownership across
+        // fields/events, which works at runtime but is too implicit for analyzers and shutdown.
         var clientManager = new SoulseekClientManager(engineSettings, options.ClientFactory?.Invoke(engineSettings));
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         StateStore.AttachEngine(engine);

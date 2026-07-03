@@ -74,7 +74,7 @@ public sealed class SourceMutationExecutor
         if (string.IsNullOrWhiteSpace(mutation.Source) || string.IsNullOrWhiteSpace(mutation.TrackUri))
             return;
 
-        var spotify = new Sockseek.Core.Extractors.Spotify(
+        using var spotify = new Sockseek.Core.Extractors.Spotify(
             settings.ClientId ?? "",
             settings.ClientSecret ?? "",
             settings.Token ?? "",

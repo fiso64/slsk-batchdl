@@ -2,6 +2,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Jobs;
 using System.Text.RegularExpressions;
 using Sockseek.Core.Settings;
+using System.Globalization;
 
 namespace Sockseek.Core.Extractors;
     public partial class CsvExtractor : IExtractor, IInputMatcher
@@ -248,10 +249,10 @@ namespace Sockseek.Core.Extractors;
             {
                 switch (formatParts[i])
                 {
-                    case "h":  totalSeconds += double.Parse(durationParts[i]) * 3600; break;
-                    case "m":  totalSeconds += double.Parse(durationParts[i]) * 60;   break;
-                    case "s":  totalSeconds += double.Parse(durationParts[i]);         break;
-                    case "ms": totalSeconds += double.Parse(durationParts[i]) / Math.Pow(10, durationParts[i].Length); break;
+                    case "h":  totalSeconds += double.Parse(durationParts[i], CultureInfo.InvariantCulture) * 3600; break;
+                    case "m":  totalSeconds += double.Parse(durationParts[i], CultureInfo.InvariantCulture) * 60;   break;
+                    case "s":  totalSeconds += double.Parse(durationParts[i], CultureInfo.InvariantCulture);         break;
+                    case "ms": totalSeconds += double.Parse(durationParts[i], CultureInfo.InvariantCulture) / Math.Pow(10, durationParts[i].Length); break;
                 }
             }
             return totalSeconds;

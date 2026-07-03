@@ -25,7 +25,7 @@ namespace Sockseek.Core.Extractors;
             return !input.IsInternetUrl();
         }
 
-        public Task<Job> GetTracks(string input, ExtractionSettings extraction, ExtractorContext? context = null)
+        public async Task<Job> GetTracks(string input, ExtractionSettings extraction, ExtractorContext? context = null)
         {
             var maxTracks = extraction.MaxTracks;
             var offset    = extraction.Offset;
@@ -36,7 +36,7 @@ namespace Sockseek.Core.Extractors;
             if (!File.Exists(listFilePath))
                 throw new FileNotFoundException($"List file '{listFilePath}' not found");
 
-            var lines = File.ReadAllLines(listFilePath);
+            var lines = await File.ReadAllLinesAsync(listFilePath);
 
             var result = new JobList { ItemName = Path.GetFileNameWithoutExtension(listFilePath), EnablesIndexByDefault = true };
 
@@ -103,7 +103,7 @@ namespace Sockseek.Core.Extractors;
                 added++;
             }
 
-            return Task.FromResult<Job>(result);
+            return result;
         }
 
         static List<string> ParseLine(string input)

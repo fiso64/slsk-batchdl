@@ -362,10 +362,9 @@ public class SoulseekClientManager : IDisposable
 
         if (settings.UseRandomLogin)
         {
-            var r = new Random();
             const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-            user = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
-            pass = new string(Enumerable.Repeat(chars, 10).Select(s => s[r.Next(s.Length)]).ToArray());
+            user = RandomNumberGenerator.GetString(chars, 10);
+            pass = RandomNumberGenerator.GetString(chars, 10);
             SockseekLog.Soulseek.Debug($"Generated random username: {user}");
         }
 
@@ -389,5 +388,8 @@ public class SoulseekClientManager : IDisposable
         if (_client != null)
             _client.KickedFromServer -= OnKickedFromServer;
         _client?.Dispose();
+        _monitorCts?.Dispose();
+        _initializationSemaphore.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

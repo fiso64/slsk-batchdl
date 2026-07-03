@@ -1,6 +1,6 @@
 namespace Sockseek.Core;
 
-﻿public class RateLimitedSemaphore
+﻿public sealed class RateLimitedSemaphore : IDisposable
 {
     private readonly int maxCount;
     private readonly TimeSpan resetTimeSpan;
@@ -82,5 +82,11 @@ namespace Sockseek.Core;
 
         if (firedWaiting)
             onResumed?.Invoke();
+    }
+
+    public void Dispose()
+    {
+        semaphore.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

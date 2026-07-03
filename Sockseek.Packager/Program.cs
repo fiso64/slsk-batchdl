@@ -18,7 +18,7 @@ const UnixFileMode ExecutableFileMode =
 
 if (args.Length != 4 || args[0] != "tar-gz")
 {
-    Console.Error.WriteLine("Usage: Sockseek.Packager tar-gz <source-dir> <destination.tar.gz> <executable-name>");
+    await Console.Error.WriteLineAsync("Usage: Sockseek.Packager tar-gz <source-dir> <destination.tar.gz> <executable-name>");
     return 2;
 }
 
@@ -28,7 +28,7 @@ var executableName = args[3];
 
 if (!Directory.Exists(sourceDir))
 {
-    Console.Error.WriteLine($"Source directory does not exist: {sourceDir}");
+    await Console.Error.WriteLineAsync($"Source directory does not exist: {sourceDir}");
     return 2;
 }
 

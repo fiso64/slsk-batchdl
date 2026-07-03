@@ -195,18 +195,20 @@ namespace Sockseek.Core.Services;
             {
                 if (Utils.IsMusicFile(path))
                 {
-                    TagLib.File musicFile;
-                    try { musicFile = TagLib.File.Create(path); }
+                    try
+                    {
+                        using var musicFile = TagLib.File.Create(path);
+                        string ppath  = Preprocess(path[..path.LastIndexOf('.')], false, false)[removeLen..];
+                        string pname  = Path.GetFileName(ppath);
+                        var    parent = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
+                        var    simpleFile = new SimpleFile(musicFile);
+
+                        if (!index.TryGetValue(parent, out var value))
+                            index[parent] = new() { (path, (ppath, pname, simpleFile)) };
+                        else
+                            value.Add((path, (ppath, pname, simpleFile)));
+                    }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
-
-                    string ppath  = Preprocess(path[..path.LastIndexOf('.')], false, false)[removeLen..];
-                    string pname  = Path.GetFileName(ppath);
-                    var    parent = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
-
-                    if (!index.TryGetValue(parent, out var value))
-                        index[parent] = new() { (path, (ppath, pname, new SimpleFile(musicFile))) };
-                    else
-                        value.Add((path, (ppath, pname, new SimpleFile(musicFile))));
                 }
             }
             IndexIsBuilt = true;
@@ -250,15 +252,16 @@ namespace Sockseek.Core.Services;
             {
                 if (Utils.IsMusicFile(path))
                 {
-                    TagLib.File musicFile;
-                    try { musicFile = TagLib.File.Create(path); }
+                    try
+                    {
+                        using var musicFile = TagLib.File.Create(path);
+                        string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
+                        string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
+                        string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
+                        string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
+                        index.Add((path, (partist, ptitle, palbum, palbumArtist)));
+                    }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
-
-                    string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
-                    string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
-                    string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
-                    string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
-                    index.Add((path, (partist, ptitle, palbum, palbumArtist)));
                 }
             }
             IndexIsBuilt = true;
@@ -293,20 +296,22 @@ namespace Sockseek.Core.Services;
             {
                 if (Utils.IsMusicFile(path))
                 {
-                    TagLib.File musicFile;
-                    try { musicFile = TagLib.File.Create(path); }
+                    try
+                    {
+                        using var musicFile = TagLib.File.Create(path);
+                        string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
+                        string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
+                        string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
+                        string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
+                        var    parent       = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
+                        var    simpleFile   = new SimpleFile(musicFile);
+
+                        if (!index.TryGetValue(parent, out var value))
+                            index[parent] = new() { (path, (partist, ptitle, palbum, palbumArtist, simpleFile)) };
+                        else
+                            value.Add((path, (partist, ptitle, palbum, palbumArtist, simpleFile)));
+                    }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
-
-                    string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
-                    string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
-                    string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
-                    string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
-                    var    parent       = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
-
-                    if (!index.TryGetValue(parent, out var value))
-                        index[parent] = new() { (path, (partist, ptitle, palbum, palbumArtist, new SimpleFile(musicFile))) };
-                    else
-                        value.Add((path, (partist, ptitle, palbum, palbumArtist, new SimpleFile(musicFile))));
                 }
             }
             IndexIsBuilt = true;
@@ -380,7 +385,7 @@ namespace Sockseek.Core.Services;
 
             try
             {
-                var musicFile = TagLib.File.Create(t.DownloadPath);
+                using var musicFile = TagLib.File.Create(t.DownloadPath);
                 if (ConditionSatisfactionPolicy.LocalFileSatisfies(context.conditions, musicFile, song.Query))
                 {
                     foundPath = t.DownloadPath;
@@ -414,11 +419,12 @@ namespace Sockseek.Core.Services;
             var audioFiles = new List<SimpleFile>();
             foreach (var path in audioFilePaths)
             {
-                TagLib.File musicFile;
-                try { musicFile = TagLib.File.Create(path); }
+                try
+                {
+                    using var musicFile = TagLib.File.Create(path);
+                    audioFiles.Add(new SimpleFile(musicFile));
+                }
                 catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); return false; }
-
-                audioFiles.Add(new SimpleFile(musicFile));
             }
 
             if (!AlbumConditionsSatisfy(audioFiles, context, job))

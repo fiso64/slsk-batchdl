@@ -1,4 +1,5 @@
 using Sockseek.Core.Models;
+using System.Globalization;
 
 namespace Sockseek.Core.Services;
 
@@ -6,6 +7,8 @@ namespace Sockseek.Core.Services;
 /// Extracted from Config.ParseConditions — callers are List.cs extractor and ConfigManager.
 public static class ConditionParser
 {
+    private static readonly string[] ComparisonOperators = [">=", "<=", "=", ">", "<"];
+
     /// Parses a condition string (e.g. "format=mp3,flac;min-bitrate=200;album-track-count>=8")
     /// into a FileConditionPatch. Folder-level conditions (album-track-count) are written into
     /// folderOut if non-null; otherwise they produce an error.
@@ -14,15 +17,15 @@ public static class ConditionParser
         static void UpdateMinMax(string value, string condition, ref int? min, ref int? max)
         {
             if (condition.Contains(">="))
-                min = int.Parse(value);
+                min = int.Parse(value, CultureInfo.InvariantCulture);
             else if (condition.Contains("<="))
-                max = int.Parse(value);
+                max = int.Parse(value, CultureInfo.InvariantCulture);
             else if (condition.Contains('>'))
-                min = int.Parse(value) + 1;
+                min = int.Parse(value, CultureInfo.InvariantCulture) + 1;
             else if (condition.Contains('<'))
-                max = int.Parse(value) - 1;
+                max = int.Parse(value, CultureInfo.InvariantCulture) - 1;
             else if (condition.Contains('='))
-                min = max = int.Parse(value);
+                min = max = int.Parse(value, CultureInfo.InvariantCulture);
         }
 
         var cond = new FileConditionPatch();
@@ -31,7 +34,7 @@ public static class ConditionParser
         string[] conditions = input.Split(';', tr);
         foreach (string condition in conditions)
         {
-            string[] parts = condition.Split(new string[] { ">=", "<=", "=", ">", "<" }, 2, tr);
+            string[] parts = condition.Split(ComparisonOperators, 2, tr);
             string field = parts[0].Replace("-", "").Trim().ToLower();
             string value = parts.Length > 1 ? parts[1].Trim() : "true";
 
@@ -55,7 +58,7 @@ public static class ConditionParser
                 case "lengthtol":
                 case "tolerance":
                 case "lengthtolerance":
-                    cond.LengthTolerance = int.Parse(value);
+                    cond.LengthTolerance = int.Parse(value, CultureInfo.InvariantCulture);
                     break;
                 case "f":
                 case "format":

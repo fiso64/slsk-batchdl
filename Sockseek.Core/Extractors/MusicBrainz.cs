@@ -14,7 +14,8 @@ namespace Sockseek.Core.Extractors;
 
         public static bool InputMatches(string input)
         {
-            return input.IsInternetUrl() && input.ToLower().Contains("musicbrainz.org");
+            return input.IsInternetUrl()
+                && input.Contains("musicbrainz.org", StringComparison.OrdinalIgnoreCase);
         }
 
         public async Task<Job> GetTracks(string input, ExtractionSettings extraction, ExtractorContext? context = null)
@@ -24,7 +25,7 @@ namespace Sockseek.Core.Extractors;
             var offset    = extraction.Offset;
             var reverse   = extraction.Reverse;
 
-            var musicBrainzClient = new MusicBrainzClient(context.Log);
+            using var musicBrainzClient = new MusicBrainzClient(context.Log);
 
             int max = reverse ? int.MaxValue : maxTracks;
             int off = reverse ? 0 : offset;
@@ -68,7 +69,7 @@ namespace Sockseek.Core.Extractors;
         }
     }
 
-    public class MusicBrainzClient
+    public class MusicBrainzClient : IDisposable
     {
         private readonly HttpClient _httpClient;
         private readonly IJobLog _log;
@@ -204,5 +205,11 @@ namespace Sockseek.Core.Extractors;
 
             _log.Info($"Found {queue.Jobs.Count} releases in collection '{collectionName}'");
             return queue;
+        }
+
+        public void Dispose()
+        {
+            _httpClient.Dispose();
+            GC.SuppressFinalize(this);
         }
     }

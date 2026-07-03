@@ -104,13 +104,13 @@ static string ToPlainText(string markdown)
         var indentStr = new string(' ', indent);
         var subsequentIndentStr = new string(' ', subsequentIndent);
 
-        var lines = text.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        var lines = text.Split(HelpGeneratorSeparators.Newlines, StringSplitOptions.RemoveEmptyEntries);
 
         foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
 
-            var words = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            var words = line.Split(HelpGeneratorSeparators.Words, StringSplitOptions.RemoveEmptyEntries);
             var currentLine = new StringBuilder();
             currentLine.Append(indentStr);
             var firstWord = true;
@@ -270,3 +270,9 @@ static void WriteHelpCs(string filePath, string content)
 
 static string NormalizeNewlines(string text)
     => text.Replace("\r\n", "\n").Replace('\r', '\n');
+
+file static class HelpGeneratorSeparators
+{
+    public static readonly string[] Newlines = ["\r\n", "\r", "\n"];
+    public static readonly char[] Words = [' '];
+}
