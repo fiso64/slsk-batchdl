@@ -191,8 +191,8 @@
       },
       "Microsoft.OpenApi": {
         "type": "Transitive",
-        "resolved": "2.0.0",
-        "contentHash": "GGYLfzV/G/ct80OZ45JxnWP7NvMX1BCugn/lX7TH5o0lcVaviavsLMTxmFV2AybXWjbi3h6FF1vgZiTK6PXndw=="
+        "resolved": "2.9.0",
+        "contentHash": "uS2awDkgUvVhd735HEcNcOQdwbIDCAK3V1QzgWoszd/FPDLLVv9eF+fImmdJiGLIKKWJv2DMJQ7OSR9gYLd+uw=="
       },
       "Newtonsoft.Json": {
         "type": "Transitive",
@@ -261,7 +261,7 @@
       "sockseek.api": {
         "type": "Project",
         "dependencies": {
-          "Sockseek.Core": "[3.0.0, )"
+          "Sockseek.Core": "[3.0.4, )"
         }
       },
       "sockseek.core": {
@@ -282,8 +282,9 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "[10.0.9, )",
-          "Sockseek.Api": "[3.0.0, )",
-          "Sockseek.Core": "[3.0.0, )"
+          "Microsoft.OpenApi": "[2.9.0, )",
+          "Sockseek.Api": "[3.0.4, )",
+          "Sockseek.Core": "[3.0.4, )"
         }
       }
     }

@@ -17,6 +17,12 @@
         "resolved": "10.0.9",
         "contentHash": "n1m7EAbCbHMGiTy++F+mLSan4MrZe0t00XEpJrkai6BFpB6lwEcirflI9FiMm4G4u55h/2RnWToYBDwS+MnN6g=="
       },
+      "Microsoft.OpenApi": {
+        "type": "Direct",
+        "requested": "[2.9.0, )",
+        "resolved": "2.9.0",
+        "contentHash": "uS2awDkgUvVhd735HEcNcOQdwbIDCAK3V1QzgWoszd/FPDLLVv9eF+fImmdJiGLIKKWJv2DMJQ7OSR9gYLd+uw=="
+      },
       "AngleSharp": {
         "type": "Transitive",
         "resolved": "1.4.0",
@@ -74,11 +80,6 @@
         "type": "Transitive",
         "resolved": "1.2.0",
         "contentHash": "ujtrK6m5BQVQLEteLfl54upN7Z59c1ZqEKmU3OlYriqnV74dIgIlNM2vkcgn2AuZEItQDNORD/2H1biI/asOdg=="
-      },
-      "Microsoft.OpenApi": {
-        "type": "Transitive",
-        "resolved": "2.0.0",
-        "contentHash": "GGYLfzV/G/ct80OZ45JxnWP7NvMX1BCugn/lX7TH5o0lcVaviavsLMTxmFV2AybXWjbi3h6FF1vgZiTK6PXndw=="
       },
       "Newtonsoft.Json": {
         "type": "Transitive",
@@ -147,7 +148,7 @@
       "sockseek.api": {
         "type": "Project",
         "dependencies": {
-          "Sockseek.Core": "[3.0.0, )"
+          "Sockseek.Core": "[3.0.4, )"
         }
       },
       "sockseek.core": {
