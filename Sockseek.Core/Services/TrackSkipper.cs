@@ -59,6 +59,24 @@ namespace Sockseek.Core.Services;
 
         public virtual void BuildIndex() { IndexIsBuilt = true; }
         public bool IndexIsBuilt { get; protected set; } = false;
+
+        protected static bool AlbumConditionsSatisfy(IEnumerable<SimpleFile> files, TrackSkipperContext context)
+        {
+            if (context.conditions == null)
+                return true;
+
+            var audioFiles = files.ToList();
+            var nonQualityConditions = context.conditions.WithoutAudioQualityConditions();
+            foreach (var file in audioFiles)
+            {
+                if (!nonQualityConditions.FileSatisfies(file, null))
+                    return false;
+            }
+
+            var activeQuality = AlbumQualityPolicy.ActiveConditions(context.conditions);
+            var qualityCoverage = AlbumQualityPolicy.Evaluate(audioFiles, context.conditions, activeQuality);
+            return qualityCoverage.IsAcceptable(context.searchSettings?.StrictAlbumQuality ?? false);
+        }
     }
 
     public abstract class FileBasedSkipper<T> : TrackSkipper
@@ -223,12 +241,7 @@ namespace Sockseek.Core.Services;
                 return true;
 
             var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.file.Path));
-            foreach (var x in index[parent])
-            {
-                if (!context.conditions.FileSatisfies(x.item.file, null))
-                    return false;
-            }
-            return true;
+            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.file), context);
         }
     }
 
@@ -325,12 +338,7 @@ namespace Sockseek.Core.Services;
             if (c.conditions == null) return true;
 
             var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.file.Path));
-            foreach (var x in index[parent])
-            {
-                if (!c.conditions.FileSatisfies(x.item.file, null))
-                    return false;
-            }
-            return true;
+            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.file), c);
         }
     }
 
@@ -418,6 +426,7 @@ namespace Sockseek.Core.Services;
                 if (folderCond.MinTrackCount is { } minTrackCount && count < minTrackCount) return false;
             }
 
+            var audioFiles = new List<SimpleFile>();
             foreach (var path in files)
             {
                 if (Utils.IsMusicFile(path))
@@ -426,10 +435,12 @@ namespace Sockseek.Core.Services;
                     try { musicFile = TagLib.File.Create(path); }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); return false; }
 
-                    if (!context.conditions.FileSatisfies(musicFile, null))
-                        return false;
+                    audioFiles.Add(new SimpleFile(musicFile));
                 }
             }
+
+            if (!AlbumConditionsSatisfy(audioFiles, context))
+                return false;
 
             foundPath = t.DownloadPath;
             return true;

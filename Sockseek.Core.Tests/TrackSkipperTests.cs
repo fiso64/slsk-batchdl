@@ -3,9 +3,45 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Jobs;
 using Sockseek.Core;
 using Sockseek.Core.Services;
+using Sockseek.Core.Settings;
 
 namespace Tests.TrackSkipperTests
 {
+    internal static class AudioTestFixtures
+    {
+        public static int ReadAudioBitrate(string path)
+        {
+            using var file = TagLib.File.Create(path);
+            return file.Properties.AudioBitrate;
+        }
+
+        public static void WriteSilentWav(string path, int sampleRate = 44_100, short bitsPerSample = 16, short channels = 2)
+        {
+            int dataSize = sampleRate * channels * bitsPerSample / 8;
+            int byteRate = sampleRate * channels * bitsPerSample / 8;
+            short blockAlign = (short)(channels * bitsPerSample / 8);
+
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(36 + dataSize);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+            writer.Write(16);
+            writer.Write((short)1);
+            writer.Write(channels);
+            writer.Write(sampleRate);
+            writer.Write(byteRate);
+            writer.Write(blockAlign);
+            writer.Write(bitsPerSample);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+            writer.Write(dataSize);
+            writer.Write(new byte[dataSize]);
+
+            File.WriteAllBytes(path, stream.ToArray());
+        }
+    }
+
     [TestClass]
     public class TrackSkipperRegistryTests
     {
@@ -55,18 +91,24 @@ namespace Tests.TrackSkipperTests
     [TestClass]
     public class IndexSkipperTests
     {
+        private string _tempDir = "";
         private string _tempPath = "";
 
         [TestInitialize]
         public void Setup()
         {
-            _tempPath = Path.Combine(Path.GetTempPath(), $"Sockseek_skip_test_{Guid.NewGuid()}.m3u8");
+            _tempDir = Path.Combine(Path.GetTempPath(), $"Sockseek_skip_test_{Guid.NewGuid()}");
+            Directory.CreateDirectory(_tempDir);
+            _tempPath = Path.Combine(_tempDir, "_index.csv");
         }
 
         [TestCleanup]
         public void Cleanup()
         {
-            if (File.Exists(_tempPath)) File.Delete(_tempPath);
+            if (Directory.Exists(_tempDir))
+                Directory.Delete(_tempDir, true);
+            else if (File.Exists(_tempPath))
+                File.Delete(_tempPath);
         }
 
         private M3uEditor CreateEditorWithSong(SongJob song)
@@ -85,6 +127,45 @@ namespace Tests.TrackSkipperTests
             var queue2 = new JobList();
             queue2.Jobs.Add(slj2);
             return new M3uEditor(_tempPath, queue2, M3uOption.Index, true);
+        }
+
+        private M3uEditor CreateEditorWithDoneSong(string artist, string title, string downloadPath)
+        {
+            var original = new SongJob(new SongQuery { Artist = artist, Title = title });
+            original.SetDone();
+            original.DownloadPath = downloadPath;
+            return CreateEditorWithSong(original);
+        }
+
+        private M3uEditor CreateEditorWithDoneAlbum(string artist, string album, string downloadPath)
+        {
+            var original = new AlbumJob(new AlbumQuery { Artist = artist, Album = album });
+            original.SetDone(downloadPath);
+            var queue = new JobList("albums", [original]);
+            File.WriteAllText(_tempPath, "");
+            var editor = new M3uEditor(_tempPath, queue, M3uOption.Index, true);
+            editor.NotifyJobDownloadPath(original.Id, downloadPath);
+            editor.Update();
+
+            var query = new AlbumJob(new AlbumQuery { Artist = artist, Album = album });
+            var queue2 = new JobList("albums", [query]);
+            return new M3uEditor(_tempPath, queue2, M3uOption.Index, true);
+        }
+
+        private static TrackSkipperContext CreateContext(
+            M3uEditor editor,
+            SearchSettings search,
+            bool skipCheckCond = false,
+            bool skipCheckPrefCond = false)
+        {
+            return TrackSkipperContext.From(
+                new JobContext { IndexEditor = editor },
+                new SkipSettings
+                {
+                    SkipCheckCond = skipCheckCond,
+                    SkipCheckPrefCond = skipCheckPrefCond,
+                },
+                search);
         }
 
         [TestMethod]
@@ -142,6 +223,209 @@ namespace Tests.TrackSkipperTests
             Assert.IsFalse(result);
         }
 
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_MissingIndexedFile_SkipsWithoutFlagButNotWithFlag()
+        {
+            string missingPath = Path.Combine(_tempDir, "missing.mp3");
+            var editor = CreateEditorWithDoneSong("Artist", "Title", missingPath);
+            var query = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var search = new SearchSettings();
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.SongExists(query, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the index entry alone should skip the song even if the file is gone.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.SongExists(query, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, a stale index entry must not skip the song when its file no longer exists.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_FileFailingRequiredConditions_SkipsWithoutFlagButNotWithFlag()
+        {
+            string mp3Path = Path.Combine(_tempDir, "Artist - Title.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            var editor = CreateEditorWithDoneSong("Artist", "Title", mp3Path);
+            var query = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["flac"] },
+                PreferredCond = new FileConditions(),
+            };
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.SongExists(query, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the existing index entry should skip regardless of current required conditions.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.SongExists(query, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, an indexed MP3 must not skip when the required condition only accepts FLAC.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_FileFailingRequiredBitrateCondition_SkipsWithoutFlagButNotWithFlag()
+        {
+            string mp3Path = Path.Combine(_tempDir, "Artist - Title.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            int actualBitrate = AudioTestFixtures.ReadAudioBitrate(mp3Path);
+            Assert.IsTrue(actualBitrate > 0, "The MP3 fixture must expose a bitrate for this test to exercise metadata conditions.");
+
+            var editor = CreateEditorWithDoneSong("Artist", "Title", mp3Path);
+            var query = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { MinBitrate = actualBitrate + 1 },
+                PreferredCond = new FileConditions(),
+            };
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.SongExists(query, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the existing index entry should skip regardless of current bitrate conditions.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.SongExists(query, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, an indexed file must not skip when it fails the required bitrate condition.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckPrefCond_FileFailingPreferredConditions_SkipsWithRequiredOnlyButNotWithPreferred()
+        {
+            string mp3Path = Path.Combine(_tempDir, "Artist - Title.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            var editor = CreateEditorWithDoneSong("Artist", "Title", mp3Path);
+            var query = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["mp3"] },
+                PreferredCond = new FileConditions { Formats = ["flac"] },
+            };
+
+            var requiredOnlySkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsTrue(
+                requiredOnlySkipper.SongExists(query, CreateContext(editor, search, skipCheckCond: true), out _),
+                "skip-check-cond should still skip when the existing file satisfies the required conditions.");
+
+            var preferredSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                preferredSkipper.SongExists(query, CreateContext(editor, search, skipCheckPrefCond: true), out _),
+                "skip-check-pref-cond should keep searching when the existing file fails the preferred conditions.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckPrefCond_FileFailingPreferredBitrateCondition_SkipsWithRequiredOnlyButNotWithPreferred()
+        {
+            string mp3Path = Path.Combine(_tempDir, "Artist - Title.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            int actualBitrate = AudioTestFixtures.ReadAudioBitrate(mp3Path);
+            Assert.IsTrue(actualBitrate > 0, "The MP3 fixture must expose a bitrate for this test to exercise metadata conditions.");
+
+            var editor = CreateEditorWithDoneSong("Artist", "Title", mp3Path);
+            var query = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { MinBitrate = actualBitrate },
+                PreferredCond = new FileConditions { MinBitrate = actualBitrate + 1 },
+            };
+
+            var requiredOnlySkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsTrue(
+                requiredOnlySkipper.SongExists(query, CreateContext(editor, search, skipCheckCond: true), out _),
+                "skip-check-cond should still skip when the existing file satisfies the required bitrate condition.");
+
+            var preferredSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                preferredSkipper.SongExists(query, CreateContext(editor, search, skipCheckPrefCond: true), out _),
+                "skip-check-pref-cond should keep searching when the existing file fails the preferred bitrate condition.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_MissingIndexedAlbumDirectory_SkipsWithoutFlagButNotWithFlag()
+        {
+            string missingAlbumDir = Path.Combine(_tempDir, "Missing Album");
+            var editor = CreateEditorWithDoneAlbum("Artist", "Album", missingAlbumDir);
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+            var search = new SearchSettings();
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.AlbumExists(album, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the index entry alone should skip the album even if the folder is gone.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.AlbumExists(album, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, a stale album index entry must not skip when its folder no longer exists.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_AlbumFailingFormatCondition_SkipsWithoutFlagButNotWithFlag()
+        {
+            string albumDir = Path.Combine(_tempDir, "Artist", "Album");
+            Directory.CreateDirectory(albumDir);
+            File.WriteAllBytes(Path.Combine(albumDir, "01. Artist - Track.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            var editor = CreateEditorWithDoneAlbum("Artist", "Album", albumDir);
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["wav"] },
+                PreferredCond = new FileConditions(),
+            };
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.AlbumExists(album, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the existing album index entry should skip regardless of current format conditions.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.AlbumExists(album, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, an album with no matching audio files must not skip when the required format is WAV.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_MixedAlbumFormatAndBitrateUsesCoverageForSkipping()
+        {
+            string albumDir = Path.Combine(_tempDir, "Artist", "Album");
+            Directory.CreateDirectory(albumDir);
+            string mp3Path = Path.Combine(albumDir, "01. Artist - Low.mp3");
+            string wavPath = Path.Combine(albumDir, "02. Artist - High.wav");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            AudioTestFixtures.WriteSilentWav(wavPath);
+            int mp3Bitrate = AudioTestFixtures.ReadAudioBitrate(mp3Path);
+            int wavBitrate = AudioTestFixtures.ReadAudioBitrate(wavPath);
+            Assert.IsTrue(wavBitrate > mp3Bitrate, "The WAV fixture must expose a higher bitrate than the MP3 fixture.");
+
+            var editor = CreateEditorWithDoneAlbum("Artist", "Album", albumDir);
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+            var nonStrictSearch = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["wav"], MinBitrate = wavBitrate },
+                PreferredCond = new FileConditions(),
+            };
+            var strictSearch = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["wav"], MinBitrate = wavBitrate },
+                PreferredCond = new FileConditions(),
+                StrictAlbumQuality = true,
+            };
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsTrue(
+                checkedSkipper.AlbumExists(album, CreateContext(editor, nonStrictSearch, skipCheckCond: true), out _),
+                "Non-strict album quality should skip when coverage finds at least one file satisfying the active format and bitrate conditions.");
+
+            Assert.IsFalse(
+                checkedSkipper.AlbumExists(album, CreateContext(editor, strictSearch, skipCheckCond: true), out _),
+                "Strict album quality should not skip unless every audio file satisfies the active format and bitrate conditions.");
+        }
+
     }
 
     [TestClass]
@@ -176,6 +460,38 @@ namespace Tests.TrackSkipperTests
 
             bool result = skipper.SongExists(song, context, out _);
             Assert.IsTrue(result);
+        }
+
+        [TestMethod]
+        public void NameSkipper_SkipCheckCond_FileFailingRequiredBitrateCondition_SkipsWithoutFlagButNotWithFlag()
+        {
+            string mp3Path = Path.Combine(_tempDir, "Cool Artist - Great Song.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            int actualBitrate = AudioTestFixtures.ReadAudioBitrate(mp3Path);
+            Assert.IsTrue(actualBitrate > 0, "The MP3 fixture must expose a bitrate for this test to exercise metadata conditions.");
+
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Song" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { MinBitrate = actualBitrate + 1 },
+                PreferredCond = new FileConditions(),
+            };
+
+            var uncheckedSkipper = new NameSkipper(_tempDir);
+            uncheckedSkipper.BuildIndex();
+            Assert.IsTrue(
+                uncheckedSkipper.SongExists(song, new TrackSkipperContext { checkFileExists = false }, out _),
+                "Without skip-check-cond, name-mode skipping should ignore the current bitrate condition.");
+
+            var checkedSkipper = new NameConditionalSkipper(_tempDir);
+            checkedSkipper.BuildIndex();
+            var checkedContext = TrackSkipperContext.From(
+                new JobContext(),
+                new SkipSettings { SkipCheckCond = true },
+                search);
+            Assert.IsFalse(
+                checkedSkipper.SongExists(song, checkedContext, out _),
+                "With skip-check-cond, name-mode skipping must not skip when the matching local file fails the bitrate condition.");
         }
 
         [TestMethod]
