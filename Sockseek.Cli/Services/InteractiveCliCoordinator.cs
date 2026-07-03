@@ -58,11 +58,15 @@ internal sealed class InteractiveCliCoordinator
             bool startedFollowUp = await ProcessWorkflowAsync(workflowId, ct);
 
             var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-            if (!startedFollowUp && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
+            if (!startedFollowUp
+                && interactiveAlbumSessions.Count == 0
+                && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
             {
                 startedFollowUp = await ProcessWorkflowAsync(workflowId, ct);
                 workflow = await backend.GetWorkflowAsync(workflowId, ct);
-                if (!startedFollowUp && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
+                if (!startedFollowUp
+                    && interactiveAlbumSessions.Count == 0
+                    && (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
                     return;
             }
 
