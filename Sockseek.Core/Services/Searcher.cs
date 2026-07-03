@@ -146,7 +146,7 @@ public partial class Searcher
                 var candidate = new FileCandidate(r, f);
                 if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= search.FastSearchMinUpSpeed
                     && ResultSorter.CheapBracketCheck(song.Query, f.Filename)
-                    && search.PreferredCond.FileSatisfies(f, song.Query, r))
+                    && ConditionSatisfactionPolicy.SearchFileSatisfies(search.PreferredCond, r, f, song.Query))
                 {
                     onFastSearchCandidate(candidate);
                 }
@@ -160,7 +160,7 @@ public partial class Searcher
                 searchTimeout: timeout,
                 removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
                 responseFilter: r => r.UploadSpeed > 0 && nec.UserSatisfies(r),
-                fileFilter: f => nec.FileSatisfies(f, song.Query, null));
+                fileFilter: f => ConditionSatisfactionPolicy.SearchFileSatisfies(nec, null, f, song.Query));
 
         song.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
         await concurrencySemaphore.WaitAsync(ct);
@@ -228,7 +228,7 @@ public partial class Searcher
                 removeSingleCharacterSearchTerms: search.RemoveSingleCharSearchTerms,
                 searchTimeout: timeout,
                 responseFilter: r => r.UploadSpeed > 0 && nec.UserSatisfies(r),
-                fileFilter: f => nec.FileSatisfies(f, job.Query, null));
+                fileFilter: f => ConditionSatisfactionPolicy.SearchFileSatisfies(nec, null, f, job.Query));
 
         job.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
         await concurrencySemaphore.WaitAsync(ct);

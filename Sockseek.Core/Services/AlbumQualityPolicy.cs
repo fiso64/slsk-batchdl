@@ -16,39 +16,13 @@ internal static class AlbumQualityPolicy
         IEnumerable<Soulseek.File> audioFiles,
         FileConditions conditions,
         ActiveAudioQualityConditions activeQuality)
-    {
-        int audioFileCount = 0;
-        int formatMatchingFileCount = 0;
-        int bitrateMatchingFileCount = 0;
-        int sampleRateMatchingFileCount = 0;
-        int bitDepthMatchingFileCount = 0;
-
-        foreach (var file in audioFiles)
-        {
-            audioFileCount++;
-            if (activeQuality.Format && conditions.FormatSatisfies(file.Filename))
-                formatMatchingFileCount++;
-            if (activeQuality.Bitrate && conditions.BitrateSatisfies(file))
-                bitrateMatchingFileCount++;
-            if (activeQuality.SampleRate && conditions.SampleRateSatisfies(file))
-                sampleRateMatchingFileCount++;
-            if (activeQuality.BitDepth && conditions.BitDepthSatisfies(file))
-                bitDepthMatchingFileCount++;
-        }
-
-        if (!activeQuality.IsActive)
-            return AlbumAudioQualityCoverage.Inactive(audioFileCount);
-
-        return new AlbumAudioQualityCoverage(
-            audioFileCount,
-            CoverageBucket(activeQuality.Format, audioFileCount, formatMatchingFileCount),
-            CoverageBucket(activeQuality.Bitrate, audioFileCount, bitrateMatchingFileCount),
-            CoverageBucket(activeQuality.SampleRate, audioFileCount, sampleRateMatchingFileCount),
-            CoverageBucket(activeQuality.BitDepth, audioFileCount, bitDepthMatchingFileCount));
-    }
+        => Evaluate(
+            audioFiles.Select(ConditionFile.From),
+            conditions,
+            activeQuality);
 
     public static AlbumAudioQualityCoverage Evaluate(
-        IEnumerable<SimpleFile> audioFiles,
+        IEnumerable<ConditionFile> audioFiles,
         FileConditions conditions,
         ActiveAudioQualityConditions activeQuality)
     {
@@ -63,11 +37,11 @@ internal static class AlbumQualityPolicy
             audioFileCount++;
             if (activeQuality.Format && conditions.FormatSatisfies(file.Path))
                 formatMatchingFileCount++;
-            if (activeQuality.Bitrate && conditions.BitrateSatisfies(file))
+            if (activeQuality.Bitrate && conditions.BitrateSatisfies(file.Bitrate))
                 bitrateMatchingFileCount++;
-            if (activeQuality.SampleRate && conditions.SampleRateSatisfies(file))
+            if (activeQuality.SampleRate && conditions.SampleRateSatisfies(file.SampleRate))
                 sampleRateMatchingFileCount++;
-            if (activeQuality.BitDepth && conditions.BitDepthSatisfies(file))
+            if (activeQuality.BitDepth && conditions.BitDepthSatisfies(file.BitDepth))
                 bitDepthMatchingFileCount++;
         }
 

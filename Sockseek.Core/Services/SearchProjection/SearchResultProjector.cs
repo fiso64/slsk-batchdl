@@ -81,8 +81,7 @@ public static partial class SearchResultProjector
         Soulseek.File file,
         SongQuery query,
         SearchSettings search)
-        => search.NecessaryCond.UserSatisfies(response)
-            && search.NecessaryCond.FileSatisfies(file, query, response);
+        => ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, response, file, query);
 
     public static List<AlbumFolder> AlbumFolders(
         IEnumerable<(SearchResponse Response, Soulseek.File File)> rawResults,
@@ -100,47 +99,6 @@ public static partial class SearchResultProjector
             sortMode);
         var filteredResults = plan.FilterToList(rawResults);
         return plan.ProjectFilteredResults(filteredResults, filteredResults.Count);
-    }
-
-    internal static AlbumProjectionFilter CreateAlbumProjectionFilter(AlbumQuery query, SearchSettings search)
-    {
-        var sortQuery = AlbumFileMatchQuery(query);
-        // TODO [ARCHITECTURE]: Keep album projection/ranking policy centralized and
-        // regression-covered. Audio quality requirements are evaluated as folder
-        // coverage below rather than as per-file filters here; otherwise format/br/sr/bd
-        // conditions can fragment a real album folder into a misleading partial album.
-        var projectionCondition = search.NecessaryCond.WithoutAudioQualityConditions();
-        return new AlbumProjectionFilter(projectionCondition, sortQuery);
-    }
-
-    internal readonly record struct AlbumProjectionFilter
-    {
-        private readonly bool checkUser;
-        private readonly bool checkFile;
-
-        public FileConditions Conditions { get; }
-        public SongQuery SortQuery { get; }
-
-        public AlbumProjectionFilter(FileConditions conditions, SongQuery sortQuery)
-        {
-            Conditions = conditions;
-            SortQuery = sortQuery;
-            checkUser =
-                conditions.BannedUsers.Length > 0
-                || conditions.AllowedUsers.Length > 0;
-            checkFile =
-                conditions.HasActiveAudioQualityConditions()
-                || conditions.LengthTolerance is >= 0 && sortQuery.Length >= 0
-                || conditions.StrictTitle && sortQuery.Title.Length > 0
-                || conditions.StrictArtist && sortQuery.Artist.Length > 0
-                || conditions.StrictAlbum && sortQuery.Album.Length > 0;
-        }
-
-        public bool Satisfies((SearchResponse Response, Soulseek.File File) result)
-            => (!checkUser || Conditions.UserSatisfies(result.Response))
-                && (!checkFile
-                    || !Utils.IsMusicFile(result.File.Filename)
-                    || Conditions.FileSatisfies(result.File, SortQuery, result.Response));
     }
 
     internal static List<AlbumFolder> AlbumFoldersFromOrderedResults(
@@ -212,17 +170,13 @@ public static partial class SearchResultProjector
                 folder.RefreshInactiveQualityCoverage();
         }
 
-        int? min = search.NecessaryFolderCond.MinTrackCount;
-        int? max = search.NecessaryFolderCond.MaxTrackCount;
-        bool searchResultsLikelyContainCompleteAlbumFolders =
-            SearchResultsLikelyContainCompleteAlbumFolders(query, search);
         var folders = new List<AlbumFolder>();
         var inferDefault = new SongQuery { Artist = query.Artist, Album = query.Album };
 
         IEnumerable<AlbumFolderBuilder> orderedFolders;
         IEnumerable<AlbumFolderBuilder> candidateFolders = dirStructure.Values;
         if (activeQuality.IsActive)
-            candidateFolders = candidateFolders.Where(folder => folder.QualityCoverage.IsAcceptable(search.StrictAlbumQuality));
+            candidateFolders = candidateFolders.Where(folder => ConditionSatisfactionPolicy.AlbumQualityIsAcceptable(folder.QualityCoverage, search));
 
         if (useAlbumFolderQualityRanking)
         {
@@ -252,21 +206,18 @@ public static partial class SearchResultProjector
         foreach (var folder in orderedFolders)
         {
             if (folder.MusicCount == 0) continue;
-            // Search results can prove a folder has at least the visible audio files.
-            // That always proves max-count overflow, and it can prove min-count
-            // underflow when the search itself was not narrowed to a track hint.
-            if (min is { } minCount && minCount > 0
-                && searchResultsLikelyContainCompleteAlbumFolders
-                && folder.MusicCount < minCount) continue;
-            if (max is { } maxCount && folder.MusicCount > maxCount) continue;
+            if (!ConditionSatisfactionPolicy.SearchAlbumFolderSatisfies(
+                    search.NecessaryFolderCond,
+                    folder.MusicCount,
+                    folder.Files.Select(file => file.File.Filename),
+                    query,
+                    search)) continue;
 
             if (folder.Files.Count > 1)
                 folder.Files.Sort(AlbumFolderFileComparer.Instance);
 
-            if (!RequiredTrackTitlesSatisfy(search.NecessaryFolderCond.RequiredTrackTitles, folder.Files))
-                continue;
             var qualityCoverage = folder.QualityCoverage;
-            if (!qualityCoverage.IsAcceptable(search.StrictAlbumQuality))
+            if (!ConditionSatisfactionPolicy.AlbumQualityIsAcceptable(qualityCoverage, search))
                 continue;
 
             folders.Add(new AlbumFolder(
@@ -282,24 +233,6 @@ public static partial class SearchResultProjector
         }
 
         return folders;
-    }
-
-    private static bool SearchResultsLikelyContainCompleteAlbumFolders(AlbumQuery query, SearchSettings search)
-    {
-        if (query.SearchHint.Length == 0)
-            return true;
-
-        // If Album is empty, SearchHint becomes the network query, so Soulseek may only
-        // return tracks matching that hint rather than the whole album folder.
-        if (query.Album.Length == 0)
-            return false;
-
-        // SearchHint can also become a file-level title filter when title conditions apply,
-        // which means non-hint tracks may be filtered before folder grouping.
-        if (search.NecessaryCond.StrictTitle || search.PreferredCond.StrictTitle)
-            return false;
-
-        return true;
     }
 
     private static int[] SortedAudioLengths(List<AlbumFolderFile> folderFiles)
@@ -325,31 +258,6 @@ public static partial class SearchResultProjector
         }
 
         return files;
-    }
-
-    private static bool RequiredTrackTitlesSatisfy(List<string> requiredTrackTitles, List<AlbumFolderFile> files)
-    {
-        if (requiredTrackTitles.Count == 0)
-            return true;
-
-        var cond = new FileConditions { StrictTitle = true };
-        foreach (string title in requiredTrackTitles)
-        {
-            bool found = false;
-            foreach (var file in files)
-            {
-                if (cond.StrictTitleSatisfies(file.File.Filename, title))
-                {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found)
-                return false;
-        }
-
-        return true;
     }
 
     public static List<AlbumJob> AggregateAlbums(

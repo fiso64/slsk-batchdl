@@ -47,7 +47,11 @@ public class AlbumQualityCoverageBenchmarks
         var filteredResults = rawResults.Where(result =>
             requiredFlacSearch.NecessaryCond.UserSatisfies(result.Response)
             && (!Utils.IsMusicFile(result.File.Filename)
-                || requiredFlacSearch.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response)));
+                || ConditionSatisfactionPolicy.SearchFileSatisfies(
+                    requiredFlacSearch.NecessaryCond,
+                    result.Response,
+                    result.File,
+                    sortQuery)));
 
         return SearchResultProjector.AlbumFolders(filteredResults, albumQuery, legacyProjectionSearch).Count;
     }

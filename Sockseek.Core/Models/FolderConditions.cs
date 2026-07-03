@@ -1,6 +1,3 @@
-
-using Sockseek.Core.Jobs;
-
 namespace Sockseek.Core.Models;
 
     public class FolderConditions
@@ -16,6 +13,17 @@ namespace Sockseek.Core.Models;
             MinTrackCount = other.MinTrackCount;
             MaxTrackCount = other.MaxTrackCount;
             RequiredTrackTitles = [.. other.RequiredTrackTitles];
+        }
+
+        public FolderConditions With(FolderConditions other)
+        {
+            var result = new FolderConditions(this)
+            {
+                MinTrackCount = other.MinTrackCount ?? MinTrackCount,
+                MaxTrackCount = other.MaxTrackCount ?? MaxTrackCount,
+            };
+            result.AddRequiredTrackTitles(other.RequiredTrackTitles);
+            return result;
         }
 
         public FolderConditionPatch AddConditions(FolderConditionPatch mod)
@@ -41,13 +49,6 @@ namespace Sockseek.Core.Models;
             return undo;
         }
 
-        public bool TrackCountSatisfies(int count)
-        {
-            if (MaxTrackCount != null && count > MaxTrackCount.Value) return false;
-            if (MinTrackCount != null && MinTrackCount.Value > 0 && count < MinTrackCount.Value) return false;
-            return true;
-        }
-
         public void AddRequiredTrackTitle(string title)
         {
             if (title.Length > 0 && !RequiredTrackTitles.Contains(title))
@@ -58,17 +59,6 @@ namespace Sockseek.Core.Models;
         {
             foreach (var title in titles)
                 AddRequiredTrackTitle(title);
-        }
-
-        public bool RequiredTrackTitlesSatisfy(IEnumerable<SongJob> files)
-        {
-            if (RequiredTrackTitles.Count == 0)
-                return true;
-
-            var fileList = files.ToList();
-            var cond = new FileConditions { StrictTitle = true };
-            return RequiredTrackTitles.All(title => fileList.Any(file => file.ResolvedTarget != null
-                && cond.StrictTitleSatisfies(file.ResolvedTarget.Filename, title)));
         }
     }
 

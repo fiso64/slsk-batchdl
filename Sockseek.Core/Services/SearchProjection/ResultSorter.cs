@@ -264,7 +264,7 @@ public static partial class ResultSorter
 
             return new SortKey(
                 UserSuccessCounts.GetValueOrDefault(response.Username, 0) > Search.DownrankOn,
-                necessaryCond.FileSatisfies(file, Query, response),
+                ConditionSatisfactionPolicy.SearchFileSatisfies(necessaryCond, response, file, Query),
                 preferredUserConditionsMet,
                 (file.Length != null && file.Length > 0) || Search.PreferredCond.AcceptNoLength,
                 !UseBracketCheck || CheapBracketCheck(queryTitleAllowsBrackets, filename),

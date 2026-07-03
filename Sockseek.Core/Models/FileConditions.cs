@@ -208,12 +208,6 @@ namespace Sockseek.Core.Models;
             return result;
         }
 
-        public bool AudioQualitySatisfies(Soulseek.File file)
-            => (!HasActiveFormatCondition() || FormatSatisfies(file.Filename))
-                && BitrateSatisfies(file)
-                && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file);
-
         public bool HasActiveFormatCondition()
         {
             if (Formats.Length == 0)
@@ -232,40 +226,27 @@ namespace Sockseek.Core.Models;
             return !configured.SequenceEqual(allKnownAudio);
         }
 
-        public bool FileSatisfies(Soulseek.File file, SongQuery? query, SearchResponse? response)
-        {
-            int length    = query?.Length ?? -1;
-            string title  = query?.Title  ?? "";
-            string artist = query?.Artist ?? "";
-            string album  = query?.Album  ?? "";
-            return FormatSatisfies(file.Filename)
-                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && StrictTitleSatisfies(file.Filename, title) && StrictArtistSatisfies(file.Filename, artist)
-                && StrictAlbumSatisfies(file.Filename, album) && UserSatisfies(response) && BitDepthSatisfies(file);
-        }
-
-        public bool FileSatisfies(TagLib.File file, SongQuery? query, bool filenameChecks = false)
-        {
-            int length    = query?.Length ?? -1;
-            string title  = query?.Title  ?? "";
-            string artist = query?.Artist ?? "";
-            string album  = query?.Album  ?? "";
-            return FormatSatisfies(file.Name)
-                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Name, title)
-                && StrictArtistSatisfies(file.Name, artist) && StrictAlbumSatisfies(file.Name, album));
-        }
-
-        public bool FileSatisfies(SimpleFile file, SongQuery? query, bool filenameChecks = false)
+        internal bool FileSatisfies(
+            ConditionFile file,
+            SongQuery? query,
+            SearchResponse? response = null,
+            bool filenameChecks = true,
+            bool checkUser = true)
         {
             int length    = query?.Length ?? -1;
             string title  = query?.Title  ?? "";
             string artist = query?.Artist ?? "";
             string album  = query?.Album  ?? "";
             return FormatSatisfies(file.Path)
-                && LengthToleranceSatisfies(file, length) && BitrateSatisfies(file) && SampleRateSatisfies(file)
-                && BitDepthSatisfies(file) && (!filenameChecks || StrictTitleSatisfies(file.Path, title)
-                && StrictArtistSatisfies(file.Path, artist) && StrictAlbumSatisfies(file.Path, album));
+                && LengthToleranceSatisfies(file.Length, length)
+                && BitrateSatisfies(file.Bitrate)
+                && SampleRateSatisfies(file.SampleRate)
+                && BitDepthSatisfies(file.BitDepth)
+                && (!filenameChecks
+                    || StrictTitleSatisfies(file.Path, title)
+                    && StrictArtistSatisfies(file.Path, artist)
+                    && StrictAlbumSatisfies(file.Path, album))
+                && (!checkUser || UserSatisfies(response));
         }
 
         public bool StrictTitleSatisfies(string fname, string tname, bool noPath = true)

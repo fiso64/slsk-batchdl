@@ -426,6 +426,61 @@ namespace Tests.TrackSkipperTests
                 "Strict album quality should not skip unless every audio file satisfies the active format and bitrate conditions.");
         }
 
+        [TestMethod]
+        public void IndexSkipper_SkipCheckCond_AlbumMissingRequiredTrackTitle_SkipsWithoutFlagButNotWithFlag()
+        {
+            string albumDir = Path.Combine(_tempDir, "Artist", "Album");
+            Directory.CreateDirectory(albumDir);
+            File.WriteAllBytes(Path.Combine(albumDir, "01. Artist - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            var editor = CreateEditorWithDoneAlbum("Artist", "Album", albumDir);
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions(),
+                PreferredCond = new FileConditions(),
+                NecessaryFolderCond = new FolderConditions { RequiredTrackTitles = ["Track Two"] },
+            };
+
+            var uncheckedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: false);
+            Assert.IsTrue(
+                uncheckedSkipper.AlbumExists(album, CreateContext(editor, search), out _),
+                "Without skip-check-cond, the existing album index entry should skip without inspecting folder title coverage.");
+
+            var checkedSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                checkedSkipper.AlbumExists(album, CreateContext(editor, search, skipCheckCond: true), out _),
+                "With skip-check-cond, an indexed album must not skip when required source tracks are missing from the folder.");
+        }
+
+        [TestMethod]
+        public void IndexSkipper_SkipCheckPrefCond_AlbumMissingPreferredRequiredTrackTitle_SkipsWithRequiredOnlyButNotWithPreferred()
+        {
+            string albumDir = Path.Combine(_tempDir, "Artist", "Album");
+            Directory.CreateDirectory(albumDir);
+            File.WriteAllBytes(Path.Combine(albumDir, "01. Artist - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            var editor = CreateEditorWithDoneAlbum("Artist", "Album", albumDir);
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions(),
+                PreferredCond = new FileConditions(),
+                NecessaryFolderCond = new FolderConditions { RequiredTrackTitles = ["Track One"] },
+                PreferredFolderCond = new FolderConditions { RequiredTrackTitles = ["Track Two"] },
+            };
+
+            var requiredOnlySkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsTrue(
+                requiredOnlySkipper.AlbumExists(album, CreateContext(editor, search, skipCheckCond: true), out _),
+                "skip-check-cond should still skip when the indexed album satisfies required folder title coverage.");
+
+            var preferredSkipper = TrackSkipperRegistry.GetSkipper(SkipMode.Index, _tempDir, useConditions: true);
+            Assert.IsFalse(
+                preferredSkipper.AlbumExists(album, CreateContext(editor, search, skipCheckPrefCond: true), out _),
+                "skip-check-pref-cond should keep searching when the indexed album fails preferred folder title coverage.");
+        }
+
     }
 
     [TestClass]
@@ -568,7 +623,66 @@ namespace Tests.TrackSkipperTests
     }
 
     [TestClass]
-    public class DirectoryHasGoodCountTests
+    public class TagSkipperTests
+    {
+        private string _tempDir = "";
+
+        [TestInitialize]
+        public void Setup()
+        {
+            _tempDir = Path.Combine(Path.GetTempPath(), $"Sockseek_tag_skip_{Guid.NewGuid()}");
+            Directory.CreateDirectory(_tempDir);
+        }
+
+        [TestCleanup]
+        public void Cleanup()
+        {
+            if (Directory.Exists(_tempDir))
+                Directory.Delete(_tempDir, true);
+        }
+
+        [TestMethod]
+        public void TagSkipper_SkipCheckCond_FileFailingRequiredBitrateCondition_SkipsWithoutFlagButNotWithFlag()
+        {
+            string mp3Path = Path.Combine(_tempDir, "tagged.mp3");
+            File.WriteAllBytes(mp3Path, TestHelpers.EmptyMp3Bytes);
+            using (var tagFile = TagLib.File.Create(mp3Path))
+            {
+                tagFile.Tag.Performers = ["Cool Artist"];
+                tagFile.Tag.Title = "Great Song";
+                tagFile.Save();
+            }
+
+            int actualBitrate = AudioTestFixtures.ReadAudioBitrate(mp3Path);
+            Assert.IsTrue(actualBitrate > 0, "The MP3 fixture must expose a bitrate for this test to exercise metadata conditions.");
+
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Song" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { MinBitrate = actualBitrate + 1 },
+                PreferredCond = new FileConditions(),
+            };
+
+            var uncheckedSkipper = new TagSkipper(_tempDir);
+            uncheckedSkipper.BuildIndex();
+            Assert.IsTrue(
+                uncheckedSkipper.SongExists(song, new TrackSkipperContext { checkFileExists = false }, out _),
+                "Without skip-check-cond, tag-mode skipping should ignore the current bitrate condition.");
+
+            var checkedSkipper = new TagConditionalSkipper(_tempDir);
+            checkedSkipper.BuildIndex();
+            var checkedContext = TrackSkipperContext.From(
+                new JobContext(),
+                new SkipSettings { SkipCheckCond = true },
+                search);
+            Assert.IsFalse(
+                checkedSkipper.SongExists(song, checkedContext, out _),
+                "With skip-check-cond, tag-mode skipping must not skip when the matching local file fails the bitrate condition.");
+        }
+    }
+
+    [TestClass]
+    public class LocalAlbumDirectorySatisfiesTests
     {
         private string _tempDir = "";
 
@@ -587,36 +701,62 @@ namespace Tests.TrackSkipperTests
         }
 
         [TestMethod]
-        public void DirectoryHasGoodCount_NoConstraints_ReturnsTrue()
+        public void NoConstraints_ReturnsTrue()
         {
-            Assert.IsTrue(FileBasedSkipper<object>.DirectoryHasGoodCount(_tempDir));
+            Assert.IsTrue(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(new FolderConditions(), _tempDir));
         }
 
         [TestMethod]
-        public void DirectoryHasGoodCount_MinMet_ReturnsTrue()
+        public void MinMet_ReturnsTrue()
         {
             File.WriteAllBytes(Path.Combine(_tempDir, "a.mp3"), TestHelpers.EmptyMp3Bytes);
             File.WriteAllBytes(Path.Combine(_tempDir, "b.mp3"), TestHelpers.EmptyMp3Bytes);
 
-            Assert.IsTrue(FileBasedSkipper<object>.DirectoryHasGoodCount(_tempDir, min: 2));
+            Assert.IsTrue(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(
+                new FolderConditions { MinTrackCount = 2 },
+                _tempDir));
         }
 
         [TestMethod]
-        public void DirectoryHasGoodCount_MinNotMet_ReturnsFalse()
+        public void MinNotMet_ReturnsFalse()
         {
             File.WriteAllBytes(Path.Combine(_tempDir, "a.mp3"), TestHelpers.EmptyMp3Bytes);
 
-            Assert.IsFalse(FileBasedSkipper<object>.DirectoryHasGoodCount(_tempDir, min: 3));
+            Assert.IsFalse(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(
+                new FolderConditions { MinTrackCount = 3 },
+                _tempDir));
         }
 
         [TestMethod]
-        public void DirectoryHasGoodCount_MaxExceeded_ReturnsFalse()
+        public void MaxExceeded_ReturnsFalse()
         {
             File.WriteAllBytes(Path.Combine(_tempDir, "a.mp3"), TestHelpers.EmptyMp3Bytes);
             File.WriteAllBytes(Path.Combine(_tempDir, "b.mp3"), TestHelpers.EmptyMp3Bytes);
             File.WriteAllBytes(Path.Combine(_tempDir, "c.mp3"), TestHelpers.EmptyMp3Bytes);
 
-            Assert.IsFalse(FileBasedSkipper<object>.DirectoryHasGoodCount(_tempDir, max: 2));
+            Assert.IsFalse(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(
+                new FolderConditions { MaxTrackCount = 2 },
+                _tempDir));
+        }
+
+        [TestMethod]
+        public void RequiredTrackTitlePresent_ReturnsTrue()
+        {
+            File.WriteAllBytes(Path.Combine(_tempDir, "01. Artist - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            Assert.IsTrue(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(
+                new FolderConditions { RequiredTrackTitles = ["Track One"] },
+                _tempDir));
+        }
+
+        [TestMethod]
+        public void RequiredTrackTitleMissing_ReturnsFalse()
+        {
+            File.WriteAllBytes(Path.Combine(_tempDir, "01. Artist - Track One.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            Assert.IsFalse(ConditionSatisfactionPolicy.LocalAlbumDirectorySatisfies(
+                new FolderConditions { RequiredTrackTitles = ["Track Two"] },
+                _tempDir));
         }
     }
 }

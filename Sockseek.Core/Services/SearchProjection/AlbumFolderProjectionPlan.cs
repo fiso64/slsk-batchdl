@@ -13,7 +13,7 @@ internal readonly struct AlbumFolderProjectionPlan
 {
     private readonly AlbumQuery query;
     private readonly SearchSettings search;
-    private readonly SearchResultProjector.AlbumProjectionFilter projectionFilter;
+    private readonly ConditionSatisfactionPolicy.AlbumSearchFilter projectionFilter;
     private readonly FolderSortMode sortMode;
     private readonly ResultSorter.SortKeyContext aggregateSortKeyContext;
 
@@ -27,7 +27,7 @@ internal readonly struct AlbumFolderProjectionPlan
         this.query = query;
         this.search = search;
         this.sortMode = sortMode;
-        projectionFilter = SearchResultProjector.CreateAlbumProjectionFilter(query, search);
+        projectionFilter = ConditionSatisfactionPolicy.CreateAlbumSearchFilter(query, search);
         aggregateSortKeyContext = ResultSorter.CreateSortKeyContext(
             [],
             projectionFilter.SortQuery,

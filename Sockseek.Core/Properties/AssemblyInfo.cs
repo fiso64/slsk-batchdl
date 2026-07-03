@@ -1,3 +1,4 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("Sockseek.Core.Tests")]
+[assembly: InternalsVisibleTo("Sockseek.Benchmarks")]

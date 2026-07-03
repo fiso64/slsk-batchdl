@@ -2202,13 +2202,14 @@ public class DownloadEngine
             bool verifyTrackCount = !wasPreselected || !job.SkipResolvedTargetTrackCountVerification;
             if (verifyTrackCount
                 && config.Transfer.AlbumTrackCountMaxRetries > 0
-                && ((folderCond.MaxTrackCount ?? 0) > 0 || (folderCond.MinTrackCount ?? 0) > 0))
+                && ConditionSatisfactionPolicy.HasAlbumTrackCountConditions(folderCond))
             {
                 int KnownAudioCount() => chosenFolder.Files.Count(af => !af.IsNotAudio);
                 int knownCount = KnownAudioCount();
-                bool mustBrowseBeforeDownload = !chosenFolder.IsFullyRetrieved
-                    && ((folderCond.MaxTrackCount is int browseMaxTrackCount && browseMaxTrackCount > 0 && knownCount <= browseMaxTrackCount)
-                        || (folderCond.MinTrackCount is int browseMinTrackCount && browseMinTrackCount > 0 && knownCount < browseMinTrackCount));
+                bool mustBrowseBeforeDownload = ConditionSatisfactionPolicy.ShouldRetrieveFullAlbumForTrackCount(
+                    folderCond,
+                    knownCount,
+                    chosenFolder.IsFullyRetrieved);
 
                 if (mustBrowseBeforeDownload && !retrievedFolders.Contains(chosenFolder.FolderPath))
                 {
@@ -2234,13 +2235,13 @@ public class DownloadEngine
                     knownCount = KnownAudioCount();
                 }
 
-                bool trackCountFailed = false;
-                if (folderCond.MaxTrackCount is { } maxTrackCount and > 0 && knownCount > maxTrackCount)
-                { SockseekLog.Jobs.Info(job, $"file count ({knownCount}) above maximum ({maxTrackCount}), skipping folder: {chosenFolder.FolderPath}"); trackCountFailed = true; }
-                if (folderCond.MinTrackCount is { } minTrackCount and > 0 && knownCount < minTrackCount)
-                { SockseekLog.Jobs.Info(job, $"file count ({knownCount}) below minimum ({minTrackCount}), skipping folder: {chosenFolder.FolderPath}"); trackCountFailed = true; }
+                var trackCountCheck = ConditionSatisfactionPolicy.CheckAlbumTrackCount(folderCond, knownCount);
+                if (trackCountCheck.FailedAboveMaximum && trackCountCheck.Maximum is { } maximum)
+                    SockseekLog.Jobs.Info(job, $"file count ({trackCountCheck.AudioFileCount}) above maximum ({maximum}), skipping folder: {chosenFolder.FolderPath}");
+                if (trackCountCheck.FailedBelowMinimum && trackCountCheck.Minimum is { } minimum)
+                    SockseekLog.Jobs.Info(job, $"file count ({trackCountCheck.AudioFileCount}) below minimum ({minimum}), skipping folder: {chosenFolder.FolderPath}");
 
-                if (trackCountFailed)
+                if (!trackCountCheck.Satisfied)
                 {
                     if (wasPreselected)
                     {
@@ -2279,7 +2280,7 @@ public class DownloadEngine
                 }
 
                 var qualityCoverage = AlbumQualityPolicy.Evaluate(chosenFolder, config.Search.NecessaryCond, activeQuality);
-                if (!qualityCoverage.IsAcceptable(strict: true))
+                if (!ConditionSatisfactionPolicy.AlbumQualityIsAcceptable(qualityCoverage, strictAlbumQuality: true))
                 {
                     SockseekLog.Jobs.Info(job, $"strict album quality failed ({qualityCoverage.MatchingFileCount}/{qualityCoverage.AudioFileCount} matching audio files), skipping folder: {chosenFolder.FolderPath}");
                     if (wasPreselected)

@@ -59,7 +59,7 @@ public sealed class IncrementalResultSorter
             if (!seen.Add(key))
                 continue;
 
-            if (requireFileSatisfies && !search.NecessaryCond.FileSatisfies(file, query, response))
+            if (requireFileSatisfies && !ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, response, file, query))
                 continue;
 
             var entry = ResultSorter.CreateSortEntry(response, file, keyContext, nextOriginalIndex++);

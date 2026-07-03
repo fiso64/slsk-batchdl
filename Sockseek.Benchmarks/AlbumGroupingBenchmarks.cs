@@ -77,7 +77,11 @@ public partial class AlbumGroupingBenchmarks
         sorter.AddRange(rawResults.Where(result =>
             search.NecessaryCond.UserSatisfies(result.Response)
             && (!Utils.IsMusicFile(result.File.Filename)
-                || search.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response))));
+                || ConditionSatisfactionPolicy.SearchFileSatisfies(
+                    search.NecessaryCond,
+                    result.Response,
+                    result.File,
+                    sortQuery))));
 
         return LegacyAlbumFoldersFromOrderedResults(
                 sorter.Snapshot(),
@@ -115,7 +119,11 @@ public partial class AlbumGroupingBenchmarks
         sorter.AddRange(rawResults.Where(result =>
             search.NecessaryCond.UserSatisfies(result.Response)
             && (!Utils.IsMusicFile(result.File.Filename)
-                || search.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response))));
+                || ConditionSatisfactionPolicy.SearchFileSatisfies(
+                    search.NecessaryCond,
+                    result.Response,
+                    result.File,
+                    sortQuery))));
 
         var folders = LegacyAlbumFoldersFromOrderedResults(
             sorter.Snapshot(),
@@ -155,7 +163,11 @@ public partial class AlbumGroupingBenchmarks
             .Where(result =>
                 search.NecessaryCond.UserSatisfies(result.Response)
                 && (!Utils.IsMusicFile(result.File.Filename)
-                    || search.NecessaryCond.FileSatisfies(result.File, sortQuery, result.Response)));
+                    || ConditionSatisfactionPolicy.SearchFileSatisfies(
+                        search.NecessaryCond,
+                        result.Response,
+                        result.File,
+                        sortQuery)));
         var orderedResults = ResultSorter.OrderedResults(
             filteredResults.Select(x => (x.Response, x.File)),
             sortQuery,

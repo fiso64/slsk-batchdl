@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Soulseek;
 
 namespace Tests.FileConditionsTests
@@ -451,7 +452,7 @@ namespace Tests.FileConditionsTests
                 length: 200);
             var track = TestHelpers.CreateQuery(artist: "Cool Artist", title: "My Song", length: 201);
 
-            Assert.IsTrue(fc.FileSatisfies(file, track, null));
+            Assert.IsTrue(ConditionSatisfactionPolicy.SearchFileSatisfies(fc, null, file, track));
         }
 
         [TestMethod]
@@ -469,7 +470,7 @@ namespace Tests.FileConditionsTests
                 length: 200);
             var track = TestHelpers.CreateQuery(length: 200);
 
-            Assert.IsFalse(fc.FileSatisfies(file, track, null));
+            Assert.IsFalse(ConditionSatisfactionPolicy.SearchFileSatisfies(fc, null, file, track));
         }
     }
 
