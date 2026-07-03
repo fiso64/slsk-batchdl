@@ -88,7 +88,7 @@ namespace Sockseek.Core.Extractors;
 
     public static partial class YouTube
     {
-        private static readonly YoutubeClient? youtube = new YoutubeClient();
+        private static readonly YoutubeClient youtube = new YoutubeClient();
         private static YouTubeService? youtubeService = null;
         private static string apiKey = "";
 
@@ -109,16 +109,19 @@ namespace Sockseek.Core.Extractors;
         {
             log ??= ExtractorContext.None.Log;
             StartService();
+            var service = RequireService();
 
             string playlistId = await UrlToId(url);
 
-            var playlistRequest = youtubeService.Playlists.List("snippet");
+            var playlistRequest = service.Playlists.List("snippet");
             playlistRequest.Id = playlistId;
             var playlistResponse = playlistRequest.Execute();
+            if (playlistResponse.Items.Count == 0)
+                throw new InvalidOperationException($"Could not retrieve YouTube playlist '{playlistId}'.");
 
             string playlistName = playlistResponse.Items[0].Snippet.Title;
 
-            var playlistItemsRequest = youtubeService.PlaylistItems.List("snippet,contentDetails");
+            var playlistItemsRequest = service.PlaylistItems.List("snippet,contentDetails");
             playlistItemsRequest.PlaylistId = playlistId;
             playlistItemsRequest.MaxResults = Math.Min(max, 100);
 
@@ -144,7 +147,7 @@ namespace Sockseek.Core.Extractors;
                             var length = 0;
                             var desc = "";
 
-                            var videoRequest = youtubeService.Videos.List("contentDetails,snippet");
+                            var videoRequest = service.Videos.List("contentDetails,snippet");
                             videoRequest.Id = playlistItem.Snippet.ResourceId.VideoId;
                             var videoResponse = videoRequest.Execute();
 
@@ -280,7 +283,7 @@ namespace Sockseek.Core.Extractors;
                 o.title = vid.Title;
                 o.uploader = vid.Author.ChannelTitle;
                 o.desc = vid.Description;
-                o.length = (int)vid.Duration.Value.TotalSeconds;
+                o.length = vid.Duration.HasValue ? (int)vid.Duration.Value.TotalSeconds : -1;
             }
             catch
             {
@@ -289,7 +292,8 @@ namespace Sockseek.Core.Extractors;
                     try
                     {
                         StartService();
-                        var videoRequest = youtubeService.Videos.List("contentDetails,snippet");
+                        var service = RequireService();
+                        var videoRequest = service.Videos.List("contentDetails,snippet");
                         videoRequest.Id = id;
                         var videoResponse = videoRequest.Execute();
                         o.title = videoResponse.Items[0].Snippet.Title;
@@ -318,6 +322,9 @@ namespace Sockseek.Core.Extractors;
             }
         }
 
+        private static YouTubeService RequireService()
+            => youtubeService ?? throw new InvalidOperationException("YouTube API service was not started.");
+
         public static void StopService()
         {
             youtubeService = null;
@@ -338,7 +345,7 @@ namespace Sockseek.Core.Extractors;
                     var title = video.Title;
                     var uploader = video.Author.ChannelTitle;
                     var ytId = video.Id.Value;
-                    var length = (int)video.Duration.Value.TotalSeconds;
+                    var length = video.Duration.HasValue ? (int)video.Duration.Value.TotalSeconds : -1;
 
                     var song = await ParseSongInfo(title, uploader, ytId, length, log: log);
                     song.ItemNumber = count + 1;
@@ -374,7 +381,7 @@ namespace Sockseek.Core.Extractors;
                     var title = video.Title;
                     var uploader = video.Author.ChannelTitle;
                     var ytId = video.Id.Value;
-                    var length = (int)video.Duration.Value.TotalSeconds;
+                    var length = video.Duration.HasValue ? (int)video.Duration.Value.TotalSeconds : -1;
 
                     var song = await ParseSongInfo(title, uploader, ytId, length, log: log);
                     song.ItemNumber = count + 1;

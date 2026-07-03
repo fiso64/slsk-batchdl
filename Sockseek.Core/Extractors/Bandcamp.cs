@@ -98,6 +98,9 @@ namespace Sockseek.Core.Extractors;
                 }
 
                 var match = BandIdRegex().Match(response);
+                if (!match.Success)
+                    throw new InvalidOperationException("Could not find Bandcamp band id in artist page.");
+
                 var id = match.Groups[1].Value;
 
                 var address = $"http://bandcamp.com/api/mobile/24/band_details?band_id={id}";
@@ -105,15 +108,16 @@ namespace Sockseek.Core.Extractors;
                 var jsonDocument = JsonDocument.Parse(responseString);
                 var root = jsonDocument.RootElement;
 
-                string artistName = root.GetProperty("name").GetString();
+                string artistName = root.GetProperty("name").GetString() ?? "";
 
                 var albumList = new JobList { ItemName = artistName, EnablesIndexByDefault = true };
                 int num = 1;
                 foreach (var item in root.GetProperty("discography").EnumerateArray())
                 {
-                    string albumTitle  = item.GetProperty("title").GetString();
+                    string albumTitle  = item.GetProperty("title").GetString() ?? "";
                     string albumArtist = item.GetProperty("artist_name").GetString()
-                                     ?? item.GetProperty("band_name").GetString();
+                                      ?? item.GetProperty("band_name").GetString()
+                                      ?? artistName;
 
                     albumList.Jobs.Add(new AlbumJob(new AlbumQuery { Album = albumTitle, Artist = albumArtist })
                     {

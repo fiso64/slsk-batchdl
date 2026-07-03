@@ -83,6 +83,10 @@ public partial class FileManager
     private readonly OutputSettings output;
     private readonly ExtractionSettings extraction;
 
+    private string OutputParentDir => string.IsNullOrWhiteSpace(output.ParentDir)
+        ? Directory.GetCurrentDirectory()
+        : output.ParentDir;
+
     public FileManager(Job job, OutputSettings output, ExtractionSettings extraction)
     {
         this.job       = job;
@@ -100,7 +104,7 @@ public partial class FileManager
         lock (sync)
         {
             string? rcd = downloadingAdditionalImagesValue ? remoteImagesCommonDir : remoteBaseDir;
-            string parent = output.ParentDir;
+            string parent = OutputParentDir;
             string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
 
             if (!string.IsNullOrEmpty(job.DefaultFolderName()))
@@ -155,10 +159,12 @@ public partial class FileManager
             if (nonAudioToOrganize == null || !nonAudioToOrganize.Any())
                 return;
 
-            string parent = Utils.GreatestCommonDirectory(
-                allFiles
-                    .Where(f => !f.IsNotAudio && f.TerminalOutcome == JobTerminalOutcome.Succeeded && f.DownloadPath?.Length > 0)
-                    .Select(f => f.DownloadPath));
+            var completedAudioPaths = allFiles
+                .Where(f => !f.IsNotAudio && f.TerminalOutcome == JobTerminalOutcome.Succeeded && !string.IsNullOrEmpty(f.DownloadPath))
+                .Select(f => f.DownloadPath!)
+                .ToList();
+            string parent = completedAudioPaths.Count == 0 ? OutputParentDir : Utils.GreatestCommonDirectory(
+                completedAudioPaths);
 
             foreach (var file in nonAudioToOrganize)
             {
@@ -186,16 +192,16 @@ public partial class FileManager
             {
                 ExtractorName = extraction.InputType.ToString(),
                 InputSource   = extraction.Input ?? "",
-                OutputDir     = output.ParentDir ?? "",
+                OutputDir     = OutputParentDir,
                 ConfigDir     = job.Config?.RuntimePathContext.ConfigDir ?? "",
             });
-            string newFilePath = Path.Join(output.ParentDir, pathPart + Path.GetExtension(song.DownloadPath));
+            string newFilePath = Path.Join(OutputParentDir, pathPart + Path.GetExtension(song.DownloadPath));
 
             if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
             {
                 try
                 {
-                    Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, output.ParentDir);
+                    Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, OutputParentDir);
                 }
                 catch (Exception ex)
                 {
@@ -228,7 +234,7 @@ public partial class FileManager
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, output.ParentDir); }
+            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, OutputParentDir); }
             catch (Exception ex) { SockseekLog.Jobs.Error(file, $"failed to move non-audio file from '{file.DownloadPath}' to '{newFilePath}' for parent job [{job.DisplayId}]: {ex}"); return; }
         }
 
@@ -440,15 +446,15 @@ public partial class FileManager
         if (string.IsNullOrEmpty(remoteBaseDir) || slfile == null)
         {
             if (!string.IsNullOrEmpty(remoteBaseDir))
-                return Path.GetFileName(Utils.NormalizedPath(remoteBaseDir));
+                return Path.GetFileName(Utils.NormalizedPath(remoteBaseDir)) ?? "";
             if (slfile != null)
-                return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)));
+                return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename))) ?? "";
             return "";
         }
 
         string normalizedRbd = Utils.NormalizedPath(remoteBaseDir);
-        string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename));
-        string r = Path.GetFileName(normalizedRbd);
+        string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)) ?? "";
+        string r = Path.GetFileName(normalizedRbd) ?? "";
         string result = Path.Join(r, Path.GetRelativePath(normalizedRbd, d));
         return result;
     }

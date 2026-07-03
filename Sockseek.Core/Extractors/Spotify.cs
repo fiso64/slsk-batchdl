@@ -187,7 +187,7 @@ namespace Sockseek.Core.Extractors;
 
     public class Spotify
     {
-        private EmbedIOAuthServer _server;
+        private EmbedIOAuthServer? _server;
         private readonly string _clientId;
         private readonly string _clientSecret;
         private string _clientToken;
@@ -305,7 +305,8 @@ namespace Sockseek.Core.Extractors;
         private async Task OnAuthorizationCodeReceived(object sender, AuthorizationCodeResponse response)
         {
             _log.Debug("Authorization code received");
-            await _server.Stop();
+            if (_server != null)
+                await _server.Stop();
 
             var config        = SpotifyClientConfig.CreateDefault();
             _log.Debug("Getting token response..");
@@ -323,10 +324,11 @@ namespace Sockseek.Core.Extractors;
             loggedIn            = true;
         }
 
-        private async Task OnErrorReceived(object sender, string error, string state)
+        private async Task OnErrorReceived(object sender, string error, string? state)
         {
             _log.Debug($"Auth error: {error}");
-            await _server.Stop();
+            if (_server != null)
+                await _server.Stop();
             throw new Exception($"Aborting authorization, error received: {error}");
         }
 
@@ -337,32 +339,89 @@ namespace Sockseek.Core.Extractors;
             return true;
         }
 
+        private SpotifyClient RequireClient()
+            => _client ?? throw new InvalidOperationException("Spotify client is not authorized.");
+
+        private static object? ReadPropertyValue(object? source, string propertyName)
+            => source?.ReadProperty(propertyName);
+
+        private static string ReadStringProperty(object? source, string propertyName)
+            => ReadPropertyValue(source, propertyName) as string ?? "";
+
+        private static int ReadIntProperty(object? source, string propertyName)
+            => ReadPropertyValue(source, propertyName) switch
+            {
+                int value => value,
+                long value => checked((int)value),
+                double value => checked((int)value),
+                _ => -1,
+            };
+
+        private static string ReadNestedStringProperty(object? source, params string[] propertyPath)
+        {
+            object? current = source;
+            foreach (var propertyName in propertyPath)
+                current = ReadPropertyValue(current, propertyName);
+            return current as string ?? "";
+        }
+
+        private static string[] ReadArtists(object? track)
+        {
+            var artists = ReadPropertyValue(track, "artists") as IEnumerable<object>;
+            return artists?
+                .Select(artist => ReadStringProperty(artist, "name"))
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToArray() ?? [];
+        }
+
+        private static bool TryCreateTrackQuery(object? track, out SongQuery query)
+        {
+            var artists = ReadArtists(track);
+            var title = ReadStringProperty(track, "name");
+
+            if (artists.Length == 0 || string.IsNullOrWhiteSpace(title))
+            {
+                query = new SongQuery();
+                return false;
+            }
+
+            var durationMs = ReadIntProperty(track, "durationMs");
+            query = new SongQuery
+            {
+                Artist = artists[0],
+                Album  = ReadNestedStringProperty(track, "album", "name"),
+                Title  = title,
+                Length = durationMs >= 0 ? durationMs / 1000 : -1,
+                URI    = ReadStringProperty(track, "uri"),
+            };
+            return true;
+        }
+
         public async Task<List<SongJob>> GetLikes(int max = int.MaxValue, int offset = 0)
         {
             if (!loggedIn)
                 throw new Exception("Can't get liked music as user is not logged in");
 
+            var client = RequireClient();
             var songs = new List<SongJob>();
             int limit = Math.Min(max, 50);
             int num   = offset + 1;
 
             while (true)
             {
-                var tracks = await _client.Library.GetTracks(new LibraryTracksRequest { Limit = limit, Offset = offset });
+                var tracks = await client.Library.GetTracks(new LibraryTracksRequest { Limit = limit, Offset = offset });
 
-                foreach (var track in tracks.Items)
+                var items = tracks.Items;
+                if (items == null)
+                    break;
+
+                foreach (var track in items)
                 {
-                    string[] artists = ((IEnumerable<object>)track.Track.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
-                    string artist   = artists[0];
-                    string name     = (string)track.Track.ReadProperty("name");
-                    string album    = (string)track.Track.ReadProperty("album").ReadProperty("name");
-                    int duration    = (int)track.Track.ReadProperty("durationMs");
-
-                    var query = new SongQuery { Album = album, Artist = artist, Title = name, Length = duration / 1000 };
-                    songs.Add(new SongJob(query) { ItemNumber = num++ });
+                    if (TryCreateTrackQuery(track.Track, out var query))
+                        songs.Add(new SongJob(query) { ItemNumber = num++ });
                 }
 
-                if (tracks.Items.Count < limit || songs.Count >= max) break;
+                if (items.Count < limit || songs.Count >= max) break;
                 offset += limit;
                 limit   = Math.Min(max - songs.Count, 50);
             }
@@ -375,19 +434,28 @@ namespace Sockseek.Core.Extractors;
             if (!loggedIn)
                 throw new Exception("Can't get liked albums as user is not logged in");
 
+            var client = RequireClient();
             var queue = new JobList();
             int limit = Math.Min(max, 50);
             int num   = offset + 1;
 
             while (true)
             {
-                var albums = await _client.Library.GetAlbums(new LibraryAlbumsRequest { Limit = limit, Offset = offset });
+                var albums = await client.Library.GetAlbums(new LibraryAlbumsRequest { Limit = limit, Offset = offset });
 
-                foreach (var savedAlbum in albums.Items)
+                var items = albums.Items;
+                if (items == null)
+                    break;
+
+                foreach (var savedAlbum in items)
                 {
                     var album  = savedAlbum.Album;
-                    string[] artists = album.Artists.Select(a => a.Name).ToArray();
-                    string artist = artists[0];
+                    if (album == null || string.IsNullOrWhiteSpace(album.Name))
+                        continue;
+
+                    string artist = album.Artists?
+                        .Select(a => a.Name)
+                        .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "";
 
                     var query = new AlbumQuery
                     {
@@ -404,7 +472,7 @@ namespace Sockseek.Core.Extractors;
                     queue.Jobs.Add(job);
                 }
 
-                if (albums.Items.Count < limit || queue.Jobs.Count >= max) break;
+                if (items.Count < limit || queue.Jobs.Count >= max) break;
                 offset += limit;
                 limit   = Math.Min(max - queue.Jobs.Count, 50);
             }
@@ -415,17 +483,20 @@ namespace Sockseek.Core.Extractors;
 
         public async Task RemoveTrackFromPlaylist(string playlistId, string trackUri)
         {
-            var item = new PlaylistRemoveItemsRequest.Item { Uri = trackUri };
-            var pr   = new PlaylistRemoveItemsRequest();
-            pr.Tracks = new List<PlaylistRemoveItemsRequest.Item>() { item };
-            try { await _client.Playlists.RemoveItems(playlistId, pr); }
+            var client = RequireClient();
+            var request = new PlaylistRemoveItemsRequestV2
+            {
+                Items = [new PlaylistRemoveItemsRequestV2.Item { Uri = trackUri }],
+            };
+            try { await client.Playlists.RemovePlaylistItems(playlistId, request); }
             catch { }
         }
 
-        public async Task<(string?, string?, List<SongJob>)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
+        public async Task<(string Name, string Id, List<SongJob> Songs)> GetPlaylist(string url, int max = int.MaxValue, int offset = 0)
         {
+            var client = RequireClient();
             var playlistId = GetPlaylistIdFromUrl(url);
-            var p          = await _client.Playlists.Get(playlistId);
+            var p          = await client.Playlists.Get(playlistId);
 
             var songs = new List<SongJob>();
             int limit = Math.Min(max, 50);
@@ -433,32 +504,28 @@ namespace Sockseek.Core.Extractors;
 
             while (true)
             {
-                var tracks = await _client.Playlists.GetPlaylistItems(playlistId, new PlaylistGetItemsRequest { Limit = limit, Offset = offset });
+                var tracks = await client.Playlists.GetPlaylistItems(playlistId, new PlaylistGetItemsRequest { Limit = limit, Offset = offset });
 
-                foreach (var track in tracks.Items)
+                var items = tracks.Items;
+                if (items == null)
+                    break;
+
+                foreach (var track in items)
                 {
                     try
                     {
-                        string[] artists = ((IEnumerable<object>)track.Item.ReadProperty("artists")).Select(a => (string)a.ReadProperty("name")).ToArray();
-                        var query = new SongQuery
-                        {
-                            Artist = artists[0],
-                            Album  = (string)track.Item.ReadProperty("album").ReadProperty("name"),
-                            Title  = (string)track.Item.ReadProperty("name"),
-                            Length = (int)track.Item.ReadProperty("durationMs") / 1000,
-                            URI    = (string)track.Item.ReadProperty("uri"),
-                        };
-                        songs.Add(new SongJob(query) { ItemNumber = num++ });
+                        if (TryCreateTrackQuery(track.Item, out var query))
+                            songs.Add(new SongJob(query) { ItemNumber = num++ });
                     }
                     catch { continue; }
                 }
 
-                if (tracks.Items.Count < limit || songs.Count >= max) break;
+                if (items.Count < limit || songs.Count >= max) break;
                 offset += limit;
                 limit   = Math.Min(max - songs.Count, 50);
             }
 
-            return (p.Name, p.Id, songs);
+            return (p.Name ?? "", p.Id ?? playlistId, songs);
         }
 
         private string GetPlaylistIdFromUrl(string url)
@@ -470,29 +537,20 @@ namespace Sockseek.Core.Extractors;
 
         public async Task<AlbumJob> GetAlbumJob(string url, ExtractionSettings extraction)
         {
+            var client = RequireClient();
             var albumId = GetAlbumIdFromUrl(url);
-            var album   = await _client.Albums.Get(albumId);
+            var album   = await client.Albums.Get(albumId);
             if (album?.Tracks?.Items == null)
                 throw new Exception("Could not retrieve Spotify album tracks.");
 
-            var songs = new List<SongJob>();
-            foreach (var track in album.Tracks.Items)
-            {
-                var query = new SongQuery
-                {
-                    Album  = album.Name,
-                    Artist = track.Artists.First().Name,
-                    Title  = track.Name,
-                    Length = track.DurationMs / 1000,
-                    URI    = track.Uri,
-                };
-                songs.Add(new SongJob(query));
-            }
+            var trackCount = album.Tracks.Items.Count;
 
             var albumQuery = new AlbumQuery
             {
-                Album  = album.Name,
-                Artist = album.Artists.First().Name,
+                Album  = album.Name ?? "",
+                Artist = album.Artists?
+                    .Select(a => a.Name)
+                    .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "",
             };
 
             var albumJob = new AlbumJob(albumQuery);
@@ -500,8 +558,8 @@ namespace Sockseek.Core.Extractors;
             {
                 albumJob.ExtractorFolderCond = new FolderConditionPatch
                 {
-                    MinTrackCount = extraction.SetAlbumMinTrackCount ? songs.Count : null,
-                    MaxTrackCount = extraction.SetAlbumMaxTrackCount ? songs.Count : null,
+                    MinTrackCount = extraction.SetAlbumMinTrackCount ? trackCount : null,
+                    MaxTrackCount = extraction.SetAlbumMaxTrackCount ? trackCount : null,
                 };
             }
 

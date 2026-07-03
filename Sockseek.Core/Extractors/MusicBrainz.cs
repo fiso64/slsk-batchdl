@@ -92,8 +92,8 @@ namespace Sockseek.Core.Extractors;
             var response = await _httpClient.GetStringAsync(url);
             var release = JsonDocument.Parse(response).RootElement;
 
-            var artistCredit = release.GetProperty("artist-credit")[0].GetProperty("name").GetString();
-            var albumTitle = release.GetProperty("title").GetString();
+            var artistCredit = release.GetProperty("artist-credit")[0].GetProperty("name").GetString() ?? "";
+            var albumTitle = release.GetProperty("title").GetString() ?? "";
 
             int totalTracks = 0;
             if (release.TryGetProperty("media", out var media))
@@ -143,6 +143,9 @@ namespace Sockseek.Core.Extractors;
                 bestRelease = releases.First();
 
             var releaseMbid = bestRelease.GetProperty("id").GetString();
+            if (string.IsNullOrWhiteSpace(releaseMbid))
+                throw new InvalidOperationException("MusicBrainz release group did not include a release id.");
+
             _log.Info($"Found release '{bestRelease.GetProperty("title").GetString()}' ({releaseMbid}) in release group. Getting album info...");
             return await GetReleaseAsAlbum(releaseMbid, max, offset, extraction, true);
         }
@@ -173,10 +176,10 @@ namespace Sockseek.Core.Extractors;
                 {
                     if (count >= max) break;
 
-                    var artistCredit = release.GetProperty("artist-credit")[0].GetProperty("name").GetString();
-                    var albumTitle = release.GetProperty("title").GetString();
+                    var artistCredit = release.GetProperty("artist-credit")[0].GetProperty("name").GetString() ?? "";
+                    var albumTitle = release.GetProperty("title").GetString() ?? "";
                     var trackCount = release.GetProperty("track-count").GetInt32();
-                    var releaseId = release.GetProperty("id").GetString();
+                    var releaseId = release.GetProperty("id").GetString() ?? "";
 
                     var query = new AlbumQuery
                     {
