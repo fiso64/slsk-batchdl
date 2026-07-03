@@ -28,6 +28,7 @@ public class CliProgressReporter
     private readonly ConcurrentDictionary<Guid, byte> _liveTerminalParentLogs = new();
     private readonly ConcurrentDictionary<Guid, byte> _terminalJobs = new();
     private readonly ConcurrentDictionary<Guid, Guid> _songToAlbum = new();
+    private readonly ConcurrentDictionary<Guid, byte> _albumDownloadAttemptFailureLogs = new();
 
     private bool PlainMode => _cli.NoProgress || !LiveMode;
 
@@ -224,9 +225,14 @@ public class CliProgressReporter
         if (status.IsTerminal)
         {
             if (summary.Kind == ServerJobKind.Album && status.IsSuccessful)
+            {
+                _albumDownloadAttemptFailureLogs.TryRemove(summary.JobId, out _);
                 return;
+            }
 
             RemoveLiveJob(summary.JobId);
+            if (summary.Kind == ServerJobKind.Album)
+                _albumDownloadAttemptFailureLogs.TryRemove(summary.JobId, out _);
             if (summary.Kind == ServerJobKind.Album && _albumBlocks.TryRemove(summary.JobId, out var liveBlock))
             {
                 foreach (var song in liveBlock.Songs)
@@ -317,6 +323,44 @@ public class CliProgressReporter
 
         albumId = default;
         return false;
+    }
+
+    private bool TryGetAlbumParentForAttemptLog(Guid songJobId, out Guid albumId)
+    {
+        if (_songToAlbum.TryGetValue(songJobId, out albumId))
+            return true;
+
+        if (_parentJobIds.TryGetValue(songJobId, out albumId)
+            && _jobKinds.TryGetValue(albumId, out var parentKind)
+            && parentKind == ServerJobKind.Album)
+            return true;
+
+        albumId = default;
+        return false;
+    }
+
+    private bool TryGetAlbumAttemptLogTarget(
+        DownloadAttemptFailedEventDto failure,
+        out Guid albumId,
+        out int displayId,
+        out string jobType,
+        out string itemName)
+    {
+        displayId = failure.DisplayId;
+        jobType = "SongJob";
+        itemName = SongQueryText(failure.Query);
+
+        if (!TryGetAlbumParentForAttemptLog(failure.JobId, out albumId))
+            return false;
+
+        jobType = JobActivityLogFormatter.AlbumFileJobType;
+        if (_albumBlocks.TryGetValue(albumId, out var block))
+        {
+            displayId = block.Summary.DisplayId;
+            itemName = block.Summary.QueryText ?? block.Summary.ItemName ?? itemName;
+        }
+
+        return true;
     }
 
     private bool TryRegisterAlbumChild(
@@ -865,19 +909,21 @@ public class CliProgressReporter
     private void ReportDownloadAttemptFailed(DownloadAttemptFailedEventDto failure)
     {
         var candidate = CandidateDisplayShort(failure.Candidate);
+        var isAlbumFile = TryGetAlbumAttemptLogTarget(failure, out var albumId, out var displayId, out var jobType, out var itemName);
         var message =
-            $"download attempt failed: {WithName(SongQueryText(failure.Query), candidate)}\n" +
+            $"download attempt failed: {WithName(itemName, candidate)}\n" +
             $"    Output: {failure.OutputPath}\n" +
             $"    Attempt: {failure.Attempt}/{failure.MaxAttempts}\n" +
             $"    {failure.ExceptionType}: {failure.ExceptionMessage}";
 
-        if (PlainMode)
+        if (isAlbumFile
+            && !_albumDownloadAttemptFailureLogs.TryAdd(albumId, 0))
         {
-            SockseekLog.Jobs.Warn($"[{failure.DisplayId}] SongJob: {message}");
+            SockseekLog.Jobs.Debug($"[{displayId}] {jobType}: {message}");
             return;
         }
 
-        SockseekLog.Jobs.Warn($"[{failure.DisplayId}] SongJob: {message}");
+        SockseekLog.Jobs.Warn($"[{displayId}] {jobType}: {message}");
     }
 
     private void ReportStateChanged(SongStateChangedEventDto song)
@@ -1116,6 +1162,7 @@ public class CliProgressReporter
         _terminalJobs[job.Summary.JobId] = 0;
 
         string? remoteFolderDisplay = null;
+        _albumDownloadAttemptFailureLogs.TryRemove(job.Summary.JobId, out _);
         if (_albumBlocks.TryRemove(job.Summary.JobId, out var liveBlock))
         {
             remoteFolderDisplay = liveBlock.RemoteFolderDisplay;

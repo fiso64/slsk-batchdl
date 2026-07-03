@@ -16,6 +16,7 @@ namespace Tests.ProgressReporterTests;
 public class CliProgressReporterTests
 {
     private static string JobLog(string message) => $"[jobs] {message}";
+    private static string DebugJobLog(string message) => $"[debug] [jobs] {message}";
     private static string WarnJobLog(string message) => $"[warn] [jobs] {message}";
     private static string ErrorJobLog(string message) => $"[error] [jobs] {message}";
 
@@ -479,7 +480,7 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void EventLogger_AlbumTrackTerminalLogs_UseAlbumTrackDisplay()
+    public void EventLogger_AlbumFileTerminalLogs_UseAlbumFileDisplay()
     {
         SockseekLog.RemoveNonFileOutputs();
         var entries = new List<SockseekLog.StructuredLogEntry>();
@@ -520,10 +521,59 @@ public class CliProgressReporterTests
 
         Assert.AreEqual(1, entries.Count);
         var line = JobLogLine(entries[0]);
-        Assert.AreEqual("Album Track", line.JobType);
+        Assert.AreEqual("Album File", line.JobType);
         Assert.AreEqual(TerminalLogKind.AlbumTrackDownloaded, line.Kind);
         Assert.AreEqual("succeeded: Artist Album: 01. Artist - Track.flac", line.Message);
         Assert.IsTrue(line.ShowInLive);
+    }
+
+    [TestMethod]
+    public void EventLogger_AlbumFileAllDownloadsFailed_IsDebugOnly()
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        var entries = new List<SockseekLog.StructuredLogEntry>();
+        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry), LogLevel.Debug);
+
+        var eventLogger = new EventLogger(null!);
+        var workflowId = Guid.NewGuid();
+        var albumJobId = Guid.NewGuid();
+        var fileJobId = Guid.NewGuid();
+        var albumSummary = CreateAlbumSummary(albumJobId, ExpectedJobStatus.Downloading, null) with
+        {
+            WorkflowId = workflowId,
+        };
+        var childSummary = CreateSongSummary(fileJobId, workflowId, albumJobId);
+        var query = new SongQueryDto("Artist", "Track", null, null, null, false);
+        var candidate = CreateFileCandidate("local", @"Artist\Album\01. Artist - Track.flac");
+
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("job.upserted", albumSummary));
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("job.upserted", childSummary));
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("album.track-download-started", new AlbumTrackDownloadStartedEventDto(
+            albumSummary,
+            CreateSingleFileAlbumFolder(fileJobId, ExpectedJobStatus.Pending, null),
+            [CreateSongPayload(fileJobId, ExpectedJobStatus.Pending, null)])));
+        entries.Clear();
+
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("song.state-changed", new SongStateChangedEventDto(
+            fileJobId,
+            7,
+            workflowId,
+            query,
+            ServerJobLifecycleState.Terminal,
+            ServerJobActivityPhase.None,
+            ActivityUntilUtc: null,
+            ServerJobTerminalOutcome.Failed,
+            ServerProtocol.FailureReasons.AllDownloadsFailed,
+            DownloadPath: null,
+            ChosenCandidate: candidate,
+            FailureMessage: "Transfer rejected: Too many megabytes")));
+
+        Assert.AreEqual(1, entries.Count);
+        Assert.AreEqual(LogLevel.Debug, entries[0].Level);
+        var line = JobLogLine(entries[0]);
+        Assert.AreEqual("Album File", line.JobType);
+        Assert.AreEqual("failed [All downloads failed]: Artist Album: 01. Artist - Track.flac", line.Message);
+        Assert.IsFalse(line.ShowInLive);
     }
 
     [TestMethod]
@@ -1088,6 +1138,29 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void DownloadAttemptFailed_AlbumChild_PrintsOnlyFirstFailureAtInfo()
+    {
+        var messages = RecordAlbumChildDownloadAttemptFailures(LogLevel.Information);
+
+        CollectionAssert.AreEqual(new[]
+        {
+            WarnJobLog("[6] Album File: download attempt failed: Artist Album: user\\Artist\\Album\\01. Artist - Track.flac\n    Output: out\\01. Artist - Track.flac.incomplete\n    Attempt: 1/3\n    SoulseekClientException: Connection reset by peer"),
+        }, messages);
+    }
+
+    [TestMethod]
+    public void DownloadAttemptFailed_AlbumChild_PrintsRepeatedFailuresAtDebug()
+    {
+        var messages = RecordAlbumChildDownloadAttemptFailures(LogLevel.Debug);
+
+        CollectionAssert.AreEqual(new[]
+        {
+            WarnJobLog("[6] Album File: download attempt failed: Artist Album: user\\Artist\\Album\\01. Artist - Track.flac\n    Output: out\\01. Artist - Track.flac.incomplete\n    Attempt: 1/3\n    SoulseekClientException: Connection reset by peer"),
+            DebugJobLog("[6] Album File: download attempt failed: Artist Album: user\\Artist\\Album\\02. Artist - Track.flac\n    Output: out\\02. Artist - Track.flac.incomplete\n    Attempt: 1/3\n    TransferRejectedException: Transfer rejected: Too many megabytes"),
+        }, messages);
+    }
+
+    [TestMethod]
     public void StateChanged_FailedPreResolvedSong_DoesNotRenderAsFailedInAlbumButKeepsState()
     {
         var reporter = new CliProgressReporter(new CliSettings());
@@ -1375,8 +1448,8 @@ public class CliProgressReporterTests
 
             Assert.AreEqual(3, messages.Count);
             Assert.AreEqual(JobLog(@"[6] AlbumJob: downloading tracks: Artist Album - Artist\Album"), messages[0]);
-            Assert.AreEqual(JobLog(@"[7] SongJob: downloading: Artist - Track: local\Artist\Album\01. Artist - Track.flac"), messages[1]);
-            Assert.AreEqual(JobLog(@"[6] Album Track: succeeded: Artist Album: 01. Artist - Track.flac"), messages[2]);
+            Assert.AreEqual(JobLog(@"[6] Album File: downloading: Artist Album: local\Artist\Album\01. Artist - Track.flac"), messages[1]);
+            Assert.AreEqual(JobLog(@"[6] Album File: succeeded: Artist Album: 01. Artist - Track.flac"), messages[2]);
         }
         finally
         {
@@ -1605,6 +1678,67 @@ public class CliProgressReporterTests
         return target.GetType()
             .GetMethod(name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic, binder: null, types: argTypes, modifiers: null)!
             .Invoke(target, args);
+    }
+
+    private static List<string> RecordAlbumChildDownloadAttemptFailures(LogLevel minimumLevel)
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        var messages = new List<string>();
+        SockseekLog.AddConsole(minimumLevel, writer: (message, _) => messages.Add(message));
+
+        var reporter = new CliProgressReporter(new CliSettings { NoProgress = true });
+        try
+        {
+            var workflowId = Guid.NewGuid();
+            var albumJobId = Guid.NewGuid();
+            var firstSongId = Guid.NewGuid();
+            var secondSongId = Guid.NewGuid();
+            var albumSummary = CreateAlbumSummary(albumJobId, ExpectedJobStatus.Downloading, null) with
+            {
+                WorkflowId = workflowId,
+            };
+            var query = new SongQueryDto("Artist", "Track", null, null, null, false);
+            var firstCandidate = CreateFileCandidate("user", @"Artist\Album\01. Artist - Track.flac");
+            var secondCandidate = CreateFileCandidate("user", @"Artist\Album\02. Artist - Track.flac");
+
+            InvokePrivate(reporter, "ReportAlbumTrackDownloadStarted", new AlbumTrackDownloadStartedEventDto(
+                albumSummary,
+                CreateSingleFileAlbumFolder(firstSongId, ExpectedJobStatus.Pending, null),
+                [
+                    CreateSongPayload(firstSongId, ExpectedJobStatus.Pending, null),
+                    CreateSongPayload(secondSongId, ExpectedJobStatus.Pending, null),
+                ]));
+            InvokePrivate(reporter, "ReportDownloadAttemptFailed", new DownloadAttemptFailedEventDto(
+                firstSongId,
+                DisplayId: 7,
+                workflowId,
+                query,
+                firstCandidate,
+                OutputPath: @"out\01. Artist - Track.flac.incomplete",
+                Attempt: 1,
+                MaxAttempts: 3,
+                ExceptionType: "SoulseekClientException",
+                ExceptionMessage: "Connection reset by peer",
+                Exception: "Soulseek.SoulseekClientException: Connection reset by peer"));
+            InvokePrivate(reporter, "ReportDownloadAttemptFailed", new DownloadAttemptFailedEventDto(
+                secondSongId,
+                DisplayId: 8,
+                workflowId,
+                query,
+                secondCandidate,
+                OutputPath: @"out\02. Artist - Track.flac.incomplete",
+                Attempt: 1,
+                MaxAttempts: 3,
+                ExceptionType: "TransferRejectedException",
+                ExceptionMessage: "Transfer rejected: Too many megabytes",
+                Exception: "Soulseek.TransferRejectedException: Transfer rejected: Too many megabytes"));
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+
+        return messages;
     }
 
     private static ServerEventEnvelopeDto Envelope(string type, object payload)

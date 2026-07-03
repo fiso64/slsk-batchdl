@@ -9,7 +9,7 @@ namespace Tests.Server;
 public class JobActivityLogFormatterTests
 {
     [TestMethod]
-    public void Format_AlbumTrackTerminalState_UsesAlbumTrackLogIdentity()
+    public void Format_AlbumFileTerminalState_UsesAlbumFileLogIdentity()
     {
         var formatter = new JobActivityLogFormatter();
         var workflowId = Guid.NewGuid();
@@ -81,11 +81,11 @@ public class JobActivityLogFormatterTests
             ChosenCandidate: candidate)));
 
         Assert.IsNotNull(entry);
-        Assert.AreEqual(@"[6] Album Track: succeeded: Artist Album: 01. Artist - Track.flac", entry.Message);
+        Assert.AreEqual(@"[6] Album File: succeeded: Artist Album: 01. Artist - Track.flac", entry.Message);
     }
 
     [TestMethod]
-    public void Format_FailedAlbumTrackTerminalState_IsWarningContext()
+    public void Format_AllDownloadsFailedAlbumFileTerminalState_IsDebugContext()
     {
         var formatter = new JobActivityLogFormatter();
         var workflowId = Guid.NewGuid();
@@ -125,13 +125,13 @@ public class JobActivityLogFormatterTests
             ChosenCandidate: candidate)));
 
         Assert.IsNotNull(entry);
-        Assert.AreEqual(LogLevel.Warning, entry.Level);
+        Assert.AreEqual(LogLevel.Debug, entry.Level);
         Assert.AreEqual(ActivityLogDisplayKind.Status, entry.Display?.Kind);
-        Assert.AreEqual(@"[6] Album Track: failed [All downloads failed]: Artist Album: 01. Artist - Track.flac", entry.Message);
+        Assert.AreEqual(@"[6] Album File: failed [All downloads failed]: Artist Album: 01. Artist - Track.flac", entry.Message);
     }
 
     [TestMethod]
-    public void Format_StaleFailedAlbumTrackTerminalState_IsSuppressed()
+    public void Format_StaleFailedAlbumFileTerminalState_IsSuppressed()
     {
         var formatter = new JobActivityLogFormatter();
         var workflowId = Guid.NewGuid();
@@ -175,7 +175,7 @@ public class JobActivityLogFormatterTests
     }
 
     [TestMethod]
-    public void Format_CancelAllAlbumTrackTerminalState_IsDebug()
+    public void Format_CancelAllAlbumFileTerminalState_IsDebug()
     {
         var formatter = new JobActivityLogFormatter();
         var workflowId = Guid.NewGuid();
@@ -218,7 +218,7 @@ public class JobActivityLogFormatterTests
 
         Assert.IsNotNull(entry);
         Assert.AreEqual(LogLevel.Debug, entry.Level);
-        Assert.AreEqual(@"[6] Album Track: cancelled: Artist Album: 01. Artist - Track.flac", entry.Message);
+        Assert.AreEqual(@"[6] Album File: cancelled: Artist Album: 01. Artist - Track.flac", entry.Message);
     }
 
     [TestMethod]

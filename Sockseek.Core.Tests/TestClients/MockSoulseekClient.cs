@@ -32,6 +32,7 @@ namespace Tests.ClientTests
         public int BrowseCallCount;
         public int DownloadCallCountAtFirstBrowse = -1;
         public Action? BrowseStarted;
+        public Func<string, string, CancellationToken, Task>? BeforeDownloadStartsAsync;
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
         public bool BrowseReturnsBasenames { get; set; }
@@ -342,6 +343,7 @@ namespace Tests.ClientTests
         private async Task<Transfer> DownloadAsyncInternal(string username, string remoteFilename, Func<Task<Stream>> outputStreamFactory, long? size = null, long startOffset = 0, int? token = null, TransferOptions? options = null, CancellationToken? cancellationToken = null)
         {
             Interlocked.Increment(ref DownloadCallCount);
+            var ct = cancellationToken.GetValueOrDefault(CancellationToken.None);
 
             if (!State.HasFlag(SoulseekClientStates.Connected) || !State.HasFlag(SoulseekClientStates.LoggedIn))
                 throw new SoulseekClientException($"Mock client is disconnected while downloading from user {username}");
@@ -354,6 +356,9 @@ namespace Tests.ClientTests
                 State = SoulseekClientStates.None;
                 throw new SoulseekClientException($"Simulated disconnect during download for user {username}");
             }
+
+            if (BeforeDownloadStartsAsync != null)
+                await BeforeDownloadStartsAsync(username, remoteFilename, ct);
 
             var transferToken = token ?? Random.Shared.Next();
             long fileSize;
@@ -401,8 +406,6 @@ namespace Tests.ClientTests
             {
                 try
                 {
-                    var ct = cancellationToken.GetValueOrDefault(CancellationToken.None);
-
                     Transfer MakeTransfer(TransferStates state, long bytes, double speed = 0, DateTime? startTime = null, DateTime? endTime = null) =>
                         new Transfer(TransferDirection.Download, username, remoteFilename, transferToken,
                             state, fileSize, startOffset, bytes, speed, startTime, endTime);

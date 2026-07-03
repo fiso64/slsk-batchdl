@@ -41,6 +41,8 @@ public enum ActivityLogDisplayKind
 
 public sealed class JobActivityLogFormatter
 {
+    public const string AlbumFileJobType = "Album File";
+
     public static readonly IReadOnlySet<string> HandledEventTypes = new HashSet<string>(StringComparer.Ordinal)
     {
         "job.upserted",
@@ -300,7 +302,21 @@ public sealed class JobActivityLogFormatter
     }
 
     private ActivityLogEntry? HandleDownloadStart(DownloadStartedEventDto song)
-        => LogJob(song.JobId, song.DisplayId, "SongJob", $"downloading: {WithName(SongQueryText(song.Query), CandidateDisplayShort(song.Candidate.Ref))}", showInLive: false);
+    {
+        var candidate = CandidateDisplayShort(song.Candidate.Ref);
+        if (TryGetInlineAlbum(song.JobId, out var album))
+        {
+            var albumName = album.QueryText ?? album.ItemName ?? "";
+            return LogJob(
+                song.JobId,
+                album.DisplayId,
+                AlbumFileJobType,
+                $"downloading: {WithName(albumName, candidate)}",
+                showInLive: false);
+        }
+
+        return LogJob(song.JobId, song.DisplayId, "SongJob", $"downloading: {WithName(SongQueryText(song.Query), candidate)}", showInLive: false);
+    }
 
     private ActivityLogEntry? HandleSongStateChanged(SongStateChangedEventDto song)
     {
@@ -311,9 +327,7 @@ public sealed class JobActivityLogFormatter
             detail = WithName(detail, CandidateDisplayShort(candidate.Ref));
 
         string prefix = "SongJob: ";
-        if (IsInlineChild(song.JobId, ServerJobKind.Song)
-            && parentJobIds.TryGetValue(song.JobId, out var parentId)
-            && albumSummaries.TryGetValue(parentId, out var album))
+        if (TryGetInlineAlbum(song.JobId, out var album))
         {
             prefix = "AlbumJob: ";
             if (IsTerminal(song))
@@ -330,15 +344,23 @@ public sealed class JobActivityLogFormatter
                         return null;
 
                     albumTrackKind = ActivityLogDisplayKind.Status;
-                    albumTrackLevel ??= LogLevel.Warning;
-                    showAlbumTrackInLive = true;
+                    if (song.FailureReason == ServerProtocol.FailureReasons.AllDownloadsFailed)
+                    {
+                        albumTrackLevel = LogLevel.Debug;
+                        showAlbumTrackInLive = false;
+                    }
+                    else
+                    {
+                        albumTrackLevel ??= LogLevel.Warning;
+                        showAlbumTrackInLive = true;
+                    }
                 }
 
                 var albumName = album.QueryText ?? album.ItemName ?? "";
                 return LogJob(
                     song.JobId,
                     album.DisplayId,
-                    "Album Track",
+                    AlbumFileJobType,
                     $"{label}: {WithName(albumName, itemName)}",
                     level: albumTrackLevel,
                     kind: albumTrackKind,
@@ -425,6 +447,20 @@ public sealed class JobActivityLogFormatter
             && parentJobIds.TryGetValue(jobId, out var parentId)
             && jobKinds.TryGetValue(parentId, out var parentKind)
             && parentKind == ServerJobKind.Album;
+
+    private bool TryGetInlineAlbum(Guid jobId, out JobSummaryDto album)
+    {
+        if (IsInlineChild(jobId, ServerJobKind.Song)
+            && parentJobIds.TryGetValue(jobId, out var parentId)
+            && albumSummaries.TryGetValue(parentId, out var foundAlbum))
+        {
+            album = foundAlbum;
+            return true;
+        }
+
+        album = default!;
+        return false;
+    }
 
     private static bool IsTerminal(JobSummaryDto summary)
         => summary.LifecycleState == ServerJobLifecycleState.Terminal;

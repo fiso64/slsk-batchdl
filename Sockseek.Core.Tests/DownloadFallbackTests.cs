@@ -685,6 +685,42 @@ namespace Tests.Core
         }
 
         [TestMethod]
+        public async Task AlbumJob_SingleFailedFolder_WithRemainingRetryBudgetReportsAllDownloadsFailed()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-fallback-album-single-failed-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            var file = TestHelpers.CreateSlFile(@"Music\Album\01. Artist - Song.mp3", length: 180);
+            var response = new SearchResponse("failuser", 1, true, 10000000, 0, [file]);
+            var testClient = new ClientTests.MockSoulseekClient([response], failingUsers: ["failuser"]);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Extraction.Input = "artist=Artist, album=Album";
+                dl.Extraction.IsAlbum = true;
+                dl.Search.NoBrowseFolder = true;
+                dl.Output.ParentDir = outputDir;
+
+                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                var albumJob = app.Queue.AllJobs().OfType<AlbumJob>().FirstOrDefault();
+                Assert.IsNotNull(albumJob);
+                Assert.IsTrue(albumJob.IsUnsuccessfulTerminal);
+                Assert.AreEqual(JobFailureReason.AllDownloadsFailed, albumJob.FailureReason);
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task SongJob_FailsWhenNameFormatOrganizationCannotReplaceBlockedPath()
         {
             var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-name-format-blocked-song-" + Guid.NewGuid());

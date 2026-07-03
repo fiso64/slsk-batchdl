@@ -2104,6 +2104,7 @@ public class DownloadEngine
         List<SongJob>? ChosenFiles,
         AlbumFolder? LastChosenFolder);
 
+    // TODO: This is too long.
     async Task<AlbumAudioDownloadResult> TryDownloadAlbumAudio(AlbumJob job, JobContext ctx, FileManager organizer)
     {
         var config = job.Config;
@@ -2114,6 +2115,7 @@ public class DownloadEngine
         int albumTrackCountRetries = config.Transfer.AlbumTrackCountMaxRetries;
         var activeQuality = AlbumQualityPolicy.ActiveConditions(config.Search.NecessaryCond);
         bool verifyStrictAlbumQuality = config.Search.StrictAlbumQuality && activeQuality.IsActive;
+        bool failedDownloadCandidate = false;
         AlbumFolder? lastChosenFolder = null;
 
         List<SongJob> TrackJobsFor(AlbumFolder folder)
@@ -2344,6 +2346,8 @@ public class DownloadEngine
 
                 if (wasPreselected)
                     return ReturnSelectedFolderToManualPicker(chosenFolder, JobFailureReason.AllDownloadsFailed);
+
+                failedDownloadCandidate = true;
             }
 
             organizer.SetremoteBaseDir(null);
@@ -2355,12 +2359,16 @@ public class DownloadEngine
             job.ResolvedTarget = null;
             job.ClearTrackJobs();
             job.Results.RemoveAt(index);
+            if (job.Results.Count == 0 && failedDownloadCandidate)
+                return new(false, JobOutcome.Failed(JobFailureReason.AllDownloadsFailed), null, lastChosenFolder);
 
             // Reset state so the next iteration transitions to Downloading naturally
             job.ResetToPending();
         }
 
-        return new(false, null, null, lastChosenFolder);
+        return failedDownloadCandidate
+            ? new(false, JobOutcome.Failed(JobFailureReason.AllDownloadsFailed), null, lastChosenFolder)
+            : new(false, null, null, lastChosenFolder);
     }
 
     JobOutcome? TryGetInterruptedAlbumOutcome(AlbumJob job, AlbumFolder folder)
