@@ -656,25 +656,54 @@ sockseek "artist=MC MENTAL" --song -g --skip-music-dir "path/to/music" --print r
 ```
 
 ### Advanced example: Automatic wishlist downloader
-Create a file named `wishlist.txt`, and add some items as detailed in [Input types: List](#list-file):
+Create a file named `wishlist.txt`, and add some items as explained in [List Input](#list-file):
+
 ```
-"Artist - Some Album"                   strict-album=true;album-track-count=5
+"Artist - Some Album"
+"Artist - Album With Conditions"        strict-album=true;album-track-count>=5
+"Another Album"                         banned-users=user-sharing-bad-files
+"Album With Pref. Conditions"           format=mp3,flac                         format=flac
+
 s:"Artist - My Favorite Song"           strict-title=true;format=flac
 ```
+
 Add a profile to your `sockseek.conf`:
+
 ```ini
 [wishlist]
+# Will look for wishlist.txt in the same folder as your sockseek.conf
 input = {configdir}/wishlist.txt 
 input-type = list
-index-path = {configdir}/wishlist-index.csv
 log-file = {configdir}/wishlist.log
-```
-This will create a global index file `wishlist-index.csv` which will be scanned every time Sockseek is run to skip wishlist items that have already been downloaded. If you want to continue searching until a version satisfying the preferred conditions is found, also add `skip-check-pref-cond = true` (note that this requires the files to remain in the same spot after being downloaded).  
 
-Now you can manually run, or set up a cron job / scheduled task to periodically run Sockseek with the following option:
+# The index will keep track of successfully downloaded items to skip
+# them in the next runs:
+index-path = {configdir}/wishlist-index.csv
+# You can also make it remove the lines from wishlist.txt directly:
+# remove-from-source = true
+
+# Add some global wishlist conditions, if you want:
+format = flac,mp3
+min-bitrate = 200
+
+# To keep searching for a flac version of "Album With Pref. Conditions"
+# in the above list even after an mp3 version has been downloaded, make
+# it check the local version:
+
+# skip-check-pref-cond = true
+
+# Note that this requires the downloaded files to remain in the same
+# spot or for the index to be updated after any moves, e.g. via
+# on-complete update-index.
+```
+
+Now set up a cron job / scheduled task to periodically run Sockseek with the following option:
+
 ```bash
 sockseek --profile wishlist
 ```
+
+You can also just manually run it, e.g. with `-t` (interactive mode). 
 
 <!-- sockseek-help:start(notes-and-tips) -->
 ## Notes
@@ -768,7 +797,9 @@ Most used flags at a glance:
 --no-skip-existing              Do not skip downloaded tracks
 --skip-mode-output-dir <mode>   How to match files in the output dir: name|tag|index
                                 (default: index)
---skip-check-cond               Check file conditions when skipping existing files
+--skip-check-cond               Check file conditions when skipping existing files. If the
+                                local candidate does not exist or does not satisfy the
+                                required conditions, the item will not be skipped.
 --skip-check-pref-cond          Check preferred conditions when skipping existing files
 --skip-music-dir <path>         Also skip downloading tracks found in a music library
 --skip-mode-music-dir <mode>    How to match files in --skip-music-dir: name|tag

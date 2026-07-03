@@ -56,7 +56,9 @@ public static partial class Help
     --no-skip-existing              Do not skip downloaded tracks
     --skip-mode-output-dir <mode>   How to match files in the output dir: name|tag|index
                                     (default: index)
-    --skip-check-cond               Check file conditions when skipping existing files
+    --skip-check-cond               Check file conditions when skipping existing files. If the
+                                    local candidate does not exist or does not satisfy the
+                                    required conditions, the item will not be skipped.
     --skip-check-pref-cond          Check preferred conditions when skipping existing files
     --skip-music-dir <path>         Also skip downloading tracks found in a music library
     --skip-mode-music-dir <mode>    How to match files in --skip-music-dir: name|tag
