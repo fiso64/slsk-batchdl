@@ -6,7 +6,7 @@ using Sockseek.Core.Models;
 namespace Sockseek.Core;
 
 /// <summary>
-/// Multicast event bus for the download engine. Subscribe to any subset of events;
+/// Multicast event bus for download workflows. Subscribe to any subset of events;
 /// unsubscribed events are no-ops (null-conditional invocation).
 ///
 /// CLI reporters and the future Server/SignalR hub both subscribe here.
@@ -16,16 +16,20 @@ namespace Sockseek.Core;
 /// This causes race conditions for async consumers (like the local CLI progress reporter), 
 /// because the Job's properties (like ResolvedTarget) can mutate before the consumer processes the event.
 /// The Server/Remote CLI mode mitigates this by immediately projecting the Job into an immutable DTO 
-/// on the publisher thread, effectively taking a snapshot. In the future, the core EngineEvents 
+/// on the publisher thread, effectively taking a snapshot. In the future, the core DownloadEvents
 /// should be refactored to pass immutable state snapshots rather than live Job references.
 /// </summary>
-public class EngineEvents
+public class DownloadEvents
 {
     // ── Graph / lifecycle ───────────────────────────────────────────────────
     public event Action<Job, Job?>? JobRegistered;       // job, parent (if any)
     public event Action<Job>? JobStateChanged;     // job split-state fields changed
     public event Action<Job, JobActivityPhase, DateTimeOffset?>? JobActivityChanged; // job, phase, until
-    public event Action<Job>? JobDiscoveryChanged; // search/browse result count changed
+    /// <summary>
+    /// Fired when a download job's discovery snapshot changes, such as raw search result
+    /// or locked-file counts. Generic search-service events live in <see cref="SearchEvents"/>.
+    /// </summary>
+    public event Action<Job>? JobDiscoveryChanged;
     // Fired when a job's own execution path is finished.
     // For ExtractJob this is raised immediately after the result job has been produced,
     // not after any optional automatic processing of that result.
@@ -45,12 +49,6 @@ public class EngineEvents
     // Fired for workflow-scoped messages in the jobs category that should not be attributed
     // to the first job that happened to discover the condition.
     public event Action<Guid, LogLevel, string?, string>? WorkflowMessage;
-
-    // ── Search ───────────────────────────────────────────────────────────────
-    // Fired once per rate-limit window when the search semaphore is exhausted.
-    public event Action<DateTimeOffset>? SearchRateLimited;
-    // Fired when the rate-limit window resets and searching resumes.
-    public event Action? SearchResumed;
 
     // ── Download ─────────────────────────────────────────────────────────────
     // TODO: Once the engine is refactored to use immutable state snapshots, this event should be removed
@@ -85,9 +83,6 @@ public class EngineEvents
     internal void RaiseJobStatus(Job job, string status) => JobStatus?.Invoke(job, status);
     internal void RaiseJobMessage(Job job, LogLevel level, string? source, string message) => JobMessage?.Invoke(job, level, source, message);
     internal void RaiseWorkflowMessage(Guid workflowId, LogLevel level, string? source, string message) => WorkflowMessage?.Invoke(workflowId, level, source, message);
-    internal void RaiseSearchRateLimited(DateTimeOffset resetsAt) => SearchRateLimited?.Invoke(resetsAt);
-    internal void RaiseSearchResumed() => SearchResumed?.Invoke();
-
     internal void RaiseDownloadStarted(SongJob song, FileCandidate c) => DownloadStarted?.Invoke(song, c);
     internal void RaiseDownloadProgress(SongJob song, long xfer, long total) => DownloadProgress?.Invoke(song, xfer, total);
     internal void RaiseDownloadStateChanged(SongJob song, TransferStates s) => DownloadStateChanged?.Invoke(song, s);

@@ -3,7 +3,7 @@ namespace Sockseek.Cli;
 /// CLI-only settings — control presentation and UI behavior.
 /// Not passed to the engine; consumed by the CLI layer before/when constructing the engine.
 ///
-/// The engine interacts with UI through EngineEvents only.
+/// The engine interacts with UI through Core event surfaces such as DownloadEvents and SearchEvents.
 /// These settings tell the CLI which presentation/orchestration layers to wire up.
 ///
 public class CliSettings

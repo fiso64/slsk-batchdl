@@ -30,7 +30,7 @@ public sealed class ServerEventBroadcaster : IDisposable
 
     private void AttachEngine(DownloadEngine engine)
     {
-        new EngineEventDtoAdapter(GetSummary, coalescer.Publish).Attach(engine.Events);
+        new EngineEventDtoAdapter(GetSummary, coalescer.Publish).Attach(engine.Events, engine.SearchEvents);
     }
 
     private void PublishItems(IReadOnlyList<ServerEventItem> items)

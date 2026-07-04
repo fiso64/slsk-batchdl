@@ -243,9 +243,9 @@ namespace Tests
             return new SoulseekClientManager(engineSettings, client);
         }
 
-        public static SessionRegistry CreateSessionRegistry()
+        public static UserSuccessTracker CreateUserSuccessTracker()
         {
-            return new SessionRegistry();
+            return new UserSuccessTracker();
         }
     }
 }

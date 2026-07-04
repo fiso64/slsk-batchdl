@@ -419,6 +419,7 @@ internal static partial class Program
         {
             SockseekLog.Trace("Main: Entered finally block. Disposing clientManager...");
             engine.Cancel();
+            await engine.DisposeAsync();
             await cts.CancelAsync();
             cliReporter?.Stop();
             clientManager.Dispose();

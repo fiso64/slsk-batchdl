@@ -9,7 +9,7 @@ using Soulseek;
 namespace Tests.Eventing
 {
     [TestClass]
-    public class EngineEventsTests
+    public class DownloadEventsTests
     {
         [ClassInitialize]
         public static void ClassSetup(TestContext _)
@@ -30,7 +30,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_ReportGraphStateChangesAndCompletion()
+        public async Task DownloadEvents_ReportGraphStateChangesAndCompletion()
         {
             var listFile = Path.GetTempFileName();
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-events-" + Guid.NewGuid());
@@ -129,7 +129,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_ReportTrackBatchResolved_ForDirectSongLists()
+        public async Task DownloadEvents_ReportTrackBatchResolved_ForDirectSongLists()
         {
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings
@@ -1009,7 +1009,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_AlbumJob_ExposesResolvedTarget_OnDownloadingState()
+        public async Task DownloadEvents_AlbumJob_ExposesResolvedTarget_OnDownloadingState()
         {
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings();
@@ -1054,7 +1054,7 @@ namespace Tests.Eventing
             DiscoverySummary? capturedDiscovery = null;
             JobActivityPhase capturedActivity = JobActivityPhase.None;
 
-            var events = new EngineEvents();
+            var events = new DownloadEvents();
             events.JobStateChanged += j =>
             {
                 capturedDiscovery = j.Discovery;
@@ -1064,7 +1064,7 @@ namespace Tests.Eventing
             song.Discovery = new DiscoverySummary { RawResultCount = 5, LockedFileCount = 2 };
             song.UpdateActivity(JobActivityPhase.Downloading);
 
-            var raiseMethod = typeof(EngineEvents).GetMethod("RaiseJobStateChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var raiseMethod = typeof(DownloadEvents).GetMethod("RaiseJobStateChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             raiseMethod?.Invoke(events, [song]);
 
             Assert.AreEqual(JobActivityPhase.Downloading, capturedActivity);
@@ -1080,14 +1080,14 @@ namespace Tests.Eventing
             bool sub1SawIt = false;
             bool sub2SawIt = false;
 
-            var events = new EngineEvents();
+            var events = new DownloadEvents();
             events.JobStateChanged += j => sub1SawIt = j.Discovery != null;
             events.JobStateChanged += j => sub2SawIt = j.Discovery != null;
 
             song.Discovery = new DiscoverySummary { RawResultCount = 1 };
             song.UpdateActivity(JobActivityPhase.Downloading);
 
-            var raiseMethod = typeof(EngineEvents).GetMethod("RaiseJobStateChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var raiseMethod = typeof(DownloadEvents).GetMethod("RaiseJobStateChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             raiseMethod?.Invoke(events, [song]);
 
             Assert.IsTrue(sub1SawIt, "First subscriber should see metadata");
@@ -1095,7 +1095,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_JobStateChanged_ToFailed_ExtractJob_HasFailureReasonPopulated()
+        public async Task DownloadEvents_JobStateChanged_ToFailed_ExtractJob_HasFailureReasonPopulated()
         {
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings();
@@ -1132,7 +1132,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_JobStateChanged_ToFailed_NotFound_HasFailureReasonPopulated()
+        public async Task DownloadEvents_JobStateChanged_ToFailed_NotFound_HasFailureReasonPopulated()
         {
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings();
@@ -1165,7 +1165,7 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
-        public async Task EngineEvents_JobStateChanged_ToFailed_Download_HasFailureReasonPopulated()
+        public async Task DownloadEvents_JobStateChanged_ToFailed_Download_HasFailureReasonPopulated()
         {
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings();

@@ -4,6 +4,7 @@ using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using Sockseek.Core.Transfers.Downloads.State;
 using System.Text.RegularExpressions;
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -29,8 +30,8 @@ public class StaleDownloadCoordinatorTests
         var watchPattern = new Regex(@"\.WatchPeerTransferAsync\s*\(", RegexOptions.Singleline);
         var allowedWatchFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            Path.Combine(coreRoot, "Services", "Downloader.cs"),
-            Path.Combine(coreRoot, "Services", "StaleDownloadCoordinator.cs"),
+            Path.Combine(coreRoot, "Transfers", "Downloads", "Downloader.cs"),
+            Path.Combine(coreRoot, "Transfers", "Downloads", "StaleDetection", "StaleDownloadCoordinator.cs"),
         };
 
         var offenders = Directory.EnumerateFiles(coreRoot, "*.cs", SearchOption.AllDirectories)
@@ -68,7 +69,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
         AssertStaleTransferCancelled(attempt);
-        Assert.IsFalse(scenario.Registry.Downloads.ContainsKey(attempt.Download.Candidate.Filename));
+        Assert.IsFalse(scenario.ActiveDownloads.Contains(attempt.Download.Candidate.Filename));
     }
 
     [TestMethod]
@@ -282,10 +283,10 @@ public class StaleDownloadCoordinatorTests
 
         public Scenario()
         {
-            Coordinator = new StaleDownloadCoordinator(Registry, clock);
+            Coordinator = new StaleDownloadCoordinator(ActiveDownloads, clock);
         }
 
-        public SessionRegistry Registry { get; } = new();
+        public ActiveDownloadTracker ActiveDownloads { get; } = new();
         public StaleDownloadCoordinator Coordinator { get; }
 
         public AttemptHandle Start(string username, string filename, Job? parentJob = null)
@@ -298,7 +299,7 @@ public class StaleDownloadCoordinatorTests
                 Cts = new CancellationTokenSource(),
             };
             var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource(), parentJob);
-            Registry.Downloads[candidate.Filename] = activeDownload;
+            ActiveDownloads.TryAdd(activeDownload);
             var activityReady = new TaskCompletionSource<StaleDownloadCoordinator.PeerTransferActivity>(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var task = Coordinator.WatchPeerTransferAsync(

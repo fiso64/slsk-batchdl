@@ -18,19 +18,22 @@ namespace Sockseek.Core.Services;
 public partial class Searcher : IDisposable
 {
     private readonly ISoulseekClient client;
-    private readonly IUserStats userStats;
-    private readonly EngineEvents events;
+    private readonly IUserSuccessStats userStats;
+    private readonly DownloadEvents downloadEvents;
+    private readonly SearchEvents searchEvents;
     private readonly RateLimitedSemaphore rateSemaphore;
     private readonly SemaphoreSlim concurrencySemaphore;
 
     public Searcher(ISoulseekClient client,
-                    IUserStats userStats,
-                    EngineEvents events,
-                    int searchesPerTime, int searchRenewTime, int concurrentSearches = 2)
+                    IUserSuccessStats userStats,
+                    DownloadEvents downloadEvents,
+                    int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
+                    SearchEvents? searchEvents = null)
     {
         this.client = client;
         this.userStats = userStats;
-        this.events = events;
+        this.downloadEvents = downloadEvents;
+        this.searchEvents = searchEvents ?? new SearchEvents();
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -67,7 +70,7 @@ public partial class Searcher : IDisposable
         // search result. Large real searches have shown measurable local CPU cost in
         // the state-store/update path. Coalesce near this source by time/count, while
         // still publishing an exact final update when the search completes.
-        events.RaiseJobDiscoveryChanged(job);
+        downloadEvents.RaiseJobDiscoveryChanged(job);
     }
 
     public async Task<JobOutcome> Search(
@@ -652,13 +655,13 @@ public partial class Searcher : IDisposable
             () =>
             {
                 ownerJob?.UpdateActivity(JobActivityPhase.SearchRateLimited, rateSemaphore.NextResetTime);
-                events.RaiseSearchRateLimited(rateSemaphore.NextResetTime);
+                searchEvents.RaiseSearchRateLimited(rateSemaphore.NextResetTime);
             },
             () =>
             {
                 if (ownerJob?.ActivityPhase == JobActivityPhase.SearchRateLimited)
                     ownerJob.UpdateActivity(JobActivityPhase.Searching);
-                events.RaiseSearchResumed();
+                searchEvents.RaiseSearchResumed();
             },
             ct ?? CancellationToken.None);
         search = CleanSearchString(search, !noRemoveSpecialChars);

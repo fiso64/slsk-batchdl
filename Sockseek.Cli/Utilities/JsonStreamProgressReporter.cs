@@ -31,7 +31,7 @@ public class JsonStreamProgressReporter
         };
     }
 
-    public void Attach(EngineEvents events)
+    public void Attach(DownloadEvents events)
     {
         events.TrackListReady     += songs => ReportTrackList(songs);
         events.JobStateChanged    += job =>

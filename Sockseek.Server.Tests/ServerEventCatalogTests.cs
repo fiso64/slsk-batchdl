@@ -28,7 +28,7 @@ public class ServerEventCatalogTests
     }
 
     [TestMethod]
-    public void Describe_ClassifiesLowLevelEngineEventsAsActivity()
+    public void Describe_ClassifiesLowLevelDownloadEventsAsActivity()
     {
         var descriptor = ServerEventCatalog.Describe("song.searching");
 

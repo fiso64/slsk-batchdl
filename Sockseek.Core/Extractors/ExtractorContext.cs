@@ -14,10 +14,10 @@ public sealed class ExtractorContext
         Log = log;
     }
 
-    public static ExtractorContext ForExtractJob(ExtractJob job, EngineEvents events, string source)
+    public static ExtractorContext ForExtractJob(ExtractJob job, DownloadEvents events, string source)
         => ForJob(job, events, source);
 
-    public static ExtractorContext ForJob(Job job, EngineEvents events, string? source = null)
+    public static ExtractorContext ForJob(Job job, DownloadEvents events, string? source = null)
         => new(new EventExtractorJobLog(job, events, source));
 }
 
@@ -30,7 +30,7 @@ public interface IJobLog
     void Error(string message);
 }
 
-internal sealed class EventExtractorJobLog(Job job, EngineEvents events, string? source) : IJobLog
+internal sealed class EventExtractorJobLog(Job job, DownloadEvents events, string? source) : IJobLog
 {
     public void Trace(string message) => Log(LogLevel.Trace, message);
     public void Debug(string message) => Log(LogLevel.Debug, message);

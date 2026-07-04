@@ -49,7 +49,7 @@ public sealed class EngineSupervisor
     {
         while (!ct.IsCancellationRequested)
         {
-            var engine = CreateEngine();
+            var (engine, clientManager) = CreateEngine();
             var runTask = engine.RunAsync(ct);
 
             try
@@ -88,13 +88,18 @@ public sealed class EngineSupervisor
                 StateStore.MarkActiveJobsInfrastructureFailed(
                     SockseekLog.ExceptionSummary(ex),
                     SockseekLog.ExceptionDetail(ex));
+                continue;
+            }
+            finally
+            {
                 StateStore.DetachEngine(engine);
                 lock (engineGate)
                 {
                     if (ReferenceEquals(currentEngine, engine))
                         currentEngine = null;
                 }
-                continue;
+                await engine.DisposeAsync();
+                clientManager.Dispose();
             }
         }
     }
@@ -201,12 +206,7 @@ public sealed class EngineSupervisor
         lock (engineGate)
             engine = currentEngine;
 
-        var job = engine?.GetJob(jobId);
-        if (job == null)
-            return false;
-
-        job.Cancel(JobCancellationSource.UserRequestedJob);
-        return true;
+        return engine?.CancelJob(jobId) ?? false;
     }
 
     public bool CancelJobByDisplayId(Guid workflowId, int displayId)
@@ -215,12 +215,7 @@ public sealed class EngineSupervisor
         lock (engineGate)
             engine = currentEngine;
 
-        var job = engine?.GetJob(displayId);
-        if (job == null || job.WorkflowId != workflowId)
-            return false;
-
-        job.Cancel(JobCancellationSource.UserRequestedJob);
-        return true;
+        return engine?.CancelJobByDisplayId(displayId, workflowId) ?? false;
     }
 
     public int CancelWorkflow(Guid workflowId)
@@ -247,11 +242,7 @@ public sealed class EngineSupervisor
         lock (engineGate)
             engine = currentEngine;
 
-        var job = engine?.GetJob(displayId);
-        if (job == null || job.WorkflowId != workflowId)
-            return false;
-
-        return engine?.TryNextCandidate(job.Id) ?? false;
+        return engine?.TryNextCandidateByDisplayId(displayId, workflowId) ?? false;
     }
 
     public JobDetailDto? GetJobDetailByDisplayId(Guid workflowId, int displayId)
@@ -583,18 +574,15 @@ public sealed class EngineSupervisor
         return engine != null && await engine.SkipManualSelectionAsync(jobId);
     }
 
-    private DownloadEngine CreateEngine()
+    private (DownloadEngine Engine, SoulseekClientManager ClientManager) CreateEngine()
     {
-        // TODO [LIFETIME]: Move engine, client-manager, and state-store attachment into an
-        // async-disposable run scope. The supervisor currently transfers ownership across
-        // fields/events, which works at runtime but is too implicit for analyzers and shutdown.
         var clientManager = new SoulseekClientManager(engineSettings, options.ClientFactory?.Invoke(engineSettings));
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         StateStore.AttachEngine(engine);
         lock (engineGate)
             currentEngine = engine;
         EngineCreated?.Invoke(engine);
-        return engine;
+        return (engine, clientManager);
     }
 
     private ConcurrentDictionary<string, int> GetCurrentEngineUserSuccessCounts()

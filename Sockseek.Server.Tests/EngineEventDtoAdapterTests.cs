@@ -14,10 +14,10 @@ public class EngineEventDtoAdapterTests
     [TestMethod]
     public void Attach_MapsDownloadProgressToSharedServerEventDto()
     {
-        var events = new EngineEvents();
+        var events = new DownloadEvents();
         var published = new List<(string Type, object Payload)>();
         var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
-        new EngineEventDtoAdapter(SummaryFor, (type, payload) => published.Add((type, payload))).Attach(events);
+        Attach(events, published);
 
         Raise(events, "RaiseDownloadProgress", song, 42L, 100L);
 
@@ -32,10 +32,10 @@ public class EngineEventDtoAdapterTests
     [TestMethod]
     public void Attach_MapsSongSearchingToSharedServerEventDto()
     {
-        var events = new EngineEvents();
+        var events = new DownloadEvents();
         var published = new List<(string Type, object Payload)>();
         var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title", Album = "Album" });
-        new EngineEventDtoAdapter(SummaryFor, (type, payload) => published.Add((type, payload))).Attach(events);
+        Attach(events, published);
 
         song.UpdateActivity(JobActivityPhase.Searching);
         Raise(events, "RaiseJobStateChanged", song);
@@ -47,6 +47,24 @@ public class EngineEventDtoAdapterTests
         Assert.AreEqual("Artist", searching.Query.Artist);
         Assert.AreEqual("Title", searching.Query.Title);
         Assert.AreEqual("Album", searching.Query.Album);
+    }
+
+    [TestMethod]
+    public void Attach_MapsSearchRateLimitedToSharedServerEventDto()
+    {
+        var downloadEvents = new DownloadEvents();
+        var searchEvents = new SearchEvents();
+        var published = new List<(string Type, object Payload)>();
+        var resetsAt = DateTimeOffset.UtcNow.AddSeconds(30);
+        new EngineEventDtoAdapter(SummaryFor, (type, payload) => published.Add((type, payload)))
+            .Attach(downloadEvents, searchEvents);
+
+        Raise(searchEvents, "RaiseSearchRateLimited", resetsAt);
+
+        Assert.AreEqual(1, published.Count);
+        Assert.AreEqual("search.rate-limited", published[0].Type);
+        var rateLimited = (SearchRateLimitedEventDto)published[0].Payload;
+        Assert.AreEqual(resetsAt, rateLimited.ResetsAt);
     }
 
     private static JobSummaryDto SummaryFor(Job job)
@@ -71,10 +89,21 @@ public class EngineEventDtoAdapterTests
             [],
             []);
 
-    private static void Raise(EngineEvents events, string methodName, params object[] args)
+    private static void Attach(DownloadEvents events, List<(string Type, object Payload)> published)
+        => new EngineEventDtoAdapter(SummaryFor, (type, payload) => published.Add((type, payload)))
+            .Attach(events, new SearchEvents());
+
+    private static void Raise(DownloadEvents events, string methodName, params object[] args)
     {
-        var method = typeof(EngineEvents).GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(nameof(EngineEvents), methodName);
+        var method = typeof(DownloadEvents).GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(DownloadEvents), methodName);
+        method.Invoke(events, args);
+    }
+
+    private static void Raise(SearchEvents events, string methodName, params object[] args)
+    {
+        var method = typeof(SearchEvents).GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(SearchEvents), methodName);
         method.Invoke(events, args);
     }
 }

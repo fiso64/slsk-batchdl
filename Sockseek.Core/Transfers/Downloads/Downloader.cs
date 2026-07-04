@@ -6,6 +6,7 @@ using Sockseek.Core;
 using File = System.IO.File;
 using Directory = System.IO.Directory;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Transfers.Downloads.State;
 
 namespace Sockseek.Core.Services;
 
@@ -31,19 +32,22 @@ public class Downloader
 {
     private readonly ISoulseekClient client;
     private readonly SoulseekClientManager clientManager;
-    private readonly IDownloadRegistry downloadRegistry;
-    private readonly EngineEvents events;
+    private readonly ActiveDownloadTracker activeDownloads;
+    private readonly DownloadedFileCache downloadedFiles;
+    private readonly DownloadEvents events;
     private readonly StaleDownloadCoordinator staleDownloads;
 
     internal Downloader(ISoulseekClient client,
                         SoulseekClientManager clientManager,
-                        IDownloadRegistry downloadRegistry,
-                        EngineEvents events,
+                        ActiveDownloadTracker activeDownloads,
+                        DownloadedFileCache downloadedFiles,
+                        DownloadEvents events,
                         StaleDownloadCoordinator staleDownloads)
     {
         this.client = client;
         this.clientManager = clientManager;
-        this.downloadRegistry = downloadRegistry;
+        this.activeDownloads = activeDownloads;
+        this.downloadedFiles = downloadedFiles;
         this.events = events;
         this.staleDownloads = staleDownloads;
     }
@@ -58,34 +62,22 @@ public class Downloader
         bool publishToDuplicateCache = true,
         Job? parentJob = null)
     {
-        string fileKey = candidate.Username + '\\' + candidate.Filename;
-
-        lock (downloadRegistry.DownloadedFiles)
+        if (downloadedFiles.TryGetReusable(candidate, out var existingDownload))
         {
-            if (downloadRegistry.DownloadedFiles.TryGetValue(fileKey, out var existingDownload))
+            var existingPath     = existingDownload.OutputPath;
+            var outputFileInfo   = new FileInfo(outputPath);
+            var existingFileInfo = new FileInfo(existingPath);
+
+            SockseekLog.Jobs.Debug($"File \"{candidate.Filename}\" already downloaded at {existingPath}");
+
+            if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
             {
-                var existingPath     = existingDownload.OutputPath;
-                var outputFileInfo   = new FileInfo(outputPath);
-                var existingFileInfo = new FileInfo(existingPath);
-
-                if (existingFileInfo.Exists && existingFileInfo.Length == candidate.File.Size)
-                {
-                    SockseekLog.Jobs.Debug($"File \"{candidate.Filename}\" already downloaded at {existingPath}");
-
-                    if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
-                    {
-                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: copying existing download from '{existingPath}' to '{outputPath}'");
-                        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-                        File.Copy(existingPath!, outputPath, true);
-                    }
-
-                    return FileDownloadOutcome.Completed(new FileDownloadResult(outputPath, existingDownload.Candidate));
-                }
-                else
-                {
-                    downloadRegistry.DownloadedFiles.TryRemove(fileKey, out _);
-                }
+                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: copying existing download from '{existingPath}' to '{outputPath}'");
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                File.Copy(existingPath!, outputPath, true);
             }
+
+            return FileDownloadOutcome.Completed(new FileDownloadResult(outputPath, existingDownload.Candidate));
         }
 
         await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
@@ -105,7 +97,7 @@ public class Downloader
             progressUpdated: (progress) =>
             {
                 staleActivity?.ReportProgress(progress.Transfer);
-                if (downloadRegistry.Downloads.TryGetValue(candidate.Filename, out var x))
+                if (activeDownloads.TryGet(candidate.Filename, out var x))
                     x.Song.BytesTransferred = progress.PreviousBytesTransferred;
                 events.RaiseDownloadProgress(song, progress.PreviousBytesTransferred, candidate.File.Size > 0 ? candidate.File.Size : 0);
             }
@@ -138,7 +130,7 @@ public class Downloader
 
             song.FileSize = candidate.File.Size;
             activeDownload = new ActiveDownload(song, candidate, downloadCts, parentJob);
-            downloadRegistry.Downloads.TryAdd(candidate.Filename, activeDownload);
+            activeDownloads.TryAdd(activeDownload);
 
             events.RaiseDownloadStarted(song, candidate);
 
@@ -207,7 +199,7 @@ public class Downloader
         {
             DeleteIncompleteDownloadAfterFailure();
             
-            if (downloadRegistry.Downloads.TryRemove(candidate.Filename, out var ad) && ad.IsManuallySkipped)
+            if (activeDownloads.TryRemove(candidate.Filename, out var ad) && ad.IsManuallySkipped)
                 return FileDownloadOutcome.ManuallySkipped(candidate);
 
             throw;
@@ -222,7 +214,7 @@ public class Downloader
             }
             catch (Exception ex)
             {
-                downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
+                activeDownloads.TryRemove(candidate.Filename, out _);
                 try
                 {
                     if (File.Exists(incompleteOutputPath))
@@ -241,11 +233,8 @@ public class Downloader
 
         var result = new FileDownloadResult(outputPath, candidate);
         if (publishToDuplicateCache)
-        {
-            lock (downloadRegistry.DownloadedFiles)
-                downloadRegistry.DownloadedFiles[fileKey] = result;
-        }
-        downloadRegistry.Downloads.TryRemove(candidate.Filename, out _);
+            downloadedFiles.Publish(result);
+        activeDownloads.TryRemove(candidate.Filename, out _);
 
         if (candidate.File.Size > 0)
             song.BytesTransferred = candidate.File.Size;

@@ -6,6 +6,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Transfers.Downloads.State;
 
 using Directory = System.IO.Directory;
 
@@ -199,13 +200,15 @@ public class StaleDownloadTests
             Config = settings,
             Cts = new CancellationTokenSource(),
         };
-        var registry = new SessionRegistry();
-        var events = new EngineEvents();
-        var staleDownloads = new StaleDownloadCoordinator(registry, clock);
+        var activeDownloads = new ActiveDownloadTracker();
+        var downloadedFiles = new DownloadedFileCache();
+        var events = new DownloadEvents();
+        var staleDownloads = new StaleDownloadCoordinator(activeDownloads, clock);
         var downloader = new Downloader(
             client,
             TestHelpers.CreateMockClientManager(client, engineSettings),
-            registry,
+            activeDownloads,
+            downloadedFiles,
             events,
             staleDownloads);
         var started = NewSignal();

@@ -1,6 +1,7 @@
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Transfers.Downloads.State;
 
 namespace Sockseek.Core.Services;
 
@@ -25,11 +26,11 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
 // either published the final duplicate-cache entry or returned a failure outcome.
 internal sealed class OutputFinalizer
 {
-    private readonly IDownloadRegistry registry;
+    private readonly DownloadedFileCache downloadedFiles;
 
-    public OutputFinalizer(IDownloadRegistry registry)
+    public OutputFinalizer(DownloadedFileCache downloadedFiles)
     {
-        this.registry = registry;
+        this.downloadedFiles = downloadedFiles;
     }
 
     public InitialDownloadTarget GetInitialDownloadTarget(
@@ -60,7 +61,7 @@ internal sealed class OutputFinalizer
         if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded || !organize)
             return OutputFinalizationResult.Completed(outcome);
 
-        lock (registry.DownloadedFiles)
+        return downloadedFiles.WithExclusiveAccess(() =>
         {
             song.UpdateActivity(JobActivityPhase.Organizing);
             try
@@ -75,7 +76,7 @@ internal sealed class OutputFinalizer
                 CleanupStagedDownloadAfterOrganizationFailure(song, parentJob.Config.Output);
                 return OutputFinalizationResult.Failed(ex);
             }
-        }
+        });
     }
 
     public OutputFinalizationResult FinalizeAlbumPlacement(
@@ -92,7 +93,7 @@ internal sealed class OutputFinalizer
             return OutputFinalizationResult.Completed(outcome);
         }
 
-        lock (registry.DownloadedFiles)
+        return downloadedFiles.WithExclusiveAccess(() =>
         {
             try
             {
@@ -106,7 +107,7 @@ internal sealed class OutputFinalizer
                 SockseekLog.Jobs.Error(album, $"{ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
                 return OutputFinalizationResult.Failed(ex);
             }
-        }
+        });
     }
 
     public void PublishDownloadedFileCache(SongJob song)
@@ -126,8 +127,7 @@ internal sealed class OutputFinalizer
         if (candidate == null || string.IsNullOrEmpty(song.DownloadPath))
             return;
 
-        var fileKey = candidate.Username + '\\' + candidate.Filename;
-        registry.DownloadedFiles[fileKey] = new FileDownloadResult(song.DownloadPath, candidate);
+        downloadedFiles.Publish(song.DownloadPath, candidate);
     }
 
     public void PublishDownloadedFileCache(IEnumerable<SongJob>? songs)

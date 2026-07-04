@@ -1,11 +1,11 @@
 using Soulseek;
-using Sockseek.Core.Models;
+using Sockseek.Core.Transfers.Downloads.State;
 
 namespace Sockseek.Core.Services;
 
 internal sealed class StaleDownloadCoordinator
 {
-    private readonly IDownloadRegistry registry;
+    private readonly ActiveDownloadTracker activeDownloads;
     private readonly TimeProvider timeProvider;
     private readonly object gate = new();
     private readonly Dictionary<Guid, Attempt> attempts = new();
@@ -14,9 +14,9 @@ internal sealed class StaleDownloadCoordinator
     private readonly Dictionary<string, long> latestActivityByUser = new(StringComparer.OrdinalIgnoreCase);
     private TaskCompletionSource deadlinesChanged = NewSignal();
 
-    public StaleDownloadCoordinator(IDownloadRegistry registry, TimeProvider? timeProvider = null)
+    public StaleDownloadCoordinator(ActiveDownloadTracker activeDownloads, TimeProvider? timeProvider = null)
     {
-        this.registry = registry;
+        this.activeDownloads = activeDownloads;
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -127,7 +127,7 @@ internal sealed class StaleDownloadCoordinator
             var download = attempt.Download;
             download.MarkStaleCancelled(attempt.MaxStaleTimeMs);
             try { download.Cts.Cancel(); } catch { }
-            registry.Downloads.TryRemove(download.Candidate.Filename, out _);
+            activeDownloads.TryRemove(download.Candidate.Filename, out _);
         }
 
         return staleAttempts.Count;

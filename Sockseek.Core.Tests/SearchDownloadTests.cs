@@ -17,9 +17,9 @@ namespace Tests.SearchDownloadTests
             var (engineSettings, rootSettings) = TestHelpers.CreateDefaultSettings();
             var client = new ClientTests.MockSoulseekClient(index);
             var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
-            var registry = TestHelpers.CreateSessionRegistry();
+            var registry = TestHelpers.CreateUserSuccessTracker();
             var engine = new DownloadEngine(engineSettings, clientManager);
-            var searcher = new Searcher(client, registry, new EngineEvents(), 999, 1);
+            var searcher = new Searcher(client, registry, new DownloadEvents(), 999, 1);
             var job = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
 
             // Act

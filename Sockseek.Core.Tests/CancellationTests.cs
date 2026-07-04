@@ -122,6 +122,7 @@ namespace Tests.Cancellation
                 await WaitForAsync(() => rootExtract.TerminalOutcome == JobTerminalOutcome.Succeeded);
 
                 var rootList = (JobList)rootExtract.Result!;
+                await WaitForAsync(() => rootList.AllSongs().Count() == 2);
                 var songs    = rootList.AllSongs().ToList();
                 Assert.AreEqual(2, songs.Count);
 
@@ -235,7 +236,9 @@ namespace Tests.Cancellation
                 var rootExtract = (ExtractJob)engine.Queue.Jobs[0];
                 await WaitForAsync(() => rootExtract.TerminalOutcome == JobTerminalOutcome.Succeeded);
 
-                var songs = ((JobList)rootExtract.Result!).AllSongs().ToList();
+                var rootList = (JobList)rootExtract.Result!;
+                await WaitForAsync(() => rootList.AllSongs().Count() == 2);
+                var songs = rootList.AllSongs().ToList();
                 Assert.AreEqual(2, songs.Count);
 
                 // Wait until both songs are concurrently Searching.

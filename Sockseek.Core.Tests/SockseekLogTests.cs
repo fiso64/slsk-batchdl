@@ -165,7 +165,7 @@ public class SockseekLogTests
     [TestMethod]
     public void ExtractorContext_LogEmitsExtractJobMessageEvent()
     {
-        var events = new EngineEvents();
+        var events = new DownloadEvents();
         var job = new ExtractJob("spotify://playlist");
         var messages = new List<(int DisplayId, LogLevel Level, string? Source, string Message)>();
         events.JobMessage += (eventJob, level, source, message) => messages.Add((eventJob.DisplayId, level, source, message));

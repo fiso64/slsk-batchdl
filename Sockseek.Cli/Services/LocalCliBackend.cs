@@ -37,7 +37,7 @@ internal sealed class LocalCliBackend
         stateStore.JobUpserted += summary => Publish("job.upserted", summary);
         stateStore.WorkflowUpserted += summary => Publish("workflow.upserted", summary);
         stateStore.SearchUpdated += update => Publish("search.updated", update);
-        new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events);
+        new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events, engine.SearchEvents);
     }
 
     public Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
@@ -519,24 +519,14 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var job = engine.GetJob(jobId);
-        if (job == null)
-            return Task.FromResult(false);
-
-        job.Cancel(JobCancellationSource.UserRequestedJob);
-        return Task.FromResult(true);
+        return Task.FromResult(engine.CancelJob(jobId));
     }
 
     public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
-        var job = engine.GetJob(displayId);
-        if (job == null || (workflowId.HasValue && job.WorkflowId != workflowId.Value))
-            return false;
-
-        job.Cancel(JobCancellationSource.UserRequestedJob);
-        return await Task.FromResult(true);
+        return await Task.FromResult(engine.CancelJobByDisplayId(displayId, workflowId));
     }
 
     public Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)
@@ -554,11 +544,7 @@ internal sealed class LocalCliBackend
     public Task<bool> TryNextCandidateByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var job = engine.GetJob(displayId);
-        if (job == null || (workflowId.HasValue && job.WorkflowId != workflowId.Value))
-            return Task.FromResult(false);
-
-        return Task.FromResult(engine.TryNextCandidate(job.Id));
+        return Task.FromResult(engine.TryNextCandidateByDisplayId(displayId, workflowId));
     }
 
     private void Publish(string type, object payload)

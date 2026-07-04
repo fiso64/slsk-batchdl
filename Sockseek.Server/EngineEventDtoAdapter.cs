@@ -17,7 +17,7 @@ public sealed class EngineEventDtoAdapter
         this.publish = publish;
     }
 
-    public void Attach(EngineEvents events)
+    public void Attach(DownloadEvents events, SearchEvents searchEvents)
     {
         events.JobStatus += (job, status) => publish("job.status", new JobStatusEventDto(getSummary(job), status));
         events.JobMessage += (job, level, source, message) => publish("job.message", new JobMessageEventDto(getSummary(job), level.ToString(), source, message));
@@ -126,8 +126,8 @@ public sealed class EngineEventDtoAdapter
             ex.GetType().Name,
             SockseekLog.ExceptionSummary(ex),
             SockseekLog.ExceptionDetail(ex)));
-        events.SearchRateLimited += resetsAt => publish("search.rate-limited", new SearchRateLimitedEventDto(resetsAt));
-        events.SearchResumed += () => publish("search.resumed", new SearchResumedEventDto());
+        searchEvents.SearchRateLimited += resetsAt => publish("search.rate-limited", new SearchRateLimitedEventDto(resetsAt));
+        searchEvents.SearchResumed += () => publish("search.resumed", new SearchResumedEventDto());
         events.TrackBatchResolved += (job, pending, existing, notFound) => publish("track-batch.resolved", new TrackBatchResolvedEventDto(
             getSummary(job),
             job is JobList,
