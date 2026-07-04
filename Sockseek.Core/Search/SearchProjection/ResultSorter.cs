@@ -14,11 +14,10 @@ public static partial class ResultSorter
         SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
-        bool useLevenshtein = true,
         bool albumMode = false,
         bool ignoreStringSortConditions = false)
     {
-        return OrderedResults(results.Select(x => x.Value), query, search, userSuccessCounts, useInfer, useLevenshtein, albumMode, ignoreStringSortConditions);
+        return OrderedResults(results.Select(x => x.Value), query, search, userSuccessCounts, useInfer, albumMode, ignoreStringSortConditions);
     }
 
     public static IEnumerable<(SearchResponse response, Soulseek.File file)> OrderedResults(
@@ -27,13 +26,11 @@ public static partial class ResultSorter
         SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useInfer = false,
-        bool useLevenshtein = true,
         bool albumMode = false,
         bool ignoreStringSortConditions = false)
     {
         bool useBracketCheck = !albumMode;
         useInfer = false;
-        useLevenshtein = false;
 
         return OrderedResultsCore(
             results,
@@ -42,7 +39,6 @@ public static partial class ResultSorter
             userSuccessCounts,
             useBracketCheck,
             useInfer,
-            useLevenshtein,
             albumMode,
             ignoreStringSortConditions);
     }
@@ -54,7 +50,6 @@ public static partial class ResultSorter
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useBracketCheck,
         bool useInfer,
-        bool useLevenshtein,
         bool albumMode,
         bool ignoreStringSortConditions)
     {
@@ -65,7 +60,6 @@ public static partial class ResultSorter
             userSuccessCounts,
             useBracketCheck,
             useInfer,
-            useLevenshtein,
             albumMode,
             ignoreStringSortConditions);
         var sortableResults = keyContext.SortableResults;
@@ -91,10 +85,9 @@ public static partial class ResultSorter
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool useBracketCheck,
         bool useInfer,
-        bool useLevenshtein,
         bool albumMode,
         bool ignoreStringSortConditions = false)
-        => new(results, query, search, userSuccessCounts, useBracketCheck, useInfer, useLevenshtein, albumMode, ignoreStringSortConditions);
+        => new(results, query, search, userSuccessCounts, useBracketCheck, useInfer, albumMode, ignoreStringSortConditions);
 
     internal static SortEntry? CreateSortEntry(
         SearchResponse response,
@@ -168,8 +161,6 @@ public static partial class ResultSorter
         private readonly SongQuery emptyQuery = new();
         private readonly bool queryTitleAllowsBrackets;
         private readonly bool ignoreStringSortConditions;
-        private string? normalizedQueryTitle;
-        private Dictionary<string, int>? levenshteinScores;
         private Dictionary<string, string>? strictDirectoryNames;
         private Dictionary<string, string>? fuzzyDirectoryNames;
 
@@ -180,7 +171,6 @@ public static partial class ResultSorter
             ConcurrentDictionary<string, int> userSuccessCounts,
             bool useBracketCheck,
             bool useInfer,
-            bool useLevenshtein,
             bool albumMode,
             bool ignoreStringSortConditions)
         {
@@ -189,7 +179,6 @@ public static partial class ResultSorter
             UserSuccessCounts = userSuccessCounts;
             UseBracketCheck = useBracketCheck;
             UseInfer = useInfer;
-            UseLevenshtein = useLevenshtein;
             AlbumMode = albumMode;
             this.ignoreStringSortConditions = ignoreStringSortConditions;
 
@@ -220,7 +209,6 @@ public static partial class ResultSorter
         public ConcurrentDictionary<string, int> UserSuccessCounts { get; }
         public bool UseBracketCheck { get; }
         public bool UseInfer { get; }
-        public bool UseLevenshtein { get; }
         public bool AlbumMode { get; }
 
         public SortKey CreateKey(SearchResponse response, Soulseek.File file)
@@ -296,7 +284,6 @@ public static partial class ResultSorter
                 UseInfer ? getInferred().Count : 0,
                 response.UploadSpeed / 1024 / 350,
                 (file.BitRate ?? 0) / 80,
-                UseLevenshtein ? LevenshteinScore(getInferred().Query) : 0,
                 StableTieBreaker(response.Username, filename));
         }
 
@@ -348,24 +335,6 @@ public static partial class ResultSorter
             if (infQueriesAndCounts != null && infQueriesAndCounts.Value.TryGetValue(key, out var inferred))
                 return (inferred.Query, inferred.Count);
             return (emptyQuery, 0);
-        }
-
-        // TODO: Check if this is ever used (i.e. if UseLevenshtein can even be true)
-        private int LevenshteinScore(SongQuery inferred)
-        {
-            if (string.Equals(Query.Title, inferred.Title, StringComparison.OrdinalIgnoreCase))
-                return 0;
-
-            string normalizedInferredTitle = NormalizeLevenshteinTitle(inferred.Title);
-            normalizedQueryTitle ??= NormalizeLevenshteinTitle(Query.Title);
-            levenshteinScores ??= new Dictionary<string, int>(StringComparer.Ordinal);
-            if (!levenshteinScores.TryGetValue(normalizedInferredTitle, out int score))
-            {
-                score = CalculateLevenshtein(normalizedQueryTitle, normalizedInferredTitle) / 5;
-                levenshteinScores.Add(normalizedInferredTitle, score);
-            }
-
-            return score;
         }
 
         private static bool StrictStringPrepared(string fname, string tname, bool boundarySkipWs = true)
@@ -431,7 +400,6 @@ public static partial class ResultSorter
         private readonly int inferredTrackCount;
         private readonly int uploadSpeedMedium;
         private readonly int bitRate;
-        private readonly int levenshteinScore;
         private readonly int randomTiebreaker;
         private readonly uint albumBeforeQualityFlags;
 
@@ -461,7 +429,6 @@ public static partial class ResultSorter
             int inferredTrackCount,
             int uploadSpeedMedium,
             int bitRate,
-            int levenshteinScore,
             int randomTiebreaker)
         {
             highFlags = PackHighFlags(
@@ -488,7 +455,6 @@ public static partial class ResultSorter
             this.inferredTrackCount = inferredTrackCount;
             this.uploadSpeedMedium = uploadSpeedMedium;
             this.bitRate = bitRate;
-            this.levenshteinScore = levenshteinScore;
             this.randomTiebreaker = randomTiebreaker;
             albumBeforeQualityFlags = PackAlbumBeforeQualityFlags(
                 userSuccessAboveDownrank,
@@ -526,9 +492,6 @@ public static partial class ResultSorter
             if (comparison != 0) return comparison;
 
             comparison = bitRate.CompareTo(other.bitRate);
-            if (comparison != 0) return comparison;
-
-            comparison = levenshteinScore.CompareTo(other.levenshteinScore);
             if (comparison != 0) return comparison;
 
             return randomTiebreaker.CompareTo(other.randomTiebreaker);
@@ -643,14 +606,6 @@ public static partial class ResultSorter
             => new(preferred ? value | (1u << nextBit) : value, nextBit - 1);
     }
 
-    private static int CalculateLevenshtein(string normalizedQueryTitle, string normalizedInferredTitle)
-        => normalizedQueryTitle == normalizedInferredTitle
-            ? 0
-            : Utils.Levenshtein(normalizedQueryTitle, normalizedInferredTitle);
-
-    private static string NormalizeLevenshteinTitle(string title)
-        => title.RemoveFt().ReplaceSpecialChars("").Replace(" ", "").Replace("_", "").ToLower();
-
     private static int StableTieBreaker(string username, string filename)
     {
         unchecked
@@ -695,148 +650,5 @@ public static partial class ResultSorter
     {
         public SongQuery Query { get; } = query;
         public int Count { get; set; }
-    }
-}
-
-// TODO: Delete this legacy sorter key once ResultSorterTests cover SortKey or OrderedResults directly.
-public class SortingCriteria : IComparable<SortingCriteria>
-{
-    public bool UserSuccessAboveDownrank;
-    public bool NecessaryConditionsMet;
-    public bool PreferredUserConditionsMet;
-    public bool HasValidLength;
-    public bool BracketCheckPassed;
-    public bool StrictTitleMatch;
-    public bool AlbumModeStrictAlbumMatch;
-    public bool StrictArtistMatch;
-    public bool LengthToleranceMatch;
-    public bool FormatMatch;
-    public bool NonAlbumModeStrictAlbumMatch;
-    public bool BitrateMatch;
-    public bool SampleRateMatch;
-    public bool BitDepthMatch;
-    public bool FileSatisfies;
-    public bool HasFreeUploadSlot;
-    public bool NoQueue;
-    public int  UploadSpeedFast;
-    public bool NonAlbumModeStrictString;
-    public bool AlbumModeStrictString;
-    public bool StrictArtistString;
-    private int? _inferredTrackCount;
-    public Func<int>? InferredTrackCountFactory;
-    public int InferredTrackCount
-    {
-        get
-        {
-            _inferredTrackCount ??= InferredTrackCountFactory?.Invoke() ?? 0;
-            return _inferredTrackCount.Value;
-        }
-        set
-        {
-            _inferredTrackCount = value;
-            InferredTrackCountFactory = null;
-        }
-    }
-    public int  UploadSpeedMedium;
-    public int  BitRate;
-    private int? _levenshteinScore;
-    public Func<int>? LevenshteinScoreFactory;
-    public int LevenshteinScore
-    {
-        get
-        {
-            _levenshteinScore ??= LevenshteinScoreFactory?.Invoke() ?? 0;
-            return _levenshteinScore.Value;
-        }
-        set
-        {
-            _levenshteinScore = value;
-            LevenshteinScoreFactory = null;
-        }
-    }
-    public int  RandomTiebreaker;
-
-    public int CompareTo(SortingCriteria? other)
-    {
-        if (other == null) return 1;
-
-        int comparison;
-
-        comparison = UserSuccessAboveDownrank.CompareTo(other.UserSuccessAboveDownrank);
-        if (comparison != 0) return comparison;
-
-        comparison = NecessaryConditionsMet.CompareTo(other.NecessaryConditionsMet);
-        if (comparison != 0) return comparison;
-
-        comparison = PreferredUserConditionsMet.CompareTo(other.PreferredUserConditionsMet);
-        if (comparison != 0) return comparison;
-
-        comparison = HasValidLength.CompareTo(other.HasValidLength);
-        if (comparison != 0) return comparison;
-
-        comparison = BracketCheckPassed.CompareTo(other.BracketCheckPassed);
-        if (comparison != 0) return comparison;
-
-        comparison = StrictTitleMatch.CompareTo(other.StrictTitleMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = AlbumModeStrictAlbumMatch.CompareTo(other.AlbumModeStrictAlbumMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = StrictArtistMatch.CompareTo(other.StrictArtistMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = LengthToleranceMatch.CompareTo(other.LengthToleranceMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = FormatMatch.CompareTo(other.FormatMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = NonAlbumModeStrictAlbumMatch.CompareTo(other.NonAlbumModeStrictAlbumMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = BitrateMatch.CompareTo(other.BitrateMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = SampleRateMatch.CompareTo(other.SampleRateMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = BitDepthMatch.CompareTo(other.BitDepthMatch);
-        if (comparison != 0) return comparison;
-
-        comparison = FileSatisfies.CompareTo(other.FileSatisfies);
-        if (comparison != 0) return comparison;
-
-        comparison = HasFreeUploadSlot.CompareTo(other.HasFreeUploadSlot);
-        if (comparison != 0) return comparison;
-
-        //comparison = NoQueue.CompareTo(other.NoQueue);
-        //if (comparison != 0) return comparison;
-
-        comparison = UploadSpeedFast.CompareTo(other.UploadSpeedFast);
-        if (comparison != 0) return comparison;
-
-        comparison = NonAlbumModeStrictString.CompareTo(other.NonAlbumModeStrictString);
-        if (comparison != 0) return comparison;
-
-        comparison = AlbumModeStrictString.CompareTo(other.AlbumModeStrictString);
-        if (comparison != 0) return comparison;
-
-        comparison = StrictArtistString.CompareTo(other.StrictArtistString);
-        if (comparison != 0) return comparison;
-
-        comparison = InferredTrackCount.CompareTo(other.InferredTrackCount);
-        if (comparison != 0) return comparison;
-
-        comparison = UploadSpeedMedium.CompareTo(other.UploadSpeedMedium);
-        if (comparison != 0) return comparison;
-
-        comparison = BitRate.CompareTo(other.BitRate);
-        if (comparison != 0) return comparison;
-
-        comparison = LevenshteinScore.CompareTo(other.LevenshteinScore);
-        if (comparison != 0) return comparison;
-
-        return RandomTiebreaker.CompareTo(other.RandomTiebreaker);
     }
 }

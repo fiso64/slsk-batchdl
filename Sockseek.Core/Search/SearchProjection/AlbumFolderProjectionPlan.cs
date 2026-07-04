@@ -35,7 +35,6 @@ internal readonly struct AlbumFolderProjectionPlan
             userSuccessCounts ?? new ConcurrentDictionary<string, int>(),
             useBracketCheck: false,
             useInfer: false,
-            useLevenshtein: false,
             albumMode: true,
             ignoreStringSortConditions: ignoreStringSortConditions);
     }

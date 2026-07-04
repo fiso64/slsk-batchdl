@@ -23,7 +23,6 @@ internal sealed class AlbumFolderAggregateComparer : IComparer<AlbumFolder>
             new ConcurrentDictionary<string, int>(),
             useBracketCheck: false,
             useInfer: false,
-            useLevenshtein: false,
             albumMode: true,
             ignoreStringSortConditions: true);
     }

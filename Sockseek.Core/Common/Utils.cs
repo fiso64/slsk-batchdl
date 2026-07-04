@@ -721,39 +721,6 @@ public static partial class Utils
         return -1;
     }
 
-    public static int Levenshtein(string source, string target)
-    {
-        if (source.Length == 0)
-            return target.Length;
-        if (target.Length == 0)
-            return source.Length;
-
-        if (source.Length > target.Length)
-            (source, target) = (target, source);
-
-        var previousRow = new int[source.Length + 1];
-        for (var i = 0; i <= source.Length; i++)
-            previousRow[i] = i;
-
-        for (var j = 1; j <= target.Length; j++)
-        {
-            int previousDiagonal = previousRow[0];
-            previousRow[0] = j;
-
-            for (var i = 1; i <= source.Length; i++)
-            {
-                int deletion = previousRow[i] + 1;
-                int insertion = previousRow[i - 1] + 1;
-                int substitution = previousDiagonal + (source[i - 1] == target[j - 1] ? 0 : 1);
-
-                previousDiagonal = previousRow[i];
-                previousRow[i] = Math.Min(Math.Min(deletion, insertion), substitution);
-            }
-        }
-
-        return previousRow[source.Length];
-    }
-
     public static string GreatestCommonPath(IEnumerable<string> paths)
     {
         using var enumerator = paths.GetEnumerator();

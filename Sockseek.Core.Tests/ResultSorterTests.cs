@@ -7,33 +7,72 @@ using File = Soulseek.File;
 namespace Tests.ResultSorterTests
 {
     [TestClass]
-    public class SortingCriteriaTests
+    public class SortKeyTests
     {
-        [TestMethod]
-        public void CompareTo_Null_ReturnsPositive()
-        {
-            var a = new SortingCriteria();
-            Assert.IsTrue(a.CompareTo(null) > 0);
-        }
+        private static ResultSorter.SortKey Key(
+            bool userSuccessAboveDownrank = false,
+            bool necessaryConditionsMet = false,
+            bool preferredUserConditionsMet = false,
+            bool hasValidLength = false,
+            bool bracketCheckPassed = false,
+            bool strictTitleMatch = false,
+            bool fuzzyTitleMatch = false,
+            bool strictAlbumMatch = false,
+            bool fuzzyAlbumMatch = false,
+            bool strictArtistMatch = false,
+            bool fuzzyArtistMatch = false,
+            bool lengthToleranceMatch = false,
+            bool formatMatch = false,
+            bool bitrateMatch = false,
+            bool sampleRateMatch = false,
+            bool bitDepthMatch = false,
+            bool fileSatisfies = false,
+            bool hasFreeUploadSlot = false,
+            int uploadSpeedFast = 0,
+            bool nonAlbumModeStrictString = false,
+            bool albumModeStrictString = false,
+            bool strictArtistString = false,
+            int inferredTrackCount = 0,
+            int uploadSpeedMedium = 0,
+            int bitRate = 0,
+            int randomTiebreaker = 0)
+            => new(
+                userSuccessAboveDownrank,
+                necessaryConditionsMet,
+                preferredUserConditionsMet,
+                hasValidLength,
+                bracketCheckPassed,
+                strictTitleMatch,
+                fuzzyTitleMatch,
+                strictAlbumMatch,
+                fuzzyAlbumMatch,
+                strictArtistMatch,
+                fuzzyArtistMatch,
+                lengthToleranceMatch,
+                formatMatch,
+                bitrateMatch,
+                sampleRateMatch,
+                bitDepthMatch,
+                fileSatisfies,
+                hasFreeUploadSlot,
+                uploadSpeedFast,
+                nonAlbumModeStrictString,
+                albumModeStrictString,
+                strictArtistString,
+                inferredTrackCount,
+                uploadSpeedMedium,
+                bitRate,
+                randomTiebreaker);
 
         [TestMethod]
         public void CompareTo_NecessaryConditions_TrumpLowerCriteria()
         {
-            var better = new SortingCriteria
-            {
-                UserSuccessAboveDownrank = false,
-                NecessaryConditionsMet = true,
-            };
-            var worse = new SortingCriteria
-            {
-                UserSuccessAboveDownrank = false,
-                NecessaryConditionsMet = false,
-                // Even with all lower criteria being better
-                HasFreeUploadSlot = true,
-                UploadSpeedFast = 100,
-                BitrateMatch = true,
-                FormatMatch = true,
-            };
+            var better = Key(necessaryConditionsMet: true);
+            var worse = Key(
+                hasFreeUploadSlot: true,
+                uploadSpeedFast: 100,
+                bitrateMatch: true,
+                formatMatch: true);
 
             Assert.IsTrue(better.CompareTo(worse) > 0);
         }
@@ -41,13 +80,8 @@ namespace Tests.ResultSorterTests
         [TestMethod]
         public void CompareTo_UserSuccessAboveDownrank_IsHighestPriority()
         {
-            var better = new SortingCriteria { UserSuccessAboveDownrank = true };
-            var worse = new SortingCriteria
-            {
-                UserSuccessAboveDownrank = false,
-                NecessaryConditionsMet = true,
-                HasFreeUploadSlot = true,
-            };
+            var better = Key(userSuccessAboveDownrank: true);
+            var worse = Key(necessaryConditionsMet: true, hasFreeUploadSlot: true);
 
             Assert.IsTrue(better.CompareTo(worse) > 0);
         }
@@ -55,8 +89,8 @@ namespace Tests.ResultSorterTests
         [TestMethod]
         public void CompareTo_FreeSlot_BeatsNoFreeSlot()
         {
-            var withSlot = new SortingCriteria { HasFreeUploadSlot = true };
-            var noSlot = new SortingCriteria { HasFreeUploadSlot = false };
+            var withSlot = Key(hasFreeUploadSlot: true);
+            var noSlot = Key(hasFreeUploadSlot: false);
 
             Assert.IsTrue(withSlot.CompareTo(noSlot) > 0);
         }
@@ -64,8 +98,8 @@ namespace Tests.ResultSorterTests
         [TestMethod]
         public void CompareTo_HighUploadSpeed_BeatsLow()
         {
-            var fast = new SortingCriteria { UploadSpeedFast = 10 };
-            var slow = new SortingCriteria { UploadSpeedFast = 1 };
+            var fast = Key(uploadSpeedFast: 10);
+            var slow = Key(uploadSpeedFast: 1);
 
             Assert.IsTrue(fast.CompareTo(slow) > 0);
         }
@@ -73,126 +107,69 @@ namespace Tests.ResultSorterTests
         [TestMethod]
         public void CompareTo_AllEqual_RandomTiebreakerDecides()
         {
-            var a = new SortingCriteria { RandomTiebreaker = 100 };
-            var b = new SortingCriteria { RandomTiebreaker = 50 };
+            var a = Key(randomTiebreaker: 100);
+            var b = Key(randomTiebreaker: 50);
 
             Assert.IsTrue(a.CompareTo(b) > 0);
             Assert.IsTrue(b.CompareTo(a) < 0);
         }
 
         [TestMethod]
-        public void CompareTo_DoesNotComputeLevenshtein_WhenHigherPriorityFieldDiffers()
+        public void CompareTo_InferredTrackCount_IsLateTiebreaker()
         {
-            var calls = 0;
-            var better = new SortingCriteria
-            {
-                NecessaryConditionsMet = true,
-                LevenshteinScoreFactory = () => { calls++; return 0; },
-            };
-            var worse = new SortingCriteria
-            {
-                NecessaryConditionsMet = false,
-                LevenshteinScoreFactory = () => { calls++; return 100; },
-            };
+            var better = Key(inferredTrackCount: 2);
+            var worse = Key(inferredTrackCount: 1);
 
             Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.AreEqual(0, calls);
         }
 
         [TestMethod]
-        public void CompareTo_ComputesLevenshteinOnce_WhenNeeded()
+        public void CompareTo_DoesNotUseInferredTrackCount_WhenHigherPriorityFieldDiffers()
         {
-            var calls = 0;
-            var better = new SortingCriteria
-            {
-                LevenshteinScoreFactory = () => { calls++; return 2; },
-            };
-            var worse = new SortingCriteria
-            {
-                LevenshteinScoreFactory = () => { calls++; return 1; },
-            };
+            var better = Key(necessaryConditionsMet: true, inferredTrackCount: 1);
+            var worse = Key(necessaryConditionsMet: false, inferredTrackCount: 100);
 
             Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.AreEqual(2, calls);
-        }
-
-        [TestMethod]
-        public void CompareTo_DoesNotComputeInferredTrackCount_WhenHigherPriorityFieldDiffers()
-        {
-            var calls = 0;
-            var better = new SortingCriteria
-            {
-                NecessaryConditionsMet = true,
-                InferredTrackCountFactory = () => { calls++; return 1; },
-            };
-            var worse = new SortingCriteria
-            {
-                NecessaryConditionsMet = false,
-                InferredTrackCountFactory = () => { calls++; return 2; },
-            };
-
-            Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.AreEqual(0, calls);
-        }
-
-        [TestMethod]
-        public void CompareTo_ComputesInferredTrackCountOnce_WhenNeeded()
-        {
-            var calls = 0;
-            var better = new SortingCriteria
-            {
-                InferredTrackCountFactory = () => { calls++; return 2; },
-            };
-            var worse = new SortingCriteria
-            {
-                InferredTrackCountFactory = () => { calls++; return 1; },
-            };
-
-            Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.IsTrue(better.CompareTo(worse) > 0);
-            Assert.AreEqual(2, calls);
         }
 
         [TestMethod]
         public void CompareTo_FullPriorityChain_EachLevelWins()
         {
             // Test that each successive criterion can win when all above are equal
-            var fields = new (string name, Action<SortingCriteria> setBetter)[]
+            var fields = new (string name, Func<ResultSorter.SortKey> better)[]
             {
-                ("UserSuccessAboveDownrank", c => c.UserSuccessAboveDownrank = true),
-                ("NecessaryConditionsMet", c => c.NecessaryConditionsMet = true),
-                ("PreferredUserConditionsMet", c => c.PreferredUserConditionsMet = true),
-                ("HasValidLength", c => c.HasValidLength = true),
-                ("BracketCheckPassed", c => c.BracketCheckPassed = true),
-                ("StrictTitleMatch", c => c.StrictTitleMatch = true),
-                ("AlbumModeStrictAlbumMatch", c => c.AlbumModeStrictAlbumMatch = true),
-                ("StrictArtistMatch", c => c.StrictArtistMatch = true),
-                ("LengthToleranceMatch", c => c.LengthToleranceMatch = true),
-                ("FormatMatch", c => c.FormatMatch = true),
-                ("NonAlbumModeStrictAlbumMatch", c => c.NonAlbumModeStrictAlbumMatch = true),
-                ("BitrateMatch", c => c.BitrateMatch = true),
-                ("SampleRateMatch", c => c.SampleRateMatch = true),
-                ("BitDepthMatch", c => c.BitDepthMatch = true),
-                ("FileSatisfies", c => c.FileSatisfies = true),
-                ("HasFreeUploadSlot", c => c.HasFreeUploadSlot = true),
-                ("UploadSpeedFast", c => c.UploadSpeedFast = 1),
+                ("UserSuccessAboveDownrank", () => Key(userSuccessAboveDownrank: true)),
+                ("NecessaryConditionsMet", () => Key(necessaryConditionsMet: true)),
+                ("PreferredUserConditionsMet", () => Key(preferredUserConditionsMet: true)),
+                ("HasValidLength", () => Key(hasValidLength: true)),
+                ("BracketCheckPassed", () => Key(bracketCheckPassed: true)),
+                ("StrictTitleMatch", () => Key(strictTitleMatch: true)),
+                ("FuzzyTitleMatch", () => Key(fuzzyTitleMatch: true)),
+                ("StrictAlbumMatch", () => Key(strictAlbumMatch: true)),
+                ("FuzzyAlbumMatch", () => Key(fuzzyAlbumMatch: true)),
+                ("StrictArtistMatch", () => Key(strictArtistMatch: true)),
+                ("FuzzyArtistMatch", () => Key(fuzzyArtistMatch: true)),
+                ("LengthToleranceMatch", () => Key(lengthToleranceMatch: true)),
+                ("FormatMatch", () => Key(formatMatch: true)),
+                ("BitrateMatch", () => Key(bitrateMatch: true)),
+                ("SampleRateMatch", () => Key(sampleRateMatch: true)),
+                ("BitDepthMatch", () => Key(bitDepthMatch: true)),
+                ("FileSatisfies", () => Key(fileSatisfies: true)),
+                ("HasFreeUploadSlot", () => Key(hasFreeUploadSlot: true)),
+                ("UploadSpeedFast", () => Key(uploadSpeedFast: 1)),
+                ("NonAlbumModeStrictString", () => Key(nonAlbumModeStrictString: true)),
+                ("AlbumModeStrictString", () => Key(albumModeStrictString: true)),
+                ("StrictArtistString", () => Key(strictArtistString: true)),
+                ("InferredTrackCount", () => Key(inferredTrackCount: 1)),
+                ("UploadSpeedMedium", () => Key(uploadSpeedMedium: 1)),
+                ("BitRate", () => Key(bitRate: 1)),
+                ("RandomTiebreaker", () => Key(randomTiebreaker: 1)),
             };
 
             for (int i = 0; i < fields.Length; i++)
             {
-                var better = new SortingCriteria();
-                var worse = new SortingCriteria();
-
-                // Set all higher-priority fields equal (true/positive)
-                for (int j = 0; j < i; j++)
-                {
-                    fields[j].setBetter(better);
-                    fields[j].setBetter(worse);
-                }
-
-                // Set the current field differently
-                fields[i].setBetter(better);
+                var better = fields[i].better();
+                var worse = Key();
 
                 Assert.IsTrue(better.CompareTo(worse) > 0,
                     $"Field '{fields[i].name}' at priority {i} should make 'better' sort higher");
@@ -314,8 +291,7 @@ namespace Tests.ResultSorterTests
                 track,
                 config.Search,
                 counts,
-                useInfer: false,
-                useLevenshtein: false).ToList();
+                useInfer: false).ToList();
 
             Assert.AreEqual("clean", ordered[0].response.Username);
         }
@@ -375,8 +351,7 @@ namespace Tests.ResultSorterTests
                 track,
                 config.Search,
                 counts,
-                useInfer: true,
-                useLevenshtein: false).ToList();
+                useInfer: true).ToList();
 
             CollectionAssert.DoesNotContain(
                 ordered.Take(cheapWinnerCount).Select(x => x.response.Username).ToList(),

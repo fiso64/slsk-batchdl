@@ -37,18 +37,16 @@ public class ResultSorterBenchmarks
                 query,
                 search,
                 userSuccessCounts,
-                useInfer: true,
-                useLevenshtein: true));
+                useInfer: true));
 
     [Benchmark]
-    public int TrackSort_NoInferNoLevenshtein()
+    public int TrackSort_NoInfer()
         => ConsumeOrderedResults(ResultSorter.OrderedResults(
                 results.Select(x => (x.Response, x.File)),
                 query,
                 search,
                 userSuccessCounts,
-                useInfer: false,
-                useLevenshtein: false));
+                useInfer: false));
 
     [Benchmark]
     public int AlbumModeSort()
@@ -58,7 +56,6 @@ public class ResultSorterBenchmarks
                 search,
                 userSuccessCounts,
                 useInfer: false,
-                useLevenshtein: false,
                 albumMode: true));
 
     [Benchmark]
@@ -69,7 +66,6 @@ public class ResultSorterBenchmarks
             search,
             userSuccessCounts,
             useInfer: true,
-            useLevenshtein: true,
             requireFileSatisfies: true);
 
         foreach (var batch in resultBatches)

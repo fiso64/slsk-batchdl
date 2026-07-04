@@ -16,8 +16,7 @@ public static partial class SearchResultProjector
         SongQuery query,
         SearchSettings search,
         ConcurrentDictionary<string, int> userSuccessCounts,
-        bool useInfer = true,
-        bool useLevenshtein = true)
+        bool useInfer = true)
     {
         int capacity = rawResults.TryGetNonEnumeratedCount(out int resultCount) ? resultCount : 0;
         var ordered = ResultSorter.OrderedResults(
@@ -25,8 +24,7 @@ public static partial class SearchResultProjector
                 query,
                 search,
                 userSuccessCounts,
-                useInfer,
-                useLevenshtein);
+                useInfer);
 
         var candidates = capacity > 0 ? new List<FileCandidate>(capacity) : [];
         foreach (var (response, file) in ordered)
@@ -53,7 +51,6 @@ public static partial class SearchResultProjector
                 search,
                 userSuccessCounts,
                 useInfer: false,
-                useLevenshtein: false,
                 albumMode: false,
                 ignoreStringSortConditions: true)))
             .ToList();

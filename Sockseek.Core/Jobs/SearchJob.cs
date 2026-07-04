@@ -98,7 +98,6 @@ public class SearchJob : Job
                     search,
                     userSuccessCounts,
                     useInfer: false,
-                    useLevenshtein: false,
                     requireFileSatisfies: !projection.IncludeFullResults),
                 (projector, results) => projector.AddRange(results),
                 projector => projector.Snapshot()

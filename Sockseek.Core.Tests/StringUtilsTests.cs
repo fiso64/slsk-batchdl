@@ -92,16 +92,6 @@ namespace Tests.StringUtils
         }
 
         [TestMethod]
-        public void Levenshtein_ComputesEditDistance()
-        {
-            Assert.AreEqual(0, Utils.Levenshtein("", ""));
-            Assert.AreEqual(3, Utils.Levenshtein("", "abc"));
-            Assert.AreEqual(3, Utils.Levenshtein("kitten", "sitting"));
-            Assert.AreEqual(2, Utils.Levenshtein("flaw", "lawn"));
-            Assert.AreEqual(Utils.Levenshtein("Saturday", "Sunday"), Utils.Levenshtein("Sunday", "Saturday"));
-        }
-
-        [TestMethod]
         public void ReplaceInvalidChars_CharOverload_HandlesSlashFlag()
         {
             Assert.AreEqual("a_b_c_d_e_f_g_h_i_j", "a:b|c?d>e<f*g\"h/i\\j".ReplaceInvalidChars('_', windows: true));

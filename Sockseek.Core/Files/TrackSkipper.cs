@@ -4,6 +4,11 @@ using Sockseek.Core;
 using Sockseek.Core.Settings;
 
 namespace Sockseek.Core.Services;
+    public readonly record struct NameIndexEntry(string PathPart, string Name);
+    public readonly record struct NameConditionIndexEntry(string PathPart, string Name, SimpleFile File);
+    public readonly record struct TagIndexEntry(string Artist, string Title, string Album, string AlbumArtist);
+    public readonly record struct TagConditionIndexEntry(string Artist, string Title, string Album, string AlbumArtist, SimpleFile File);
+
     public static class TrackSkipperRegistry
     {
         public static TrackSkipper GetSkipper(SkipMode mode, string dir, bool useConditions)
@@ -128,10 +133,10 @@ namespace Sockseek.Core.Services;
         }
     }
 
-    public class NameSkipper : FileBasedSkipper<(string ppath, string pname)>
+    public class NameSkipper : FileBasedSkipper<NameIndexEntry>
     {
-        private readonly List<(string path, (string ppath, string pname) item)> index = new();
-        protected override IEnumerable<(string path, (string ppath, string pname) item)> Index => index;
+        private readonly List<(string path, NameIndexEntry item)> index = new();
+        protected override IEnumerable<(string path, NameIndexEntry item)> Index => index;
         readonly string[] ignore = { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
 
@@ -156,23 +161,23 @@ namespace Sockseek.Core.Services;
                 {
                     string ppath = Preprocess(path[removeLen..path.LastIndexOf('.')], false, false);
                     string pname = Path.GetFileName(ppath);
-                    index.Add((path, (ppath, pname)));
+                    index.Add((path, new NameIndexEntry(ppath, pname)));
                 }
             }
             IndexIsBuilt = true;
         }
 
-        protected override bool FileMatchesSong(string path, string artist, string title, (string ppath, string pname) item, TrackSkipperContext c, SongJob? song)
-            => item.pname.ContainsWithBoundary(title) && item.ppath.ContainsWithBoundary(artist);
+        protected override bool FileMatchesSong(string path, string artist, string title, NameIndexEntry item, TrackSkipperContext c, SongJob? song)
+            => item.Name.ContainsWithBoundary(title) && item.PathPart.ContainsWithBoundary(artist);
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname) item, TrackSkipperContext c, AlbumJob job)
-            => item.ppath.ContainsWithBoundary(album) && item.ppath.ContainsWithBoundary(albumArtist);
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, NameIndexEntry item, TrackSkipperContext c, AlbumJob job)
+            => item.PathPart.ContainsWithBoundary(album) && item.PathPart.ContainsWithBoundary(albumArtist);
     }
 
-    public class NameConditionalSkipper : FileBasedSkipper<(string ppath, string pname, SimpleFile file)>
+    public class NameConditionalSkipper : FileBasedSkipper<NameConditionIndexEntry>
     {
-        private readonly Dictionary<string, List<(string path, (string ppath, string pname, SimpleFile file) item)>> index = new();
-        protected override IEnumerable<(string path, (string ppath, string pname, SimpleFile file) item)> Index => index.Values.SelectMany(x => x);
+        private readonly Dictionary<string, List<(string path, NameConditionIndexEntry item)>> index = new();
+        protected override IEnumerable<(string path, NameConditionIndexEntry item)> Index => index.Values.SelectMany(x => x);
         readonly string[] ignore = { "_", "-", ".", "(", ")", "[", "]" };
         readonly string dir;
 
@@ -204,9 +209,9 @@ namespace Sockseek.Core.Services;
                         var    simpleFile = new SimpleFile(musicFile);
 
                         if (!index.TryGetValue(parent, out var value))
-                            index[parent] = new() { (path, (ppath, pname, simpleFile)) };
+                            index[parent] = new() { (path, new NameConditionIndexEntry(ppath, pname, simpleFile)) };
                         else
-                            value.Add((path, (ppath, pname, simpleFile)));
+                            value.Add((path, new NameConditionIndexEntry(ppath, pname, simpleFile)));
                     }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
                 }
@@ -214,28 +219,28 @@ namespace Sockseek.Core.Services;
             IndexIsBuilt = true;
         }
 
-        protected override bool FileMatchesSong(string path, string artist, string title, (string ppath, string pname, SimpleFile file) item, TrackSkipperContext context, SongJob? song)
-            => item.pname.ContainsWithBoundary(title)
-            && item.ppath.ContainsWithBoundary(artist)
-            && (context.conditions == null || ConditionSatisfactionPolicy.LocalFileSatisfies(context.conditions, item.file, song?.Query));
+        protected override bool FileMatchesSong(string path, string artist, string title, NameConditionIndexEntry item, TrackSkipperContext context, SongJob? song)
+            => item.Name.ContainsWithBoundary(title)
+            && item.PathPart.ContainsWithBoundary(artist)
+            && (context.conditions == null || ConditionSatisfactionPolicy.LocalFileSatisfies(context.conditions, item.File, song?.Query));
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string ppath, string pname, SimpleFile file) item, TrackSkipperContext context, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, NameConditionIndexEntry item, TrackSkipperContext context, AlbumJob job)
         {
-            if (!item.ppath.ContainsWithBoundary(album) || !item.ppath.ContainsWithBoundary(albumArtist))
+            if (!item.PathPart.ContainsWithBoundary(album) || !item.PathPart.ContainsWithBoundary(albumArtist))
                 return false;
             if (context.conditions == null)
                 return true;
 
-            var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.file.Path)!);
-            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.file), context, job);
+            var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.File.Path)!);
+            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.File), context, job);
         }
     }
 
-    public class TagSkipper : FileBasedSkipper<(string partist, string ptitle, string palbum, string palbumArtist)>
+    public class TagSkipper : FileBasedSkipper<TagIndexEntry>
     {
         readonly string dir;
-        readonly List<(string path, (string partist, string ptitle, string palbum, string palbumArtist) item)> index = new();
-        protected override IEnumerable<(string path, (string partist, string ptitle, string palbum, string palbumArtist) item)> Index => index;
+        readonly List<(string path, TagIndexEntry item)> index = new();
+        protected override IEnumerable<(string path, TagIndexEntry item)> Index => index;
 
         public TagSkipper(string dir) { this.dir = dir; }
 
@@ -259,7 +264,7 @@ namespace Sockseek.Core.Services;
                         string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
                         string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
                         string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
-                        index.Add((path, (partist, ptitle, palbum, palbumArtist)));
+                        index.Add((path, new TagIndexEntry(partist, ptitle, palbum, palbumArtist)));
                     }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
                 }
@@ -267,19 +272,18 @@ namespace Sockseek.Core.Services;
             IndexIsBuilt = true;
         }
 
-        protected override bool FileMatchesSong(string path, string artist, string title, (string partist, string ptitle, string palbum, string palbumArtist) item, TrackSkipperContext c, SongJob? song)
-            => title == item.ptitle && item.partist.Contains(artist);
+        protected override bool FileMatchesSong(string path, string artist, string title, TagIndexEntry item, TrackSkipperContext c, SongJob? song)
+            => title == item.Title && item.Artist.Contains(artist);
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist) item, TrackSkipperContext c, AlbumJob job)
-            => album == item.palbum && (albumArtist == null || item.palbumArtist.Contains(albumArtist));
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, TagIndexEntry item, TrackSkipperContext c, AlbumJob job)
+            => album == item.Album && (albumArtist == null || item.AlbumArtist.Contains(albumArtist));
     }
 
-    // TODO: Replace generic tuple soup with readonly record structs.
-    public class TagConditionalSkipper : FileBasedSkipper<(string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file)>
+    public class TagConditionalSkipper : FileBasedSkipper<TagConditionIndexEntry>
     {
         readonly string dir;
-        private readonly Dictionary<string, List<(string path, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item)>> index = new();
-        protected override IEnumerable<(string path, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item)> Index => index.Values.SelectMany(x => x);
+        private readonly Dictionary<string, List<(string path, TagConditionIndexEntry item)>> index = new();
+        protected override IEnumerable<(string path, TagConditionIndexEntry item)> Index => index.Values.SelectMany(x => x);
 
         public TagConditionalSkipper(string dir) { this.dir = dir; }
 
@@ -307,9 +311,9 @@ namespace Sockseek.Core.Services;
                         var    simpleFile   = new SimpleFile(musicFile);
 
                         if (!index.TryGetValue(parent, out var value))
-                            index[parent] = new() { (path, (partist, ptitle, palbum, palbumArtist, simpleFile)) };
+                            index[parent] = new() { (path, new TagConditionIndexEntry(partist, ptitle, palbum, palbumArtist, simpleFile)) };
                         else
-                            value.Add((path, (partist, ptitle, palbum, palbumArtist, simpleFile)));
+                            value.Add((path, new TagConditionIndexEntry(partist, ptitle, palbum, palbumArtist, simpleFile)));
                     }
                     catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
                 }
@@ -317,19 +321,19 @@ namespace Sockseek.Core.Services;
             IndexIsBuilt = true;
         }
 
-        protected override bool FileMatchesSong(string path, string artist, string title, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item, TrackSkipperContext c, SongJob? song)
-            => title == item.ptitle
-            && item.partist.Contains(artist)
-            && (c.conditions == null || ConditionSatisfactionPolicy.LocalFileSatisfies(c.conditions, item.file, song?.Query));
+        protected override bool FileMatchesSong(string path, string artist, string title, TagConditionIndexEntry item, TrackSkipperContext c, SongJob? song)
+            => title == item.Title
+            && item.Artist.Contains(artist)
+            && (c.conditions == null || ConditionSatisfactionPolicy.LocalFileSatisfies(c.conditions, item.File, song?.Query));
 
-        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, (string partist, string ptitle, string palbum, string palbumArtist, SimpleFile file) item, TrackSkipperContext c, AlbumJob job)
+        protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, TagConditionIndexEntry item, TrackSkipperContext c, AlbumJob job)
         {
-            if (album != item.palbum) return false;
-            if (albumArtist != null && !item.palbumArtist.Contains(albumArtist)) return false;
+            if (album != item.Album) return false;
+            if (albumArtist != null && !item.AlbumArtist.Contains(albumArtist)) return false;
             if (c.conditions == null) return true;
 
-            var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.file.Path)!);
-            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.file), c, job);
+            var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.File.Path)!);
+            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.File), c, job);
         }
     }
 

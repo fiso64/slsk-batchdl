@@ -71,7 +71,6 @@ public partial class AlbumGroupingBenchmarks
             search,
             userSuccessCounts,
             useInfer: false,
-            useLevenshtein: false,
             albumMode: true);
 
         sorter.AddRange(rawResults.Where(result =>
@@ -112,7 +111,6 @@ public partial class AlbumGroupingBenchmarks
             search,
             userSuccessCounts,
             useInfer: false,
-            useLevenshtein: false,
             albumMode: true,
             ignoreStringSortConditions: true);
 
@@ -174,7 +172,6 @@ public partial class AlbumGroupingBenchmarks
             search,
             userSuccessCounts,
             useInfer: false,
-            useLevenshtein: false,
             albumMode: true);
 
         int capacity = rawResults.TryGetNonEnumeratedCount(out int resultCount) ? resultCount : 0;

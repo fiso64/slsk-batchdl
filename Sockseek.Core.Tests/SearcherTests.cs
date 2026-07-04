@@ -142,6 +142,24 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchAlbum_ReturnsMatchingResults()
+        {
+            var index = TestHelpers.CreateTestIndex();
+            var settings = TestHelpers.CreateDefaultSettings().Download;
+            var client = CreateMockClient(index);
+            var searcher = CreateSearcher(client, settings);
+            var album = new AlbumJob(new AlbumQuery { Album = "testalbum", Artist = "testartist" });
+
+            await searcher.SearchAlbum(album, settings.Search, new ResponseData(), CancellationToken.None);
+
+            var testUserFolder = album.Results.First(folder => folder.Username == "testuser");
+            Assert.AreEqual(4, testUserFolder.Files.Count);
+            CollectionAssert.AreEqual(
+                index.First(response => response.Username == "testuser").Files.Select(file => file.Filename).ToList(),
+                testUserFolder.Files.Select(file => file.Candidate.File.Filename).ToList());
+        }
+
+        [TestMethod]
         public void AlbumFolders_PreservesAlbumModeSorterOrder()
         {
             var badResponse = new SearchResponse("SlowUser", 1, false, 1, 10,

@@ -12,7 +12,7 @@ public sealed class IncrementalResultSorter
     private readonly SongQuery query;
     private readonly SearchSettings search;
     private readonly bool requireFileSatisfies;
-    private readonly List<ResultSorter.SortEntry> entries = [];
+    private List<ResultSorter.SortEntry> entries = [];
     private readonly HashSet<string> seen = new(StringComparer.Ordinal);
     private int nextOriginalIndex;
 
@@ -22,7 +22,6 @@ public sealed class IncrementalResultSorter
         ConcurrentDictionary<string, int> userSuccessCounts,
         bool albumMode = false,
         bool useInfer = false,
-        bool useLevenshtein = false,
         bool requireFileSatisfies = false,
         bool ignoreStringSortConditions = false)
     {
@@ -36,7 +35,6 @@ public sealed class IncrementalResultSorter
             userSuccessCounts,
             useBracketCheck: !albumMode,
             useInfer,
-            useLevenshtein,
             albumMode,
             ignoreStringSortConditions);
     }
@@ -77,8 +75,6 @@ public sealed class IncrementalResultSorter
         return newEntries.Count;
     }
 
-    // TODO [PERFORMANCE]: Maybe remove the `readonly` modifier from the `entries` field, and simply swap the 
-    // reference: `this.entries = merged;`.
     private void MergeSortedEntries(List<ResultSorter.SortEntry> newEntries)
     {
         if (entries.Count == 0)
@@ -106,8 +102,7 @@ public sealed class IncrementalResultSorter
         while (newIndex < newEntries.Count)
             merged.Add(newEntries[newIndex++]);
 
-        entries.Clear();
-        entries.AddRange(merged);
+        entries = merged;
     }
 
     internal IEnumerable<(SearchResponse Response, SlFile File)> OrderedResults()

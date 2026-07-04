@@ -49,14 +49,13 @@ public class LargeResultProjectionBenchmarks
             .Count;
 
     [Benchmark]
-    public int SongSort_NoInferNoLevenshtein()
+    public int SongSort_NoInfer()
         => SearchResultProjector.SortedTrackCandidates(
                 trackResults,
                 trackQuery,
                 search,
                 userSuccessCounts,
-                useInfer: false,
-                useLevenshtein: false)
+                useInfer: false)
             .Count;
 
     [Benchmark]
