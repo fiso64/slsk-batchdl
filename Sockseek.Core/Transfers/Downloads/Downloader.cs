@@ -111,7 +111,7 @@ public class Downloader
 
             try
             {
-                Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, parentDir ?? "");
+                Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, CleanupRootForIncompletePath(incompleteOutputPath, parentDir));
                 SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: deleted incomplete download '{incompleteOutputPath}' after failure");
             }
             catch (Exception ex)
@@ -250,5 +250,16 @@ public class Downloader
                    s.HasFlag(TransferStates.Locally)  ? "Queued (L)" : "Queued";
         if (s.HasFlag(TransferStates.Initializing)) return "Initialising";
         return "Requested";
+    }
+
+    private static string CleanupRootForIncompletePath(string path, string? parentDir)
+    {
+        if (string.IsNullOrWhiteSpace(parentDir))
+            return "";
+
+        var stagingRoot = Path.Join(parentDir, ".sockseek-staging");
+        return Utils.IsInDirectory(path, stagingRoot, strict: true)
+            ? stagingRoot
+            : parentDir;
     }
 }

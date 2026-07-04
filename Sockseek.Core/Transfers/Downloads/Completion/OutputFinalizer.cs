@@ -153,7 +153,7 @@ internal sealed class OutputFinalizer
 
         try
         {
-            Utils.DeleteFileAndParentsIfEmpty(song.DownloadPath, parentDir);
+            Utils.DeleteFileAndParentsIfEmpty(song.DownloadPath, stagingRoot);
             song.DownloadPath = null;
         }
         catch (Exception ex)

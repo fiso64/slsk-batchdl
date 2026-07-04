@@ -292,11 +292,38 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         await Task.WhenAll(rootTasks);
         SockseekLog.Jobs.Trace("RunAsync: All rootTasks completed.");
 
+        CleanupEmptyStagingDirectories();
+
         if (Queue.Jobs.Count > 0 && !Queue.Jobs[^1].Config!.DoNotDownload)
             Events.RaiseEngineCompleted(Queue);
 
         SockseekLog.Jobs.Debug("Exiting RunAsync");
         await _runtime.CancelAsync();
+    }
+
+    private void CleanupEmptyStagingDirectories()
+    {
+        var outputParents = Queue.AllJobs()
+            .Select(job => job.Config?.Output.ParentDir)
+            .Where(parent => !string.IsNullOrWhiteSpace(parent))
+            .Select(parent => Path.GetFullPath(parent!))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var parentDir in outputParents)
+        {
+            var stagingRoot = Path.Join(parentDir, ".sockseek-staging");
+            if (!Directory.Exists(stagingRoot) || Utils.FileCountRecursive(stagingRoot) > 0)
+                continue;
+
+            try
+            {
+                Directory.Delete(stagingRoot, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                SockseekLog.Jobs.Debug($"Failed to remove empty staging directory '{stagingRoot}': {SockseekLog.ExceptionSummary(ex)}");
+            }
+        }
     }
 
 }

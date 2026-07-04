@@ -201,7 +201,7 @@ public partial class FileManager
             {
                 try
                 {
-                    Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, OutputParentDir);
+                    Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, CleanupRootForSourcePath(song.DownloadPath));
                 }
                 catch (Exception ex)
                 {
@@ -234,12 +234,20 @@ public partial class FileManager
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, OutputParentDir); }
+            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, CleanupRootForSourcePath(file.DownloadPath)); }
             catch (Exception ex) { SockseekLog.Jobs.Error(file, $"failed to move non-audio file from '{file.DownloadPath}' to '{newFilePath}' for parent job [{job.DisplayId}]: {ex}"); return; }
         }
 
         file.DownloadPath = newFilePath;
         organized.Add(file);
+    }
+
+    private string CleanupRootForSourcePath(string sourcePath)
+    {
+        var stagingRoot = Path.Join(OutputParentDir, ".sockseek-staging");
+        return Utils.IsInDirectory(sourcePath, stagingRoot, strict: true)
+            ? stagingRoot
+            : OutputParentDir;
     }
 
     private string ApplyNameFormat(string format, FileManagerContext ctx)
