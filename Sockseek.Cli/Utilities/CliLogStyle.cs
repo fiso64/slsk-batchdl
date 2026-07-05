@@ -146,6 +146,8 @@ internal static class CliLogStyle
             or TerminalLogKind.JobSucceeded or TerminalLogKind.PlaylistCompleted
             or TerminalLogKind.AggregateCompleted
             => "green",
+        TerminalLogKind.JobPartial
+            => "yellow",
         TerminalLogKind.SongFailed or TerminalLogKind.AlbumTrackFailed
             or TerminalLogKind.JobFailed
             => "red",

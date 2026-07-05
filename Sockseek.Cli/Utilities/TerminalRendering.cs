@@ -10,6 +10,7 @@ internal enum TerminalLogKind
 {
     JobSucceeded,
     JobFailed,
+    JobPartial,
     JobCancelled,
     JobAlreadyExists,
     SongDownloaded,
@@ -813,7 +814,8 @@ internal sealed class TerminalLiveRenderer : IDisposable
     private static string? StateColor(string state)
     {
         if (string.Equals(state, "downloading", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(state, "downloading tracks", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(state, "downloading tracks", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(state, "partial", StringComparison.OrdinalIgnoreCase))
             return "yellow";
         if (string.Equals(state, "searching", StringComparison.OrdinalIgnoreCase))
             return "cyan";

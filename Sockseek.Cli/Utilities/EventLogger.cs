@@ -54,6 +54,7 @@ internal sealed class EventLogger
         => kind switch
         {
             ActivityLogDisplayKind.Failed => TerminalLogKind.JobFailed,
+            ActivityLogDisplayKind.Partial => TerminalLogKind.JobPartial,
             ActivityLogDisplayKind.Cancelled => TerminalLogKind.JobCancelled,
             ActivityLogDisplayKind.Succeeded => TerminalLogKind.JobSucceeded,
             ActivityLogDisplayKind.AlreadyExists => TerminalLogKind.JobAlreadyExists,

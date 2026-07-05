@@ -313,6 +313,33 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void EventLogger_PartialSuccess_UsesPartialLogKind()
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        SockseekLog.RemoveFileOutputs();
+
+        var entries = new List<SockseekLog.StructuredLogEntry>();
+        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry), LogLevel.Information);
+
+        var eventLogger = new EventLogger(null!);
+        var summary = CreateAlbumSummary(Guid.NewGuid(), ExpectedJobStatus.Failed, null) with
+        {
+            LifecycleState = ServerJobLifecycleState.Terminal,
+            ActivityPhase = ServerJobActivityPhase.None,
+            TerminalOutcome = ServerJobTerminalOutcome.PartialSuccess,
+            FailureReason = ServerProtocol.FailureReasons.Other,
+        };
+
+        InvokePrivate(eventLogger, "HandleEvent", Envelope("job.upserted", summary));
+
+        var line = JobLogLine(entries.Single());
+        Assert.AreEqual("partial: Artist Album", line.Message);
+        Assert.AreEqual("partial", line.Highlight);
+        Assert.AreEqual(TerminalLogKind.JobPartial, line.Kind);
+        Assert.AreEqual("yellow", CliLogStyle.TerminalLogKindColor(line.Kind));
+    }
+
+    [TestMethod]
     public void EventLogger_DiagnosticError_CanBeSuppressedForRemoteClients()
     {
         SockseekLog.RemoveNonFileOutputs();

@@ -331,7 +331,8 @@ public class CliBackendParityTests
                     ctx.Backend,
                     second.WorkflowId,
                     job => job.Kind == ServerJobKind.Album
-                        && job.LifecycleState != ServerJobLifecycleState.Pending);
+                        && job.LifecycleState is ServerJobLifecycleState.AwaitingSelection
+                            or ServerJobLifecycleState.Terminal);
 
                 Assert.AreEqual(
                     ExpectedJobStatus.AwaitingSelection,

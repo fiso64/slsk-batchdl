@@ -31,6 +31,7 @@ public enum ActivityLogDisplayKind
     Status,
     Succeeded,
     Failed,
+    Partial,
     Cancelled,
     AlreadyExists,
     Skipped,
@@ -536,6 +537,8 @@ public sealed class JobActivityLogFormatter
     {
         if (status.StartsWith("failed", StringComparison.OrdinalIgnoreCase))
             return ActivityLogDisplayKind.Failed;
+        if (status.StartsWith("partial", StringComparison.OrdinalIgnoreCase))
+            return ActivityLogDisplayKind.Partial;
         if (status.StartsWith("succeeded", StringComparison.OrdinalIgnoreCase))
             return ActivityLogDisplayKind.Succeeded;
         if (status.StartsWith("already exists", StringComparison.OrdinalIgnoreCase))
@@ -566,7 +569,7 @@ public sealed class JobActivityLogFormatter
             ServerJobTerminalOutcome.Cancelled => ActivityLogDisplayKind.Cancelled,
             ServerJobTerminalOutcome.Failed when failureReason == ServerProtocol.FailureReasons.Cancelled => ActivityLogDisplayKind.Cancelled,
             ServerJobTerminalOutcome.Failed => ActivityLogDisplayKind.Failed,
-            ServerJobTerminalOutcome.PartialSuccess => ActivityLogDisplayKind.Failed,
+            ServerJobTerminalOutcome.PartialSuccess => ActivityLogDisplayKind.Partial,
             _ => ActivityLogDisplayKind.Status,
         };
 
@@ -578,7 +581,7 @@ public sealed class JobActivityLogFormatter
         {
             ActivityLogDisplayKind.Succeeded or ActivityLogDisplayKind.AlreadyExists => ActivityLogDisplayKind.AlbumTrackSucceeded,
             ActivityLogDisplayKind.Skipped or ActivityLogDisplayKind.Cancelled => ActivityLogDisplayKind.AlbumTrackSkipped,
-            ActivityLogDisplayKind.Failed => ActivityLogDisplayKind.AlbumTrackFailed,
+            ActivityLogDisplayKind.Failed or ActivityLogDisplayKind.Partial => ActivityLogDisplayKind.AlbumTrackFailed,
             _ => kind,
         };
 

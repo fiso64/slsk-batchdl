@@ -17,6 +17,7 @@ public class CliJobStatusPresenterTests
             transferState: "InProgress");
 
         Assert.AreEqual("partial", status.Label);
+        Assert.AreEqual(ConsoleColor.Yellow, status.Color);
         Assert.IsTrue(status.IsFailed);
     }
 
