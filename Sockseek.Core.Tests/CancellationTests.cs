@@ -442,9 +442,11 @@ namespace Tests.Cancellation
                 app.CompleteEnqueue();
 
                 SongJob? songJob = null;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Downloading && job is SongJob sj)
+                    if (change.ActivityPhase == JobActivityPhase.Downloading
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Song
+                        && app.GetJob(change.Job.Id) is SongJob sj)
                     {
                         songJob = sj;
                         // Cancel as soon as downloading starts
@@ -498,9 +500,11 @@ namespace Tests.Cancellation
                 app.CompleteEnqueue();
 
                 AlbumJob? albumJob = null;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Downloading && job is AlbumJob aj)
+                    if (change.ActivityPhase == JobActivityPhase.Downloading
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && app.GetJob(change.Job.Id) is AlbumJob aj)
                     {
                         albumJob = aj;
                         // Cancel as soon as downloading starts
@@ -551,10 +555,10 @@ namespace Tests.Cancellation
                 var client = new ClientTests.MockSoulseekClient([response]);
                 var engine = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (ReferenceEquals(job, albumJob) && job.LifecycleState == JobLifecycleState.Running)
-                        job.Cancel(JobCancellationSource.UserRequestedJob);
+                    if (change.Job.Id == albumJob.Id && change.LifecycleState == JobLifecycleState.Running)
+                        albumJob.Cancel(JobCancellationSource.UserRequestedJob);
                 };
 
                 engine.Enqueue(albumJob, downloadSettings);
@@ -601,10 +605,10 @@ namespace Tests.Cancellation
                 var client = new ClientTests.MockSoulseekClient([response]);
                 var engine = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (ReferenceEquals(job, aggregateJob) && job.LifecycleState == JobLifecycleState.Running)
-                        job.Cancel(JobCancellationSource.UserRequestedJob);
+                    if (change.Job.Id == aggregateJob.Id && change.LifecycleState == JobLifecycleState.Running)
+                        aggregateJob.Cancel(JobCancellationSource.UserRequestedJob);
                 };
 
                 engine.Enqueue(aggregateJob, downloadSettings);
@@ -654,10 +658,10 @@ namespace Tests.Cancellation
                 var client = new ClientTests.MockSoulseekClient([response]);
                 var engine = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (ReferenceEquals(job, songJob) && job.LifecycleState == JobLifecycleState.Running)
-                        job.Cancel(JobCancellationSource.UserRequestedJob);
+                    if (change.Job.Id == songJob.Id && change.LifecycleState == JobLifecycleState.Running)
+                        songJob.Cancel(JobCancellationSource.UserRequestedJob);
                 };
 
                 engine.Enqueue(songJob, downloadSettings);
@@ -693,10 +697,10 @@ namespace Tests.Cancellation
                 var client = new ClientTests.MockSoulseekClient([]);
                 var engine = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (ReferenceEquals(job, extractJob) && job.ActivityPhase == JobActivityPhase.Extracting)
-                        job.Cancel(JobCancellationSource.UserRequestedJob);
+                    if (change.Job.Id == extractJob.Id && change.ActivityPhase == JobActivityPhase.Extracting)
+                        extractJob.Cancel(JobCancellationSource.UserRequestedJob);
                 };
 
                 engine.Enqueue(extractJob, downloadSettings);
@@ -751,9 +755,11 @@ namespace Tests.Cancellation
 
                 AlbumJob? albumJob = null;
                 AlbumFolder? folder = null;
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Downloading && job is AlbumJob aj)
+                    if (change.ActivityPhase == JobActivityPhase.Downloading
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && engine.GetJob(change.Job.Id) is AlbumJob aj)
                     {
                         albumJob = aj;
                         folder = aj.ResolvedTarget;
@@ -845,15 +851,19 @@ namespace Tests.Cancellation
                 var engine = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
 
                 JobList? aggregateList = null;
-                engine.Events.JobRegistered += (job, parent) =>
+                engine.Events.JobRegistered += change =>
                 {
-                    if (parent == aggregateJob && job is JobList list)
+                    if (change.Parent?.Id == aggregateJob.Id
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.JobList
+                        && engine.GetJob(change.Job.Id) is JobList list)
                         aggregateList = list;
                 };
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (ReferenceEquals(job, aggregateList) && job.ActivityPhase == JobActivityPhase.RunningChildren)
-                        job.Cancel(JobCancellationSource.UserRequestedJob);
+                    if (aggregateList != null
+                        && change.Job.Id == aggregateList.Id
+                        && change.ActivityPhase == JobActivityPhase.RunningChildren)
+                        aggregateList.Cancel(JobCancellationSource.UserRequestedJob);
                 };
 
                 engine.Enqueue(aggregateJob, downloadSettings);

@@ -4,6 +4,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 
@@ -134,7 +135,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request.SongQuery != null
@@ -150,7 +151,7 @@ internal sealed class LocalCliBackend
                 snapshot.Items.Select(ToFileCandidateDto).ToList()));
         }
 
-        var songJob = stateStore.GetJob<SongJob>(jobId);
+        var songJob = GetRuntimeJob<SongJob>(jobId);
         if (songJob == null)
             return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(null);
 
@@ -170,7 +171,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = albumQuery != null
@@ -203,7 +204,7 @@ internal sealed class LocalCliBackend
                     folder.IsFullyRetrieved)).ToList()));
         }
 
-        var albumJob = stateStore.GetJob<AlbumJob>(jobId);
+        var albumJob = GetRuntimeJob<AlbumJob>(jobId);
         if (albumJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(null);
 
@@ -221,7 +222,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request.SongQuery != null
@@ -241,7 +242,7 @@ internal sealed class LocalCliBackend
                     includeCandidates ? song.Candidates?.Select(ToFileCandidateDto).ToList() : null)).ToList()));
         }
 
-        var aggregateJob = stateStore.GetJob<AggregateJob>(jobId);
+        var aggregateJob = GetRuntimeJob<AggregateJob>(jobId);
         if (aggregateJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AggregateTrackCandidateDto>?>(null);
 
@@ -265,7 +266,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request?.AlbumQuery != null
@@ -288,7 +289,7 @@ internal sealed class LocalCliBackend
                     includeFolders ? [..album.Results.Select(f => ToAlbumFolderDto(f, includeFiles: true))] : null)).ToList()));
         }
 
-        var albumAggregateJob = stateStore.GetJob<AlbumAggregateJob>(jobId);
+        var albumAggregateJob = GetRuntimeJob<AlbumAggregateJob>(jobId);
         if (albumAggregateJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?>(null);
 
@@ -306,7 +307,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<JobSummaryDto?>(null);
 
@@ -325,7 +326,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return null;
 
@@ -347,7 +348,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<IReadOnlyList<JobSummaryDto>?>(null);
 
@@ -417,7 +418,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<JobSummaryDto?>(null);
 
@@ -777,32 +778,14 @@ internal sealed class LocalCliBackend
                 && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
 
     private static JobSummaryDto BuildSubmittedJobSummary(Job job, Guid? sourceJobId = null)
-        => new(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            EngineStateStore.GetJobKind(job),
-            EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
-            job.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
-            EngineStateStore.ToServerJobSkipReason(job.SkipReason),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            EngineStateStore.ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
-            null,
-            null,
-            sourceJobId,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            [],
-            job.FailureDetail,
-            EngineStateStore.ToServerJobCancellationSource(job.CancellationSource));
+        => ServerSnapshotMapper.ToSubmittedJobSummary(job, sourceJobId);
 
-    private JobSummaryDto GetSummary(Job job)
-        => stateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);
+    private JobSummaryDto GetSummary(JobSnapshot job)
+        => stateStore.GetJobSummary(job.Id) ?? ServerSnapshotMapper.ToJobSummary(job);
+
+    private TJob? GetRuntimeJob<TJob>(Guid jobId)
+        where TJob : Job
+        => engine.GetJob(jobId) as TJob;
 
     private static SongQueryDto ToSongQueryDto(SongQuery query)
         => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);

@@ -1,10 +1,9 @@
-using Sockseek.Core;
-using Sockseek.Core.Jobs;
-using Sockseek.Core.Models;
-using Sockseek.Core.Services;
-using Sockseek.Core.Settings;
-using Soulseek;
 using Sockseek.Api;
+using Sockseek.Core;
+using Sockseek.Core.Events;
+using Sockseek.Core.Jobs;
+using Sockseek.Core.Snapshots;
+using Soulseek;
 
 namespace Sockseek.Server;
 
@@ -12,15 +11,14 @@ public sealed class EngineStateStore
 {
     private readonly Lock gate = new();
     // Keep records and workflow aggregate indexes in sync only through UpdateJobRecord.
-    private readonly Dictionary<Guid, Job> jobs = [];
+    private readonly Dictionary<Guid, JobSnapshot> jobs = [];
     private readonly Dictionary<Guid, JobRecord> records = [];
     private readonly Dictionary<Guid, WorkflowStateRecord> workflows = [];
     private readonly Dictionary<Guid, Guid?> parentJobIds = [];
     private readonly Dictionary<Guid, Guid> resultJobIds = [];
     private readonly Dictionary<Guid, Guid> sourceJobIds = [];
-    private readonly HashSet<Guid> infrastructureFailedJobs = [];
     private readonly HashSet<Guid> executionCompletedJobs = [];
-    private readonly Dictionary<Guid, TransferStates> songTransferStates = [];
+    private readonly Dictionary<Guid, string> songTransferStates = [];
 
     public event Action<JobSummaryDto>? JobUpserted;
     public event Action<WorkflowSummaryDto>? WorkflowUpserted;
@@ -58,13 +56,6 @@ public sealed class EngineStateStore
         }
     }
 
-    public TJob? GetJob<TJob>(Guid jobId)
-        where TJob : Job
-    {
-        lock (gate)
-            return jobs.TryGetValue(jobId, out var job) ? job as TJob : null;
-    }
-
     public JobDetailDto? GetJobDetail(Guid jobId)
     {
         lock (gate)
@@ -84,9 +75,11 @@ public sealed class EngineStateStore
             if (payload is AlbumJobPayloadDto albumPayload)
             {
                 var tracks = children
-                    .Select(c => jobs.TryGetValue(c.Id, out var job) ? job as SongJob : null)
-                    .OfType<SongJob>()
-                    .Select(s => ToSongJobPayloadDto(s, songTransferStates.TryGetValue(s.Id, out var ts) ? ts.ToString() : null))
+                    .Select(child => jobs.TryGetValue(child.Id, out var childJob) ? childJob : null)
+                    .OfType<JobSnapshot>()
+                    .Where(childJob => childJob.Kind == JobSnapshotKind.Song)
+                    .OrderBy(childJob => childJob.DisplayId)
+                    .Select(song => ServerSnapshotMapper.ToSongJobPayloadDto(song, GetTransferState(song.Id)))
                     .ToList();
                 if (tracks.Count > 0)
                     payload = albumPayload with { Tracks = tracks };
@@ -117,13 +110,11 @@ public sealed class EngineStateStore
             if (query.SkipReason.HasValue)
                 filtered = filtered.Where(record => record.Summary.SkipReason == query.SkipReason.Value);
 
-            var summaries = filtered
+            return filtered
                 .OrderBy(record => record.Summary.DisplayId)
                 .Where(record => query.IncludeAll || IsDefaultRoot(record))
                 .Select(record => record.Summary)
                 .ToList();
-
-            return summaries;
         }
     }
 
@@ -216,17 +207,31 @@ public sealed class EngineStateStore
         List<WorkflowSummaryDto> changedWorkflows;
         lock (gate)
         {
-            foreach (var job in jobs.Values.Where(IsActiveJob))
+            var failedJobs = jobs.Values
+                .Where(job => EffectiveLifecycleState(job) != JobLifecycleState.Terminal)
+                .Select(job => job with
+                {
+                    LifecycleState = JobLifecycleState.Terminal,
+                    ActivityPhase = JobActivityPhase.None,
+                    ActivityUntilUtc = null,
+                    TerminalOutcome = JobTerminalOutcome.Failed,
+                    FailureReason = JobFailureReason.Other,
+                    FailureMessage = "Infrastructure failure: " + reason,
+                    FailureDetail = detail,
+                    CanCancel = false,
+                    Revision = job.Revision + 1,
+                })
+                .ToList();
+
+            foreach (var failedJob in failedJobs)
             {
-                job.Fail(JobFailureReason.Other, "Infrastructure failure: " + reason, detail);
-                infrastructureFailedJobs.Add(job.Id);
-                UpdateJobRecord(job);
+                jobs[failedJob.Id] = failedJob;
+                UpdateJobRecord(failedJob);
             }
 
-            changedJobs = records.Values
-                .Where(record => infrastructureFailedJobs.Contains(record.Id))
-                .OrderBy(record => record.Summary.DisplayId)
-                .Select(record => record.Summary)
+            changedJobs = failedJobs
+                .Select(job => records[job.Id].Summary)
+                .OrderBy(summary => summary.DisplayId)
                 .ToList();
             changedWorkflows = changedJobs
                 .Select(job => job.WorkflowId)
@@ -238,18 +243,8 @@ public sealed class EngineStateStore
         PublishJobAndWorkflowUpserts(changedJobs, changedWorkflows);
     }
 
-    public static ServerJobKind GetJobKind(Job job) => job switch
-    {
-        ExtractJob => ServerJobKind.Extract,
-        SearchJob => ServerJobKind.Search,
-        SongJob => ServerJobKind.Song,
-        AlbumJob => ServerJobKind.Album,
-        JobList => ServerJobKind.JobList,
-        RetrieveFolderJob => ServerJobKind.RetrieveFolder,
-        AggregateJob => ServerJobKind.Aggregate,
-        AlbumAggregateJob => ServerJobKind.AlbumAggregate,
-        _ => ServerJobKind.Generic,
-    };
+    public static ServerJobKind GetJobKind(Job job)
+        => ServerSnapshotMapper.ToServerJobKind(job);
 
     public void SetSourceJob(Guid jobId, Guid sourceJobId)
     {
@@ -261,145 +256,137 @@ public sealed class EngineStateStore
         }
     }
 
-    private void OnJobRegistered(Job job, Job? parent)
+    private void OnJobRegistered(JobRegisteredChange change)
     {
         JobSummaryDto summary;
         WorkflowSummaryDto workflowSummary;
         lock (gate)
         {
-            job.EnsureDisplayId();
-            jobs[job.Id] = job;
-            parentJobIds[job.Id] = parent?.Id;
-            summary = UpdateJobRecord(job).Summary;
-            workflowSummary = BuildWorkflowSummary(job.WorkflowId);
+            jobs[change.Job.Id] = change.Job;
+            parentJobIds[change.Job.Id] = change.Parent?.Id;
+            summary = UpdateJobRecord(change.Job).Summary;
+            workflowSummary = BuildWorkflowSummary(change.Job.WorkflowId);
         }
-
-        if (job is SearchJob searchJob)
-            SubscribeToSearchJob(searchJob);
 
         PublishJobAndWorkflowUpserts([summary], [workflowSummary]);
     }
 
-    private void OnJobResultCreated(ExtractJob job, Job result)
+    private void OnJobResultCreated(JobResultCreatedChange change)
     {
         List<JobSummaryDto> changedJobs = [];
         WorkflowSummaryDto? workflowSummary = null;
         lock (gate)
         {
-            result.EnsureDisplayId();
-            resultJobIds[job.Id] = result.Id;
+            jobs[change.ExtractJob.Id] = change.ExtractJob;
+            resultJobIds[change.ExtractJob.Id] = change.ResultJob.Id;
 
-            if (jobs.TryGetValue(job.Id, out var extractJob))
-                changedJobs.Add(UpdateJobRecord(extractJob).Summary);
-            if (jobs.TryGetValue(result.Id, out var resultJob))
-                changedJobs.Add(UpdateJobRecord(resultJob).Summary);
-            else if (job.AutoProcessResult)
+            changedJobs.Add(UpdateJobRecord(change.ExtractJob).Summary);
+
+            if (jobs.ContainsKey(change.ResultJob.Id))
             {
-                jobs[result.Id] = result;
-                parentJobIds[result.Id] = parentJobIds.GetValueOrDefault(job.Id);
-                changedJobs.Add(UpdateJobRecord(result).Summary);
+                jobs[change.ResultJob.Id] = change.ResultJob;
+                changedJobs.Add(UpdateJobRecord(change.ResultJob).Summary);
+            }
+            else if (change.ExtractJob.Payload is ExtractJobSnapshotPayload { AutoProcessResult: true })
+            {
+                jobs[change.ResultJob.Id] = change.ResultJob;
+                parentJobIds[change.ResultJob.Id] = parentJobIds.GetValueOrDefault(change.ExtractJob.Id);
+                changedJobs.Add(UpdateJobRecord(change.ResultJob).Summary);
             }
 
-            if (workflows.ContainsKey(job.WorkflowId))
-                workflowSummary = BuildWorkflowSummary(job.WorkflowId);
+            if (workflows.ContainsKey(change.ExtractJob.WorkflowId))
+                workflowSummary = BuildWorkflowSummary(change.ExtractJob.WorkflowId);
         }
 
-        PublishJobAndWorkflowUpserts(changedJobs, workflowSummary != null ? [workflowSummary] : []);
+        PublishJobAndWorkflowUpserts(
+            changedJobs.DistinctBy(summary => summary.JobId).ToList(),
+            workflowSummary != null ? [workflowSummary] : []);
     }
 
-    private void OnJobStateChanged(Job job)
+    private void OnJobStateChanged(JobStateChangedChange change)
     {
         List<JobSummaryDto> summaries;
         List<WorkflowSummaryDto> workflowSummaries;
+        SearchUpdatedDto? searchUpdate;
         lock (gate)
         {
-            if (IsRunningOrPending(job))
-                executionCompletedJobs.Remove(job.Id);
+            if (ServerSnapshotMapper.IsRunningOrPending(change.Job))
+                executionCompletedJobs.Remove(change.Job.Id);
 
-            if (!jobs.ContainsKey(job.Id))
-            {
-                var containingRecords = UpdateRecordsContainingJob(job.Id);
-                summaries = containingRecords.Select(record => record.Summary).ToList();
-                workflowSummaries = containingRecords
-                    .Select(record => record.WorkflowId)
-                    .Distinct()
-                    .Select(BuildWorkflowSummary)
-                    .ToList();
-            }
-            else
-            {
-                var changedRecords = UpdateRecordsContainingJob(job.Id);
-                changedRecords.Add(UpdateJobRecord(job));
-                summaries = changedRecords
-                    .DistinctBy(record => record.Id)
-                    .Select(record => record.Summary)
-                    .ToList();
-                workflowSummaries = [BuildWorkflowSummary(job.WorkflowId)];
-            }
+            jobs[change.Job.Id] = change.Job;
+            var changedRecords = UpdateRecordsContainingJob(change.Job.Id);
+            changedRecords.Add(UpdateJobRecord(change.Job));
+            summaries = changedRecords
+                .DistinctBy(record => record.Id)
+                .Select(record => record.Summary)
+                .ToList();
+            workflowSummaries = [BuildWorkflowSummary(change.Job.WorkflowId)];
+            searchUpdate = ToSearchUpdated(change.Job);
         }
 
-        if (summaries.Count == 0 && workflowSummaries.Count == 0)
-            return;
+        if (summaries.Count > 0 || workflowSummaries.Count > 0)
+            PublishJobAndWorkflowUpserts(summaries, workflowSummaries);
 
-        PublishJobAndWorkflowUpserts(summaries, workflowSummaries);
+        if (searchUpdate != null)
+            SearchUpdated?.Invoke(searchUpdate);
     }
 
-    private void OnJobDiscoveryChanged(Job job)
+    private void OnJobDiscoveryChanged(JobDiscoveryChangedChange change)
     {
         List<JobSummaryDto> summaries = [];
+        SearchUpdatedDto? searchUpdate;
         lock (gate)
         {
-            if (jobs.ContainsKey(job.Id))
-            {
-                summaries.Add(UpdateJobRecord(job).Summary);
-            }
-            else
-            {
-                var containingRecords = UpdateRecordsContainingJob(job.Id);
-                if (containingRecords.Count > 0)
-                    summaries.AddRange(containingRecords.Select(record => record.Summary));
-            }
+            jobs[change.Job.Id] = change.Job;
+            var changedRecords = UpdateRecordsContainingJob(change.Job.Id);
+            changedRecords.Add(UpdateJobRecord(change.Job));
+            summaries.AddRange(changedRecords
+                .DistinctBy(record => record.Id)
+                .Select(record => record.Summary));
+            searchUpdate = ToSearchUpdated(change.Job);
         }
 
-        if (summaries.Count == 0)
-            return;
+        if (summaries.Count > 0)
+            PublishJobAndWorkflowUpserts(summaries, []);
 
-        PublishJobAndWorkflowUpserts(summaries, []);
+        if (searchUpdate != null)
+            SearchUpdated?.Invoke(searchUpdate);
     }
 
-    private void OnJobExecutionCompleted(Job job)
+    private void OnJobExecutionCompleted(JobExecutionCompletedChange change)
     {
         JobSummaryDto summary;
         WorkflowSummaryDto workflowSummary;
         lock (gate)
         {
-            if (!jobs.ContainsKey(job.Id))
-                return;
-
-            executionCompletedJobs.Add(job.Id);
-            summary = UpdateJobRecord(job).Summary;
-            workflowSummary = BuildWorkflowSummary(job.WorkflowId);
+            jobs[change.Job.Id] = change.Job;
+            executionCompletedJobs.Add(change.Job.Id);
+            summary = UpdateJobRecord(change.Job).Summary;
+            workflowSummary = BuildWorkflowSummary(change.Job.WorkflowId);
         }
 
         PublishJobAndWorkflowUpserts([summary], [workflowSummary]);
     }
 
-    private void OnDownloadStateChanged(SongJob song, TransferStates state)
+    private void OnDownloadStateChanged(DownloadStateChangedChange change)
     {
         lock (gate)
-            songTransferStates[song.Id] = state;
+        {
+            songTransferStates[change.Song.Id] = change.State;
+            jobs[change.Song.Id] = change.Song;
+            UpdateJobRecord(change.Song);
+            UpdateRecordsContainingJob(change.Song.Id);
+        }
     }
 
-
-    private void OnNestedSongDownloadStarted(SongJob song, FileCandidate _) => OnNestedSongChanged(song);
-
-    private void OnNestedSongChanged(SongJob song)
+    private void OnNestedSongDownloadStarted(DownloadStartedChange change)
     {
         List<JobSummaryDto> summaries;
         List<WorkflowSummaryDto> workflowSummaries;
         lock (gate)
         {
-            var containingRecords = UpdateRecordsContainingJob(song.Id);
+            jobs[change.Song.Id] = change.Song;
+            var containingRecords = UpdateRecordsContainingJob(change.Song.Id);
             summaries = containingRecords.Select(record => record.Summary).ToList();
             workflowSummaries = containingRecords
                 .Select(record => record.WorkflowId)
@@ -425,59 +412,10 @@ public sealed class EngineStateStore
             WorkflowUpserted?.Invoke(workflow);
     }
 
-    private void SubscribeToSearchJob(SearchJob searchJob)
-    {
-        searchJob.Session.RawResultAdded += OnSearchRawResultAdded;
-        searchJob.Session.Completed += OnSearchCompleted;
-    }
-
-    private void OnSearchRawResultAdded(SearchSession session, SearchRawResult rawResult)
-    {
-        SearchJob? searchJob;
-        lock (gate)
-        {
-            searchJob = jobs.Values
-                .OfType<SearchJob>()
-                .FirstOrDefault(job => ReferenceEquals(job.Session, session));
-
-            if (searchJob != null)
-                UpdateJobRecord(searchJob);
-        }
-
-        if (searchJob == null)
-            return;
-
-        SearchUpdated?.Invoke(new SearchUpdatedDto(
-            searchJob.Id,
-            searchJob.WorkflowId,
-            rawResult.Revision,
-            searchJob.ResultCount,
-            false));
-    }
-
-    private void OnSearchCompleted(SearchSession session)
-    {
-        SearchJob? searchJob;
-        lock (gate)
-        {
-            searchJob = jobs.Values
-                .OfType<SearchJob>()
-                .FirstOrDefault(job => ReferenceEquals(job.Session, session));
-
-            if (searchJob != null)
-                UpdateJobRecord(searchJob);
-        }
-
-        if (searchJob == null)
-            return;
-
-        SearchUpdated?.Invoke(new SearchUpdatedDto(
-            searchJob.Id,
-            searchJob.WorkflowId,
-            searchJob.Revision,
-            searchJob.ResultCount,
-            searchJob.IsComplete));
-    }
+    private SearchUpdatedDto? ToSearchUpdated(JobSnapshot job)
+        => job.Payload is SearchJobSnapshotPayload search
+            ? new SearchUpdatedDto(job.Id, job.WorkflowId, search.Revision, search.ResultCount, search.IsComplete)
+            : null;
 
     private WorkflowSummaryDto BuildWorkflowSummary(Guid workflowId)
         => workflows.TryGetValue(workflowId, out var workflow)
@@ -538,19 +476,20 @@ public sealed class EngineStateStore
     private static bool IsDefaultRoot(JobRecord record)
         => record.ParentJobId == null;
 
-    private JobRecord UpdateJobRecord(Job job)
+    private JobRecord UpdateJobRecord(JobSnapshot job)
     {
-        var parentJobId = parentJobIds.GetValueOrDefault(job.Id);
-        if (records.TryGetValue(job.Id, out var oldRecord))
+        var current = RefreshNestedSnapshots(jobs.GetValueOrDefault(job.Id) ?? job);
+        var parentJobId = parentJobIds.GetValueOrDefault(current.Id);
+        if (records.TryGetValue(current.Id, out var oldRecord))
             RemoveWorkflowRecord(oldRecord);
 
         var record = new JobRecord(
-            job.Id,
-            job.WorkflowId,
+            current.Id,
+            current.WorkflowId,
             parentJobId,
-            BuildJobSummary(job),
-            BuildPayload(job));
-        records[job.Id] = record;
+            BuildJobSummary(current),
+            ServerSnapshotMapper.ToJobPayload(current, GetTransferState, CountDescendants));
+        records[current.Id] = record;
         AddWorkflowRecord(record);
         return record;
     }
@@ -577,331 +516,84 @@ public sealed class EngineStateStore
     }
 
     private List<JobRecord> UpdateRecordsContainingJob(Guid jobId)
-    {
-        return jobs.Values
-            .Where(job => ContainsNestedJob(job, jobId))
+        => jobs.Values
+            .Where(job => job.Id != jobId && ServerSnapshotMapper.ContainsNestedJob(job, jobId))
             .Select(UpdateJobRecord)
             .ToList();
+
+    private JobSnapshot RefreshNestedSnapshots(JobSnapshot job)
+    {
+        if (jobs.TryGetValue(job.Id, out var current) && !ReferenceEquals(current, job))
+            job = current;
+
+        return job.Payload switch
+        {
+            AlbumJobSnapshotPayload album => job with
+            {
+                Payload = album with
+                {
+                    TrackJobs = album.TrackJobs.Select(RefreshNestedSnapshots).ToList(),
+                },
+            },
+            AggregateJobSnapshotPayload aggregate => job with
+            {
+                Payload = aggregate with
+                {
+                    Songs = aggregate.Songs.Select(RefreshNestedSnapshots).ToList(),
+                },
+            },
+            JobListSnapshotPayload list => job with
+            {
+                Payload = list with
+                {
+                    Jobs = list.Jobs.Select(RefreshNestedSnapshots).ToList(),
+                },
+            },
+            _ => job,
+        };
     }
 
-    private static bool ContainsNestedJob(Job container, Guid jobId)
-        => container switch
-        {
-            AlbumJob albumJob => albumJob.TrackJobs
-                .Any(song => song.Id == jobId),
-            AggregateJob aggregateJob => aggregateJob.Songs.Any(song => song.Id == jobId),
-            JobList jobList => jobList.Jobs.Any(job => job.Id == jobId || ContainsNestedJob(job, jobId)),
-            _ => false,
-        };
-
-    private JobSummaryDto BuildJobSummary(Job job)
+    private JobSummaryDto BuildJobSummary(JobSnapshot job)
     {
         var parentJobId = parentJobIds.GetValueOrDefault(job.Id);
         Guid? resultJobId = resultJobIds.TryGetValue(job.Id, out var resultId) ? resultId : null;
         Guid? sourceJobId = sourceJobIds.TryGetValue(job.Id, out var sourceId) ? sourceId : null;
 
-        return new JobSummaryDto(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            GetJobKind(job),
-            EffectiveServerLifecycleState(job),
-            EffectiveServerActivityPhase(job),
-            EffectiveActivityUntilUtc(job),
-            EffectiveServerTerminalOutcome(job),
-            ToServerJobSkipReason(job.SkipReason),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
+        return ServerSnapshotMapper.ToJobSummary(
+            job,
             parentJobId,
             resultJobId,
             sourceJobId,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            job.Config?.AppliedAutoProfiles?.OrderBy(x => x).ToList() ?? [],
-            BuildActions(job),
-            job.FailureDetail,
-            ToServerJobCancellationSource(job.CancellationSource),
-            job.Config?.PrintOption ?? PrintOption.None);
+            EffectiveLifecycleState(job),
+            EffectiveActivityPhase(job),
+            EffectiveActivityUntilUtc(job),
+            EffectiveTerminalOutcome(job));
     }
 
-    private JobPayloadDto BuildPayload(Job job)
-        => job switch
-        {
-            ExtractJob extractJob => new ExtractJobPayloadDto(
-                extractJob.Input,
-                extractJob.InputType?.ToString(),
-                extractJob.Result?.Id,
-                extractJob.AutoProcessResult,
-                BuildExtractResultDraft(extractJob)),
-            SearchJob searchJob => new SearchJobPayloadDto(
-                searchJob.QueryText,
-                searchJob.DefaultFileProjection != null
-                    ? new FileSearchProjectionRequestDto(
-                        ToSongQueryDto(searchJob.DefaultFileProjection.Query),
-                        searchJob.DefaultFileProjection.IncludeFullResults)
-                    : null,
-                searchJob.DefaultFolderProjection != null
-                    ? new FolderSearchProjectionRequestDto(
-                        ToAlbumQueryDto(searchJob.DefaultFolderProjection.Query),
-                        searchJob.DefaultFolderProjection.IncludeFiles)
-                    : null,
-                searchJob.ResultCount,
-                searchJob.Revision,
-                searchJob.IsComplete),
-            SongJob songJob => ToSongJobPayloadDto(songJob,
-                songTransferStates.TryGetValue(songJob.Id, out var ts) ? ts.ToString() : null),
-            AlbumJob albumJob => new AlbumJobPayloadDto(
-                ToAlbumQueryDto(albumJob.Query),
-                albumJob.Results.Count,
-                albumJob.DownloadPath,
-                albumJob.ResolvedTarget?.Username,
-                albumJob.ResolvedTarget?.FolderPath,
-                albumJob.ResolvedTarget != null ? albumJob.TrackJobs.Count : null,
-                albumJob.ResolvedTarget != null ? albumJob.TrackJobs.Count(IsTerminalSong) : null,
-                albumJob.ResolvedTarget != null ? albumJob.TrackJobs.Count(IsSuccessfulSong) : null,
-                albumJob.ResolvedTarget != null ? albumJob.TrackJobs.Count(IsFailedOrSkippedSong) : null,
-                null,
-                null),
-            AggregateJob aggregateJob => new AggregateJobPayloadDto(
-                ToSongQueryDto(aggregateJob.Query),
-                aggregateJob.Songs.Count,
-                aggregateJob.Songs.Count(IsTerminalSong),
-                aggregateJob.Songs.Count(IsSuccessfulSong),
-                aggregateJob.Songs.Count(IsFailedOrSkippedSong),
-                null),
-            AlbumAggregateJob albumAggregateJob => new AlbumAggregateJobPayloadDto(
-                ToAlbumQueryDto(albumAggregateJob.Query),
-                albumAggregateJob.Albums.Count > 0
-                    ? albumAggregateJob.Albums.Count
-                    : CountDescendants(albumAggregateJob.Id, ServerJobKind.Album)),
-            JobList jobList => new JobListPayloadDto(
-                jobList.Count,
-                jobList.Jobs.Count(IsActiveJob),
-                jobList.Jobs.Count(IsTerminalJob),
-                jobList.Jobs.Count(IsSuccessfulJob),
-                jobList.Jobs.Count(IsFailedOrSkippedJob),
-                null),
-            RetrieveFolderJob retrieveFolderJob => new RetrieveFolderJobPayloadDto(
-                retrieveFolderJob.TargetFolder.FolderPath,
-                retrieveFolderJob.TargetFolder.Username,
-                retrieveFolderJob.NewFilesFoundCount,
-                ToServerFolderRetrievalOutcome(retrieveFolderJob.RetrievalOutcome),
-                retrieveFolderJob.RetrievalCancelled,
-                ToAlbumFolderDto(retrieveFolderJob.TargetFolder, includeFiles: true)),
-            _ => new GenericJobPayloadDto(job.ToString(noInfo: true))
-        };
-
-    private static JobDraftDto? BuildExtractResultDraft(ExtractJob extractJob)
-        => extractJob is { AutoProcessResult: false, Result: not null }
-            ? ToJobDraft(extractJob.Result, extractJob.Config)
-            : null;
-
-    private static JobDraftDto? ToJobDraft(Job? job, DownloadSettings? inheritedConfig = null)
-        => job switch
-        {
-            null => null,
-            ExtractJob extract => new ExtractJobDraftDto(
-                extract.Input,
-                extract.InputType?.ToString(),
-                extract.AutoProcessResult,
-                SettingsDelta(inheritedConfig, extract.Config),
-                extract.ResultDownloadBehaviorPolicy != null ? ToDownloadBehaviorPolicyDto(extract.ResultDownloadBehaviorPolicy) : null,
-                ToProvenanceDto(extract)),
-            SearchJob search when search.DefaultFolderProjection != null =>
-                new AlbumSearchJobDraftDto(
-                    ToAlbumQueryDto(search.DefaultFolderProjection.Query),
-                    SettingsDelta(inheritedConfig, search.Config),
-                    ToProvenanceDto(search)),
-            SearchJob search when search.DefaultFileProjection != null =>
-                new TrackSearchJobDraftDto(
-                    ToSongQueryDto(search.DefaultFileProjection.Query),
-                    search.DefaultFileProjection.IncludeFullResults,
-                    SettingsDelta(inheritedConfig, search.Config),
-                    ToProvenanceDto(search)),
-            SongJob song => new SongJobDraftDto(
-                ToSongQueryDto(song.Query),
-                ToDownloadBehaviorPolicyDto(song.DownloadBehaviorPolicy),
-                SettingsDelta(inheritedConfig, song.Config),
-                ToProvenanceDto(song)),
-            AlbumJob album => new AlbumJobDraftDto(
-                ToAlbumQueryDto(album.Query),
-                ToDownloadBehaviorPolicyDto(album.DownloadBehaviorPolicy),
-                SettingsDelta(inheritedConfig, album.Config),
-                ToProvenanceDto(album)),
-            AggregateJob aggregate => new AggregateJobDraftDto(
-                ToSongQueryDto(aggregate.Query),
-                ToDownloadBehaviorPolicyDto(aggregate.DownloadBehaviorPolicy),
-                SettingsDelta(inheritedConfig, aggregate.Config),
-                ToProvenanceDto(aggregate)),
-            AlbumAggregateJob aggregate => new AlbumAggregateJobDraftDto(
-                ToAlbumQueryDto(aggregate.Query),
-                ToDownloadBehaviorPolicyDto(aggregate.DownloadBehaviorPolicy),
-                SettingsDelta(inheritedConfig, aggregate.Config),
-                ToProvenanceDto(aggregate)),
-            JobList list => new JobListJobDraftDto(
-                list.ItemName,
-                list.Jobs.Select(child => ToJobDraft(child, list.Config)).OfType<JobDraftDto>().ToList(),
-                SettingsDelta(inheritedConfig, list.Config),
-                ToProvenanceDto(list)),
-            _ => null,
-        };
-
-    private static JobProvenanceDto? ToProvenanceDto(Job job)
-        => job.SourceMutation == null && job.LineNumber == 0 && job.ItemNumber == 1
-            ? null
-            : new JobProvenanceDto(job.ItemNumber, job.LineNumber, ToSourceMutationDto(job.SourceMutation));
-
-    private static SourceMutationDto? ToSourceMutationDto(SourceMutation? mutation)
-        => mutation == null
-            ? null
-            : new SourceMutationDto(
-                mutation.Kind.ToString(),
-                mutation.Source,
-                mutation.LineNumber,
-                mutation.ItemNumber,
-                mutation.CsvColumnCount,
-                mutation.TrackUri);
-
-    private static DownloadSettingsPatchDto? SettingsDelta(DownloadSettings? inheritedConfig, DownloadSettings? effectiveConfig)
-        => inheritedConfig != null && effectiveConfig != null
-            ? DownloadSettingsPatchDtoMapper.FromDifference(inheritedConfig, effectiveConfig)
-            : null;
-
-    private static DownloadBehaviorPolicyDto ToDownloadBehaviorPolicyDto(DownloadBehaviorPolicy policy)
-        => new(policy.Default, policy.Song, policy.Album, policy.Aggregate, policy.AlbumAggregate);
-
-    private static IReadOnlyList<ResourceActionDto> BuildActions(Job job)
-        => job.LifecycleState != JobLifecycleState.Terminal && job.Cts != null && !job.Cts.IsCancellationRequested
-            ? [CancelAction(job.Id)]
-            : [];
-
-    private static ResourceActionDto CancelAction(Guid jobId)
-        => new(ServerResourceActionKind.Cancel, "POST", $"/api/jobs/{jobId}/cancel");
-
-    private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song, string? transferState = null)
-    {
-        long? totalBytes = song.FileSize > 0 ? song.FileSize : song.ResolvedTarget?.File.Size;
-        double? progressPercent = totalBytes > 0
-            ? Math.Round((double)song.BytesTransferred / totalBytes.Value * 100, 2)
-            : null;
-
-        return new SongJobPayloadDto(
-            ToSongQueryDto(song.Query),
-            song.Candidates?.Count,
-            song.DownloadPath,
-            song.ResolvedTarget?.Username,
-            song.ResolvedTarget?.Filename,
-            song.ResolvedTarget?.Response.HasFreeUploadSlot,
-            song.ResolvedTarget?.Response.UploadSpeed,
-            song.ResolvedTarget?.File.Size,
-            song.ResolvedTarget?.File.SampleRate,
-            song.ResolvedTarget?.File.Extension,
-            song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
-            song.Id,
-            song.DisplayId,
-            null,
-            ToServerJobLifecycleState(song.LifecycleState),
-            ToServerJobActivityPhase(song.ActivityPhase),
-            song.ActivityUntilUtc,
-            ToServerJobTerminalOutcome(song.TerminalOutcome),
-            ToServerJobSkipReason(song.SkipReason),
-            ToServerFailureReason(song.FailureReason),
-            song.FailureMessage,
-            song.BytesTransferred,
-            totalBytes,
-            progressPercent,
-            BuildActions(song),
-            transferState,
-            ToServerJobCancellationSource(song.CancellationSource),
-            ToServerSongDownloadSource(song.DownloadSource));
-    }
-
-    private static SongQueryDto ToSongQueryDto(SongQuery query) => new(
-        Optional(query.Artist),
-        Optional(query.Title),
-        Optional(query.Album),
-        Optional(query.URI),
-        Optional(query.Length),
-        query.ArtistMaybeWrong);
-
-    private static AlbumQueryDto ToAlbumQueryDto(AlbumQuery query) => new(
-        Optional(query.Artist),
-        Optional(query.Album),
-        Optional(query.SearchHint),
-        Optional(query.URI),
-        query.ArtistMaybeWrong);
-
-    private static string? Optional(string value)
-        => value.Length > 0 ? value : null;
-
-    private static int? Optional(int value)
-        => value >= 0 ? value : null;
-
-    private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate) => new(
-        new FileCandidateRefDto(candidate.Username, candidate.Filename),
-        candidate.Username,
-        candidate.Filename,
-        new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-        candidate.File.Size,
-        candidate.File.BitRate,
-        candidate.File.SampleRate,
-        candidate.File.Length,
-        candidate.File.Extension,
-        candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
-
-    private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
-        => new(
-            new AlbumFolderRefDto(folder.Username, folder.FolderPath),
-            folder.Username,
-            folder.FolderPath,
-            new PeerInfoDto(
-                folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
-            folder.SearchFileCount,
-            folder.SearchAudioFileCount,
-            includeFiles
-                ? folder.Files
-                    .Select(file => ToFileCandidateDto(file.Candidate))
-                    .ToList()
-                : null,
-            folder.IsFullyRetrieved);
-
-    private JobLifecycleState EffectiveLifecycleState(Job job)
+    private JobLifecycleState EffectiveLifecycleState(JobSnapshot job)
         => executionCompletedJobs.Contains(job.Id)
-            && IsRunningOrPending(job)
+            && ServerSnapshotMapper.IsRunningOrPending(job)
                 ? JobLifecycleState.Terminal
                 : job.LifecycleState;
 
-    private JobActivityPhase EffectiveActivityPhase(Job job)
+    private JobActivityPhase EffectiveActivityPhase(JobSnapshot job)
         => EffectiveLifecycleState(job) == JobLifecycleState.Terminal
             ? JobActivityPhase.None
             : job.ActivityPhase;
 
-    private DateTimeOffset? EffectiveActivityUntilUtc(Job job)
+    private DateTimeOffset? EffectiveActivityUntilUtc(JobSnapshot job)
         => EffectiveActivityPhase(job) == JobActivityPhase.None
             ? null
             : job.ActivityUntilUtc;
 
-    private JobTerminalOutcome EffectiveTerminalOutcome(Job job)
+    private JobTerminalOutcome EffectiveTerminalOutcome(JobSnapshot job)
         => executionCompletedJobs.Contains(job.Id)
-            && IsRunningOrPending(job)
+            && ServerSnapshotMapper.IsRunningOrPending(job)
                 ? JobTerminalOutcome.Succeeded
                 : job.TerminalOutcome;
 
-    private ServerJobLifecycleState EffectiveServerLifecycleState(Job job)
-        => ToServerJobLifecycleState(EffectiveLifecycleState(job));
-
-    private ServerJobActivityPhase EffectiveServerActivityPhase(Job job)
-        => ToServerJobActivityPhase(EffectiveActivityPhase(job));
-
-    private ServerJobTerminalOutcome EffectiveServerTerminalOutcome(Job job)
-        => ToServerJobTerminalOutcome(EffectiveTerminalOutcome(job));
-
-    private bool IsActiveJob(Job job)
-        => EffectiveLifecycleState(job) != JobLifecycleState.Terminal;
+    private string? GetTransferState(Guid jobId)
+        => songTransferStates.TryGetValue(jobId, out var state) ? state : null;
 
     private int CountDescendants(Guid parentId, ServerJobKind? kind = null)
     {
@@ -927,59 +619,28 @@ public sealed class EngineStateStore
                 && record.Summary.SkipReason != ServerJobSkipReason.AlreadyExists);
 
     public static ServerJobLifecycleState ToServerJobLifecycleState(JobLifecycleState state)
-        => Enum.Parse<ServerJobLifecycleState>(state.ToString());
+        => ServerSnapshotMapper.ToServerJobLifecycleState(state);
 
     public static ServerJobActivityPhase ToServerJobActivityPhase(JobActivityPhase phase)
-        => Enum.Parse<ServerJobActivityPhase>(phase.ToString());
+        => ServerSnapshotMapper.ToServerJobActivityPhase(phase);
 
     public static ServerJobTerminalOutcome ToServerJobTerminalOutcome(JobTerminalOutcome outcome)
-        => Enum.Parse<ServerJobTerminalOutcome>(outcome.ToString());
+        => ServerSnapshotMapper.ToServerJobTerminalOutcome(outcome);
 
     public static ServerSongDownloadSource ToServerSongDownloadSource(SongDownloadSource source)
-        => Enum.Parse<ServerSongDownloadSource>(source.ToString());
+        => ServerSnapshotMapper.ToServerSongDownloadSource(source);
 
     public static ServerJobSkipReason ToServerJobSkipReason(JobSkipReason reason)
-        => Enum.Parse<ServerJobSkipReason>(reason.ToString());
+        => ServerSnapshotMapper.ToServerJobSkipReason(reason);
 
     public static ServerJobFailureReason? ToServerFailureReason(JobFailureReason reason)
-        => reason == JobFailureReason.None
-            ? null
-            : Enum.Parse<ServerJobFailureReason>(reason.ToString());
+        => ServerSnapshotMapper.ToServerFailureReason(reason);
 
     public static ServerJobCancellationSource ToServerJobCancellationSource(JobCancellationSource source)
-        => Enum.Parse<ServerJobCancellationSource>(source.ToString());
+        => ServerSnapshotMapper.ToServerJobCancellationSource(source);
 
     public static ServerFolderRetrievalOutcome ToServerFolderRetrievalOutcome(FolderRetrievalOutcome outcome)
-        => Enum.Parse<ServerFolderRetrievalOutcome>(outcome.ToString());
-
-    private static bool IsRunningOrPending(Job job)
-        => job.LifecycleState is JobLifecycleState.Pending or JobLifecycleState.Running;
-
-    private static bool IsTerminalJob(Job job)
-        => job.LifecycleState == JobLifecycleState.Terminal;
-
-    private static bool IsSuccessfulJob(Job job)
-        => job.TerminalOutcome == JobTerminalOutcome.Succeeded
-            || (job.TerminalOutcome == JobTerminalOutcome.Skipped && job.SkipReason == JobSkipReason.AlreadyExists);
-
-    private static bool IsFailedOrSkippedJob(Job job)
-        => job.TerminalOutcome is JobTerminalOutcome.Failed
-                or JobTerminalOutcome.Cancelled
-                or JobTerminalOutcome.PartialSuccess
-            || (job.TerminalOutcome == JobTerminalOutcome.Skipped && job.SkipReason != JobSkipReason.AlreadyExists);
-
-    private static bool IsTerminalSong(SongJob song)
-        => song.LifecycleState == JobLifecycleState.Terminal;
-
-    private static bool IsSuccessfulSong(SongJob song)
-        => song.TerminalOutcome == JobTerminalOutcome.Succeeded
-            || (song.TerminalOutcome == JobTerminalOutcome.Skipped && song.SkipReason == JobSkipReason.AlreadyExists);
-
-    private static bool IsFailedOrSkippedSong(SongJob song)
-        => song.TerminalOutcome is JobTerminalOutcome.Failed
-                or JobTerminalOutcome.Cancelled
-                or JobTerminalOutcome.PartialSuccess
-            || (song.TerminalOutcome == JobTerminalOutcome.Skipped && song.SkipReason != JobSkipReason.AlreadyExists);
+        => ServerSnapshotMapper.ToServerFolderRetrievalOutcome(outcome);
 
     private sealed record JobRecord(
         Guid Id,

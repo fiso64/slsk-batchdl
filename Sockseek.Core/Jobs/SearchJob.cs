@@ -25,7 +25,7 @@ public class SearchJob : Job
     public AggregateTrackProjection? DefaultAggregateTrackProjection { get; init; }
     public AggregateAlbumProjection? DefaultAggregateAlbumProjection { get; init; }
 
-    public SearchSession Session { get; } = new();
+    public SearchSession Session { get; }
 
     public int ResultCount => Session.Results.Count;
     public int Revision => Session.Revision;
@@ -42,6 +42,7 @@ public class SearchJob : Job
             throw new ArgumentException("queryText is required for search jobs");
 
         QueryText = queryText;
+        Session = new SearchSession(Id);
     }
 
     public SearchJob(SongQuery query, bool includeFullResults = false)
@@ -49,6 +50,7 @@ public class SearchJob : Job
         QueryText = query.ToString(noInfo: true);
         DefaultFileProjection = new FileSearchProjection(query, includeFullResults);
         DefaultAggregateTrackProjection = new AggregateTrackProjection(query);
+        Session = new SearchSession(Id);
     }
 
     public SearchJob(AlbumQuery query)
@@ -56,6 +58,7 @@ public class SearchJob : Job
         QueryText = SearchResultProjector.AlbumNetworkQuery(query).ToString(noInfo: true);
         DefaultFolderProjection = new FolderSearchProjection(query);
         DefaultAggregateAlbumProjection = new AggregateAlbumProjection(query);
+        Session = new SearchSession(Id);
     }
 
     public IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)> Snapshot()

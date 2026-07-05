@@ -304,7 +304,7 @@ public sealed class EngineSupervisor
 
     public IReadOnlyList<SearchRawResultDto>? GetSearchRawResults(Guid jobId, long afterSequence)
     {
-        var searchJob = StateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob == null)
             return null;
 
@@ -318,7 +318,7 @@ public sealed class EngineSupervisor
 
     public SearchResultSnapshotDto<FileCandidateDto>? GetFileResults(Guid jobId, FileSearchProjectionRequestDto? projection)
     {
-        var searchJob = StateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var fileProjection = projection?.SongQuery != null
@@ -334,7 +334,7 @@ public sealed class EngineSupervisor
                 snapshot.Items.Select(ToFileCandidateDto).ToList());
         }
 
-        var songJob = StateStore.GetJob<SongJob>(jobId);
+        var songJob = GetRuntimeJob<SongJob>(jobId);
         if (songJob == null)
             return null;
 
@@ -352,7 +352,7 @@ public sealed class EngineSupervisor
 
     private SearchResultSnapshotDto<AlbumFolderDto>? GetFolderResults(Guid jobId, AlbumQueryDto? albumQuery, bool includeFiles)
     {
-        var searchJob = StateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = albumQuery != null
@@ -370,7 +370,7 @@ public sealed class EngineSupervisor
                 snapshot.Items.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToList());
         }
 
-        var albumJob = StateStore.GetJob<AlbumJob>(jobId);
+        var albumJob = GetRuntimeJob<AlbumJob>(jobId);
         if (albumJob == null)
             return null;
 
@@ -386,7 +386,7 @@ public sealed class EngineSupervisor
 
     public SearchResultSnapshotDto<AggregateTrackCandidateDto>? GetAggregateTrackResults(Guid jobId, AggregateTrackProjectionRequestDto? projection)
     {
-        var searchJob = StateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var aggregateProjection = projection?.SongQuery != null
@@ -406,7 +406,7 @@ public sealed class EngineSupervisor
                     includeCandidates ? song.Candidates?.Select(ToFileCandidateDto).ToList() : null)).ToList());
         }
 
-        var aggregateJob = StateStore.GetJob<AggregateJob>(jobId);
+        var aggregateJob = GetRuntimeJob<AggregateJob>(jobId);
         if (aggregateJob == null)
             return null;
 
@@ -425,7 +425,7 @@ public sealed class EngineSupervisor
 
     public SearchResultSnapshotDto<AggregateAlbumCandidateDto>? GetAggregateAlbumResults(Guid jobId, AggregateAlbumProjectionRequestDto? projection)
     {
-        var searchJob = StateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var aggregateProjection = projection?.AlbumQuery != null
@@ -448,7 +448,7 @@ public sealed class EngineSupervisor
                     includeFolders ? album.Results.Select(f => ToAlbumFolderDto(f, includeFiles: true)).ToList() : null)).ToList());
         }
 
-        var albumAggregateJob = StateStore.GetJob<AlbumAggregateJob>(jobId);
+        var albumAggregateJob = GetRuntimeJob<AlbumAggregateJob>(jobId);
         if (albumAggregateJob == null)
             return null;
 
@@ -464,7 +464,7 @@ public sealed class EngineSupervisor
 
     public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid sourceJobId, RetrieveFolderRequestDto request, CancellationToken ct)
     {
-        var sourceJob = StateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return null;
 
@@ -482,7 +482,7 @@ public sealed class EngineSupervisor
 
     public async Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid sourceJobId, StartFileDownloadsRequestDto request, CancellationToken ct)
     {
-        var sourceJob = StateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return null;
 
@@ -543,7 +543,7 @@ public sealed class EngineSupervisor
 
     public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct)
     {
-        var sourceJob = StateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return null;
 
@@ -638,29 +638,18 @@ public sealed class EngineSupervisor
         return engine?.UserSuccessCounts ?? new ConcurrentDictionary<string, int>();
     }
 
+    internal TJob? GetRuntimeJob<TJob>(Guid jobId)
+        where TJob : Job
+    {
+        DownloadEngine? engine;
+        lock (engineGate)
+            engine = currentEngine;
+
+        return engine?.GetJob(jobId) as TJob;
+    }
+
     private static JobSummaryDto BuildSubmittedJobSummary(Job job, Guid? sourceJobId = null)
-        => new(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            EngineStateStore.GetJobKind(job),
-            EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
-            job.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
-            EngineStateStore.ToServerJobSkipReason(job.SkipReason),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            EngineStateStore.ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
-            null,
-            null,
-            sourceJobId,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            [],
-            CancellationSource: EngineStateStore.ToServerJobCancellationSource(job.CancellationSource));
+        => ServerSnapshotMapper.ToSubmittedJobSummary(job, sourceJobId);
 
     private static SearchRawResultDto ToSearchRawResultDto(SearchRawResult result)
         => new(
@@ -668,10 +657,10 @@ public sealed class EngineSupervisor
             result.Revision,
             result.Username,
             result.Filename,
-            result.File.Size,
-            result.File.BitRate,
-            result.File.SampleRate,
-            result.File.Length);
+            result.Size,
+            result.BitRate,
+            result.SampleRate,
+            result.Length);
 
     private static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
         => new(

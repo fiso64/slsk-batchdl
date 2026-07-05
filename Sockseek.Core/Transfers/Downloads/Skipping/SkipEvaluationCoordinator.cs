@@ -23,7 +23,7 @@ internal sealed class SkipEvaluationCoordinator
 
         if (path != null)
         {
-            song.SetAlreadyExists(path);
+            JobOutcomeCommitter.Commit(song, JobOutcome.AlreadyExists(path));
             SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: skipped because matching file already exists at '{path}': {song}");
         }
 
@@ -50,10 +50,7 @@ internal sealed class SkipEvaluationCoordinator
 
         if (path != null)
         {
-            if (job is AlbumJob albumJob)
-                albumJob.SetAlreadyExists(path);
-            else
-                job.SetAlreadyExists();
+            JobOutcomeCommitter.Commit(job, JobOutcome.AlreadyExists(path));
             ctx.IndexEditor?.NotifyJobDownloadPath(job.Id, path);
             SockseekLog.Jobs.Debug($"[{job.DisplayId}] {SockseekLog.JobTypeName(job)}: skipped because matching output already exists at '{path}': {job}");
         }
@@ -111,7 +108,7 @@ internal sealed class SkipEvaluationCoordinator
         if (prev == null) return false;
         if (IsNotFoundFailure(prev.FailureReason) || prev.State == JobStateOld.NotFoundLastTime)
         {
-            song.SetSkipped(JobSkipReason.NotFoundLastTime, NotFoundFailureReasonOrDefault(prev.FailureReason));
+            JobOutcomeCommitter.Commit(song, JobOutcome.Skipped(JobSkipReason.NotFoundLastTime, NotFoundFailureReasonOrDefault(prev.FailureReason)));
             SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: skipped because prior index entry was {prev.State}/{prev.FailureReason}: {song}");
             return true;
         }
@@ -127,7 +124,7 @@ internal sealed class SkipEvaluationCoordinator
         if (prev == null) return false;
         if (IsNotFoundFailure(prev.FailureReason) || prev.State == JobStateOld.NotFoundLastTime)
         {
-            job.SetSkipped(JobSkipReason.NotFoundLastTime, NotFoundFailureReasonOrDefault(prev.FailureReason));
+            JobOutcomeCommitter.Commit(job, JobOutcome.Skipped(JobSkipReason.NotFoundLastTime, NotFoundFailureReasonOrDefault(prev.FailureReason)));
             SockseekLog.Jobs.Debug($"[{job.DisplayId}] {SockseekLog.JobTypeName(job)}: skipped because prior index entry was {prev.State}/{prev.FailureReason}: {job}");
             return true;
         }

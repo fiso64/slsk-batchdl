@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
 using System.Collections.Concurrent;
+using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
@@ -18,7 +19,7 @@ namespace Tests.Unit
             var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", length: 180);
             var response = new SearchResponse("User1", 1, true, 100, 2, [file]);
             var rawEvents = 0;
-            session.RawResultReceived += (_, _, _) => rawEvents++;
+            session.RawResultReceived += _ => rawEvents++;
 
             session.AddResponse(response);
             session.AddResponse(response);
@@ -26,6 +27,37 @@ namespace Tests.Unit
             Assert.AreEqual(1, session.Results.Count, "Duplicate raw result keys should not be added twice.");
             Assert.AreEqual(1, session.Revision, "Revision should change only when a new raw result is added.");
             Assert.AreEqual(1, rawEvents, "Raw result event should fire only for newly added files.");
+        }
+
+        [TestMethod]
+        public void SearchSession_AddResponse_PublishesImmutableSearchResultChanges()
+        {
+            var jobId = Guid.NewGuid();
+            var session = new SearchSession(jobId);
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.flac", bitrate: 1000, length: 180);
+            var response = new SearchResponse("User1", 1, true, 123_456, 2, [file]);
+            SearchResultsAddedChange? added = null;
+            SearchCompletedChange? completed = null;
+
+            session.ResultsAdded += change => added = change;
+            session.SearchCompleted += change => completed = change;
+
+            session.AddResponse(response);
+            session.Complete();
+
+            Assert.IsNotNull(added);
+            Assert.AreEqual(jobId, added.JobId);
+            Assert.AreEqual(1, added.Revision);
+            Assert.AreEqual(1, added.Results.Count);
+            Assert.AreEqual("User1", added.Results[0].Username);
+            Assert.AreEqual(@"Music\Artist\Track.flac", added.Results[0].Filename);
+            Assert.AreEqual(file.Size, added.Results[0].Size);
+            Assert.AreEqual(file.Extension, added.Results[0].Extension);
+            Assert.AreEqual(response.UploadSpeed, added.Results[0].UploadSpeed);
+            Assert.AreEqual(response.HasFreeUploadSlot, added.Results[0].HasFreeUploadSlot);
+            Assert.IsNotNull(completed);
+            Assert.AreEqual(jobId, completed.JobId);
+            Assert.AreEqual(1, completed.Revision);
         }
 
         [TestMethod]

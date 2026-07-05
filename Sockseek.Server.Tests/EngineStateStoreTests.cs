@@ -1,8 +1,10 @@
 using System.Reflection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
+using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 using Soulseek;
@@ -390,44 +392,68 @@ public class EngineStateStoreTests
 
     private static void Register(EngineStateStore store, Job job, Job? parent = null)
     {
+        job.EnsureDisplayId();
+        parent?.EnsureDisplayId();
         typeof(EngineStateStore)
             .GetMethod("OnJobRegistered", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job, parent]);
+            .Invoke(store, [new JobRegisteredChange(1, DateTimeOffset.UtcNow, Snapshot(job), parent == null ? null : Snapshot(parent))]);
     }
 
     private static void UpdateState(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobStateChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobStateChangedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void DiscoveryChanged(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobDiscoveryChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobDiscoveryChangedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void ResultCreated(EngineStateStore store, ExtractJob job, Job result)
     {
+        job.EnsureDisplayId();
+        result.EnsureDisplayId();
         typeof(EngineStateStore)
             .GetMethod("OnJobResultCreated", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job, result]);
+            .Invoke(store, [new JobResultCreatedChange(1, DateTimeOffset.UtcNow, Snapshot(job), Snapshot(result))]);
     }
 
     private static void ExecutionCompleted(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobExecutionCompleted", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobExecutionCompletedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void DownloadStateChanged(EngineStateStore store, SongJob song, TransferStates state)
     {
         typeof(EngineStateStore)
             .GetMethod("OnDownloadStateChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [song, state]);
+            .Invoke(store, [new DownloadStateChangedChange(1, DateTimeOffset.UtcNow, Snapshot(song), Transfer(song, state))]);
+    }
+
+    private static JobSnapshot Snapshot(Job job)
+        => CoreSnapshotFactory.CreateJob(job, revision: 1);
+
+    private static TransferSnapshot Transfer(SongJob song, TransferStates state)
+    {
+        var response = new SearchResponse("user", 1, true, 100_000, 0, []);
+        var file = new Soulseek.File(1, $"{song.Query.Title}.mp3", song.FileSize > 0 ? song.FileSize : 100, ".mp3");
+        var candidate = new FileCandidate(response, file);
+        return CoreSnapshotFactory.CreateDownloadTransfer(
+            Guid.NewGuid(),
+            song,
+            candidate,
+            $"C:/downloads/{song.Query.Title}.mp3",
+            revision: 1,
+            state: state.ToString(),
+            bytesTransferred: song.BytesTransferred,
+            totalBytes: song.FileSize > 0 ? song.FileSize : file.Size,
+            attemptCount: 0);
     }
 
     private static void AssertWorkflowSummaryMatchesBruteForceSnapshot(EngineStateStore store, Guid workflowId)

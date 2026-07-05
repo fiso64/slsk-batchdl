@@ -2,61 +2,55 @@ using Soulseek;
 using Microsoft.Extensions.Logging;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Events;
+using Sockseek.Core.Snapshots;
+using System.Collections.Concurrent;
 
 namespace Sockseek.Core;
 
 /// <summary>
-/// Multicast event bus for download workflows. Subscribe to any subset of events;
-/// unsubscribed events are no-ops (null-conditional invocation).
-///
-/// CLI reporters and the future Server/SignalR hub both subscribe here.
-/// 
-/// TODO: Architectural Issue - Mutable Event Payloads
-/// Currently, events pass mutable Job objects by reference.
-/// This causes race conditions for async consumers (like the local CLI progress reporter), 
-/// because the Job's properties (like ResolvedTarget) can mutate before the consumer processes the event.
-/// The Server/Remote CLI mode mitigates this by immediately projecting the Job into an immutable DTO 
-/// on the publisher thread, effectively taking a snapshot. In the future, the core DownloadEvents
-/// should be refactored to pass immutable state snapshots rather than live Job references.
+/// Multicast event bus for download workflows. Public subscribers receive immutable
+/// Sockseek-owned change records captured synchronously by the publisher.
 /// </summary>
 public class DownloadEvents
 {
+    private readonly ConcurrentDictionary<Guid, long> jobRevisions = new();
+    private readonly ConcurrentDictionary<Guid, long> transferRevisions = new();
+
     // ── Graph / lifecycle ───────────────────────────────────────────────────
-    public event Action<Job, Job?>? JobRegistered;       // job, parent (if any)
-    public event Action<Job>? JobStateChanged;     // job split-state fields changed
-    public event Action<Job, JobActivityPhase, DateTimeOffset?>? JobActivityChanged; // job, phase, until
+    public event Action<JobRegisteredChange>? JobRegistered;
+    public event Action<JobStateChangedChange>? JobStateChanged;
+    public event Action<JobActivityChangedChange>? JobActivityChanged;
     /// <summary>
     /// Fired when a download job's discovery snapshot changes, such as raw search result
     /// or locked-file counts. Generic search-service events live in <see cref="SearchEvents"/>.
     /// </summary>
-    public event Action<Job>? JobDiscoveryChanged;
+    public event Action<JobDiscoveryChangedChange>? JobDiscoveryChanged;
     // Fired when a job's own execution path is finished.
     // For ExtractJob this is raised immediately after the result job has been produced,
     // not after any optional automatic processing of that result.
-    public event Action<Job>? JobExecutionCompleted;
+    public event Action<JobExecutionCompletedChange>? JobExecutionCompleted;
     // Fired when an ExtractJob produces its semantic output job (possibly after upgrade
     // transforms). This happens at the same moment the ExtractJob itself completes.
-    public event Action<ExtractJob, Job>? JobResultCreated;    // extract job, extracted/upgraded result
-    public event Action<JobList>? EngineCompleted;
+    public event Action<JobResultCreatedChange>? JobResultCreated;
+    public event Action<EngineCompletedChange>? EngineCompleted;
 
     // Fired for transient, human-readable status updates that don't warrant a formal state change
     // (e.g. "deleting files", "moving").
-    public event Action<Job, string>? JobStatus;
+    public event Action<JobStatusChange>? JobStatus;
 
     // Fired for job-scoped log messages that should be rendered with the same prefix/color policy
     // as other job activity.
-    public event Action<Job, LogLevel, string?, string>? JobMessage;
+    public event Action<JobMessageChange>? JobMessage;
     // Fired for workflow-scoped messages in the jobs category that should not be attributed
     // to the first job that happened to discover the condition.
-    public event Action<Guid, LogLevel, string?, string>? WorkflowMessage;
+    public event Action<WorkflowMessageChange>? WorkflowMessage;
 
     // ── Download ─────────────────────────────────────────────────────────────
-    // TODO: Once the engine is refactored to use immutable state snapshots, this event should be removed
-    // and consumers should just read the snapshot from a generic JobStateChanged/TargetChanged event.
-    public event Action<SongJob, FileCandidate>? DownloadStarted;
-    public event Action<SongJob, long, long>? DownloadProgress;      // transferred, total
-    public event Action<SongJob, TransferStates>? DownloadStateChanged;  // raw state, not string
-    public event Action<SongJob, FileCandidate, string, int, int, Exception>? DownloadAttemptFailed;
+    public event Action<DownloadStartedChange>? DownloadStarted;
+    public event Action<DownloadProgressedChange>? DownloadProgress;
+    public event Action<DownloadStateChangedChange>? DownloadStateChanged;
+    public event Action<DownloadAttemptFailedChange>? DownloadAttemptFailed;
 
     // ── List / overall ───────────────────────────────────────────────────────
     // Fired when a batch of songs has been resolved into:
@@ -64,34 +58,204 @@ public class DownloadEvents
     // - tracks already satisfied by skip/existing logic
     // - tracks skipped because they were not found in a prior run
     // The owner job carries any rendering context (for example PrintOption).
-    public event Action<Job, IReadOnlyList<SongJob>, IReadOnlyList<SongJob>, IReadOnlyList<SongJob>>? TrackBatchResolved;
-    public event Action<IEnumerable<SongJob>>? TrackListReady;
-    public event Action<JobList, int, int, int>? ListProgress;    // list, done, failed, total
-    public event Action<int, int, int>? OverallProgress; // done, failed, total
+    public event Action<TrackBatchResolvedChange>? TrackBatchResolved;
+    public event Action<TrackListReadyChange>? TrackListReady;
+    public event Action<ListProgressChange>? ListProgress;
+    public event Action<OverallProgressChange>? OverallProgress;
+
+    public event Action<CoreChange>? ChangePublished;
 
     // ── Internal raise methods (same assembly only) ──────────────────────────
-    internal void RaiseJobRegistered(Job job, Job? parent) => JobRegistered?.Invoke(job, parent);
-    internal void RaiseJobStateChanged(Job job) => JobStateChanged?.Invoke(job);
+    internal void RaiseJobRegistered(Job job, Job? parent)
+        => Publish(new JobRegisteredChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true), parent == null ? null : Snapshot(parent)));
+
+    internal void RaiseJobStateChanged(Job job)
+        => Publish(new JobStateChangedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true)));
+
     internal void RaiseJobActivityChanged(Job job, JobActivityPhase phase, DateTimeOffset? untilUtc)
-        => JobActivityChanged?.Invoke(job, phase, untilUtc);
-    internal void RaiseJobDiscoveryChanged(Job job) => JobDiscoveryChanged?.Invoke(job);
-    internal void RaiseJobExecutionCompleted(Job job) => JobExecutionCompleted?.Invoke(job);
-    internal void RaiseJobResultCreated(ExtractJob job, Job result) => JobResultCreated?.Invoke(job, result);
-    internal void RaiseEngineCompleted(JobList queue) => EngineCompleted?.Invoke(queue);
+        => Publish(new JobActivityChangedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true), phase, untilUtc));
+
+    internal void RaiseJobDiscoveryChanged(Job job)
+        => Publish(new JobDiscoveryChangedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true)));
+
+    internal void RaiseJobExecutionCompleted(Job job)
+        => Publish(new JobExecutionCompletedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true)));
+
+    internal void RaiseJobResultCreated(ExtractJob job, Job result)
+        => Publish(new JobResultCreatedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job, incrementRevision: true), Snapshot(result, incrementRevision: true)));
+
+    internal void RaiseEngineCompleted(JobList queue)
+        => Publish(new EngineCompletedChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(queue, incrementRevision: true)));
 
 
-    internal void RaiseJobStatus(Job job, string status) => JobStatus?.Invoke(job, status);
-    internal void RaiseJobMessage(Job job, LogLevel level, string? source, string message) => JobMessage?.Invoke(job, level, source, message);
-    internal void RaiseWorkflowMessage(Guid workflowId, LogLevel level, string? source, string message) => WorkflowMessage?.Invoke(workflowId, level, source, message);
-    internal void RaiseDownloadStarted(SongJob song, FileCandidate c) => DownloadStarted?.Invoke(song, c);
-    internal void RaiseDownloadProgress(SongJob song, long xfer, long total) => DownloadProgress?.Invoke(song, xfer, total);
-    internal void RaiseDownloadStateChanged(SongJob song, TransferStates s) => DownloadStateChanged?.Invoke(song, s);
-    internal void RaiseDownloadAttemptFailed(SongJob song, FileCandidate c, string outputPath, int attempt, int maxAttempts, Exception ex)
-        => DownloadAttemptFailed?.Invoke(song, c, outputPath, attempt, maxAttempts, ex);
+    internal void RaiseJobStatus(Job job, string status)
+        => Publish(new JobStatusChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job), status));
+
+    internal void RaiseJobMessage(Job job, LogLevel level, string? source, string message)
+        => Publish(new JobMessageChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(job), level, source, message));
+
+    internal void RaiseWorkflowMessage(Guid workflowId, LogLevel level, string? source, string message)
+        => Publish(new WorkflowMessageChange(NextSequence(), DateTimeOffset.UtcNow, workflowId, level, source, message));
+
+    internal void RaiseDownloadStarted(Guid transferId, SongJob song, FileCandidate c, string outputPath)
+        => Publish(new DownloadStartedChange(
+            NextSequence(),
+            DateTimeOffset.UtcNow,
+            Snapshot(song, incrementRevision: true),
+            SnapshotTransfer(transferId, song, c, outputPath, state: "Started", bytesTransferred: song.BytesTransferred, totalBytes: c.File.Size > 0 ? c.File.Size : 0, attemptCount: 0, incrementRevision: true)));
+
+    internal void RaiseDownloadProgress(Guid transferId, SongJob song, FileCandidate c, string outputPath, long xfer, long total)
+        => Publish(new DownloadProgressedChange(
+            NextSequence(),
+            DateTimeOffset.UtcNow,
+            Snapshot(song, incrementRevision: true),
+            SnapshotTransfer(transferId, song, c, outputPath, state: "InProgress", bytesTransferred: xfer, totalBytes: total, attemptCount: 0, incrementRevision: true)));
+
+    internal void RaiseDownloadStateChanged(Guid transferId, SongJob song, FileCandidate c, string outputPath, TransferStates s, long bytesTransferred, long totalBytes)
+        => Publish(new DownloadStateChangedChange(
+            NextSequence(),
+            DateTimeOffset.UtcNow,
+            Snapshot(song, incrementRevision: true),
+            SnapshotTransfer(transferId, song, c, outputPath, s.ToString(), bytesTransferred, totalBytes, attemptCount: 0, incrementRevision: true)));
+
+    internal void RaiseDownloadAttemptFailed(
+        Guid transferId,
+        SongJob song,
+        FileCandidate c,
+        string transferOutputPath,
+        string attemptOutputPath,
+        int attempt,
+        int maxAttempts,
+        Exception ex)
+        => Publish(new DownloadAttemptFailedChange(
+            NextSequence(),
+            DateTimeOffset.UtcNow,
+            Snapshot(song, incrementRevision: true),
+            SnapshotTransfer(transferId, song, c, transferOutputPath, state: "AttemptFailed", bytesTransferred: song.BytesTransferred, totalBytes: c.File.Size > 0 ? c.File.Size : 0, attemptCount: attempt, incrementRevision: true),
+            attemptOutputPath,
+            attempt,
+            maxAttempts,
+            CoreSnapshotFactory.CreateException(ex)));
 
     internal void RaiseTrackBatchResolved(Job job, IReadOnlyList<SongJob> pending, IReadOnlyList<SongJob> existing, IReadOnlyList<SongJob> notFound)
-        => TrackBatchResolved?.Invoke(job, pending, existing, notFound);
-    internal void RaiseTrackListReady(IEnumerable<SongJob> songs) => TrackListReady?.Invoke(songs);
-    internal void RaiseListProgress(JobList list, int dl, int fl, int total) => ListProgress?.Invoke(list, dl, fl, total);
-    internal void RaiseOverallProgress(int dl, int fl, int total) => OverallProgress?.Invoke(dl, fl, total);
+        => Publish(new TrackBatchResolvedChange(
+            NextSequence(),
+            DateTimeOffset.UtcNow,
+            Snapshot(job),
+            SnapshotSongs(pending),
+            SnapshotSongs(existing),
+            SnapshotSongs(notFound)));
+
+    internal void RaiseTrackListReady(IEnumerable<SongJob> songs)
+        => Publish(new TrackListReadyChange(NextSequence(), DateTimeOffset.UtcNow, SnapshotSongs(songs)));
+
+    internal void RaiseListProgress(JobList list, int dl, int fl, int total)
+        => Publish(new ListProgressChange(NextSequence(), DateTimeOffset.UtcNow, Snapshot(list, incrementRevision: true), dl, fl, total));
+
+    internal void RaiseOverallProgress(int dl, int fl, int total)
+        => Publish(new OverallProgressChange(NextSequence(), DateTimeOffset.UtcNow, dl, fl, total));
+
+    private long NextSequence() => CoreChangeSequencer.Next();
+
+    private JobSnapshot Snapshot(Job job, bool incrementRevision = false)
+    {
+        long revision = incrementRevision
+            ? jobRevisions.AddOrUpdate(job.Id, 1, static (_, current) => current + 1)
+            : jobRevisions.GetOrAdd(job.Id, 0);
+
+        return CoreSnapshotFactory.CreateJob(job, revision);
+    }
+
+    private IReadOnlyList<JobSnapshot> SnapshotSongs(IEnumerable<SongJob> songs)
+        => SnapshotCollections.Freeze(songs.Select(song => Snapshot(song)));
+
+    private TransferSnapshot SnapshotTransfer(
+        Guid transferId,
+        SongJob song,
+        FileCandidate candidate,
+        string outputPath,
+        string? state,
+        long bytesTransferred,
+        long totalBytes,
+        int attemptCount,
+        bool incrementRevision)
+    {
+        long revision = incrementRevision
+            ? transferRevisions.AddOrUpdate(transferId, 1, static (_, current) => current + 1)
+            : transferRevisions.GetOrAdd(transferId, 0);
+
+        return CoreSnapshotFactory.CreateDownloadTransfer(
+            transferId,
+            song,
+            candidate,
+            outputPath,
+            revision,
+            state,
+            bytesTransferred,
+            totalBytes,
+            attemptCount);
+    }
+
+    private void Publish(CoreChange change)
+    {
+        switch (change)
+        {
+            case JobRegisteredChange specific:
+                JobRegistered?.Invoke(specific);
+                break;
+            case JobStateChangedChange specific:
+                JobStateChanged?.Invoke(specific);
+                break;
+            case JobActivityChangedChange specific:
+                JobActivityChanged?.Invoke(specific);
+                break;
+            case JobDiscoveryChangedChange specific:
+                JobDiscoveryChanged?.Invoke(specific);
+                break;
+            case JobExecutionCompletedChange specific:
+                JobExecutionCompleted?.Invoke(specific);
+                break;
+            case JobResultCreatedChange specific:
+                JobResultCreated?.Invoke(specific);
+                break;
+            case EngineCompletedChange specific:
+                EngineCompleted?.Invoke(specific);
+                break;
+            case JobStatusChange specific:
+                JobStatus?.Invoke(specific);
+                break;
+            case JobMessageChange specific:
+                JobMessage?.Invoke(specific);
+                break;
+            case WorkflowMessageChange specific:
+                WorkflowMessage?.Invoke(specific);
+                break;
+            case DownloadStartedChange specific:
+                DownloadStarted?.Invoke(specific);
+                break;
+            case DownloadProgressedChange specific:
+                DownloadProgress?.Invoke(specific);
+                break;
+            case DownloadStateChangedChange specific:
+                DownloadStateChanged?.Invoke(specific);
+                break;
+            case DownloadAttemptFailedChange specific:
+                DownloadAttemptFailed?.Invoke(specific);
+                break;
+            case TrackBatchResolvedChange specific:
+                TrackBatchResolved?.Invoke(specific);
+                break;
+            case TrackListReadyChange specific:
+                TrackListReady?.Invoke(specific);
+                break;
+            case ListProgressChange specific:
+                ListProgress?.Invoke(specific);
+                break;
+            case OverallProgressChange specific:
+                OverallProgress?.Invoke(specific);
+                break;
+        }
+
+        ChangePublished?.Invoke(change);
+    }
 }

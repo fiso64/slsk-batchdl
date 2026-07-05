@@ -571,9 +571,9 @@ namespace Tests.Core
 
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
                 string? attemptException = null;
-                app.Events.DownloadAttemptFailed += (_, _, _, _, _, ex) =>
+                app.Events.DownloadAttemptFailed += change =>
                 {
-                    attemptException = SockseekLog.ExceptionDetail(ex);
+                    attemptException = change.Exception.Detail;
                 };
                 app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();
@@ -659,10 +659,10 @@ namespace Tests.Core
 
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
                 var albumStatuses = new List<string>();
-                app.Events.JobStatus += (job, status) =>
+                app.Events.JobStatus += change =>
                 {
-                    if (job is AlbumJob)
-                        albumStatuses.Add(status);
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
+                        albumStatuses.Add(change.Status);
                 };
                 app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();
@@ -785,10 +785,10 @@ namespace Tests.Core
 
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
                 var albumStatuses = new List<string>();
-                app.Events.JobStatus += (job, status) =>
+                app.Events.JobStatus += change =>
                 {
-                    if (job is AlbumJob)
-                        albumStatuses.Add(status);
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
+                        albumStatuses.Add(change.Status);
                 };
                 app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();

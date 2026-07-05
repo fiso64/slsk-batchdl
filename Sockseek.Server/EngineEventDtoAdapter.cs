@@ -1,17 +1,17 @@
-using Soulseek;
-using Sockseek.Core;
-using Sockseek.Core.Jobs;
-using Sockseek.Core.Models;
 using Sockseek.Api;
+using Sockseek.Core;
+using Sockseek.Core.Events;
+using Sockseek.Core.Jobs;
+using Sockseek.Core.Snapshots;
 
 namespace Sockseek.Server;
 
 public sealed class EngineEventDtoAdapter
 {
-    private readonly Func<Job, JobSummaryDto> getSummary;
+    private readonly Func<JobSnapshot, JobSummaryDto> getSummary;
     private readonly Action<string, object> publish;
 
-    public EngineEventDtoAdapter(Func<Job, JobSummaryDto> getSummary, Action<string, object> publish)
+    public EngineEventDtoAdapter(Func<JobSnapshot, JobSummaryDto> getSummary, Action<string, object> publish)
     {
         this.getSummary = getSummary;
         this.publish = publish;
@@ -19,121 +19,170 @@ public sealed class EngineEventDtoAdapter
 
     public void Attach(DownloadEvents events, SearchEvents searchEvents)
     {
-        events.JobStatus += (job, status) => publish("job.status", new JobStatusEventDto(getSummary(job), status));
-        events.JobMessage += (job, level, source, message) => publish("job.message", new JobMessageEventDto(getSummary(job), level.ToString(), source, message));
-        events.WorkflowMessage += (workflowId, level, source, message) => publish("workflow.message", new WorkflowMessageEventDto(workflowId, level.ToString(), source, message));
-        events.JobActivityChanged += (job, _, _) => publish("job.activity-changed", new JobActivityChangedEventDto(getSummary(job)));
-        events.JobStateChanged += job =>
-        {
-            if (job is SongJob song)
-            {
-                if (song.ActivityPhase == JobActivityPhase.Searching)
-                    publish("song.searching", new SongSearchingEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query)));
-                else if (song.IsTerminal && ShouldPublishSongStateChanged(song))
-                    publish("song.state-changed", new SongStateChangedEventDto(
-                        song.Id,
-                        song.DisplayId,
-                        song.WorkflowId,
-                        ToSongQueryDto(song.Query),
-                        EngineStateStore.ToServerJobLifecycleState(song.LifecycleState),
-                        EngineStateStore.ToServerJobActivityPhase(song.ActivityPhase),
-                        song.ActivityUntilUtc,
-                        EngineStateStore.ToServerJobTerminalOutcome(song.TerminalOutcome),
-                        EngineStateStore.ToServerJobSkipReason(song.SkipReason),
-                        EngineStateStore.ToServerFailureReason(song.FailureReason),
-                        song.DownloadPath,
-                        song.ChosenCandidate != null ? ToFileCandidateDto(song.ChosenCandidate) : null,
-                        song.Discovery?.RawResultCount,
-                        song.Discovery?.LockedFileCount,
-                        song.FailureMessage,
-                        EngineStateStore.ToServerJobCancellationSource(song.CancellationSource),
-                        EngineStateStore.ToServerSongDownloadSource(song.DownloadSource)));
-            }
-            else if (job is AlbumJob albumJob)
-            {
-                if (albumJob.ActivityPhase == JobActivityPhase.Searching)
-                    publish("job.started", new JobStartedEventDto(getSummary(job)));
-                else if (albumJob.ActivityPhase == JobActivityPhase.Downloading && albumJob.ResolvedTarget != null)
-                {
-                    var folder = albumJob.ResolvedTarget;
-                    publish("album.download-started", new AlbumDownloadStartedEventDto(
-                        getSummary(job),
-                        ToAlbumFolderDto(folder, includeFiles: false),
-                        albumJob.TrackJobs.Select(ToSongJobPayloadDto).ToList()));
-                    publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(
-                        getSummary(job),
-                        ToAlbumFolderDto(folder, includeFiles: false),
-                        albumJob.TrackJobs.Select(ToSongJobPayloadDto).ToList()));
-                }
-                else if (albumJob.IsTerminal)
-                    publish("album.state-changed", new AlbumStateChangedEventDto(getSummary(job), albumJob.DownloadPath));
-            }
-            else if (job is ExtractJob extractJob)
-            {
-                if (extractJob.ActivityPhase == JobActivityPhase.Extracting)
-                    publish("extraction.started", new ExtractionStartedEventDto(
-                        getSummary(extractJob),
-                        extractJob.Input,
-                        extractJob.InputType?.ToString(),
-                        ExtractionSource(extractJob)));
-                else if (extractJob.IsUnsuccessfulTerminal)
-                    publish("extraction.failed", new ExtractionFailedEventDto(
-                        getSummary(extractJob),
-                        extractJob.FailureMessage ?? "Extraction failed",
-                        ExtractionSource(extractJob)));
-            }
-            else if (job is AggregateJob && job.ActivityPhase == JobActivityPhase.RunningChildren)
-            {
-                publish("job.status", new JobStatusEventDto(getSummary(job), "running"));
-            }
-            else if (job is AggregateJob && job.TerminalOutcome == JobTerminalOutcome.Succeeded)
-            {
-                publish("job.status", new JobStatusEventDto(getSummary(job), "done"));
-            }
-            else
-            {
-                if (job.ActivityPhase == JobActivityPhase.Searching)
-                    publish("job.started", new JobStartedEventDto(getSummary(job)));
-            }
-
-            PublishDiagnosticErrorIfNeeded(job);
-        };
-        events.DownloadStarted += (song, candidate) => publish("download.started", new DownloadStartedEventDto(song.Id, song.DisplayId, song.WorkflowId, ToSongQueryDto(song.Query), ToFileCandidateDto(candidate)));
-        events.DownloadProgress += (song, transferred, total) => publish("download.progress", new DownloadProgressEventDto(song.Id, song.WorkflowId, transferred, total));
-        events.DownloadStateChanged += (song, state) => publish("download.state-changed", new DownloadStateChangedEventDto(song.Id, song.WorkflowId, state.ToString()));
-        events.DownloadAttemptFailed += (song, candidate, outputPath, attempt, maxAttempts, ex) => publish("download.attempt-failed", new DownloadAttemptFailedEventDto(
-            song.Id,
-            song.DisplayId,
-            song.WorkflowId,
-            ToSongQueryDto(song.Query),
-            ToFileCandidateDto(candidate),
-            outputPath,
-            attempt,
-            maxAttempts,
-            ex.GetType().Name,
-            SockseekLog.ExceptionSummary(ex),
-            SockseekLog.ExceptionDetail(ex)));
+        events.JobStatus += change => publish("job.status", new JobStatusEventDto(getSummary(change.Job), change.Status));
+        events.JobMessage += change => publish("job.message", new JobMessageEventDto(getSummary(change.Job), change.Level.ToString(), change.Source, change.Message));
+        events.WorkflowMessage += change => publish("workflow.message", new WorkflowMessageEventDto(change.WorkflowId, change.Level.ToString(), change.Source, change.Message));
+        events.JobActivityChanged += change => publish("job.activity-changed", new JobActivityChangedEventDto(getSummary(change.Job)));
+        events.JobStateChanged += OnJobStateChanged;
+        events.DownloadStarted += change => publish("download.started", new DownloadStartedEventDto(
+            change.Song.Id,
+            change.Song.DisplayId,
+            change.Song.WorkflowId,
+            ServerSnapshotMapper.ToSongQueryDto(SongPayload(change.Song).Query),
+            ServerSnapshotMapper.ToFileCandidateDto(change.Candidate),
+            change.TransferId));
+        events.DownloadProgress += change => publish("download.progress", new DownloadProgressEventDto(
+            change.Song.Id,
+            change.Song.WorkflowId,
+            change.BytesTransferred,
+            change.TotalBytes,
+            change.TransferId));
+        events.DownloadStateChanged += change => publish("download.state-changed", new DownloadStateChangedEventDto(
+            change.Song.Id,
+            change.Song.WorkflowId,
+            change.State,
+            change.TransferId));
+        events.DownloadAttemptFailed += change => publish("download.attempt-failed", new DownloadAttemptFailedEventDto(
+            change.Song.Id,
+            change.Song.DisplayId,
+            change.Song.WorkflowId,
+            ServerSnapshotMapper.ToSongQueryDto(SongPayload(change.Song).Query),
+            ServerSnapshotMapper.ToFileCandidateDto(change.Candidate),
+            change.OutputPath,
+            change.Attempt,
+            change.MaxAttempts,
+            change.Exception.Type,
+            change.Exception.Message,
+            change.Exception.Detail,
+            change.TransferId));
         searchEvents.SearchRateLimited += resetsAt => publish("search.rate-limited", new SearchRateLimitedEventDto(resetsAt));
         searchEvents.SearchResumed += () => publish("search.resumed", new SearchResumedEventDto());
-        events.TrackBatchResolved += (job, pending, existing, notFound) => publish("track-batch.resolved", new TrackBatchResolvedEventDto(
-            getSummary(job),
-            job is JobList,
-            job.Config.PrintOption,
-            pending.Count,
-            existing.Count,
-            notFound.Count,
-            [.. SelectTrackBatchRows(pending,  job.Config.PrintOption, limit: 20)],
-            [.. SelectTrackBatchRows(existing, job.Config.PrintOption, limit: 20)],
-            [.. SelectTrackBatchRows(notFound, job.Config.PrintOption, limit: 20)]));
+        events.TrackBatchResolved += change => publish("track-batch.resolved", new TrackBatchResolvedEventDto(
+            getSummary(change.Owner),
+            change.Owner.Kind == JobSnapshotKind.JobList,
+            change.Owner.PrintOption,
+            change.Pending.Count,
+            change.Existing.Count,
+            change.NotFound.Count,
+            [.. SelectTrackBatchRows(change.Pending, change.Owner.PrintOption, limit: 20)],
+            [.. SelectTrackBatchRows(change.Existing, change.Owner.PrintOption, limit: 20)],
+            [.. SelectTrackBatchRows(change.NotFound, change.Owner.PrintOption, limit: 20)]));
     }
 
-    private static bool ShouldPublishSongStateChanged(SongJob song)
+    private void OnJobStateChanged(JobStateChangedChange change)
+    {
+        var job = change.Job;
+        switch (job.Payload)
+        {
+            case SongJobSnapshotPayload song:
+                if (job.ActivityPhase == JobActivityPhase.Searching)
+                {
+                    publish("song.searching", new SongSearchingEventDto(job.Id, job.DisplayId, job.WorkflowId, ServerSnapshotMapper.ToSongQueryDto(song.Query)));
+                }
+                else if (job.LifecycleState == JobLifecycleState.Terminal && ShouldPublishSongStateChanged(job))
+                {
+                    publish("song.state-changed", new SongStateChangedEventDto(
+                        job.Id,
+                        job.DisplayId,
+                        job.WorkflowId,
+                        ServerSnapshotMapper.ToSongQueryDto(song.Query),
+                        EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
+                        EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
+                        job.ActivityUntilUtc,
+                        EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
+                        EngineStateStore.ToServerJobSkipReason(job.SkipReason),
+                        EngineStateStore.ToServerFailureReason(job.FailureReason),
+                        song.DownloadPath,
+                        song.ResolvedTarget != null ? ServerSnapshotMapper.ToFileCandidateDto(song.ResolvedTarget) : null,
+                        job.Discovery?.RawResultCount,
+                        job.Discovery?.LockedFileCount,
+                        job.FailureMessage,
+                        EngineStateStore.ToServerJobCancellationSource(job.CancellationSource),
+                        EngineStateStore.ToServerSongDownloadSource(song.DownloadSource)));
+                }
+                break;
+
+            case AlbumJobSnapshotPayload album:
+                if (job.ActivityPhase == JobActivityPhase.Searching)
+                {
+                    publish("job.started", new JobStartedEventDto(getSummary(job)));
+                }
+                else if (job.ActivityPhase == JobActivityPhase.Downloading && album.ResolvedTarget != null)
+                {
+                    var folder = album.ResolvedTarget;
+                    var tracks = album.TrackJobs.Select(track => ServerSnapshotMapper.ToSongJobPayloadDto(track)).ToList();
+                    publish("album.download-started", new AlbumDownloadStartedEventDto(
+                        getSummary(job),
+                        ServerSnapshotMapper.ToAlbumFolderDto(folder, includeFiles: false),
+                        tracks));
+                    publish("album.track-download-started", new AlbumTrackDownloadStartedEventDto(
+                        getSummary(job),
+                        ServerSnapshotMapper.ToAlbumFolderDto(folder, includeFiles: false),
+                        tracks));
+                }
+                else if (job.LifecycleState == JobLifecycleState.Terminal)
+                {
+                    publish("album.state-changed", new AlbumStateChangedEventDto(getSummary(job), album.DownloadPath));
+                }
+                break;
+
+            case ExtractJobSnapshotPayload extract:
+                if (job.ActivityPhase == JobActivityPhase.Extracting)
+                {
+                    publish("extraction.started", new ExtractionStartedEventDto(
+                        getSummary(job),
+                        extract.Input,
+                        extract.InputType,
+                        ExtractionSource(extract)));
+                }
+                else if (IsUnsuccessfulTerminal(job))
+                {
+                    publish("extraction.failed", new ExtractionFailedEventDto(
+                        getSummary(job),
+                        job.FailureMessage ?? "Extraction failed",
+                        ExtractionSource(extract)));
+                }
+                break;
+
+            case AggregateJobSnapshotPayload aggregate when job.ActivityPhase == JobActivityPhase.RunningChildren:
+                publish("job.status", new JobStatusEventDto(getSummary(job), "running"));
+                var pending = aggregate.Songs.Where(song => song.LifecycleState == JobLifecycleState.Pending).ToList();
+                var existing = aggregate.Songs
+                    .Where(song => song.TerminalOutcome == JobTerminalOutcome.Skipped && song.SkipReason == JobSkipReason.AlreadyExists)
+                    .ToList();
+                var notFound = aggregate.Songs.Where(song => IsNotFoundFailure(song.FailureReason)).ToList();
+                publish("track-batch.resolved", new TrackBatchResolvedEventDto(
+                    getSummary(job),
+                    false,
+                    job.PrintOption,
+                    pending.Count,
+                    existing.Count,
+                    notFound.Count,
+                    [.. SelectTrackBatchRows(pending, job.PrintOption, limit: 20)],
+                    [.. SelectTrackBatchRows(existing, job.PrintOption, limit: 20)],
+                    [.. SelectTrackBatchRows(notFound, job.PrintOption, limit: 20)]));
+                break;
+
+            case AggregateJobSnapshotPayload when job.TerminalOutcome == JobTerminalOutcome.Succeeded:
+                publish("job.status", new JobStatusEventDto(getSummary(job), "done"));
+                break;
+
+            default:
+                if (job.ActivityPhase == JobActivityPhase.Searching)
+                    publish("job.started", new JobStartedEventDto(getSummary(job)));
+                break;
+        }
+
+        PublishDiagnosticErrorIfNeeded(job);
+    }
+
+    private static bool ShouldPublishSongStateChanged(JobSnapshot song)
         => song.TerminalOutcome != JobTerminalOutcome.Cancelled
             || song.CancellationSource is JobCancellationSource.UserRequestedJob
                 or JobCancellationSource.InternalEngine
                 or JobCancellationSource.None;
 
-    private void PublishDiagnosticErrorIfNeeded(Job job)
+    private void PublishDiagnosticErrorIfNeeded(JobSnapshot job)
     {
         if (job.TerminalOutcome != JobTerminalOutcome.Failed || string.IsNullOrWhiteSpace(job.FailureDetail))
             return;
@@ -146,11 +195,11 @@ public sealed class EngineEventDtoAdapter
             job.FailureDetail,
             summary,
             job.WorkflowId,
-            job is ExtractJob extractJob ? ExtractionSource(extractJob) : null));
+            job.Payload is ExtractJobSnapshotPayload extract ? ExtractionSource(extract) : null));
     }
 
-    private static string? ExtractionSource(ExtractJob job)
-        => job.InputType?.ToString();
+    private static string? ExtractionSource(ExtractJobSnapshotPayload job)
+        => job.InputType;
 
     private static string ExceptionType(string exceptionDetail)
     {
@@ -163,80 +212,23 @@ public sealed class EngineEventDtoAdapter
     }
 
     private static IEnumerable<SongJobPayloadDto> SelectTrackBatchRows(
-        IReadOnlyList<SongJob> songs, PrintOption printOption, int limit = int.MaxValue)
+        IReadOnlyList<JobSnapshot> songs, PrintOption printOption, int limit = int.MaxValue)
     {
         bool needsFullRows = printOption.HasFlag(PrintOption.Jobs)
             || (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
         int effectiveLimit = needsFullRows ? int.MaxValue : limit;
-        return songs.Take(effectiveLimit).Select(ToSongJobPayloadDto);
+        return songs.Take(effectiveLimit)
+            .Where(song => song.Payload is SongJobSnapshotPayload)
+            .Select(song => ServerSnapshotMapper.ToSongJobPayloadDto(song));
     }
 
     private static bool IsNotFoundFailure(JobFailureReason reason)
         => reason is JobFailureReason.NoSearchResults or JobFailureReason.NoMatchingResults;
 
-    public static SongQueryDto ToSongQueryDto(SongQuery query)
-        => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);
+    private static bool IsUnsuccessfulTerminal(JobSnapshot job)
+        => job.LifecycleState == JobLifecycleState.Terminal && !ServerSnapshotMapper.IsSuccessfulJob(job);
 
-    private static string? Optional(string value)
-        => value.Length > 0 ? value : null;
-
-    private static int? Optional(int value)
-        => value >= 0 ? value : null;
-
-    public static FileCandidateDto ToFileCandidateDto(FileCandidate candidate)
-        => new(
-            new FileCandidateRefDto(candidate.Username, candidate.Filename),
-            candidate.Username,
-            candidate.Filename,
-            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
-
-    public static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
-        => new(
-            ToSongQueryDto(song.Query),
-            song.Candidates?.Count,
-            song.DownloadPath,
-            song.ResolvedTarget?.Username,
-            song.ResolvedTarget?.Filename,
-            song.ResolvedTarget?.Response.HasFreeUploadSlot,
-            song.ResolvedTarget?.Response.UploadSpeed,
-            song.ResolvedTarget?.File.Size,
-            song.ResolvedTarget?.File.SampleRate,
-            song.ResolvedTarget?.File.Extension,
-            song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
-            song.Id,
-            song.DisplayId,
-            null,
-            EngineStateStore.ToServerJobLifecycleState(song.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(song.ActivityPhase),
-            song.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(song.TerminalOutcome),
-            EngineStateStore.ToServerJobSkipReason(song.SkipReason),
-            EngineStateStore.ToServerFailureReason(song.FailureReason),
-            song.FailureMessage,
-            CancellationSource: EngineStateStore.ToServerJobCancellationSource(song.CancellationSource),
-            DownloadSource: EngineStateStore.ToServerSongDownloadSource(song.DownloadSource));
-
-    public static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
-        => new(
-            new AlbumFolderRefDto(folder.Username, folder.FolderPath),
-            folder.Username,
-            folder.FolderPath,
-            new PeerInfoDto(
-                folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
-            folder.SearchFileCount,
-            folder.SearchAudioFileCount,
-            includeFiles
-                ? folder.Files
-                    .Select(file => ToFileCandidateDto(file.Candidate))
-                    .ToList()
-                : null,
-            folder.IsFullyRetrieved);
+    private static SongJobSnapshotPayload SongPayload(JobSnapshot job)
+        => job.Payload as SongJobSnapshotPayload
+            ?? throw new InvalidOperationException($"Expected song snapshot for job {job.Id}.");
 }

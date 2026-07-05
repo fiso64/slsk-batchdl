@@ -85,7 +85,7 @@ public partial class Searcher : IDisposable
         var session = job.Session;
         var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(activityJob, session);
+        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(activityJob, session);
         session.RawResultAdded += OnRawResultAdded;
 
         try
@@ -140,9 +140,9 @@ public partial class Searcher : IDisposable
         CancellationToken ct, Action? onSearch = null,
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
-        var session = new SearchSession();
+        var session = new SearchSession(song.Id);
         InitializeDiscoveryProgress(song);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(song, session);
+        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(song, session);
         session.RawResultAdded += OnRawResultAdded;
 
         void responseHandler(SearchResponse r)
@@ -226,9 +226,9 @@ public partial class Searcher : IDisposable
     // Populates job.Songs: one SongJob per distinct inferred track version found.
     public async Task<JobOutcome?> SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var session = new SearchSession();
+        var session = new SearchSession(job.Id);
         InitializeDiscoveryProgress(job);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(job, session);
+        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(job, session);
         session.RawResultAdded += OnRawResultAdded;
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>

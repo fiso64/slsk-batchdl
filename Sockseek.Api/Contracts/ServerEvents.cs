@@ -173,7 +173,8 @@ public sealed record DownloadStartedEventDto(
     int DisplayId,
     Guid WorkflowId,
     SongQueryDto Query,
-    FileCandidateDto Candidate);
+    FileCandidateDto Candidate,
+    Guid TransferId = default);
 
 /// <summary>
 /// Coalesced progress event for an active file transfer.
@@ -182,7 +183,8 @@ public sealed record DownloadProgressEventDto(
     Guid JobId,
     Guid WorkflowId,
     long BytesTransferred,
-    long TotalBytes);
+    long TotalBytes,
+    Guid TransferId = default);
 
 /// <summary>
 /// Activity event carrying the lower-level transfer state.
@@ -190,7 +192,8 @@ public sealed record DownloadProgressEventDto(
 public sealed record DownloadStateChangedEventDto(
     Guid JobId,
     Guid WorkflowId,
-    string State);
+    string State,
+    Guid TransferId = default);
 
 /// <summary>
 /// Activity event emitted immediately when a low-level transfer attempt throws.
@@ -206,7 +209,8 @@ public sealed record DownloadAttemptFailedEventDto(
     int MaxAttempts,
     string ExceptionType,
     string ExceptionMessage,
-    string Exception);
+    string Exception,
+    Guid TransferId = default);
 
 /// <summary>
 /// Activity event emitted when a song job changes state.

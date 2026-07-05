@@ -3,6 +3,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 
@@ -17,14 +18,18 @@ public class EngineEventDtoAdapterTests
         var events = new DownloadEvents();
         var published = new List<(string Type, object Payload)>();
         var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+        var transferId = Guid.NewGuid();
+        var file = new Soulseek.File(1, "Music/Artist/Title.mp3", 100, ".mp3");
+        var candidate = new FileCandidate(new Soulseek.SearchResponse("user", 1, true, 100_000, 0, [file]), file);
         Attach(events, published);
 
-        Raise(events, "RaiseDownloadProgress", song, 42L, 100L);
+        Raise(events, "RaiseDownloadProgress", transferId, song, candidate, "C:/downloads/Title.mp3", 42L, 100L);
 
         Assert.AreEqual(1, published.Count);
         Assert.AreEqual("download.progress", published[0].Type);
         var progress = (DownloadProgressEventDto)published[0].Payload;
         Assert.AreEqual(song.Id, progress.JobId);
+        Assert.AreEqual(transferId, progress.TransferId);
         Assert.AreEqual(42, progress.BytesTransferred);
         Assert.AreEqual(100, progress.TotalBytes);
     }
@@ -67,27 +72,8 @@ public class EngineEventDtoAdapterTests
         Assert.AreEqual(resetsAt, rateLimited.ResetsAt);
     }
 
-    private static JobSummaryDto SummaryFor(Job job)
-        => new(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            EngineStateStore.GetJobKind(job),
-            EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
-            job.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            EngineStateStore.ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
-            null,
-            null,
-            null,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            [],
-            []);
+    private static JobSummaryDto SummaryFor(JobSnapshot job)
+        => ServerSnapshotMapper.ToJobSummary(job);
 
     private static void Attach(DownloadEvents events, List<(string Type, object Payload)> published)
         => new EngineEventDtoAdapter(SummaryFor, (type, payload) => published.Add((type, payload)))

@@ -128,10 +128,10 @@ namespace Tests.Unit
             var album = new AlbumJob(new AlbumQuery { Artist = "ELO", Album = "Time" });
             var counts = new List<int>();
 
-            events.JobDiscoveryChanged += job =>
+            events.JobDiscoveryChanged += change =>
             {
-                if (ReferenceEquals(job, album) && job.Discovery != null)
-                    counts.Add(job.Discovery.RawResultCount);
+                if (change.Job.Id == album.Id && change.Discovery != null)
+                    counts.Add(change.Discovery.RawResultCount);
             };
 
             await searcher.SearchAlbum(album, settings.Search, new ResponseData(), CancellationToken.None);
