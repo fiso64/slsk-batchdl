@@ -323,7 +323,11 @@ namespace Sockseek.Core.Jobs;
 
         public virtual void SetDone()
         {
-            SetTerminal(JobTerminalOutcome.Succeeded);
+            ApplyStateTransition(() =>
+            {
+                ClearFailureCore();
+                SetTerminalCore(JobTerminalOutcome.Succeeded);
+            });
         }
 
         public virtual void SetAlreadyExists()

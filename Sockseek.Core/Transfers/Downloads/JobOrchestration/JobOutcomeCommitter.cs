@@ -9,6 +9,8 @@ internal static class JobOutcomeCommitter
         if (!outcome.ShouldCommit)
             return;
 
+        ApplyOutcomeDownloadPath(job, outcome);
+
         if (outcome.LifecycleState == JobLifecycleState.AwaitingSelection)
         {
             job.SetAwaitingSelection();
@@ -60,5 +62,16 @@ internal static class JobOutcomeCommitter
                 job.SetPartialSuccess(outcome.FailureMessage, outcome.CancellationSource);
                 break;
         }
+    }
+
+    private static void ApplyOutcomeDownloadPath(Job job, JobOutcome outcome)
+    {
+        if (!outcome.ShouldUpdateDownloadPath)
+            return;
+
+        if (job is SongJob song)
+            song.DownloadPath = outcome.DownloadPath;
+        else if (job is AlbumJob album)
+            album.DownloadPath = outcome.DownloadPath;
     }
 }

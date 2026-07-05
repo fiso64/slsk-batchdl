@@ -17,6 +17,7 @@ public sealed record JobOutcome
     public JobFailureReason FailureReason { get; }
     public string? FailureMessage { get; }
     public string? FailureDetail { get; }
+    public bool ShouldUpdateDownloadPath { get; }
     public string? DownloadPath { get; }
     public FileCandidate? ChosenCandidate { get; }
     public SongDownloadSource DownloadSource { get; }
@@ -31,6 +32,7 @@ public sealed record JobOutcome
         JobFailureReason failureReason = JobFailureReason.None,
         string? failureMessage = null,
         string? failureDetail = null,
+        bool shouldUpdateDownloadPath = false,
         string? downloadPath = null,
         FileCandidate? chosenCandidate = null,
         SongDownloadSource downloadSource = SongDownloadSource.None)
@@ -44,6 +46,7 @@ public sealed record JobOutcome
         FailureReason = failureReason;
         FailureMessage = failureMessage;
         FailureDetail = failureDetail;
+        ShouldUpdateDownloadPath = shouldUpdateDownloadPath;
         DownloadPath = downloadPath;
         ChosenCandidate = chosenCandidate;
         DownloadSource = downloadSource;
@@ -67,24 +70,34 @@ public sealed record JobOutcome
         => new(
             shouldCommit: true,
             terminalOutcome: JobTerminalOutcome.Succeeded,
+            shouldUpdateDownloadPath: downloadPath != null,
             downloadPath: downloadPath,
             chosenCandidate: chosenCandidate,
             downloadSource: downloadSource);
 
-    public static JobOutcome Failed(JobFailureReason reason, string? message = null, string? detail = null)
+    public static JobOutcome Failed(
+        JobFailureReason reason,
+        string? message = null,
+        string? detail = null,
+        string? downloadPath = null,
+        bool clearDownloadPath = false)
     {
         if (reason == JobFailureReason.Cancelled)
             throw new ArgumentException("Use JobOutcome.Cancelled(source) for cancellation outcomes.", nameof(reason));
+        if (downloadPath != null && clearDownloadPath)
+            throw new ArgumentException("A failure outcome cannot both set and clear the download path.", nameof(clearDownloadPath));
 
         return new(
             shouldCommit: true,
             terminalOutcome: JobTerminalOutcome.Failed,
             failureReason: reason,
             failureMessage: message,
-            failureDetail: detail);
+            failureDetail: detail,
+            shouldUpdateDownloadPath: downloadPath != null || clearDownloadPath,
+            downloadPath: downloadPath);
     }
 
-    public static JobOutcome Cancelled(JobCancellationSource source, string? message = null, string? detail = null)
+    public static JobOutcome Cancelled(JobCancellationSource source, string? message = null, string? detail = null, string? downloadPath = null)
     {
         if (source == JobCancellationSource.None)
             throw new ArgumentException("Cancellation outcomes must include a non-None source.", nameof(source));
@@ -95,7 +108,9 @@ public sealed record JobOutcome
             cancellationSource: source,
             failureReason: JobFailureReason.Cancelled,
             failureMessage: message,
-            failureDetail: detail);
+            failureDetail: detail,
+            shouldUpdateDownloadPath: downloadPath != null,
+            downloadPath: downloadPath);
     }
 
     public static JobOutcome AlreadyExists(string? downloadPath = null)
@@ -103,13 +118,16 @@ public sealed record JobOutcome
 
     public static JobOutcome PartialSuccess(
         string? message = null,
-        JobCancellationSource cancellationSource = JobCancellationSource.None)
+        JobCancellationSource cancellationSource = JobCancellationSource.None,
+        string? downloadPath = null)
         => new(
             shouldCommit: true,
             terminalOutcome: JobTerminalOutcome.PartialSuccess,
             cancellationSource: cancellationSource,
             failureReason: JobFailureReason.Other,
-            failureMessage: message);
+            failureMessage: message,
+            shouldUpdateDownloadPath: downloadPath != null,
+            downloadPath: downloadPath);
 
     public static JobOutcome Skipped(JobSkipReason skipReason = JobSkipReason.None, JobFailureReason reason = JobFailureReason.None, string? downloadPath = null)
         => new(
@@ -117,6 +135,7 @@ public sealed record JobOutcome
             terminalOutcome: JobTerminalOutcome.Skipped,
             skipReason: skipReason,
             failureReason: reason,
+            shouldUpdateDownloadPath: downloadPath != null,
             downloadPath: downloadPath);
 
 }

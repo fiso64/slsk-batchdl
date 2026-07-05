@@ -257,7 +257,7 @@ public class M3uEditor
                         var (state, reason) = JobToIndexState(albumJob);
                         string key = MakeAlbumKey(albumJob.Query.Artist, albumJob.Query.Album);
                         jobDownloadPaths.TryGetValue(albumJob.Id, out var downloadPath);
-                        updateEntryIfNeeded(key, downloadPath ?? "",
+                        updateEntryIfNeeded(key, downloadPath ?? albumJob.DownloadPath ?? "",
                             albumJob.Query.Artist, albumJob.Query.Album, "", -1, state, reason, isAlbum: true);
                     }
                 }

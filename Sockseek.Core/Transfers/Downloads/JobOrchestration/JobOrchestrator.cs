@@ -56,7 +56,7 @@ internal sealed class JobOrchestrator
         bool consumeJobSlot = true)
         => await discovery.ProcessFolderRetrieval(folder, parentJob, statusMessage, consumeJobSlot);
 
-    public async Task RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
+    public async Task<JobOutcome> RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
         => await download.RunOnCompleteIfApplicable(job, song, ctx, outcome);
 
     public async Task ProcessJob(Job job, CancellationToken parentToken = default, Job? parentJob = null)
@@ -525,7 +525,7 @@ internal sealed class JobOrchestrator
             {
                 DownloadExecutorCoordinator.ApplyPreCommitOutcomeMetadata(job, alreadyExistsOutcome);
                 var postProcessOutcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(job, alreadyExistsOutcome);
-                await download.RunOnCompleteIfApplicable(job, null, ctx, postProcessOutcome);
+                postProcessOutcome = await download.RunOnCompleteIfApplicable(job, null, ctx, postProcessOutcome);
                 JobOutcomeCommitter.Commit(job, DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(job, postProcessOutcome));
             }
 

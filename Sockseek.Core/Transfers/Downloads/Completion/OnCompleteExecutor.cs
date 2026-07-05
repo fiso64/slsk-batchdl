@@ -58,6 +58,8 @@ public static class OnCompleteExecutor
     private readonly record struct CapturedProcessOutput(string? Text, int CharsRead, bool Truncated);
 
     private readonly record struct OnCompleteContext(FileManagerContext Variables, string? TagSourcePath);
+    private readonly record struct CommandProcessingResult(JobOutcome Outcome, bool NeedsIndexUpdate);
+    private readonly record struct UpdateIndexStateResult(JobOutcome? Outcome, bool AllowsPathUpdate);
 
     public static void ValidateCommand(string rawCommand)
         => _ = ParseCommand(rawCommand);
@@ -73,10 +75,10 @@ public static class OnCompleteExecutor
 
     // Execute on-complete actions for a job.
     // song is null when called for an album-level completion (no individual song).
-    public static async Task ExecuteAsync(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
+    public static async Task<JobOutcome> ExecuteAsync(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
     {
         if (!job.Config.HasOnComplete || job.Config.Output.OnComplete == null)
-            return;
+            return outcome;
 
         bool isAlbumOnComplete = IsAlbumOnComplete(job, song);
 
@@ -107,6 +109,7 @@ public static class OnCompleteExecutor
             Variables = ApplyOutcomeToContext(onCompleteContext.Variables, outcome),
         };
 
+        var currentOutcome = outcome;
         bool needUpdateIndex    = false;
         ProcessResult? firstCommandResult = null;
         ProcessResult? prevCommandResult  = null;
@@ -156,10 +159,12 @@ public static class OnCompleteExecutor
             if (currentResult == null)
             {
                 SockseekLog.Jobs.Error(OnCompleteLogJob(job, song), $"execution failed for on-complete command {i + 1}. Stopping further on-complete actions for this item.");
-                return;
+                return currentOutcome;
             }
 
-            if (ProcessCommandResult(currentResult.Value, config, song, job))
+            var processedResult = ProcessCommandResult(currentResult.Value, config, song, job, currentOutcome);
+            currentOutcome = processedResult.Outcome;
+            if (processedResult.NeedsIndexUpdate)
                 needUpdateIndex = true;
 
             prevCommandResult = currentResult;
@@ -168,10 +173,10 @@ public static class OnCompleteExecutor
 
         if (needUpdateIndex)
         {
-            ctx.IndexEditor?.Update();
-            ctx.PlaylistEditor?.Update();
-            SockseekLog.Jobs.Debug($"{OnCompleteLogPrefix(job, song)} index/playlist updated based on on-complete action output.");
+            SockseekLog.Jobs.Debug($"{OnCompleteLogPrefix(job, song)} index/playlist will be updated based on on-complete action output.");
         }
+
+        return currentOutcome;
     }
 
     public static bool HasApplicableCommand(Job job, SongJob? song, JobOutcome outcome)
@@ -397,6 +402,9 @@ public static class OnCompleteExecutor
             "already-exists" or "alreadyexists" => CommandWhen.AlreadyExists,
             "not-found-last-time" or "not-found" or "notfound" => CommandWhen.NotFoundLastTime,
             "cancelled" or "canceled" => CommandWhen.Cancelled,
+            // PartialSuccess is currently produced by container-style jobs, but on-complete
+            // actions are only invoked for track completions and AlbumJob-level completions.
+            // Do not document it as usable unless container-level on-complete execution is added.
             "partial" or "partial-success" => CommandWhen.PartialSuccess,
             _ => throw InvalidOnCompleteCommand(rawCommand, $"Unknown when value `{value}`.")
         };
@@ -623,10 +631,10 @@ public static class OnCompleteExecutor
     private static string? CleanCapturedOutput(string? output)
         => string.IsNullOrWhiteSpace(output) ? null : output.Trim().Trim('"');
 
-    // Returns true if the index needs updating.
-    private static bool ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job)
+    private static CommandProcessingResult ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job, JobOutcome currentOutcome)
     {
         bool needsUpdate = false;
+        var nextOutcome = currentOutcome;
         var logJob = OnCompleteLogJob(job, song);
         var logPrefix = OnCompleteLogPrefix(job, song);
 
@@ -635,31 +643,129 @@ public static class OnCompleteExecutor
             if (result.StdoutTruncated)
             {
                 SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout for index update because command output exceeded the capture limit.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
-                return needsUpdate;
+                return new CommandProcessingResult(nextOutcome, needsUpdate);
             }
 
             string[] parts = result.Stdout.Split(';', 2);
-            if (parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]) && song != null)
+            string stateText = parts[0].Trim();
+            string? newPath = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1])
+                ? parts[1].Trim()
+                : null;
+            var indexTarget = GetUpdateIndexTarget(job, song);
+
+            var stateResult = TryGetUpdateIndexStateOutcome(stateText, indexTarget, logJob, result, nextOutcome, newPath);
+            if (stateResult.Outcome is { } stateOutcome)
             {
-                string newPath = parts[1].Trim();
-                if (song.DownloadPath != newPath)
+                nextOutcome = stateOutcome;
+                needsUpdate = true;
+            }
+
+            if (stateResult.AllowsPathUpdate && newPath != null && indexTarget != null)
+            {
+                var currentPath = nextOutcome.DownloadPath ?? GetDownloadPath(indexTarget);
+                if (currentPath != newPath)
                 {
-                    SockseekLog.Jobs.Debug($"{logPrefix} updating song path from '{song.DownloadPath}' to '{newPath}' based on stdout: {song}");
-                    song.DownloadPath = newPath;
+                    SockseekLog.Jobs.Debug($"{logPrefix} updating index path from '{currentPath}' to '{newPath}' based on stdout: {indexTarget}");
+                    nextOutcome = WithDownloadPath(nextOutcome, newPath);
                     needsUpdate = true;
                 }
             }
-            else if (!string.IsNullOrWhiteSpace(result.Stdout))
+            else if (stateResult.AllowsPathUpdate && newPath != null && indexTarget == null)
             {
-                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout for index update. In 3.0 stdout can update the path using '<ignored>;<path>', but cannot mutate job state.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
+                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout path update because index path can only be updated for track- or album-level completions.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
             }
         }
 
         if (result.ExitCode != 0)
             SockseekLog.Jobs.Warn(logJob, $"on-complete command exited with code {result.ExitCode}. {FormatCommandOutputForLog(result)}");
 
-        return needsUpdate;
+        return new CommandProcessingResult(nextOutcome, needsUpdate);
     }
+
+    private static Job? GetUpdateIndexTarget(Job job, SongJob? song)
+        => song ?? (job is AlbumJob ? job : null);
+
+    private static string? GetDownloadPath(Job job)
+        => job switch
+        {
+            SongJob song => song.DownloadPath,
+            AlbumJob album => album.DownloadPath,
+            _ => null,
+        };
+
+    private static UpdateIndexStateResult TryGetUpdateIndexStateOutcome(string stateText, Job? indexTarget, Job logJob, ProcessResult result, JobOutcome currentOutcome, string? newPath)
+    {
+        if (string.IsNullOrWhiteSpace(stateText)
+            || stateText.Equals("ignored", StringComparison.OrdinalIgnoreCase)
+            || stateText.Equals("ignore", StringComparison.OrdinalIgnoreCase)
+            || stateText.Equals("unchanged", StringComparison.OrdinalIgnoreCase)
+            || stateText.Equals("no-change", StringComparison.OrdinalIgnoreCase))
+            return new UpdateIndexStateResult(null, AllowsPathUpdate: true);
+
+        if (indexTarget == null)
+        {
+            SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout state update because index state can only be updated for track- or album-level completions.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+            return new UpdateIndexStateResult(null, AllowsPathUpdate: false);
+        }
+
+        switch (stateText.ToLowerInvariant())
+        {
+            case "success":
+            case "succeeded":
+            case "done":
+            case "downloaded":
+                var path = newPath ?? currentOutcome.DownloadPath ?? GetDownloadPath(indexTarget);
+                var successOutcome = indexTarget is SongJob song
+                    ? JobOutcome.Done(path, currentOutcome.ChosenCandidate ?? song.ChosenCandidate, currentOutcome.DownloadSource != SongDownloadSource.None ? currentOutcome.DownloadSource : song.DownloadSource)
+                    : JobOutcome.Done(path);
+                return new UpdateIndexStateResult(successOutcome, AllowsPathUpdate: true);
+
+            case "failure":
+            case "failed":
+                var failureReason = currentOutcome.FailureReason is JobFailureReason.None or JobFailureReason.Cancelled
+                    ? indexTarget.FailureReason is JobFailureReason.None or JobFailureReason.Cancelled
+                        ? JobFailureReason.Other
+                        : indexTarget.FailureReason
+                    : currentOutcome.FailureReason;
+                if (newPath != null)
+                    SockseekLog.Jobs.Warn(logJob, $"ignored path after failed on-complete index state because failed index entries clear their stored path.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+                return new UpdateIndexStateResult(
+                    JobOutcome.Failed(failureReason, currentOutcome.FailureMessage, currentOutcome.FailureDetail, clearDownloadPath: true),
+                    AllowsPathUpdate: false);
+
+            default:
+                SockseekLog.Jobs.Warn(logJob, $"ignored unknown on-complete index state '{stateText}'. Use success, failed, or ignored.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+                return new UpdateIndexStateResult(null, AllowsPathUpdate: false);
+        }
+    }
+
+    private static JobOutcome WithDownloadPath(JobOutcome outcome, string path)
+    {
+        return outcome.TerminalOutcome switch
+        {
+            JobTerminalOutcome.Succeeded => JobOutcome.Done(path, outcome.ChosenCandidate, outcome.DownloadSource),
+            JobTerminalOutcome.Failed => JobOutcome.Failed(
+                FailureReasonForFailedIndexUpdate(outcome.FailureReason),
+                outcome.FailureMessage,
+                outcome.FailureDetail,
+                path),
+            JobTerminalOutcome.Cancelled => JobOutcome.Cancelled(
+                outcome.CancellationSource == JobCancellationSource.None
+                    ? JobCancellationSource.InternalEngine
+                    : outcome.CancellationSource,
+                outcome.FailureMessage,
+                outcome.FailureDetail,
+                path),
+            JobTerminalOutcome.Skipped => JobOutcome.Skipped(outcome.SkipReason, outcome.FailureReason, path),
+            JobTerminalOutcome.PartialSuccess => JobOutcome.PartialSuccess(outcome.FailureMessage, outcome.CancellationSource, path),
+            _ => outcome,
+        };
+    }
+
+    private static JobFailureReason FailureReasonForFailedIndexUpdate(JobFailureReason reason)
+        => reason is JobFailureReason.None or JobFailureReason.Cancelled
+            ? JobFailureReason.Other
+            : reason;
 
     private static string FormatCommandOutputForLog(ProcessResult result)
     {

@@ -522,7 +522,6 @@ When passing an on-complete action on the command line, quote the whole value so
 - `when=already-exists` - Execute only for already-existing skipped jobs
 - `when=not-found-last-time` - Execute only for not-found-last-time skipped jobs
 - `when=cancelled` - Execute only for cancelled jobs
-- `when=partial` - Execute only for partially successful container jobs
 - `when=completed` - Execute for all non-skipped terminal outcomes
 - `when=any` - Execute for every terminal outcome
 - `scope=track` - Execute only for track-level completions
@@ -530,11 +529,9 @@ When passing an on-complete action on the command line, quote the whole value so
 - `hidden` - Hide the command window
 - `shell` - Use shell execute
 - `lock` - Serialize this action across jobs
-- `update-index` - Use stdout to update the index and playlist path
+- `update-index` - Read stdout as `success;new_path`, `failed`, or `ignored;new_path` to update the track/album entry in the index and playlist. `failed` clears the stored path; `ignored;new_path` leaves the state unchanged and updates only the path.
 
 If `when=` is omitted, it behaves like `when=completed`. This preserves the usual "run when work completed" behavior while avoiding commands for already-existing or not-found-last-time skips.
-
-Sockseek captures bounded stdout/stderr for ordinary on-complete commands, so chained commands can use output variables without an extra option. Commands launched with `shell` use shell execute and cannot expose stdout/stderr. When using `update-index`, stdout should be `ignored;new_path` to update the track path in the index and playlist.
 
 ### Variables
 
@@ -545,6 +542,8 @@ The available variables are the same as in [name-format](#available-variables), 
 - `{first-exitcode}` - First command's exit code
 - `{first-stdout}` - First command's stdout
 - `{first-stderr}` - First command's stderr
+
+Sockseek captures bounded stdout/stderr for ordinary on-complete commands, so chained commands can use output variables from the previous ones. Commands launched with `shell` use shell execute and cannot expose stdout/stderr.
 
 For album-only (`scope=album`) actions, tag variables such as `{title}`, `{artist}`, and `{album}` are read from the first audio file in the album. Job/source/path variables such as `{sartist}`, `{salbum}`, and `{path}` describe the album-level completion itself.
 

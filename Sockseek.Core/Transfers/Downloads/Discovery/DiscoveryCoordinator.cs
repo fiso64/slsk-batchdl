@@ -403,7 +403,7 @@ internal sealed class DiscoveryCoordinator
         if (!foundSomething)
         {
             var outcome = DownloadOutcomes.NoMatchingDiscovery(responseData, "file result", "file results", "album folders");
-            await jobs.RunOnCompleteIfApplicable(job, null, context.Ctx(job), outcome);
+            outcome = await jobs.RunOnCompleteIfApplicable(job, null, context.Ctx(job), outcome);
             JobOutcomeCommitter.Commit(job, outcome);
 
             if (!config.PrintResults)

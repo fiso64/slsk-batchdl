@@ -113,6 +113,32 @@ namespace Tests.Index
         }
 
         [TestMethod]
+        public void Index_FailedJobWithClearedPath_UpdatesExistingPathToEmpty()
+        {
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            song.SetDone();
+            song.DownloadPath = "path/to/file.mp3";
+
+            var (queue, _, _) = MakeSongQueue([song]);
+            File.WriteAllText(testM3uPath, "");
+            var editor = new M3uEditor(testM3uPath, queue, M3uOption.Index, true);
+            editor.Update();
+
+            JobOutcomeCommitter.Commit(song, JobOutcome.Failed(JobFailureReason.AllDownloadsFailed, clearDownloadPath: true));
+            editor.Update();
+
+            var lookup = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
+            var (queue2, _, _) = MakeSongQueue([lookup]);
+            var editor2 = new M3uEditor(testM3uPath, queue2, M3uOption.Index, true);
+
+            editor2.TryGetPreviousRunResult(lookup, out var prev);
+            Assert.IsNotNull(prev);
+            Assert.AreEqual(JobStateOld.Failed, prev.State);
+            Assert.AreEqual(JobFailureReason.AllDownloadsFailed, prev.FailureReason);
+            Assert.AreEqual("", prev.DownloadPath);
+        }
+
+        [TestMethod]
         public void Index_SerializesFilePathsWithForwardSlashes()
         {
             var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Title" });
@@ -169,6 +195,7 @@ namespace Tests.Index
                 Assert.IsNotNull(prev, $"Previous run result not found for {lookupJobs[i].Query.Artist} - {lookupJobs[i].Query.Album}");
                 Assert.AreEqual(albumJobs[i].Query.Artist, prev.Artist);
                 Assert.AreEqual(albumJobs[i].Query.Album, prev.Album);
+                Assert.AreEqual(albumJobs[i].DownloadPath ?? "", prev.DownloadPath);
 
                 // Verify prev is a separate object from the job
                 string originalPath = albumJobs[i].DownloadPath ?? "";

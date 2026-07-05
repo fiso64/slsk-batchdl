@@ -67,7 +67,7 @@ internal sealed class AlbumDownloadExecutor
         }
 
         var postProcessOutcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(job, outcome);
-        await songDownloads.RunOnCompleteIfApplicable(job, null, ctx, postProcessOutcome);
+        postProcessOutcome = await songDownloads.RunOnCompleteIfApplicable(job, null, ctx, postProcessOutcome);
 
         var finalOutcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(job, postProcessOutcome);
         JobOutcomeCommitter.Commit(job, finalOutcome);

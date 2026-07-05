@@ -61,14 +61,14 @@ internal sealed class SongDownloadExecutor
         return outcome;
     }
 
-    public async Task RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
+    public async Task<JobOutcome> RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
     {
         if (!OnCompleteExecutor.HasApplicableCommand(job, song, outcome))
-            return;
+            return outcome;
 
         var activityJob = song ?? job;
         activityJob.UpdateActivity(JobActivityPhase.RunningOnComplete);
-        await OnCompleteExecutor.ExecuteAsync(job, song, ctx, outcome);
+        return await OnCompleteExecutor.ExecuteAsync(job, song, ctx, outcome);
     }
 
     public async Task<JobOutcome> DownloadEmbeddedSong(
@@ -153,7 +153,8 @@ internal sealed class SongDownloadExecutor
             return finalization.Outcome;
 
         var postProcessOutcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(song, finalization.Outcome);
-        await RunOnCompleteIfApplicable(parentJob, song, jobCtx, postProcessOutcome);
+        postProcessOutcome = await RunOnCompleteIfApplicable(parentJob, song, jobCtx, postProcessOutcome);
+        DownloadExecutorCoordinator.ApplyPreCommitOutcomeMetadata(song, postProcessOutcome);
 
         context.OutputFinalizer.PublishDownloadedFileCache(song, postProcessOutcome);
         return postProcessOutcome;

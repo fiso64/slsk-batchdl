@@ -77,7 +77,7 @@ internal sealed class DownloadExecutorCoordinator
         bool updateIndexes)
         => await songDownloads.CommitAndFinalizeSong(song, parentJob, outcome, jobCtx, organizer, organize, updateIndexes);
 
-    public async Task RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
+    public async Task<JobOutcome> RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
         => await songDownloads.RunOnCompleteIfApplicable(job, song, ctx, outcome);
 
     public static void ApplyPreCommitOutcomeMetadata(Job job, JobOutcome outcome)
@@ -86,12 +86,12 @@ internal sealed class DownloadExecutorCoordinator
         {
             if (outcome.ChosenCandidate != null)
                 song.ChosenCandidate = outcome.ChosenCandidate;
-            if (outcome.DownloadPath != null)
+            if (outcome.ShouldUpdateDownloadPath)
                 song.DownloadPath = outcome.DownloadPath;
             if (outcome.DownloadSource != SongDownloadSource.None)
                 song.DownloadSource = outcome.DownloadSource;
         }
-        else if (job is AlbumJob album && outcome.DownloadPath != null)
+        else if (job is AlbumJob album && outcome.ShouldUpdateDownloadPath)
         {
             album.DownloadPath = outcome.DownloadPath;
         }
@@ -134,6 +134,5 @@ internal sealed class DownloadExecutorCoordinator
 
     public static string JobLogKind(Job job) => SockseekLog.JobTypeName(job);
 }
-
 
 
