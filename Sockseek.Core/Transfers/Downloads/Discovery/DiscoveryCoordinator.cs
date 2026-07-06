@@ -550,6 +550,7 @@ internal sealed class DiscoveryCoordinator
                 PlaylistEditor = ctx.PlaylistEditor,
                 OutputDirSkipper = ctx.OutputDirSkipper,
                 MusicDirSkipper = ctx.MusicDirSkipper,
+                OutputScope = ctx.OutputScope,
                 PreprocessTracks = false,
             };
         }
@@ -559,6 +560,7 @@ internal sealed class DiscoveryCoordinator
             PlaylistEditor = ctx.PlaylistEditor,
             OutputDirSkipper = ctx.OutputDirSkipper,
             MusicDirSkipper = ctx.MusicDirSkipper,
+            OutputScope = ctx.OutputScope,
             PreprocessTracks = false,
         };
 
@@ -697,6 +699,5 @@ internal sealed class DiscoveryCoordinator
     }
 
 }
-
 
 

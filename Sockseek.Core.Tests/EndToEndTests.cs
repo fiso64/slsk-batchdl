@@ -180,6 +180,186 @@ namespace Tests.EndToEnd
         }
 
         [TestMethod]
+        public async Task CsvSongList_DefaultOutputDir_DownloadsSongsInsideCsvNamedFolder()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-default-folder-" + Guid.NewGuid());
+            var musicRoot = Path.Combine(tempRoot, "music");
+            var outputDir = Path.Combine(tempRoot, "out");
+            var sourceDir = Path.Combine(tempRoot, "source");
+            Directory.CreateDirectory(musicRoot);
+            Directory.CreateDirectory(outputDir);
+            Directory.CreateDirectory(sourceDir);
+
+            var csvPath = Path.Combine(sourceDir, "tracks_to_download.csv");
+            File.WriteAllText(csvPath, "artist,title\nTest Artist,First Track\n");
+            File.WriteAllBytes(Path.Combine(musicRoot, "Test Artist - First Track.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var settings = new DownloadSettings();
+                settings.Extraction.Input = csvPath;
+                settings.Output.ParentDir = outputDir;
+
+                var client = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+                var app = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
+                app.Enqueue(new ExtractJob(csvPath, InputType.None), settings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                var expectedPath = Path.Combine(outputDir, "tracks_to_download", "Test Artist - First Track.mp3");
+                var rootPath = Path.Combine(outputDir, "Test Artist - First Track.mp3");
+                var tree = string.Join("\n", Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(outputDir, path)));
+
+                Assert.IsTrue(File.Exists(expectedPath), $"Expected downloaded song at '{expectedPath}'. Actual tree:\n{tree}");
+                Assert.IsFalse(File.Exists(rootPath), "CSV song downloads should not be placed directly in the output root.");
+            }
+            finally
+            {
+                if (Directory.Exists(tempRoot))
+                    Directory.Delete(tempRoot, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task CsvSongList_NameFormat_DoesNotPrefixCsvNamedFolder()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-name-format-folder-" + Guid.NewGuid());
+            var musicRoot = Path.Combine(tempRoot, "music");
+            var outputDir = Path.Combine(tempRoot, "out");
+            var sourceDir = Path.Combine(tempRoot, "source");
+            Directory.CreateDirectory(musicRoot);
+            Directory.CreateDirectory(outputDir);
+            Directory.CreateDirectory(sourceDir);
+
+            var csvPath = Path.Combine(sourceDir, "tracks_to_download.csv");
+            File.WriteAllText(csvPath, "artist,title\nTest Artist,First Track\n");
+            File.WriteAllBytes(Path.Combine(musicRoot, "Test Artist - First Track.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var settings = new DownloadSettings();
+                settings.Extraction.Input = csvPath;
+                settings.Output.ParentDir = outputDir;
+                settings.Output.NameFormat = "Custom/{sartist} - {stitle}";
+
+                var client = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+                var app = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
+                app.Enqueue(new ExtractJob(csvPath, InputType.None), settings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                var expectedPath = Path.Combine(outputDir, "Custom", "Test Artist - First Track.mp3");
+                var csvPrefixedPath = Path.Combine(outputDir, "tracks_to_download", "Custom", "Test Artist - First Track.mp3");
+                var tree = string.Join("\n", Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(outputDir, path)));
+
+                Assert.IsTrue(File.Exists(expectedPath), $"Expected name-formatted song at '{expectedPath}'. Actual tree:\n{tree}");
+                Assert.IsFalse(File.Exists(csvPrefixedPath), "Name format should not be wrapped in the CSV default folder.");
+            }
+            finally
+            {
+                if (Directory.Exists(tempRoot))
+                    Directory.Delete(tempRoot, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task CsvAlbumList_DefaultOutputDir_DownloadsAlbumInsideCsvNamedFolder()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-album-default-folder-" + Guid.NewGuid());
+            var musicRoot = Path.Combine(tempRoot, "music");
+            var albumRoot = Path.Combine(musicRoot, "Test Artist", "Test Album");
+            var outputDir = Path.Combine(tempRoot, "out");
+            var sourceDir = Path.Combine(tempRoot, "source");
+            Directory.CreateDirectory(albumRoot);
+            Directory.CreateDirectory(outputDir);
+            Directory.CreateDirectory(sourceDir);
+
+            var csvPath = Path.Combine(sourceDir, "albums_to_download.csv");
+            File.WriteAllText(csvPath, "artist,title,album\nTest Artist,,Test Album\n");
+            File.WriteAllBytes(Path.Combine(albumRoot, "01. Test Artist - First Track.mp3"), TestHelpers.EmptyMp3Bytes);
+            File.WriteAllBytes(Path.Combine(albumRoot, "02. Test Artist - Second Track.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var settings = new DownloadSettings();
+                settings.Extraction.Input = csvPath;
+                settings.Output.ParentDir = outputDir;
+
+                var client = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+                var app = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
+                app.Enqueue(new ExtractJob(csvPath, InputType.None), settings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                var expectedPath = Path.Combine(outputDir, "albums_to_download", "Test Album", "01. Test Artist - First Track.mp3");
+                var oldPath = Path.Combine(outputDir, "Test Album", "01. Test Artist - First Track.mp3");
+                var tree = string.Join("\n", Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(outputDir, path)));
+
+                Assert.IsTrue(File.Exists(expectedPath), $"Expected CSV album track at '{expectedPath}'. Actual tree:\n{tree}");
+                Assert.IsFalse(File.Exists(oldPath), "CSV album downloads should not skip the CSV default folder.");
+            }
+            finally
+            {
+                if (Directory.Exists(tempRoot))
+                    Directory.Delete(tempRoot, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task NestedListCsv_DefaultOutputDir_DownloadsSongsInsideAllContainerFolders()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "slsk-nested-default-folder-" + Guid.NewGuid());
+            var sourceDir = Path.Combine(tempRoot, "source");
+            var musicRoot = Path.Combine(tempRoot, "music");
+            var outputDir = Path.Combine(tempRoot, "out");
+            Directory.CreateDirectory(sourceDir);
+            Directory.CreateDirectory(musicRoot);
+            Directory.CreateDirectory(outputDir);
+
+            var csvPath = Path.Combine(sourceDir, "songs.csv");
+            var listPath = Path.Combine(sourceDir, "wishlist.txt");
+            File.WriteAllText(csvPath, "artist,title\nTest Artist,First Song\n");
+            File.WriteAllText(listPath, $"\"{csvPath}\"\n");
+            File.WriteAllBytes(Path.Combine(musicRoot, "Test Artist - First Song.mp3"), TestHelpers.EmptyMp3Bytes);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var settings = new DownloadSettings();
+                settings.Extraction.Input = listPath;
+                settings.Extraction.InputType = InputType.List;
+                settings.Output.ParentDir = outputDir;
+
+                var client = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot);
+                var app = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
+                app.Enqueue(new ExtractJob(listPath, InputType.List), settings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                var expectedPath = Path.Combine(outputDir, "wishlist", "songs", "Test Artist - First Song.mp3");
+                var tree = string.Join("\n", Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
+                    .Select(path => Path.GetRelativePath(outputDir, path)));
+
+                Assert.IsTrue(File.Exists(expectedPath), $"Expected nested container song at '{expectedPath}'. Actual tree:\n{tree}");
+            }
+            finally
+            {
+                if (Directory.Exists(tempRoot))
+                    Directory.Delete(tempRoot, true);
+            }
+        }
+
+        [TestMethod]
         public async Task NestedListCsv_AutoIndex_SkipsExistingItemsOnRerun()
         {
             Console.ResetColor();
@@ -224,7 +404,7 @@ namespace Tests.EndToEnd
                 await RunAsync(LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, musicRoot));
 
                 var listIndexPath = Path.Combine(outputDir, "list", "_index.csv");
-                var csvIndexPath = Path.Combine(outputDir, "songs", "_index.csv");
+                var csvIndexPath = Path.Combine(outputDir, "list", "songs", "_index.csv");
                 Assert.IsTrue(File.Exists(listIndexPath), "The outer list should auto-create an index file.");
                 Assert.IsTrue(File.Exists(csvIndexPath), "The nested CSV should auto-create an index file.");
 

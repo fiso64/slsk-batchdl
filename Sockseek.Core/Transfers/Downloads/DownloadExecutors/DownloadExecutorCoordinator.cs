@@ -36,10 +36,10 @@ internal sealed class DownloadExecutorCoordinator
             switch (job)
             {
                 case SongJob sj:
-                    Job songOwner = parentJob is AggregateJob aggregateOwner ? aggregateOwner : sj;
-                    var songOrganizer = new FileManager(songOwner, config.Output, config.Extraction);
-                    outcome = await songDownloads.ProcessSongDownload(sj, songOwner, songOrganizer, parentToken);
-                    outcome = await songDownloads.CommitAndFinalizeSong(sj, songOwner, outcome, ctx, songOrganizer, organize: true, updateIndexes: true);
+                    var songParent = parentJob ?? sj;
+                    var songOrganizer = new FileManager(sj, config.Output, config.Extraction, ctx.OutputScope);
+                    outcome = await songDownloads.ProcessSongDownload(sj, songParent, songOrganizer, parentToken);
+                    outcome = await songDownloads.CommitAndFinalizeSong(sj, songParent, outcome, ctx, songOrganizer, organize: true, updateIndexes: true);
                     break;
 
                 case AlbumJob aj:
@@ -63,7 +63,6 @@ internal sealed class DownloadExecutorCoordinator
             return outcome;
         }
     }
-
 
     // ── per-job-type handlers ─────────────────────────────────────────────────
 
@@ -134,5 +133,3 @@ internal sealed class DownloadExecutorCoordinator
 
     public static string JobLogKind(Job job) => SockseekLog.JobTypeName(job);
 }
-
-

@@ -146,6 +146,7 @@ internal sealed class ManualSelectionCoordinator
             PlaylistEditor = parentCtx.PlaylistEditor,
             OutputDirSkipper = parentCtx.OutputDirSkipper,
             MusicDirSkipper = parentCtx.MusicDirSkipper,
+            OutputScope = parentCtx.OutputScope,
             PreprocessTracks = false,
         };
 

@@ -30,6 +30,7 @@ public struct FileManagerContext
     public string InputSource;    // {input}
     public string OutputDir;      // {output-dir}
     public string ConfigDir;      // {configdir}
+    public string DefaultFolder;   // {default-folder}
     public SongQuery Query;         // artist, title, album, length, uri, artistMaybeWrong
     public FileCandidate? Candidate;    // slsk-filename, slsk-foldername
     public string? DownloadPath;  // path, path-noext, ext
@@ -65,6 +66,64 @@ public struct FileManagerContext
 
 }
 
+public sealed class OutputScope
+{
+    private readonly string[] defaultFolderSegments;
+
+    private OutputScope(IEnumerable<string> defaultFolderSegments)
+    {
+        this.defaultFolderSegments = defaultFolderSegments.ToArray();
+    }
+
+    public static OutputScope Empty { get; } = new([]);
+
+    public IReadOnlyList<string> DefaultFolderSegments => defaultFolderSegments;
+
+    public string DefaultFolder => defaultFolderSegments.Length == 0
+        ? ""
+        : Path.Join(defaultFolderSegments);
+
+    public static string OutputParentDir(OutputSettings output)
+        => string.IsNullOrWhiteSpace(output.ParentDir)
+            ? Directory.GetCurrentDirectory()
+            : output.ParentDir;
+
+    public string DefaultDirectory(OutputSettings output)
+        => defaultFolderSegments.Length == 0
+            ? OutputParentDir(output)
+            : Path.Join([OutputParentDir(output), .. defaultFolderSegments]);
+
+    public string ScopedPath(OutputSettings output, params string[] pathParts)
+        => Path.Join([DefaultDirectory(output), .. pathParts]);
+
+    public OutputScope WithDefaultFolder(string? folderName, string invalidReplaceStr)
+    {
+        var cleaned = CleanDefaultFolderSegment(folderName, invalidReplaceStr);
+        if (string.IsNullOrEmpty(cleaned))
+            return this;
+
+        return new OutputScope(defaultFolderSegments.Append(cleaned));
+    }
+
+    public static OutputScope ForLegacyOwner(Job job, OutputSettings output)
+        => Empty.WithDefaultFolder(job.DefaultFolderName(), output.InvalidReplaceStr);
+
+    public static OutputScope ForPreparedJob(Job job, OutputScope inherited, OutputSettings output)
+        => JobCreatesDefaultFolderScope(job)
+            ? inherited.WithDefaultFolder(job.DefaultFolderName(), output.InvalidReplaceStr)
+            : inherited;
+
+    private static bool JobCreatesDefaultFolderScope(Job job)
+        => job is JobList or AggregateJob or AlbumAggregateJob;
+
+    private static string CleanDefaultFolderSegment(string? folderName, string invalidReplaceStr)
+        => string.IsNullOrWhiteSpace(folderName)
+            ? ""
+            : folderName
+                .ReplaceInvalidChars(invalidReplaceStr)
+                .Trim(' ', '.');
+}
+
 
 public partial class FileManager
 {
@@ -82,16 +141,17 @@ public partial class FileManager
     }
     private readonly OutputSettings output;
     private readonly ExtractionSettings extraction;
+    private readonly OutputScope outputScope;
 
-    private string OutputParentDir => string.IsNullOrWhiteSpace(output.ParentDir)
-        ? Directory.GetCurrentDirectory()
-        : output.ParentDir;
+    private string OutputParentDir => OutputScope.OutputParentDir(output);
+    private string DefaultOutputDir => outputScope.DefaultDirectory(output);
 
-    public FileManager(Job job, OutputSettings output, ExtractionSettings extraction)
+    public FileManager(Job job, OutputSettings output, ExtractionSettings extraction, OutputScope? outputScope = null)
     {
-        this.job       = job;
-        this.output    = output;
+        this.job        = job;
+        this.output     = output;
         this.extraction = extraction;
+        this.outputScope = outputScope ?? OutputScope.ForLegacyOwner(job, output);
     }
 
     public string GetSavePath(string sourceFname)
@@ -104,11 +164,8 @@ public partial class FileManager
         lock (sync)
         {
             string? rcd = downloadingAdditionalImagesValue ? remoteImagesCommonDir : remoteBaseDir;
-            string parent = OutputParentDir;
+            string parent = DefaultOutputDir;
             string name = Utils.GetFileNameWithoutExtSlsk(sourceFname);
-
-            if (!string.IsNullOrEmpty(job.DefaultFolderName()))
-                parent = Path.Join(parent, job.DefaultFolderName());
 
             if (job is AlbumJob && !string.IsNullOrEmpty(rcd))
             {
@@ -193,6 +250,7 @@ public partial class FileManager
                 ExtractorName = extraction.InputType.ToString(),
                 InputSource   = extraction.Input ?? "",
                 OutputDir     = OutputParentDir,
+                DefaultFolder = outputScope.DefaultFolder,
                 ConfigDir     = job.Config?.RuntimePathContext.ConfigDir ?? "",
             });
             string newFilePath = Path.Join(OutputParentDir, pathPart + Path.GetExtension(song.DownloadPath));
@@ -385,7 +443,7 @@ public partial class FileManager
         { "extractor",      (ctx, _) => ctx.ExtractorName },
         { "input",          (ctx, _) => ctx.InputSource },
         { "item-name",      (ctx, _) => ctx.Job.ItemNameOrSource() },
-        { "default-folder", (ctx, _) => ctx.Job.DefaultFolderName() },
+        { "default-folder", (ctx, _) => !string.IsNullOrEmpty(ctx.DefaultFolder) ? ctx.DefaultFolder : ctx.Job.DefaultFolderName() },
         { "output-dir",     (ctx, _) => ctx.OutputDir },
         { "outputdir",      (ctx, _) => ctx.OutputDir },
         { "configdir",      (ctx, _) => ctx.ConfigDir },
@@ -400,7 +458,8 @@ public partial class FileManager
     private static readonly HashSet<string> PreserveSeparatorVars = new()
     {
         "slsk-foldername",
-        "foldername"
+        "foldername",
+        "default-folder"
     };
 
     private static readonly HashSet<string> NoCleanSeparatorVars = new()

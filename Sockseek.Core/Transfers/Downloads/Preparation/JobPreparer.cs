@@ -24,7 +24,7 @@ public static class JobPreparer
         resolver ??= DefaultJobSettingsResolver.Instance;
 
         foreach (var job in queue.Jobs)
-            PrepareJob(job, queue, startConfig, contexts, editors, skippers, resolver);
+            PrepareJob(job, queue, OutputScope.Empty, startConfig, contexts, editors, skippers, resolver);
 
         return contexts;
     }
@@ -57,10 +57,13 @@ public static class JobPreparer
                 skippers[(parentConfig.Skip.SkipMusicDir, parentConfig.Skip.SkipModeMusicDir, checkCond)] = parentCtx.MusicDirSkipper;
         }
 
+        var inheritedScope = parentCtx?.OutputScope ?? OutputScope.Empty;
+
         // Use a synthetic owner list so index/playlist paths are scoped correctly when
         // root is a bare leaf job (not a JobList).
-        var ownerList = explicitOwnerList ?? root as JobList ?? new JobList(null, [root]);
-        PrepareJob(root, ownerList, parentConfig, newContexts, editors, skippers, resolver);
+        var ownerList = root as JobList ?? explicitOwnerList ?? new JobList(null, [root]);
+        bool useInheritedScopeForRootEditors = explicitOwnerList != null && root is JobList;
+        PrepareJob(root, ownerList, inheritedScope, parentConfig, newContexts, editors, skippers, resolver, useInheritedScopeForRootEditors);
         return newContexts;
     }
 
@@ -117,15 +120,19 @@ public static class JobPreparer
     private static void PrepareJob(
         Job job,
         JobList ownerList,
+        OutputScope inheritedScope,
         DownloadSettings parentConfig,
         Dictionary<Guid, JobContext> contexts,
         Dictionary<(string, M3uOption), M3uEditor> editors,
         Dictionary<(string, SkipMode, bool), TrackSkipper> skippers,
-        IJobSettingsResolver resolver)
+        IJobSettingsResolver resolver,
+        bool useInheritedScopeForCurrentJob = false)
     {
         var ctx = new JobContext();
 
         job.Config = resolver.Resolve(parentConfig, job);
+        var childScope = OutputScope.ForPreparedJob(job, inheritedScope, job.Config.Output);
+        ctx.OutputScope = useInheritedScopeForCurrentJob ? inheritedScope : childScope;
 
         ctx.EnablesIndexByDefault = job.EnablesIndexByDefault;
 
@@ -165,7 +172,7 @@ public static class JobPreparer
         if (job is JobList childList)
         {
             foreach (var child in childList.Jobs)
-                PrepareJob(child, childList, job.Config, contexts, editors, skippers, resolver);
+                PrepareJob(child, childList, childScope, job.Config, contexts, editors, skippers, resolver);
         }
     }
 
@@ -191,7 +198,7 @@ public static class JobPreparer
         }
         else
         {
-            indexPath = Path.Join(config.Output.ParentDir, ownerList.DefaultFolderName(), "_index.csv");
+            indexPath = ctx.OutputScope.ScopedPath(config.Output, "_index.csv");
         }
 
         var key = (indexPath, indexOption);
@@ -222,7 +229,7 @@ public static class JobPreparer
         else
         {
             string playlistFileName = ownerList.ItemName != null ? ownerList.DefaultPlaylistName() : job.DefaultPlaylistName();
-            m3uPath = Path.Join(config.Output.ParentDir, ownerList.DefaultFolderName(), playlistFileName);
+            m3uPath = ctx.OutputScope.ScopedPath(config.Output, playlistFileName);
         }
 
         var key = (m3uPath, M3uOption.Playlist);

@@ -34,7 +34,7 @@ internal sealed class AlbumDownloadExecutor
     public async Task<JobOutcome> ProcessAlbumDownload(AlbumJob job, JobContext ctx)
     {
         var config = job.Config;
-        var organizer = new FileManager(job, config.Output, config.Extraction);
+        var organizer = new FileManager(job, config.Output, config.Extraction, ctx.OutputScope);
         var audioResult = await TryDownloadAlbumAudio(job, ctx, organizer);
         var completion = PrepareAlbumAudioOutcome(job, audioResult, ctx);
         var chosenFiles = completion.ChosenFiles;

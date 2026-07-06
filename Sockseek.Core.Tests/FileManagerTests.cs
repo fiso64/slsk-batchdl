@@ -240,10 +240,47 @@ namespace Tests.FileManagerTests
     }
 
     [TestClass]
+    public class OutputScopeTests
+    {
+        [TestMethod]
+        public void ForPreparedJob_AddsFolderSegmentsForListAndAggregateContainers()
+        {
+            var output = new OutputSettings();
+            var list = new JobList("Wishlist");
+            var aggregate = new AggregateJob(new SongQuery { Artist = "Artist1" }) { ItemName = "Artist1" };
+            var albumAggregate = new AlbumAggregateJob(new AlbumQuery { Artist = "Artist1" }) { ItemName = "Artist1 Albums" };
+
+            var scope = OutputScope.Empty;
+            scope = OutputScope.ForPreparedJob(list, scope, output);
+            scope = OutputScope.ForPreparedJob(aggregate, scope, output);
+            scope = OutputScope.ForPreparedJob(albumAggregate, scope, output);
+
+            Assert.AreEqual(Path.Join("Wishlist", "Artist1", "Artist1 Albums"), scope.DefaultFolder);
+        }
+
+        [TestMethod]
+        public void ForPreparedJob_DoesNotAddLeafSongOrAlbumSegments()
+        {
+            var output = new OutputSettings();
+            var inherited = OutputScope.Empty.WithDefaultFolder("Wishlist", output.InvalidReplaceStr);
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Track1" });
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+
+            var songScope = OutputScope.ForPreparedJob(song, inherited, output);
+            var albumScope = OutputScope.ForPreparedJob(album, inherited, output);
+
+            Assert.AreEqual(inherited.DefaultFolder, songScope.DefaultFolder);
+            Assert.AreEqual(inherited.DefaultFolder, albumScope.DefaultFolder);
+        }
+    }
+
+    [TestClass]
     public class OrganizationTests
     {
         private string testRoot = "";
         private DownloadSettings config = null!;
+        private const string AlbumRemoteDir = @"User1\Artist1\Album1";
+        private const string AlbumRemoteTrack = AlbumRemoteDir + @"\01. Track1.mp3";
 
         [TestInitialize]
         public void Setup()
@@ -264,57 +301,93 @@ namespace Tests.FileManagerTests
         }
 
         [TestMethod]
-        public void AlbumJob_DefaultOrganization_UsesRemoteFolderName()
+        public void SingleInputSong_DefaultOrganization_PlacesSongDirectlyInOutputDir()
         {
-            // Setup
-            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            var manager = new FileManager(job, config.Output, config.Extraction);
-            manager.SetremoteBaseDir(@"Artist1\Album1"); // slsk-style path
+            var job = new SongJob(new SongQuery { Artist = "Artist1", Title = "Track1" });
+            var contexts = Prepare(job);
+            var manager = PreparedManager(job, contexts);
 
-            // File paths
-            string source = Path.Combine(testRoot, "temp_download.mp3");
-            File.WriteAllText(source, "dummy");
+            string target = manager.GetSavePath(@"User1\Artist1 - Track1.mp3");
 
-            // Execute
-            string target = manager.GetSavePath(source);
-
-            // Verify
-            // Should be {testRoot}/Album1/temp_download.mp3
-            string expected = Path.Combine(testRoot, "Album1", "temp_download.mp3");
-            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+            AssertSamePath(Path.Combine(testRoot, "Artist1 - Track1.mp3"), target);
         }
 
         [TestMethod]
-        public void SongListJob_DefaultOrganization_UsesItemName()
+        public void SingleInputAlbum_DefaultOrganization_PlacesAlbumFolderDirectlyInOutputDir()
         {
-            // Setup
-            var job = new JobList();
-            job.ItemName = "MyPlaylist";
-            var manager = new FileManager(job, config.Output, config.Extraction);
+            var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var contexts = Prepare(job);
+            var manager = PreparedManager(job, contexts);
+            manager.SetremoteBaseDir(AlbumRemoteDir);
 
-            // File paths
-            string source = Path.Combine(testRoot, "temp_song.mp3");
-            File.WriteAllText(source, "dummy");
+            string target = manager.GetSavePath(AlbumRemoteTrack);
 
-            // Execute
-            string target = manager.GetSavePath(source);
+            AssertSamePath(Path.Combine(testRoot, "Album1", "01. Track1.mp3"), target);
+        }
 
-            // Verify
-            // Should be {testRoot}/MyPlaylist/temp_song.mp3
-            string expected = Path.Combine(testRoot, "MyPlaylist", "temp_song.mp3");
-            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+        [TestMethod]
+        public void JobList_DefaultOrganization_NestsSongsAndAlbumsInsideListFolder()
+        {
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Single" });
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var list = new JobList("MyPlaylist", [song, album]);
+
+            var contexts = Prepare(list);
+            var songManager = PreparedManager(song, contexts);
+            var albumManager = PreparedManager(album, contexts);
+            albumManager.SetremoteBaseDir(AlbumRemoteDir);
+
+            string songTarget = songManager.GetSavePath(@"User1\Artist1 - Single.mp3");
+            string albumTarget = albumManager.GetSavePath(AlbumRemoteTrack);
+
+            AssertSamePath(Path.Combine(testRoot, "MyPlaylist", "Artist1 - Single.mp3"), songTarget);
+            AssertSamePath(Path.Combine(testRoot, "MyPlaylist", "Album1", "01. Track1.mp3"), albumTarget);
+        }
+
+        [TestMethod]
+        public void NestedJobLists_DefaultOrganization_NestsSongInsideAllListFolders()
+        {
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Nested" });
+            var innerList = new JobList("Inner", [song]);
+            var outerList = new JobList("Outer", [innerList]);
+
+            var contexts = Prepare(outerList);
+            var manager = PreparedManager(song, contexts);
+
+            string target = manager.GetSavePath(@"User1\Artist1 - Nested.mp3");
+
+            Assert.AreEqual(Path.Join("Outer", "Inner"), contexts[song.Id].OutputScope.DefaultFolder);
+            AssertSamePath(Path.Combine(testRoot, "Outer", "Inner", "Artist1 - Nested.mp3"), target);
+        }
+
+        [TestMethod]
+        public void NestedJobLists_NameFormatCanRecoverDefaultOrganization()
+        {
+            config.Output.NameFormat = "{default-folder}/{filename}";
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Nested" });
+            var innerList = new JobList("Inner", [song]);
+            var outerList = new JobList("Outer", [innerList]);
+
+            var contexts = Prepare(outerList);
+            var manager = PreparedManager(song, contexts);
+            MarkDownloaded(song, @"User1\Artist1 - Nested.mp3", Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
+
+            manager.OrganizeSong(song);
+
+            string expected = Path.Combine(testRoot, "Outer", "Inner", "Artist1 - Nested.mp3");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
         }
 
         [TestMethod]
         public void AlbumJob_NameFormat_MovesCoverIntelligently()
         {
-            // Setup
             var job = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
             config.Output.NameFormat = "OrgTest/{sartist}/{salbum}/{filename}";
-            var manager = new FileManager(job, config.Output, config.Extraction);
+            var contexts = Prepare(job);
+            var manager = PreparedManager(job, contexts);
             manager.SetremoteBaseDir(@"Artist1\Album1");
 
-            // Create some "downloaded" files
             string audio1Base = Path.Combine(testRoot, "dl1.mp3");
             string audio2Base = Path.Combine(testRoot, "dl2.mp3");
             string coverBase = Path.Combine(testRoot, "cover.jpg");
@@ -348,60 +421,188 @@ namespace Tests.FileManagerTests
 
             var allFiles = new List<SongJob> { file1, file2, coverFile };
 
-            // Execute
             manager.OrganizeAlbum(job, allFiles, null, remainingOnly: false);
 
-            // Verify audio files are moved to NF location
-            // NF is "OrgTest/{sartist}/{salbum}/{filename}". {filename} for file1 is "01. Track1"
             string expectedAudio1 = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "01. Track1.mp3");
             string expectedAudio2 = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "02. Track2.mp3");
             Assert.IsTrue(File.Exists(expectedAudio1), "Audio 1 not found at target");
             Assert.IsTrue(File.Exists(expectedAudio2), "Audio 2 not found at target");
 
-            // Verify cover is moved specifically to the common parent of the audio files
             string expectedCover = Path.Combine(testRoot, "OrgTest", "Artist1", "Album1", "cover.jpg");
             Assert.IsTrue(File.Exists(expectedCover), $"Cover not found at {expectedCover}");
         }
 
         [TestMethod]
-        public void AlbumAggregate_ArtistOnly_CreatesSubfoldersForAlbums()
+        public void AggregateJob_DefaultOrganization_GroupsGeneratedSongsInsideAggregateFolder()
         {
-            // main use case for -ag: find all albums by an artist.
-            var aggJob = new AlbumAggregateJob(new AlbumQuery { Artist = "Artist1" });
-            aggJob.ItemName = "Artist1"; // Set by JobList
-            
-            // Simulating an AlbumJob spawned from this aggregate (e.g. for 'Album1')
-            var albumJob = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
-            albumJob.ItemName = aggJob.ItemName; // Inherited from AlbumAggregateJob
-            
-            var manager = new FileManager(albumJob, config.Output, config.Extraction);
-            manager.SetremoteBaseDir(@"User1\Artist1\Album1"); // Remote path
-            
-            string source = Path.Combine(testRoot, "track.mp3");
-            File.WriteAllText(source, "data");
-            
-            // Should be {testRoot}/Artist1/Album1/track.mp3
-            string target = manager.GetSavePath(source);
-            string expected = Path.Combine(testRoot, "Artist1", "Album1", "track.mp3");
-            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+            var aggregate = new AggregateJob(new SongQuery { Artist = "Artist1" }) { ItemName = "Artist1" };
+            var generatedSong = new SongJob(new SongQuery { Artist = "Artist1", Title = "Track1" });
+
+            var contexts = Prepare(aggregate);
+            generatedSong.Config = aggregate.Config;
+            var manager = new FileManager(generatedSong, aggregate.Config.Output, aggregate.Config.Extraction, contexts[aggregate.Id].OutputScope);
+
+            string target = manager.GetSavePath(@"User1\Artist1 - Track1.mp3");
+
+            AssertSamePath(Path.Combine(testRoot, "Artist1", "Artist1 - Track1.mp3"), target);
         }
 
         [TestMethod]
-        public void SongAggregate_ArtistOnly_GroupsIntoArtistFolder()
+        public void AlbumAggregateJob_DefaultOrganization_GroupsGeneratedAlbumsInsideAggregateFolder()
         {
-            // main use case for -g: find all songs by an artist.
-            var job = new AggregateJob(new SongQuery { Artist = "Artist1" });
-            job.ItemName = "Artist1"; // Set by JobList
-            
-            var manager = new FileManager(job, config.Output, config.Extraction);
-            
-            string source = Path.Combine(testRoot, "temp.mp3");
-            File.WriteAllText(source, "data");
-            
-            // Should be {testRoot}/Artist1/temp.mp3
-            string target = manager.GetSavePath(source);
-            string expected = Path.Combine(testRoot, "Artist1", "temp.mp3");
-            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(target));
+            var aggregate = new AlbumAggregateJob(new AlbumQuery { Artist = "Artist1" }) { ItemName = "Artist1" };
+            var generatedAlbum = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+
+            var contexts = Prepare(aggregate);
+            generatedAlbum.Config = aggregate.Config;
+            var manager = new FileManager(generatedAlbum, aggregate.Config.Output, aggregate.Config.Extraction, contexts[aggregate.Id].OutputScope);
+            manager.SetremoteBaseDir(AlbumRemoteDir);
+
+            string target = manager.GetSavePath(AlbumRemoteTrack);
+
+            AssertSamePath(Path.Combine(testRoot, "Artist1", "Album1", "01. Track1.mp3"), target);
+        }
+
+        [TestMethod]
+        public void ExtractJobIndirection_DefaultOrganization_PreservesListAndCsvFolders()
+        {
+            var (song, contexts) = PrepareNestedExtractedCsvSong();
+            var manager = PreparedManager(song, contexts);
+
+            string target = manager.GetSavePath(@"User1\Test Artist - First Song.mp3");
+
+            Assert.AreEqual(Path.Join("wishlist", "songs"), contexts[song.Id].OutputScope.DefaultFolder);
+            AssertSamePath(Path.Combine(testRoot, "wishlist", "songs", "Test Artist - First Song.mp3"), target);
+        }
+
+        [TestMethod]
+        public void ExtractJobIndirection_NameFormatCanRecoverListAndCsvFolders()
+        {
+            config.Output.NameFormat = "{default-folder}/{filename}";
+            var (song, contexts) = PrepareNestedExtractedCsvSong();
+            var manager = PreparedManager(song, contexts);
+            MarkDownloaded(song, @"User1\Test Artist - First Song.mp3", Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
+
+            manager.OrganizeSong(song);
+
+            string expected = Path.Combine(testRoot, "wishlist", "songs", "Test Artist - First Song.mp3");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
+        }
+
+        [TestMethod]
+        public void NameFormat_BypassesDefaultOrganization()
+        {
+            config.Output.NameFormat = "Custom/{filename}";
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var list = new JobList("MyPlaylist", [album]);
+
+            var contexts = Prepare(list);
+            var manager = PreparedManager(album, contexts);
+            manager.SetremoteBaseDir(AlbumRemoteDir);
+            string defaultPath = manager.GetSavePath(AlbumRemoteTrack);
+            var song = DownloadedSong(AlbumRemoteTrack, defaultPath);
+
+            manager.OrganizeSong(song);
+
+            string expected = Path.Combine(testRoot, "Custom", "01. Track1.mp3");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
+            Assert.IsFalse(File.Exists(Path.Combine(testRoot, "MyPlaylist", "Album1", "Custom", "01. Track1.mp3")));
+        }
+
+        [TestMethod]
+        public void NameFormat_CanRecoverDefaultOrganization()
+        {
+            config.Output.NameFormat = "{default-folder}/{foldername}/{filename}";
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist1", Album = "Album1" });
+            var list = new JobList("MyPlaylist", [album]);
+
+            var contexts = Prepare(list);
+            var manager = PreparedManager(album, contexts);
+            manager.SetremoteBaseDir(AlbumRemoteDir);
+            string stagingPath = CreateDownloadedFile(Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
+            var song = DownloadedSong(AlbumRemoteTrack, stagingPath);
+
+            manager.OrganizeSong(song);
+
+            string expected = Path.Combine(testRoot, "MyPlaylist", "Album1", "01. Track1.mp3");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
+        }
+
+        private Dictionary<Guid, JobContext> Prepare(params Job[] jobs)
+            => JobPreparer.PrepareJobs(new JobList(null, jobs), config);
+
+        private FileManager PreparedManager(Job job, Dictionary<Guid, JobContext> contexts)
+            => new(job, job.Config.Output, job.Config.Extraction, contexts[job.Id].OutputScope);
+
+        private (SongJob Song, Dictionary<Guid, JobContext> Contexts) PrepareNestedExtractedCsvSong()
+        {
+            var contexts = new Dictionary<Guid, JobContext>();
+            var rootExtract = new ExtractJob("wishlist.txt", InputType.List);
+
+            foreach (var (id, ctx) in JobPreparer.PrepareJobs(new JobList(null, [rootExtract]), config))
+                contexts[id] = ctx;
+
+            var csvExtract = new ExtractJob("songs.csv", InputType.CSV);
+            var extractedList = new JobList("wishlist", [csvExtract]);
+            rootExtract.Result = extractedList;
+
+            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(extractedList, rootExtract.Config, parentCtx: contexts[rootExtract.Id]))
+                contexts[id] = ctx;
+
+            var song = new SongJob(new SongQuery { Artist = "Test Artist", Title = "First Song" });
+            var extractedCsv = new JobList("songs", [song]);
+            csvExtract.Result = extractedCsv;
+
+            foreach (var (id, ctx) in JobPreparer.PrepareSubtree(extractedCsv, csvExtract.Config, explicitOwnerList: extractedList, parentCtx: contexts[csvExtract.Id]))
+                contexts[id] = ctx;
+
+            return (song, contexts);
+        }
+
+        private static FileCandidate Candidate(string filename)
+        {
+            var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, []);
+            return new FileCandidate(response, TestHelpers.CreateSlFile(filename));
+        }
+
+        private SongJob MarkDownloaded(SongJob song, string remoteFilename, string localPath)
+        {
+            string downloadPath = CreateDownloadedFile(localPath);
+            var candidate = Candidate(remoteFilename);
+            song.ResolvedTarget = candidate;
+            song.Candidates = [candidate];
+            song.DownloadPath = downloadPath;
+            return song;
+        }
+
+        private SongJob DownloadedSong(string remoteFilename, string localPath)
+        {
+            string downloadPath = CreateDownloadedFile(localPath);
+            var candidate = Candidate(remoteFilename);
+            return new SongJob(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track1" })
+            {
+                ResolvedTarget = candidate,
+                Candidates = [candidate],
+                DownloadPath = downloadPath,
+            };
+        }
+
+        private static string CreateDownloadedFile(string path)
+        {
+            string? parent = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(parent))
+                Directory.CreateDirectory(parent);
+
+            File.WriteAllText(path, "data");
+            return path;
+        }
+
+        private static void AssertSamePath(string expected, string actual)
+        {
+            Assert.AreEqual(Path.GetFullPath(expected), Path.GetFullPath(actual));
         }
     }
 }

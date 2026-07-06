@@ -55,6 +55,7 @@ internal sealed class AggregateDownloadExecutor
             PlaylistEditor = parent.PlaylistEditor,
             OutputDirSkipper = parent.OutputDirSkipper,
             MusicDirSkipper = parent.MusicDirSkipper,
+            OutputScope = parent.OutputScope,
             EnablesIndexByDefault = parent.EnablesIndexByDefault,
             PreprocessTracks = false,
         };

@@ -511,7 +511,7 @@ internal sealed class JobOrchestrator
         {
             if (job is SongJob existingSong)
             {
-                var organizer = new FileManager(existingSong, config.Output, config.Extraction);
+                var organizer = new FileManager(existingSong, config.Output, config.Extraction, ctx.OutputScope);
                 await download.CommitAndFinalizeSong(
                     existingSong,
                     existingSong,
@@ -591,4 +591,3 @@ internal sealed class JobOrchestrator
     }
 
 }
-
