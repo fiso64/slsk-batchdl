@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <VersionPrefix>3.0.4</VersionPrefix>
+    <VersionPrefix>3.0.5</VersionPrefix>
     <VersionSuffix></VersionSuffix>
 
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
