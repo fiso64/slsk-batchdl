@@ -102,7 +102,17 @@ internal sealed class TerminalLiveRenderer : IDisposable
     private bool _terminalWasResized;
 
     private sealed record LiveRow(IRenderable Renderable);
-    private sealed record LiveCell(string Text, Style? Style = null);
+    private sealed record LiveCell
+    {
+        public LiveCell(string text, Style? style = null)
+        {
+            Text = SanitizeLiveText(text);
+            Style = style;
+        }
+
+        public string Text { get; init; }
+        public Style? Style { get; init; }
+    }
     private static readonly Style DimIdStyle = new(foreground: Color.Grey);
     private static readonly Style DimStyle = new(foreground: Color.Grey);
     private static readonly Style CyanStyle = new(foreground: Color.Cyan1);
@@ -162,7 +172,7 @@ internal sealed class TerminalLiveRenderer : IDisposable
     private void SetStatusMessage(string? message)
     {
         if (_disposed) return;
-        _statusMessage = message;
+        _statusMessage = message == null ? null : SanitizeLiveText(message);
     }
 
     private void SetRateLimited(DateTimeOffset? resetsAt)
@@ -360,6 +370,7 @@ internal sealed class TerminalLiveRenderer : IDisposable
 
     private static void WriteStructuredLogLine(TerminalLogLine line)
     {
+        line = SanitizeLiveLogLine(line);
         var markup = CliLogStyle.FormatTerminalLogMarkup(line);
         var visualLength = CellCount(Markup.Remove(markup));
         int width = LogLineWidth();
@@ -374,6 +385,7 @@ internal sealed class TerminalLiveRenderer : IDisposable
 
     private static void WritePlainLogLines(string text)
     {
+        text = SanitizeLiveText(text);
         var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
         foreach (var line in normalized.Split('\n'))
         {
@@ -384,6 +396,11 @@ internal sealed class TerminalLiveRenderer : IDisposable
 
     private static void WriteProcessLogLine(TerminalProcessLogLine line)
     {
+        line = line with
+        {
+            CategoryName = SanitizeLiveText(line.CategoryName),
+            Message = SanitizeLiveText(line.Message),
+        };
         var normalized = line.Message.Replace("\r\n", "\n").Replace('\r', '\n');
         var messageLines = normalized.Split('\n');
         var prefixText = CliLogStyle.ProcessLogPrefixText(line);
@@ -481,6 +498,41 @@ internal sealed class TerminalLiveRenderer : IDisposable
         int arrowLen = trimmed.IndexOf(' ') + 1;
         return new string(' ', leadingSpaces + arrowLen);
     }
+
+    private static TerminalLogLine SanitizeLiveLogLine(TerminalLogLine line)
+        => line with
+        {
+            JobType = SanitizeLiveText(line.JobType),
+            Message = SanitizeLiveText(line.Message),
+            Source = line.Source == null ? null : SanitizeLiveText(line.Source),
+            Highlight = line.Highlight == null ? null : SanitizeLiveText(line.Highlight),
+        };
+
+    internal static string SanitizeLiveText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        StringBuilder? builder = null;
+        for (int i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (IsBidiControl(c))
+            {
+                builder ??= new StringBuilder(text.Length).Append(text, 0, i);
+                continue;
+            }
+
+            builder?.Append(c);
+        }
+
+        return builder?.ToString() ?? text;
+    }
+
+    private static bool IsBidiControl(char c)
+        => c is '\u061C' or '\u200E' or '\u200F'
+            || (c >= '\u202A' && c <= '\u202E')
+            || (c >= '\u2066' && c <= '\u2069');
 
     private static IEnumerable<string> WrapContent(string content, int availableWidth)
     {

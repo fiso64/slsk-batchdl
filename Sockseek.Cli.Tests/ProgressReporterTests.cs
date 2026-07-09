@@ -618,6 +618,21 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void TerminalLiveRenderer_SanitizeLiveText_RemovesBidiControlCharacters()
+    {
+        var folder = "2002 - Cowboy Bebop - CD-BOX Original Soundtrack\u200e [FLAC]";
+
+        Assert.AreEqual(
+            "2002 - Cowboy Bebop - CD-BOX Original Soundtrack [FLAC]",
+            TerminalLiveRenderer.SanitizeLiveText(folder));
+
+        Assert.AreEqual(
+            "ab\u200dcd",
+            TerminalLiveRenderer.SanitizeLiveText("a\u061Cb\u200d\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069cd"),
+            "Only bidi controls should be stripped; other format characters such as ZWJ are not the live repaint bug.");
+    }
+
+    [TestMethod]
     public void CliLogStyle_DimsStructuredProcessLogPrefixes()
     {
         Assert.AreEqual(

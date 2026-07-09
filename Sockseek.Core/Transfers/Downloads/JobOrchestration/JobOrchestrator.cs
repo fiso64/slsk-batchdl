@@ -101,6 +101,10 @@ internal sealed class JobOrchestrator
                 SockseekLog.Jobs.Trace($"ProcessJob (ExtractJob {job.DisplayId}): Processing extracted job {extractResult.Result.DisplayId}");
                 await ProcessJob(extractResult.Result, parentToken, parentJob);
 
+                var extractCtx = context.Ctx(ej);
+                extractCtx.IndexEditor?.Update();
+                extractCtx.PlaylistEditor?.Update();
+
                 // For single extracted jobs with a source line (e.g. a lone AlbumJob from a CSV row),
                 // trigger removal now that processing is complete. Multi-item results use LineNumber=0
                 // (no source line of their own) and handle per-child removal inside ProcessJob.
