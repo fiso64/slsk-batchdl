@@ -161,7 +161,7 @@ namespace Sockseek.Core;
     public enum PrintOption
     {
         None = 0,
-        Tracks = 1,
+        Jobs = 1,
         Results = 2,
         Full = 4,
         Link = 8,

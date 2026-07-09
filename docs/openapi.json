@@ -3771,6 +3771,9 @@
           },
           "cancellationSource": {
             "$ref": "#/components/schemas/ServerJobCancellationSource"
+          },
+          "printOption": {
+            "$ref": "#/components/schemas/PrintOption"
           }
         }
       },

@@ -156,310 +156,7 @@ public static class Printing
 
 
     public static void PrintResults(Job job, PrintOption printOption, SearchSettings search)
-    {
-        if (job is JobList slj)
-        {
-            bool nonVerbose = (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
-            foreach (var song in slj.Jobs.OfType<SongJob>())
-            {
-                PrintSongResults(song, printOption, search);
-                if (!nonVerbose)
-                    WriteLine();
-            }
-        }
-        else if (job is SongJob songJob)
-        {
-            PrintSongResults(songJob, printOption, search);
-        }
-        else if (job is AggregateJob ag)
-        {
-            var existing = ag.Songs.Where(IsAlreadyExistingPlannedJob).ToList();
-            var notFound = ag.Songs.Where(s => IsNotFoundFailure(s.FailureReason)).ToList();
-            if (printOption.HasFlag(PrintOption.Json))
-            {
-                JsonPrinter.PrintAggregateJson(ag.Songs.Where(s => s.IsPending));
-            }
-            else if (printOption.HasFlag(PrintOption.Link))
-            {
-                var first = ag.Songs.FirstOrDefault(s => s.ChosenCandidate != null);
-                if (first?.ChosenCandidate != null)
-                    PrintLink(first.ChosenCandidate.Username, first.ChosenCandidate.Filename);
-            }
-            else
-            {
-                WriteLine($"Results for aggregate {job.ToString(true)}:");
-                PrintTracksTbd(ag.Songs.Where(s => s.IsPending).ToList(), existing, notFound, false, printOption);
-            }
-        }
-        else if (job is AlbumJob albumJob)
-        {
-            PrintAlbumResults(albumJob, printOption, search);
-        }
-        else if (job is AlbumAggregateJob albumAggregateJob)
-        {
-            if (albumAggregateJob.Albums.Count == 0)
-            {
-                WriteLine("No results.");
-                return;
-            }
-
-            bool nonVerbose = (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
-            for (int i = 0; i < albumAggregateJob.Albums.Count; i++)
-            {
-                PrintAlbumResults(
-                    albumAggregateJob.Albums[i],
-                    printOption,
-                    search,
-                    aggregateResultIndex: i + 1,
-                    aggregateResultCount: albumAggregateJob.Albums.Count,
-                    aggregateDisplayName: albumAggregateJob.ToString(true));
-
-                if (!nonVerbose)
-                    WriteLine();
-            }
-        }
-        else
-        {
-            WriteLine("No results.");
-        }
-    }
-
-    private static void PrintAlbumResults(
-        AlbumJob albumJob,
-        PrintOption printOption,
-        SearchSettings search,
-        int? aggregateResultIndex = null,
-        int? aggregateResultCount = null,
-        string? aggregateDisplayName = null)
-    {
-        if (printOption.HasFlag(PrintOption.Json))
-        {
-            var foldersToPrint = printOption.HasFlag(PrintOption.Full)
-                ? albumJob.Results
-                : albumJob.Results.Take(1).ToList();
-            JsonPrinter.PrintAlbumJson(foldersToPrint, albumJob);
-        }
-        else if (printOption.HasFlag(PrintOption.Link))
-        {
-            if (albumJob.Results.Count > 0)
-                PrintAlbumLink(albumJob.Results[0]);
-        }
-        else
-        {
-            string displayName = aggregateDisplayName ?? albumJob.ToString(true);
-            if (aggregateResultIndex is { } resultIndex && aggregateResultCount is { } resultCount)
-                WriteLine($"Result {resultIndex} of {resultCount} for album {displayName}:");
-            else if (!printOption.HasFlag(PrintOption.Full))
-                WriteLine($"Result 1 of {albumJob.Results.Count} for album {displayName}:");
-            else
-                WriteLine($"Results ({albumJob.Results.Count}) for album {displayName}:");
-
-            if (albumJob.Results.Count > 0)
-            {
-                if (!search.NoBrowseFolder)
-                    WriteLine("[Skipping full folder retrieval]");
-
-                foreach (var folder in albumJob.Results)
-                {
-                    PrintAlbum(folder);
-                    if (!printOption.HasFlag(PrintOption.Full))
-                        break;
-                }
-            }
-        }
-    }
-
-    private static void PrintSongResults(SongJob song, PrintOption printOption, SearchSettings search)
-    {
-        bool printFull = printOption.HasFlag(PrintOption.Full);
-        bool nonVerbose = (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
-        var orderedResults = song.Candidates?
-            .Select(candidate => (candidate.Response, candidate.File))
-            .ToList();
-
-        if (!nonVerbose)
-            WriteLine($"Results for {song}:");
-
-        if (orderedResults == null || orderedResults.Count == 0)
-        {
-            if (printOption.HasFlag(PrintOption.Json))
-                JsonPrinter.PrintTrackResultJson(song.Query, []);
-            if (!nonVerbose)
-                WriteLine("No results", ConsoleColor.Yellow);
-            return;
-        }
-
-        if (!nonVerbose)
-            WriteLine();
-
-        if (printOption.HasFlag(PrintOption.Json))
-            JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, printFull);
-        else if (printOption.HasFlag(PrintOption.Link))
-            PrintLink(orderedResults.First().Response.Username, orderedResults.First().File.Filename);
-        else
-            PrintTrackResults(orderedResults.Select(x => (x.Response, x.File)), song.Query, printFull, search.NecessaryCond, search.PreferredCond);
-    }
-
-    public static void PrintPlannedOutput(JobList queue)
-    {
-        foreach (var job in queue.Jobs)
-            PrintPlannedOutput(job);
-    }
-
-    private static void PrintPlannedOutput(Job job)
-    {
-        switch (job)
-        {
-            case ExtractJob extractJob when extractJob.Result != null:
-                PrintPlannedOutput(extractJob.Result);
-                break;
-
-            case ExtractJob:
-                break;
-
-            case JobList jobList:
-                var plannedJobs = CollectPlannedDownloadJobs(jobList).ToList();
-                if (plannedJobs.Count > 0)
-                {
-                    if (jobList.Config!.PrintTracks)
-                    {
-                        PrintPlannedDownloads(plannedJobs, jobList.Config);
-                    }
-                    else if (jobList.Config!.PrintResults)
-                    {
-                        PrintPlannedResults(plannedJobs, jobList.Config);
-                    }
-                    break;
-                }
-
-                foreach (var child in jobList.Jobs)
-                    PrintPlannedOutput(child);
-                break;
-
-            default:
-                if (job.Config?.PrintTracks == true)
-                    PrintPlannedDownloads([job], job.Config);
-                else if (job.Config?.PrintResults == true)
-                    PrintResults(job, job.Config.PrintOption, job.Config.Search);
-                break;
-        }
-    }
-
-    public static void PrintPlannedDownloads(IReadOnlyList<Job> plannedJobs, DownloadSettings config)
-    {
-        var songs = plannedJobs.OfType<SongJob>().ToList();
-        var otherJobs = plannedJobs.Where(job => job is not SongJob).ToList();
-
-        if (songs.Count > 0)
-        {
-            var existing = songs.Where(IsAlreadyExistingPlannedJob).ToList();
-            var notFound = songs.Where(s => IsNotFoundFailure(s.FailureReason)).ToList();
-            PrintTracksTbd(songs.Where(s => s.IsPending).ToList(), existing, notFound, true, config.PrintOption);
-        }
-
-        var existingJobs = otherJobs.Where(IsAlreadyExistingPlannedJob).ToList();
-        var notFoundJobs = otherJobs.Where(IsNotFoundPlannedJob).ToList();
-        var pendingJobs = otherJobs.Except(existingJobs).Except(notFoundJobs).ToList();
-
-        if (pendingJobs.Count > 0)
-        {
-            if (songs.Count > 0)
-                WriteLine();
-
-            PrintPlannedJobLines($"Downloading {pendingJobs.Count} {(pendingJobs.Count == 1 ? "item" : "items")}:", pendingJobs, config);
-        }
-
-        if (config.PrintTracks || (config.PrintOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0)
-        {
-            if (existingJobs.Count > 0)
-            {
-                WriteLine();
-                PrintPlannedJobLines("The following items already exist:", existingJobs, config, includePath: true);
-            }
-
-            if (notFoundJobs.Count > 0)
-            {
-                WriteLine();
-                PrintPlannedJobLines("The following items were not found during a prior run:", notFoundJobs, config);
-            }
-        }
-    }
-
-    private static void PrintPlannedResults(IReadOnlyList<Job> plannedJobs, DownloadSettings config)
-    {
-        bool nonVerbose = (config.PrintOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
-        bool printedAny = false;
-
-        foreach (var plannedJob in plannedJobs)
-        {
-            if (printedAny && !nonVerbose)
-                WriteLine();
-
-            PrintResults(plannedJob, config.PrintOption, config.Search);
-            printedAny = true;
-        }
-    }
-
-    private static IEnumerable<Job> CollectPlannedDownloadJobs(Job job)
-    {
-        switch (job)
-        {
-            case SongJob song:
-                yield return song;
-                break;
-
-            case AlbumAggregateJob albumAggregate when albumAggregate.Albums.Count > 0:
-                foreach (var album in albumAggregate.Albums)
-                    yield return album;
-                break;
-
-            case AlbumJob or AggregateJob or AlbumAggregateJob:
-                yield return job;
-                break;
-
-            case ExtractJob extractJob when extractJob.Result != null:
-                foreach (var plannedJob in CollectPlannedDownloadJobs(extractJob.Result))
-                    yield return plannedJob;
-                break;
-
-            case JobList jobList:
-                foreach (var child in jobList.Jobs)
-                foreach (var plannedJob in CollectPlannedDownloadJobs(child))
-                    yield return plannedJob;
-                break;
-        }
-    }
-
-    private static void PrintPlannedJobLines(string header, IReadOnlyList<Job> jobs, DownloadSettings config, bool includePath = false)
-    {
-        SockseekLog.Info(header);
-        Console.ResetColor();
-        foreach (var job in jobs)
-        {
-            var path = includePath ? GetPlannedJobDownloadPath(job) : null;
-            WriteLine($"  {job.ToString(noInfo: config.PrintOption.HasFlag(PrintOption.Tracks))}{(string.IsNullOrWhiteSpace(path) ? "" : $" -> {path}")}");
-        }
-    }
-
-    private static bool IsAlreadyExistingPlannedJob(Job job)
-        => job.TerminalOutcome == JobTerminalOutcome.Skipped && job.SkipReason == JobSkipReason.AlreadyExists
-        || job.TerminalOutcome == JobTerminalOutcome.Skipped && !string.IsNullOrWhiteSpace(GetPlannedJobDownloadPath(job));
-
-    private static bool IsNotFoundPlannedJob(Job job)
-        => job.TerminalOutcome == JobTerminalOutcome.Skipped && job.SkipReason == JobSkipReason.NotFoundLastTime
-        || IsNotFoundFailure(job.FailureReason);
-
-    private static bool IsNotFoundFailure(JobFailureReason reason)
-        => reason is JobFailureReason.NoSearchResults or JobFailureReason.NoMatchingResults;
-
-    private static string? GetPlannedJobDownloadPath(Job job)
-        => job switch
-        {
-            SongJob song => song.DownloadPath,
-            AlbumJob album => album.DownloadPath,
-            _ => null,
-        };
-
+        => ResultPrintFormatter.Print(job, printOption, search);
 
     public static void PrintComplete(JobList queue)
     {
@@ -494,6 +191,9 @@ public static class Printing
         ref int skipped)
     {
         if (!visited.Add(job.Id))
+            return;
+
+        if (job.Config?.DoNotDownload == true)
             return;
 
         switch (job)
@@ -554,7 +254,7 @@ public static class Printing
     public static void PrintTracksTbd(List<SongJob> toBeDownloaded, List<SongJob> existing, List<SongJob> notFound,
         bool isNormal, PrintOption printOption, bool summary = true)
     {
-        bool printTracks  = printOption.HasFlag(PrintOption.Tracks);
+        bool printTracks  = printOption.HasFlag(PrintOption.Jobs);
         bool printResults = (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
         bool full         = printOption.HasFlag(PrintOption.Full);
 
@@ -566,9 +266,17 @@ public static class Printing
         notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
         string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
         bool allSkipped = existing.Count + notFound.Count > toBeDownloaded.Count;
+        bool printOnly = printTracks || printResults;
 
-        if (summary && (isNormal || skippedTracks.Length > 0))
+        if (summary && printOnly && toBeDownloaded.Count > 0)
+        {
+            var label = printResults && !isNormal ? "aggregate tracks" : "tracks to download";
+            WriteLine($"{toBeDownloaded.Count} {label}:");
+        }
+        else if (summary && !printOnly && (isNormal || skippedTracks.Length > 0))
+        {
             SockseekLog.Info($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+        }
 
         if (toBeDownloaded.Count > 0)
         {
@@ -584,12 +292,12 @@ public static class Printing
 
         if (existing.Count > 0)
         {
-            WriteLine($"\nThe following tracks already exist:");
+            WriteLine($"{(toBeDownloaded.Count > 0 ? "\n" : "")}{existing.Count} tracks already exist:");
             PrintTracks(existing, fullInfo: full, infoFirst: printTracks);
         }
         if (notFound.Count > 0)
         {
-            WriteLine($"\nThe following tracks were not found during a prior run:");
+            WriteLine($"{(toBeDownloaded.Count > 0 || existing.Count > 0 ? "\n" : "")}{notFound.Count} tracks were not found during a prior run:");
             PrintTracks(notFound, fullInfo: full, infoFirst: printTracks);
         }
     }

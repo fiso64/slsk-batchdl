@@ -893,7 +893,7 @@ public class RemoteCliBackendTests
 
             using var output = new StringWriter();
             Console.SetOut(output);
-            await Sockseek.Cli.Program.PrintRemoteResultsAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
 
             string rendered = output.ToString();
             StringAssert.Contains(rendered, "Results for Artist - Track One");
@@ -913,16 +913,16 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    public async Task RemoteCliBackend_PrintTracks_RendersPlannedTracksFromWorkflowSnapshot()
+    public async Task RemoteCliBackend_PrintJobs_RendersInputJobsFromWorkflowSnapshot()
     {
-        string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-tracks-" + Guid.NewGuid() + ".txt");
-        string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-tracks-out-" + Guid.NewGuid());
+        string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-" + Guid.NewGuid() + ".txt");
+        string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-out-" + Guid.NewGuid());
         Directory.CreateDirectory(outputDir);
         string existingAlbumDir = Path.Combine(outputDir, "Artist Two", "Album Two");
         Directory.CreateDirectory(existingAlbumDir);
         File.WriteAllText(Path.Combine(outputDir, "Artist One - Track One.mp3"), "already here");
         File.WriteAllText(Path.Combine(existingAlbumDir, "01. Artist Two - Album Track.mp3"), "already here");
-        File.WriteAllLines(inputPath, ["\"Artist One - Track One\"", "a:\"Artist Two - Album Two\""]);
+        File.WriteAllLines(inputPath, ["s:\"Artist One - Track One\"", "a:\"Artist Two - Album Two\""]);
 
         int port = GetFreeTcpPort();
         string url = $"http://127.0.0.1:{port}";
@@ -953,7 +953,7 @@ public class RemoteCliBackendTests
 
             var printSettings = new DownloadSettings
             {
-                PrintOption = PrintOption.Tracks,
+                PrintOption = PrintOption.Jobs,
                 Output =
                 {
                     ParentDir = outputDir,
@@ -967,20 +967,21 @@ public class RemoteCliBackendTests
                     "List",
                     Options: new SubmissionOptionsDto(
                         OutputParentDir: outputDir,
-                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--print-tracks"]))));
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--print", "jobs"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             using var output = new StringWriter();
             Console.SetOut(output);
-            await Sockseek.Cli.Program.PrintRemotePlannedOutputAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
 
             string rendered = output.ToString();
-            StringAssert.Contains(rendered, "Artist One - Track One");
-            StringAssert.Contains(rendered, "Artist Two - Album Two");
-            StringAssert.Contains(rendered, "already exist");
+            StringAssert.Contains(rendered, "2 jobs:");
+            StringAssert.Contains(rendered, "Song: Artist One - Track One");
+            StringAssert.Contains(rendered, "Album: Artist Two - Album Two");
+            Assert.IsFalse(rendered.Contains("already exist", StringComparison.OrdinalIgnoreCase), rendered);
             Assert.AreEqual(2, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
-                "Remote print-tracks mode should not download files.");
+                "Remote print-jobs mode should not download files.");
         }
         finally
         {

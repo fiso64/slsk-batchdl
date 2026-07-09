@@ -83,9 +83,9 @@ public class CliProgressReporter
         _output = output ?? CliOutputController.CreateDetached(cli);
     }
 
-    public void Stop()
+    public void Stop(bool printSummary = true)
     {
-        _output.StopLiveRendering();
+        _output.StopLiveRendering(printSummary);
     }
 
     public void ReportSyntheticJobFailure(int displayId, string jobType, string name, string failureReason)
@@ -210,9 +210,11 @@ public class CliProgressReporter
         else
             _terminalJobs.TryRemove(summary.JobId, out _);
 
+        if (ShouldStartLiveRenderingForSummary(summary, status))
+            _output.StartLiveRenderingIfNeeded();
+
         if (!IsInfrastructureJobKind(summary.Kind))
         {
-            _output.StartLiveRenderingIfNeeded();
             _output.UpsertJobRecord(new TerminalJobRecord(
                 summary.JobId.ToString(),
                 summary.DisplayId,
@@ -447,6 +449,15 @@ public class CliProgressReporter
         => !status.IsQueued
             && !status.IsTerminal
             && !IsInfrastructureJobKind(summary.Kind);
+
+    internal static bool ShouldShowContainerSummaryInLiveTable(JobSummaryDto summary, CliJobStatus status)
+        => !status.IsQueued
+            && !status.IsTerminal
+            && IsContainerJobKind(summary.Kind);
+
+    internal static bool ShouldStartLiveRenderingForSummary(JobSummaryDto summary, CliJobStatus status)
+        => !IsInfrastructureJobKind(summary.Kind)
+            || ShouldShowContainerSummaryInLiveTable(summary, status);
 
     private bool IsTransparentContainer(Guid jobId, ServerJobKind kind)
         => kind == ServerJobKind.JobList
@@ -976,6 +987,9 @@ public class CliProgressReporter
 
     private void ReportTrackBatchResolved(TrackBatchResolvedEventDto batch)
     {
+        if (PlainMode || batch.PrintOption != PrintOption.None)
+            return;
+
         const int max = 10;
 
         void LogGroup(IReadOnlyList<SongJobPayloadDto> songs, string label)
@@ -983,14 +997,29 @@ public class CliProgressReporter
             if (songs.Count == 0) return;
             var shown = songs.Take(max).ToList();
             var more = songs.Count - shown.Count;
-            var msg = $"[{batch.Summary.DisplayId}] {GetJobTypeLabel(batch.Summary.Kind)}: {songs.Count} {label}:\n"
+            var msg = $"{songs.Count} {label}:\n"
                 + string.Join('\n', shown.Select(s => $"    {SongQueryText(s.Query)}"))
                 + (more > 0 ? $"\n    ... and {more} more" : "");
-            SockseekLog.Jobs.Info(msg);
+            WriteBatchJobLog(batch.Summary, msg);
         }
 
         LogGroup(batch.Existing, "tracks already exist");
         LogGroup(batch.NotFound, "tracks were not found in a prior run");
+    }
+
+    private static void WriteBatchJobLog(JobSummaryDto summary, string message)
+    {
+        var line = new TerminalLogLine(
+            TerminalLogKind.Status,
+            summary.JobId.ToString(),
+            summary.DisplayId,
+            GetJobTypeLabel(summary.Kind),
+            message);
+        SockseekLog.Write(new SockseekLog.StructuredLogEntry(
+            LogLevel.Information,
+            SockseekLog.Categories.Jobs,
+            CliLogStyle.FormatTerminalLogText(line),
+            Context: new CliOutputEvent.JobLog(line)));
     }
 
     private void ReportSearchRateLimited(SearchRateLimitedEventDto rateLimit)

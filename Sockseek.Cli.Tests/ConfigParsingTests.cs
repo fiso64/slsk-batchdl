@@ -421,11 +421,18 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
-        public void DoNotDownload_TrueWhenPrintTracks()
+        public void DoNotDownload_TrueWhenPrintJobs()
+        {
+            var config = Cfg("--print", "jobs", "some input");
+            Assert.IsTrue(config.DoNotDownload);
+            Assert.IsTrue(config.PrintJobs);
+        }
+
+        [TestMethod]
+        public void PrintTracks_AliasSetsPrintJobs()
         {
             var config = Cfg("--print-tracks", "some input");
-            Assert.IsTrue(config.DoNotDownload);
-            Assert.IsTrue(config.PrintTracks);
+            Assert.IsTrue(config.PrintJobs);
         }
 
         [TestMethod]

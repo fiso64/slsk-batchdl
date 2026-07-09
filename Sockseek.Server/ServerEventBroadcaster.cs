@@ -155,7 +155,8 @@ public sealed class ServerEventBroadcaster : IDisposable
             job.Config?.AppliedAutoProfiles?.ToList() ?? [],
             [],
             job.FailureDetail,
-            EngineStateStore.ToServerJobCancellationSource(job.CancellationSource));
+            EngineStateStore.ToServerJobCancellationSource(job.CancellationSource),
+            job.Config?.PrintOption ?? PrintOption.None);
 
     private static Guid? GetWorkflowId(object payload)
         => payload switch

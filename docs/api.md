@@ -1,5 +1,8 @@
 # API and Client integration
 
+> [!WARNING]
+> The API is experimental and has not yet been tested much. Expect bugs and breaking changes.
+
 The daemon exposes an HTTP API for durable state plus a SignalR hub for live invalidation/progress events.
 
 ## .NET clients
@@ -18,17 +21,15 @@ For client development, start from mock files instead of a real Soulseek account
 ```bash
 python scripts/create_mock_music_library.py -o /tmp/sockseek-fixture
 
-dotnet run --project Sockseek.Cli -- daemon \
+sockseek daemon \
   --mock-files-dir /tmp/sockseek-fixture/mock-library \
   --mock-files-no-read-tags \
   --mock-files-slow \
   --server-port 5030 \
-  -p /tmp/sockseek-out
+  -o /tmp/sockseek-out
 ```
 
 ## Source map
-
-The API is still in flux. Prefer the generated OpenAPI document and source code over this file for endpoint-level details.
 
 - `Sockseek.Api/Client/SockseekApiClient.cs` — .NET client wrapper and the most convenient reference for supported client flows.
 - `Sockseek.Api/Contracts/` — request/response DTOs shared by the server, CLI, and .NET clients.

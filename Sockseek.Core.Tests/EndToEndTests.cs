@@ -1464,6 +1464,48 @@ namespace Tests.EndToEnd
         }
 
         [TestMethod]
+        public async Task PrintJobs_AggregateJob_DoesNotSearchOrDownload()
+        {
+            var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-print-jobs-aggregate-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var engineSettings = new EngineSettings();
+                var rootSettings = new DownloadSettings();
+                rootSettings.Output.ParentDir = outputDir;
+                rootSettings.PrintOption = PrintOption.Jobs;
+
+                var aggregateJob = new AggregateJob(new SongQuery { Artist = "testartist" });
+                var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
+                var app = new DownloadEngine(engineSettings, clientManager);
+                var searched = false;
+                app.Events.JobStateChanged += job =>
+                {
+                    if (job.ActivityPhase == JobActivityPhase.Searching)
+                        searched = true;
+                };
+
+                app.Enqueue(aggregateJob, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, aggregateJob.TerminalOutcome);
+                Assert.IsFalse(searched, "Print-jobs mode should not search, even for aggregate jobs.");
+                Assert.AreEqual(0, aggregateJob.Songs.Count, "Print-jobs mode should not populate aggregate search results.");
+                Assert.AreEqual(0, Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length,
+                    "Print-jobs mode should not download files.");
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir))
+                    Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task PrintResults_SongJob_SearchesWithoutDownloading()
         {
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());

@@ -622,7 +622,8 @@ public sealed class EngineStateStore
             job.Config?.AppliedAutoProfiles?.OrderBy(x => x).ToList() ?? [],
             BuildActions(job),
             job.FailureDetail,
-            ToServerJobCancellationSource(job.CancellationSource));
+            ToServerJobCancellationSource(job.CancellationSource),
+            job.Config?.PrintOption ?? PrintOption.None);
     }
 
     private JobPayloadDto BuildPayload(Job job)

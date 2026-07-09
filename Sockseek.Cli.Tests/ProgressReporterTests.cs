@@ -838,6 +838,95 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void LiveSummaryVisibility_AggregateContainersCanStartLiveRendering()
+    {
+        var aggregate = CreateContainerSummary(ServerJobKind.Aggregate, ExpectedJobStatus.Searching);
+        var albumAggregate = CreateContainerSummary(ServerJobKind.AlbumAggregate, ExpectedJobStatus.Searching);
+        var jobList = CreateContainerSummary(ServerJobKind.JobList, ExpectedJobStatus.Searching);
+        var pendingAggregate = CreateContainerSummary(ServerJobKind.Aggregate, ExpectedJobStatus.Pending);
+
+        Assert.IsFalse(CliProgressReporter.ShouldShowStandaloneSummaryInLiveTable(
+            aggregate,
+            CliJobStatusPresenter.ForSummary(aggregate)));
+        Assert.IsTrue(CliProgressReporter.ShouldShowContainerSummaryInLiveTable(
+            aggregate,
+            CliJobStatusPresenter.ForSummary(aggregate)));
+        Assert.IsTrue(CliProgressReporter.ShouldStartLiveRenderingForSummary(
+            aggregate,
+            CliJobStatusPresenter.ForSummary(aggregate)));
+        Assert.IsTrue(CliProgressReporter.ShouldStartLiveRenderingForSummary(
+            albumAggregate,
+            CliJobStatusPresenter.ForSummary(albumAggregate)));
+        Assert.IsTrue(CliProgressReporter.ShouldStartLiveRenderingForSummary(
+            jobList,
+            CliJobStatusPresenter.ForSummary(jobList)));
+        Assert.IsFalse(CliProgressReporter.ShouldShowContainerSummaryInLiveTable(
+            pendingAggregate,
+            CliJobStatusPresenter.ForSummary(pendingAggregate)));
+    }
+
+    [TestMethod]
+    public void TrackBatchResolved_NoProgress_DoesNotEmitProgressReporterPreview()
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        var messages = new List<string>();
+        SockseekLog.AddConsole(writer: (message, _) => messages.Add(message));
+
+        var reporter = new CliProgressReporter(new CliSettings { NoProgress = true });
+        try
+        {
+            var batch = CreateTrackBatchResolved(
+                CreateContainerSummary(ServerJobKind.Aggregate, ExpectedJobStatus.RunningChildren),
+                existing: [CreateSongPayload(Guid.NewGuid(), ExpectedJobStatus.AlreadyExists, null)]);
+
+            InvokePrivate(reporter, "ReportTrackBatchResolved", batch);
+
+            Assert.AreEqual(0, messages.Count);
+        }
+        finally
+        {
+            reporter.Stop();
+        }
+    }
+
+    [TestMethod]
+    public void TrackBatchResolved_DetailedAggregatePreview_UsesJobLogFormatting()
+    {
+        SockseekLog.RemoveNonFileOutputs();
+        var messages = new List<string>();
+        SockseekLog.AddConsole(writer: (message, _) => messages.Add(message));
+
+        using var output = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            var summary = CreateContainerSummary(ServerJobKind.Aggregate, ExpectedJobStatus.RunningChildren) with
+            {
+                DisplayId = 2,
+                ItemName = "Radiohead",
+                QueryText = "Radiohead",
+            };
+            var batch = CreateTrackBatchResolved(
+                summary,
+                existing: [CreateSongPayload(Guid.NewGuid(), ExpectedJobStatus.AlreadyExists, null)]);
+
+            typeof(Sockseek.Cli.Program)
+                .GetMethod("PrintTrackBatchResolved", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [batch]);
+
+            CollectionAssert.AreEqual(new[]
+            {
+                JobLog("[002] Aggregate: 1 tracks already exist:"),
+            }, messages);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+    }
+
+    [TestMethod]
     public void EventLogger_JobActivityChanged_DoesNotPrintPlainStatusLine()
     {
         SockseekLog.RemoveNonFileOutputs();
@@ -1922,6 +2011,52 @@ public class CliProgressReporterTests
             AvailableActions: []);
     }
 
+    private static JobSummaryDto CreateContainerSummary(ServerJobKind kind, ExpectedJobStatus state)
+    {
+        var split = Split(state);
+        return new(
+            Guid.NewGuid(),
+            DisplayId: 5,
+            WorkflowId: Guid.NewGuid(),
+            Kind: kind,
+            LifecycleState: split.LifecycleState,
+            ActivityPhase: split.ActivityPhase,
+            ActivityUntilUtc: null,
+            TerminalOutcome: split.TerminalOutcome,
+            ItemName: "cowboy bebop",
+            QueryText: "cowboy bebop",
+            FailureReason: null,
+            FailureMessage: null,
+            ParentJobId: null,
+            ResultJobId: null,
+            SourceJobId: null,
+            DiscoveryRawResultCount: null,
+            DiscoveryLockedFileCount: null,
+            AppliedAutoProfiles: [],
+            AvailableActions: []);
+    }
+
+    private static TrackBatchResolvedEventDto CreateTrackBatchResolved(
+        JobSummaryDto summary,
+        IReadOnlyList<SongJobPayloadDto>? pending = null,
+        IReadOnlyList<SongJobPayloadDto>? existing = null,
+        IReadOnlyList<SongJobPayloadDto>? notFound = null)
+    {
+        pending ??= [];
+        existing ??= [];
+        notFound ??= [];
+        return new TrackBatchResolvedEventDto(
+            summary,
+            IsNormal: false,
+            PrintOption: PrintOption.None,
+            PendingCount: pending.Count,
+            ExistingCount: existing.Count,
+            NotFoundCount: notFound.Count,
+            Pending: pending,
+            Existing: existing,
+            NotFound: notFound);
+    }
+
     private static AlbumFolderDto CreateSingleFileAlbumFolder(Guid fileJobId, ExpectedJobStatus state, ServerJobFailureReason? failureReason)
         => new(
             new AlbumFolderRefDto("local", @"Artist\Album"),
@@ -2054,23 +2189,56 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
-    public void Printing_PrintPlannedOutput_DoesNotPrintFailedExtractAsDownload()
+    public void Printing_PrintRequestedOutput_DoesNotPrintFailedExtractAsJob()
     {
         SockseekLog.RemoveNonFileOutputs();
         var messages = new List<string>();
         SockseekLog.AddConsole(writer: (message, _) => messages.Add(message));
 
         var extract = new ExtractJob("input.txt", InputType.List);
-        extract.Config = new DownloadSettings { PrintOption = PrintOption.Tracks };
+        extract.Config = new DownloadSettings { PrintOption = PrintOption.Jobs };
         extract.Fail(JobFailureReason.ExtractionFailed, "Could not parse input");
         var queue = new JobList("root", [extract]);
 
-        Printing.PrintPlannedOutput(queue);
+        PrintOutputRenderer.PrintRequestedOutput(queue);
 
         Assert.IsFalse(
             messages.Any(message => message.Contains("Downloading", StringComparison.Ordinal)),
             string.Join(Environment.NewLine, messages));
         Assert.AreEqual(0, messages.Count, string.Join(Environment.NewLine, messages));
+    }
+
+    [TestMethod]
+    public void Printing_PrintRequestedOutput_PrintsSearchJobResults()
+    {
+        var search = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track One" })
+        {
+            Config = new DownloadSettings { PrintOption = PrintOption.Results },
+        };
+        search.Session.AddResponse(new Soulseek.SearchResponse("user", 1, true, 100, 0,
+        [
+            new Soulseek.File(1, @"Music\Artist - Track One.mp3", 1024, ".mp3"),
+        ]));
+        search.Session.Complete();
+
+        var queue = new JobList("root", [search]);
+        TextWriter originalOut = Console.Out;
+        try
+        {
+            using var output = new StringWriter();
+            Console.SetOut(output);
+
+            PrintOutputRenderer.PrintRequestedOutput(queue);
+
+            string rendered = output.ToString();
+            StringAssert.Contains(rendered, "Results for Artist - Track One");
+            StringAssert.Contains(rendered, "Artist - Track One.mp3");
+            Assert.IsFalse(rendered.Contains("No results", StringComparison.OrdinalIgnoreCase), rendered);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
     }
 
     private static AlbumJob CompletedAlbum(string artist, string album, int trackCount)

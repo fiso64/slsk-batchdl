@@ -134,7 +134,6 @@ namespace Tests.Eventing
             var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
             var downloadSettings = new DownloadSettings
             {
-                PrintOption = PrintOption.Tracks,
                 Preprocess = new PreprocessSettings { ParseTitleTemplate = "" },
             };
 

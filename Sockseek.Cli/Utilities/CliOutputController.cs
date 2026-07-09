@@ -130,14 +130,14 @@ internal sealed class CliOutputController : IDisposable
     public void SetStatusMessage(string? message)
         => Publish(new CliOutputEvent.StatusMessage(message));
 
-    public void StopLiveRendering()
+    public void StopLiveRendering(bool printSummary = true)
     {
         lock (_liveGate)
         {
             if (_live == null)
                 return;
 
-            _live.Dispose();
+            _live.Dispose(printSummary);
             _live = null;
             Printing.LiveWriteLine = null;
         }

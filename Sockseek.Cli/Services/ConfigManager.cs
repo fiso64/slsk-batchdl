@@ -606,10 +606,14 @@ public static partial class ConfigManager
                 break;
             case "--print":
                 Download(d => d.PrintOption = ParsePrintOption(value, flag)); break;
+            case "--print-jobs":
+                Download(d => d.PrintOption = PrintOption.Jobs); break;
+            case "--print-jobs-full":
+                Download(d => d.PrintOption = PrintOption.Jobs | PrintOption.Full); break;
             case "--pt": case "--print-tracks":
-                Download(d => d.PrintOption = PrintOption.Tracks); break;
+                Download(d => d.PrintOption = PrintOption.Jobs); break;
             case "--ptf": case "--print-tracks-full":
-                Download(d => d.PrintOption = PrintOption.Tracks | PrintOption.Full); break;
+                Download(d => d.PrintOption = PrintOption.Jobs | PrintOption.Full); break;
             case "--pr": case "--print-results":
                 Download(d => d.PrintOption = PrintOption.Results); break;
             case "--prf": case "--print-results-full":
@@ -931,7 +935,7 @@ public static partial class ConfigManager
                 intSeed: -987654320,
                 doubleSeed: -987654320.5,
                 stringSeed: "<<Sockseek-sentinel-b>>",
-                printSeed: PrintOption.Tracks,
+                printSeed: PrintOption.Jobs,
                 inputSeed: InputType.Spotify,
                 skipSeed: SkipMode.Tag,
                 albumArtSeed: AlbumArtOption.Most));
@@ -1306,6 +1310,8 @@ public static partial class ConfigManager
         or "--progress"
         or "--nwp" or "--no-write-playlist"
         or "--nwi" or "--no-write-index"
+        or "--print-jobs"
+        or "--print-jobs-full"
         or "--pt" or "--print-tracks"
         or "--ptf" or "--print-tracks-full"
         or "--pr" or "--print-results"
@@ -1358,9 +1364,11 @@ public static partial class ConfigManager
     private static PrintOption ParsePrintOption(string s, string flag) => s.ToLower().Trim() switch
     {
         "none"          => PrintOption.None,
-        "tracks"        => PrintOption.Tracks,
+        "jobs"          => PrintOption.Jobs,
+        "tracks"        => PrintOption.Jobs,
         "results"       => PrintOption.Results,
-        "tracks-full"   => PrintOption.Tracks | PrintOption.Full,
+        "jobs-full"     => PrintOption.Jobs | PrintOption.Full,
+        "tracks-full"   => PrintOption.Jobs | PrintOption.Full,
         "results-full"  => PrintOption.Results | PrintOption.Full,
         "link"          => PrintOption.Link,
         "json"          => PrintOption.Json,

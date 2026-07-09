@@ -70,7 +70,7 @@ sockseek "https://www.youtube.com/playlist?list=blah"
 
 Check the tracks before downloading a 5000-item long megalist:
 ```bash
-sockseek "input" -n 10 --print-tracks-full
+sockseek "input" -n 10 --print jobs-full
 ```
 
 #### Download all albums by an artist interactively
@@ -139,8 +139,8 @@ Use `--print results-full` to inspect what Soulseek returned without downloading
  - [Download modes](#download-modes)
    - [Song](#song)
    - [Album](#album)
-   - [Aggregate](#aggregate)
    - [Album Aggregate](#album-aggregate)
+   - [Song Aggregate](#song-aggregate)
  - [Daemon / remote mode](#daemon--remote-mode)
  - [Configuration](#configuration)
  - [File conditions](#file-conditions)
@@ -197,7 +197,7 @@ sockseek "https://open.spotify.com/playlist/id" --spotify-id 123456 --spotify-se
 For private playlists, liked songs, liked albums, or `--remove-from-source`, start Sockseek with the obtained credentials and an authorized action to trigger the Spotify app login flow:
 
 ```bash
-sockseek spotify-likes --spotify-id 123456 --spotify-secret 123456 -n 1 --print-tracks
+sockseek spotify-likes --spotify-id 123456 --spotify-secret 123456 -n 1 --print jobs
 ```
 Sockseek will try to open a browser automatically but will fall back to logging the login flow URL to output. After login flow is complete Sockseek will output a token and refresh token and finish running the current command.
 
@@ -286,18 +286,17 @@ also used by album-shaped sources such as Spotify/Bandcamp album links and CSV r
 a track title. Use `-t` to pick
 interactively. See [Shortcuts & interactive mode](#shortcuts--interactive-mode).
 
-### Song Aggregate
-With `--song -g/--aggregate`, Sockseek performs an ordinary search for the input, then attempts to
-group the results. Note that `--min-shares-aggregate` is 2 by default, meaning that
-items shared by only one user will be ignored. Aggregate song mode can be used to download
-all songs by an artist. See [Print all songs by an artist which are not in your library](#print-all-songs-by-an-artist-which-are-not-in-your-library).
-
 ### Album Aggregate
-Activated when `--aggregate` is enabled for album-shaped input. Sockseek will group shares and
+Activated when `-g/--aggregate` is enabled for album-shaped input. Sockseek will group shares and
 download one of each distinct album, starting with the one shared by the most users. Note
 that `--min-shares-aggregate` is 2 by default, meaning that albums shared by only one user
-will be ignored. Album-aggregate mode can be used to download the most popular (or all) albums
-by an artist. It is recommended to pair it with `--interactive`. See [Example](#download-all-albums-by-an-artist-interactively) for more details.
+will be ignored. Album-aggregate mode can be used to determine the most common version of a particular album, 
+or download the most popular (or all) albums by an artist. It's recommended to pair it with `--interactive`. See [Example](#download-all-albums-by-an-artist-interactively) for more details.
+
+### Song Aggregate
+With `--aggregate --song` (or `-gs` for short), Sockseek performs an ordinary search for the input, then attempts to
+group the results into distinct songs. Note that `--min-shares-aggregate` is 2 by default, meaning that
+songs shared by only one user will be ignored.
 <!-- sockseek-help:end -->
 
 <!-- sockseek-help:start(daemon) -->
@@ -993,9 +992,9 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
 --log-file <path>               Write debug info to a specified file
 --no-progress                   Disable progress bars/percentages, only simple printing
 --progress-json                 Print progress events as JSON lines
---print <option>                Print tracks or search results instead of downloading:
-                                'tracks': Print all tracks to be downloaded
-                                'tracks-full': Print extended information about all tracks
+--print <option>                Print jobs or search results instead of downloading:
+                                'jobs': Print input jobs after extraction/preprocessing
+                                'jobs-full': Print extended information about input jobs
                                 'results': Print search results satisfying file conditions
                                 'results-full': Print search results including full paths.
                                 'json': Print first result in json format
@@ -1003,8 +1002,8 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
                                 'link': Print first result slsk:// link
                                 'index': Print Sockseek index as formatted json
                                 'index-failed': Print failed downloads from Sockseek index
---print-tracks                  Alias for --print tracks
---print-tracks-full             Alias for --print tracks-full
+--print-jobs                    Alias for --print jobs
+--print-jobs-full               Alias for --print jobs-full
 --print-results                 Alias for --print results
 --print-results-full            Alias for --print results-full
 --print-link                    Alias for --print link

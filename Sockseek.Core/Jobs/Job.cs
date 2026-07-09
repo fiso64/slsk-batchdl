@@ -402,22 +402,6 @@ namespace Sockseek.Core.Jobs;
         // Primary query used for display and key computation. Non-leaf types return null.
         public virtual SongQuery? QueryTrack => null;
 
-        private List<string>? _printLines;
-
-        public void AddPrintLine(string line)
-        {
-            _printLines ??= new List<string>();
-            _printLines.Add(line);
-        }
-
-        public void PrintLines()
-        {
-            if (_printLines == null) return;
-            foreach (var line in _printLines)
-                SockseekLog.Info(line);
-            _printLines = null;
-        }
-
         public string DefaultFolderName()
         {
             return (ItemName ?? "").ReplaceInvalidChars(" ").Trim();

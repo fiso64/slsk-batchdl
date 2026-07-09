@@ -299,6 +299,72 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
+    public async Task SubmitJobListAsync_AppliesChildDraftDownloadSettings()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
+        string trackDir = Path.Combine(musicRoot, "Artist");
+        string outputDir = Path.Combine(musicRoot, "out");
+        Directory.CreateDirectory(trackDir);
+        Directory.CreateDirectory(outputDir);
+
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+        File.WriteAllText(Path.Combine(trackDir, "Artist - Track Two.mp3"), "b");
+
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+        try
+        {
+            var supervisor = CreateSupervisor(musicRoot, outputDir);
+            runTask = supervisor.RunAsync(cts.Token);
+
+            var summary = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "configured children",
+                    [
+                        new TrackSearchJobDraftDto(
+                            new SongQueryDto("Artist", "Track One", "", "", -1, false),
+                            DownloadSettings: new DownloadSettingsPatchDto(
+                                Search: new SearchSettingsPatchDto(MaxStaleTime: 111, NoBrowseFolder: true))),
+                        new TrackSearchJobDraftDto(
+                            new SongQueryDto("Artist", "Track Two", "", "", -1, false),
+                            DownloadSettings: new DownloadSettingsPatchDto(
+                                Search: new SearchSettingsPatchDto(MaxStaleTime: 222, NoBrowseFolder: false))),
+                    ]),
+                CancellationToken.None);
+
+            await WaitForConditionAsync(
+                () =>
+                {
+                    var children = SearchChildren(supervisor, summary.WorkflowId);
+                    return children.Count == 2
+                        && children.All(child => supervisor.StateStore.GetJob<SearchJob>(child.JobId)?.Config != null);
+                },
+                "Timed out waiting for job-list child settings.");
+
+            var children = SearchChildren(supervisor, summary.WorkflowId).ToList();
+            Assert.AreEqual(2, children.Count);
+
+            var first = SearchChildByQuery(supervisor, children, "Track One");
+            var second = SearchChildByQuery(supervisor, children, "Track Two");
+
+            Assert.AreEqual(111, first.Config.Search.MaxStaleTime);
+            Assert.IsTrue(first.Config.Search.NoBrowseFolder);
+            Assert.AreEqual(222, second.Config.Search.MaxStaleTime);
+            Assert.IsFalse(second.Config.Search.NoBrowseFolder);
+
+            cts.Cancel();
+            await runTask;
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(musicRoot))
+                Directory.Delete(musicRoot, true);
+        }
+    }
+
+    [TestMethod]
     public async Task StartFolderDownloadAsync_CancelWorkflowMarksUnfinishedPayloadFilesCancelled()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
@@ -1169,5 +1235,19 @@ public class EngineSupervisorTests
             .Select(child => supervisor.StateStore.GetJobDetail(child.JobId)?.Payload)
             .OfType<SongJobPayloadDto>()
             .ToList() ?? [];
+    }
+
+    private static List<JobSummaryDto> SearchChildren(EngineSupervisor supervisor, Guid workflowId)
+        => supervisor.StateStore.GetJobs(new JobQuery(null, null, ServerJobKind.Search, workflowId, IncludeAll: true))
+            .Where(summary => summary.ParentJobId != null)
+            .OrderBy(summary => summary.DisplayId)
+            .ToList();
+
+    private static SearchJob SearchChildByQuery(EngineSupervisor supervisor, IReadOnlyList<JobSummaryDto> children, string queryText)
+    {
+        var summary = children.Single(child => child.QueryText?.Contains(queryText, StringComparison.OrdinalIgnoreCase) == true);
+        var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+        Assert.IsNotNull(job);
+        return job;
     }
 }

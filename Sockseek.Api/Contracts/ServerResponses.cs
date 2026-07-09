@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Sockseek.Core;
 
 namespace Sockseek.Api;
 
@@ -79,6 +80,7 @@ public sealed record ResourceActionDto(
 /// <param name="ResultJobId">For extract jobs, the semantic result job produced by extraction.</param>
 /// <param name="SourceJobId">Provenance link for independently submitted follow-up jobs, such as downloads started from search results.</param>
 /// <param name="AvailableActions">Actions currently valid for this job.</param>
+/// <param name="PrintOption">Effective print mode for this job, when print-only behavior is active.</param>
 public sealed record JobSummaryDto(
     Guid JobId,
     int DisplayId,
@@ -101,7 +103,8 @@ public sealed record JobSummaryDto(
     IReadOnlyList<string> AppliedAutoProfiles,
     IReadOnlyList<ResourceActionDto> AvailableActions,
     string? FailureDetail = null,
-    ServerJobCancellationSource CancellationSource = ServerJobCancellationSource.None)
+    ServerJobCancellationSource CancellationSource = ServerJobCancellationSource.None,
+    PrintOption PrintOption = PrintOption.None)
 {
     public JobSummaryDto()
         : this(

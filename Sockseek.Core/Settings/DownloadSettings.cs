@@ -29,7 +29,7 @@ public class DownloadSettings
 
     // ── Top-level mode flags ──────────────────────────────────────────────────
 
-    /// Controls what the engine prints instead of (or in addition to) downloading.
+    /// Controls what the engine prepares for CLI/API printing instead of downloading.
     /// Set by ConfigManager's special-case handler for --print and its shortcuts.
     public PrintOption PrintOption { get; set; } = PrintOption.None;
 
@@ -43,12 +43,12 @@ public class DownloadSettings
     // ── Computed properties ───────────────────────────────────────────────────
 
     public bool DoNotDownload  => PrintOption != PrintOption.None;
-    public bool PrintTracks    => (PrintOption & PrintOption.Tracks)  != 0;
+    public bool PrintJobs      => (PrintOption & PrintOption.Jobs)    != 0;
     public bool PrintResults   => (PrintOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
     public bool PrintFull      => (PrintOption & PrintOption.Full)    != 0;
     public bool NonVerbosePrint => (PrintOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
 
-    public bool NeedLogin      => !PrintTracks && (PrintOption & PrintOption.Index) == 0;
+    public bool NeedLogin      => !PrintJobs && (PrintOption & PrintOption.Index) == 0;
 
     public ResolvedIncompleteAlbumAction ResolveIncompleteAlbumAction()
     {

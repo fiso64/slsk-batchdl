@@ -279,8 +279,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
                 throw new InvalidOperationException($"Cannot resume job {rootJob.DisplayId}: no prepared job context exists.");
             }
 
-            var effectiveSettings = settings ?? rootJob.Config!;
-            if (effectiveSettings.NeedLogin)
+            if (ContainsLoginRequiredJob(rootJob))
             {
                 await _runtime.EnsureServicesInitializedAsync(ct, AutomaticStaleChecksEnabled);
             }
@@ -294,7 +293,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
         CleanupEmptyStagingDirectories();
 
-        if (Queue.Jobs.Count > 0 && !Queue.Jobs[^1].Config!.DoNotDownload)
+        if (Queue.Jobs.Any(ContainsDownloadableJob))
             Events.RaiseEngineCompleted(Queue);
 
         SockseekLog.Jobs.Debug("Exiting RunAsync");
@@ -325,5 +324,23 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             }
         }
     }
+
+    private static bool ContainsDownloadableJob(Job job)
+        => job switch
+        {
+            ExtractJob { Result: { } result } => ContainsDownloadableJob(result),
+            ExtractJob => false,
+            JobList list => list.Jobs.Any(ContainsDownloadableJob),
+            RetrieveFolderJob => false,
+            _ => job.Config?.DoNotDownload == false,
+        };
+
+    private static bool ContainsLoginRequiredJob(Job job)
+        => job switch
+        {
+            ExtractJob => job.Config?.NeedLogin == true,
+            JobList list => list.Jobs.Any(ContainsLoginRequiredJob),
+            _ => job.Config?.NeedLogin == true,
+        };
 
 }

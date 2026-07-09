@@ -221,6 +221,9 @@ internal sealed class TerminalLiveRenderer : IDisposable
     }
 
     public void Dispose()
+        => Dispose(printSummary: true);
+
+    public void Dispose(bool printSummary)
     {
         if (_disposed) return;
         _disposed = true;
@@ -232,7 +235,8 @@ internal sealed class TerminalLiveRenderer : IDisposable
         // Replaying the log history at the end recovers those lost lines.
         if (_terminalWasResized)
             ReplayPrintedLogHistory();
-        AnsiConsole.MarkupLine(BuildCountsMarkup(CountKnownJobs()));
+        if (printSummary)
+            AnsiConsole.MarkupLine(BuildCountsMarkup(CountKnownJobs()));
         _cts.Dispose();
     }
 

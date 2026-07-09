@@ -82,22 +82,9 @@ public sealed class EngineEventDtoAdapter
                         extractJob.FailureMessage ?? "Extraction failed",
                         ExtractionSource(extractJob)));
             }
-            else if (job is AggregateJob ag && ag.ActivityPhase == JobActivityPhase.RunningChildren)
+            else if (job is AggregateJob && job.ActivityPhase == JobActivityPhase.RunningChildren)
             {
                 publish("job.status", new JobStatusEventDto(getSummary(job), "running"));
-                var pending   = ag.Songs.Where(s => s.IsPending).ToList();
-                var existing  = ag.Songs.Where(s => s.TerminalOutcome == JobTerminalOutcome.Skipped && s.SkipReason == JobSkipReason.AlreadyExists).ToList();
-                var notFound  = ag.Songs.Where(s => IsNotFoundFailure(s.FailureReason)).ToList();
-                publish("track-batch.resolved", new TrackBatchResolvedEventDto(
-                    getSummary(job),
-                    false,
-                    job.Config.PrintOption,
-                    pending.Count,
-                    existing.Count,
-                    notFound.Count,
-                    [.. SelectTrackBatchRows(pending,  job.Config.PrintOption, limit: 20)],
-                    [.. SelectTrackBatchRows(existing, job.Config.PrintOption, limit: 20)],
-                    [.. SelectTrackBatchRows(notFound, job.Config.PrintOption, limit: 20)]));
             }
             else if (job is AggregateJob && job.TerminalOutcome == JobTerminalOutcome.Succeeded)
             {
@@ -178,7 +165,7 @@ public sealed class EngineEventDtoAdapter
     private static IEnumerable<SongJobPayloadDto> SelectTrackBatchRows(
         IReadOnlyList<SongJob> songs, PrintOption printOption, int limit = int.MaxValue)
     {
-        bool needsFullRows = printOption.HasFlag(PrintOption.Tracks)
+        bool needsFullRows = printOption.HasFlag(PrintOption.Jobs)
             || (printOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
         int effectiveLimit = needsFullRows ? int.MaxValue : limit;
         return songs.Take(effectiveLimit).Select(ToSongJobPayloadDto);

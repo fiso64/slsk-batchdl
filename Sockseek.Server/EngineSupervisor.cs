@@ -178,7 +178,40 @@ public sealed class EngineSupervisor
         => SubmitJobAsync(JobRequestMapper.CreateAlbumAggregateJob(request), request.Options, ct);
 
     public Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct)
-        => SubmitJobAsync(JobRequestMapper.CreateJobList(request), request.Options, ct);
+    {
+        var job = JobRequestMapper.CreateJobList(request);
+        ApplyDraftJobOptions(job, request.Jobs);
+        return SubmitJobAsync(job, request.Options, ct);
+    }
+
+    private void ApplyDraftJobOptions(JobList jobList, IReadOnlyList<JobDraftDto> drafts)
+    {
+        for (int i = 0; i < jobList.Jobs.Count && i < drafts.Count; i++)
+            ApplyDraftJobOptions(jobList.Jobs[i], drafts[i]);
+    }
+
+    private void ApplyDraftJobOptions(Job job, JobDraftDto draft)
+    {
+        if (DraftDownloadSettings(draft) is { } patch)
+            jobSettingsResolver.SetJobOptions(job.Id, new SubmissionOptionsDto(DownloadSettings: patch));
+
+        if (job is JobList childList && draft is JobListJobDraftDto childDraft)
+            ApplyDraftJobOptions(childList, childDraft.Jobs);
+    }
+
+    private static DownloadSettingsPatchDto? DraftDownloadSettings(JobDraftDto draft)
+        => draft switch
+        {
+            ExtractJobDraftDto typed => typed.DownloadSettings,
+            TrackSearchJobDraftDto typed => typed.DownloadSettings,
+            AlbumSearchJobDraftDto typed => typed.DownloadSettings,
+            SongJobDraftDto typed => typed.DownloadSettings,
+            AlbumJobDraftDto typed => typed.DownloadSettings,
+            AggregateJobDraftDto typed => typed.DownloadSettings,
+            AlbumAggregateJobDraftDto typed => typed.DownloadSettings,
+            JobListJobDraftDto typed => typed.DownloadSettings,
+            _ => null,
+        };
 
     private async Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
     {
@@ -191,13 +224,24 @@ public sealed class EngineSupervisor
 
         var settings = jobSettingsResolver.Resolve(defaultDownloadSettings, job);
 
-        if (settings.NeedLogin && !CanAcceptLoginRequiredJobs())
+        if (ContainsLoginRequiredJob(job, defaultDownloadSettings, settings) && !CanAcceptLoginRequiredJobs())
             throw new ArgumentException("This server is not configured for Soulseek login. Configure username/password, enable random login, or use a non-login submission.");
 
         job.EnsureDisplayId();
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(job, settings), ct);
 
         return StateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);
+    }
+
+    private bool ContainsLoginRequiredJob(Job job, DownloadSettings inheritedSettings, DownloadSettings? resolvedSettings = null)
+    {
+        var effectiveSettings = resolvedSettings ?? jobSettingsResolver.Resolve(inheritedSettings, job);
+
+        return job switch
+        {
+            JobList list => list.Jobs.Any(child => ContainsLoginRequiredJob(child, effectiveSettings)),
+            _ => effectiveSettings.NeedLogin,
+        };
     }
 
     public bool CancelJob(Guid jobId)

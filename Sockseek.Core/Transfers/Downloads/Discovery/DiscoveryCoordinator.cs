@@ -699,5 +699,3 @@ internal sealed class DiscoveryCoordinator
     }
 
 }
-
-

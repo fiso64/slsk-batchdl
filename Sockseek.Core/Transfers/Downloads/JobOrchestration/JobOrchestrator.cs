@@ -281,41 +281,50 @@ internal sealed class JobOrchestrator
             JobPreparer.ApplySearchSettings(jl, config.Search);
         }
 
-        jl.PrintLines();
+        if (config.PrintJobs)
+        {
+            await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, jl.Cts!.Token, childParentJob)));
+            SetJobListTerminalState(jl, parentToken);
+            return;
+        }
 
         // ── skip checks for direct SongJob children ──────────────────────
         var directSongs = jl.Jobs.OfType<SongJob>().ToList();
+        var skipEligibleDirectSongs = directSongs
+            .Where(song => !song.Config.PrintJobs && !song.Config.PrintResults)
+            .ToList();
         var existing = new List<SongJob>();
         var notFound = new List<SongJob>();
 
-        if (directSongs.Count > 0 && !config.PrintResults)
+        if (skipEligibleDirectSongs.Count > 0)
         {
-            if (ctx != null && config.Skip.SkipNotFound)
-                foreach (var song in directSongs)
-                    if (context.SkipEvaluation.TrySetNotFoundLastTime(song, ctx.IndexEditor))
-                        notFound.Add(song);
+            foreach (var song in skipEligibleDirectSongs)
+            {
+                var songCtx = context.Ctx(song);
+                var songConfig = song.Config;
 
-            if (ctx != null && config.Skip.SkipExisting)
-                foreach (var song in directSongs.Where(s => s.LifecycleState == JobLifecycleState.Pending))
-                    if (context.SkipEvaluation.TrySetAlreadyExists(batchOwner, song, TrackSkipperContext.From(ctx, config.Skip, config.Search)))
-                        existing.Add(song);
+                if (songConfig.Skip.SkipNotFound
+                    && context.SkipEvaluation.TrySetNotFoundLastTime(song, songCtx.IndexEditor))
+                {
+                    notFound.Add(song);
+                    continue;
+                }
+
+                if (songConfig.Skip.SkipExisting
+                    && song.LifecycleState == JobLifecycleState.Pending
+                    && context.SkipEvaluation.TrySetAlreadyExists(batchOwner, song, TrackSkipperContext.From(songCtx, songConfig.Skip, songConfig.Search)))
+                {
+                    existing.Add(song);
+                }
+            }
 
             context.Events.RaiseTrackBatchResolved(batchOwner,
-                directSongs.Where(s => s.LifecycleState == JobLifecycleState.Pending).ToList(),
+                skipEligibleDirectSongs.Where(s => s.LifecycleState == JobLifecycleState.Pending).ToList(),
                 existing,
                 notFound);
 
             foreach (var song in existing)
-                await MaybeRemoveFromSource(song, config);
-        }
-
-        if (config.PrintTracks)
-        {
-            if (directSongs.Count == 0)
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, jl.Cts!.Token, childParentJob)));
-
-            jl.PrintLines();
-            return;
+                await MaybeRemoveFromSource(song, song.Config);
         }
 
         ctx?.IndexEditor?.Update();
@@ -342,14 +351,14 @@ internal sealed class JobOrchestrator
 
                     if (wasInitial && child is SongJob song)
                     {
-                        ctx?.IndexEditor?.Update();
-                        ctx?.PlaylistEditor?.Update();
+                        context.Ctx(song).IndexEditor?.Update();
+                        context.Ctx(song).PlaylistEditor?.Update();
                         intervalReporter?.MaybeReport(song);
                         int dl = directSongs.Count(IsSubtreeSuccessful);
                         int fl = directSongs.Count(IsSubtreeUnsuccessful);
                         context.Events.RaiseOverallProgress(dl, fl, directSongs.Count);
 
-                        await MaybeRemoveFromSource(song, config);
+                        await MaybeRemoveFromSource(song, song.Config);
                     }
                 }));
 
@@ -362,7 +371,7 @@ internal sealed class JobOrchestrator
                 await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, jl.Cts!.Token, childParentJob)));
 
                 foreach (var child in jl.Jobs)
-                    await MaybeRemoveFromSource(child, config);
+                    await MaybeRemoveFromSource(child, child.Config);
             }
         }
         catch (OperationCanceledException) when (jl.Cts?.IsCancellationRequested == true)
@@ -380,8 +389,8 @@ internal sealed class JobOrchestrator
         {
             JobList jl => jl.Jobs.All(IsSubtreeSuccessful),
             ExtractJob ej => ej.TerminalOutcome == JobTerminalOutcome.Succeeded && ej.Result != null && IsSubtreeSuccessful(ej.Result),
-            AlbumAggregateJob aag => aag.Albums.Count > 0 && aag.Albums.All(IsSubtreeSuccessful),
-            AggregateJob ag => ag.Songs.Count > 0 && ag.Songs.All(IsSubtreeSuccessful),
+            AlbumAggregateJob aag => aag.Albums.Count > 0 ? aag.Albums.All(IsSubtreeSuccessful) : IsSuccessfulTerminal(aag),
+            AggregateJob ag => ag.Songs.Count > 0 ? ag.Songs.All(IsSubtreeSuccessful) : IsSuccessfulTerminal(ag),
             _ => IsSuccessfulTerminal(job),
         };
     }
@@ -474,6 +483,7 @@ internal sealed class JobOrchestrator
 
     internal async Task MaybeRemoveFromSource(Job job, DownloadSettings config)
     {
+        if (config.DoNotDownload) return;
         if (!config.Extraction.RemoveTracksFromSource) return;
         if (job is SearchJob or RetrieveFolderJob) return;
         if (job.SourceMutation == null) return;
@@ -492,9 +502,14 @@ internal sealed class JobOrchestrator
             JobPreparer.ApplySearchSettings(job, config.Search);
         }
 
-        job.PrintLines();
-
         // ── skip checks ──────────────────────────────────────────────────────
+
+        if (config.PrintJobs)
+        {
+            var outcome = JobOutcome.Done();
+            JobOutcomeCommitter.Commit(job, outcome);
+            return outcome;
+        }
 
         if (config.Skip.SkipNotFound && !config.PrintResults && job.CanBeSkipped)
         {
@@ -534,12 +549,6 @@ internal sealed class JobOrchestrator
             ctx.IndexEditor?.Update();
             ctx.PlaylistEditor?.Update();
             return alreadyExistsOutcome;
-        }
-
-        if (config.PrintTracks)
-        {
-            job.PrintLines();
-            return JobOutcome.NoChange();
         }
 
         // ── source search / download ──────────────────────────────────────────
