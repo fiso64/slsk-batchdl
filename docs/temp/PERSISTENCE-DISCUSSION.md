@@ -1442,6 +1442,38 @@ The completed persistence feature MUST include:
 * Startup and shutdown ordering.
 * Documentation of consistency and crash-durability guarantees.
 
+## Operational mode boundary
+
+Persistence is a daemon-mode facility.
+
+When Sockseek runs in daemon/server mode, it owns the database, applies permitted
+migrations, creates a runtime session, starts the persistence writer, exposes
+historical queries, and performs shutdown reconciliation.
+
+Ordinary non-daemon or one-shot CLI execution MUST remain ephemeral and MUST NOT:
+
+* Open or create the persistence database.
+* Apply migrations.
+* Acquire the daemon database ownership lock.
+* Create a runtime-session row.
+* Start the persistence writer or maintenance services.
+* Subscribe the persistence adapter to Core changes.
+* Allocate display IDs from durable state.
+* Read or write persisted history directly.
+
+A CLI command operating against a running daemon MAY access persisted history
+through the daemon's HTTP/API contracts. It MUST NOT open the daemon's SQLite
+file directly.
+
+Explicit maintenance commands such as `--migrate-only`, backup, restore, or
+integrity-check are exceptions. They may access persistence without starting the
+domain runtimes, but they MUST acquire exclusive database ownership and follow
+the same migration, backup, and integrity safeguards as daemon mode.
+
+Supporting persistence in a future standalone execution mode requires a separate
+architecture decision. It must not occur accidentally through shared dependency
+registration.
+
 ## 1.2 Explicitly out of scope
 
 The implementation MAY stop without the following, provided the public documentation does not claim them:
@@ -1509,6 +1541,24 @@ The implementation MUST NOT be declared complete while any row in this table sti
 * [ ] **ARCH-12** Persistence mutations are compact persistence-owned records; the writer does not serialize `JobSnapshot.Payload` wholesale.
 * [ ] **ARCH-13** An architecture test fails if forbidden mutable/runtime/third-party types appear in public Core changes or persistence mutations.
 * [ ] **ARCH-14** An architecture test fails if EF Core or SQLite references are introduced into Core or API projects.
+
+# Daemon-mode boundary
+
+- [ ] **MODE-01** Persistence services are registered and started only in daemon/server mode.
+- [ ] **MODE-02** Ordinary standalone and one-shot CLI modes do not create, open,
+      migrate, lock, read, or write the persistence database.
+- [ ] **MODE-03** Non-daemon execution does not create a runtime session or seed
+      the durable display-ID allocator.
+- [ ] **MODE-04** Non-daemon execution does not subscribe a persistence adapter
+      or start writer, retention, reconciliation, or maintenance hosted services.
+- [ ] **MODE-05** CLI access to daemon history goes through the daemon API rather
+      than direct SQLite access.
+- [ ] **MODE-06** Maintenance-only commands are explicitly enumerated, acquire
+      exclusive ownership, and do not start domain runtimes.
+- [ ] **MODE-07** Tests prove that representative one-shot CLI commands leave no
+      database, WAL, shared-memory, lock, backup, or migration files behind.
+- [ ] **MODE-08** Tests prove that daemon mode initializes persistence before
+      accepting domain work.
 
 ## Required evidence
 
