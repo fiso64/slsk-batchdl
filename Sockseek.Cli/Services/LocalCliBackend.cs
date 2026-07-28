@@ -192,8 +192,8 @@ internal sealed class LocalCliBackend
                     folder.FolderPath,
                     new PeerInfoDto(
                         folder.Username,
-                        folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                        folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                        folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                        folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
                     folder.SearchFileCount,
                     folder.SearchAudioFileCount,
                     includeFiles
@@ -771,8 +771,8 @@ internal sealed class LocalCliBackend
     }
 
     private static FileCandidate? FindRawFileCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
-        => searchJob.Snapshot()
-            .Select(pair => new FileCandidate(pair.Response, pair.File))
+        => searchJob.RawSnapshot()
+            .Select(result => result.ProjectionInput.ToFileCandidate())
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
                 && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
@@ -804,13 +804,13 @@ internal sealed class LocalCliBackend
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
-            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+            new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
+            candidate.Size,
+            candidate.BitRate,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension,
+            candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
 
     private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
         => new(
@@ -819,12 +819,12 @@ internal sealed class LocalCliBackend
             song.DownloadPath,
             song.ResolvedTarget?.Username,
             song.ResolvedTarget?.Filename,
-            song.ResolvedTarget?.Response.HasFreeUploadSlot,
-            song.ResolvedTarget?.Response.UploadSpeed,
-            song.ResolvedTarget?.File.Size,
-            song.ResolvedTarget?.File.SampleRate,
-            song.ResolvedTarget?.File.Extension,
-            song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+            song.ResolvedTarget?.HasFreeUploadSlot,
+            song.ResolvedTarget?.UploadSpeed,
+            song.ResolvedTarget?.Size,
+            song.ResolvedTarget?.SampleRate,
+            song.ResolvedTarget?.Extension,
+            song.ResolvedTarget?.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList(),
             song.Id,
             song.DisplayId,
             song.Candidates?.Select(ToFileCandidateDto).ToList(),
@@ -845,8 +845,8 @@ internal sealed class LocalCliBackend
             folder.FolderPath,
             new PeerInfoDto(
                 folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
             includeFiles

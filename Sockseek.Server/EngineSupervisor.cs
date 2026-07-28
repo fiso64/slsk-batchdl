@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using Sockseek.Core;
@@ -6,8 +7,11 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
+using Sockseek.Persistence.Read;
 using Soulseek;
 using Sockseek.Api;
+using Sockseek.Server.Persistence;
 
 namespace Sockseek.Server;
 
@@ -21,6 +25,7 @@ public sealed class EngineSupervisor
     private readonly Channel<QueuedSubmission> submissionChannel = Channel.CreateUnbounded<QueuedSubmission>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly Lock engineGate = new();
+    private readonly PersistenceCoordinator? persistence;
 
     private DownloadEngine? currentEngine;
     private int restartCount;
@@ -30,9 +35,10 @@ public sealed class EngineSupervisor
     public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
     public EngineStateStore StateStore { get; }
 
-    public EngineSupervisor(IOptions<ServerOptions> options)
+    public EngineSupervisor(IOptions<ServerOptions> options, PersistenceCoordinator? persistence = null)
     {
         this.options = options.Value;
+        this.persistence = persistence;
 
         engineSettings = SettingsCloner.Clone(this.options.Engine);
         engineSettings.AutoReconnectAfterKickedFromServer = true;
@@ -73,7 +79,7 @@ public sealed class EngineSupervisor
                         if (submission.IsResume)
                             engine.Resume(submission.Job);
                         else
-                            engine.Enqueue(submission.Job, submission.Settings!);
+                            engine.Enqueue(submission.Job, submission.Settings!, submission.SourceJobId);
                     }
                 }
             }
@@ -93,6 +99,7 @@ public sealed class EngineSupervisor
             finally
             {
                 StateStore.DetachEngine(engine);
+                persistence?.DetachEngine(engine);
                 lock (engineGate)
                 {
                     if (ReferenceEquals(currentEngine, engine))
@@ -117,13 +124,84 @@ public sealed class EngineSupervisor
             clientState = currentEngine?.ClientState ?? SoulseekClientStates.None;
 
         var stats = StateStore.GetStatistics();
+        var persistenceStatus = GetPersistenceStatus();
         return new ServerStatusDto(
             ToSoulseekClientStatusDto(clientState),
             stats.TotalJobCount,
             stats.ActiveJobCount,
             stats.TotalWorkflowCount,
             stats.ActiveWorkflowCount,
-            restartCount);
+            restartCount,
+            persistenceStatus);
+    }
+
+    private PersistenceStatusDto GetPersistenceStatus()
+    {
+        if (persistence?.IsEnabled != true)
+            return new PersistenceStatusDto(
+                false, false, "Disabled", null, null, null, null, null, null,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0);
+
+        var runtime = persistence.Runtime;
+        var snapshot = persistence.HealthSnapshot;
+        var reconciliation = persistence.Reconciliation;
+        var lastRetention = persistence.LastRetentionResult;
+        if (snapshot == null)
+            return new PersistenceStatusDto(
+                true, false, "Starting", persistence.Initialization?.SchemaVersion,
+                runtime?.RuntimeId, runtime?.StartedAtUtc, null, null, null,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0);
+
+        return new PersistenceStatusDto(
+            true,
+            persistence.Initialization != null,
+            snapshot.State.ToString(),
+            persistence.Initialization?.SchemaVersion,
+            runtime?.RuntimeId,
+            runtime?.StartedAtUtc,
+            snapshot.LastSuccessfulCommitAtUtc,
+            snapshot.LastFailureAtUtc,
+            snapshot.LastFailure,
+            snapshot.CriticalQueueDepth,
+            snapshot.CriticalQueueCapacity,
+            snapshot.OrdinaryQueueDepth,
+            snapshot.OrdinaryQueueCapacity,
+            snapshot.ProgressEntityCount,
+            snapshot.ProgressEntityCapacity,
+            snapshot.BufferedSearchResultCount,
+            snapshot.BufferedSearchResultCapacity,
+            snapshot.DegradedProjectionCount,
+            snapshot.DegradedProjectionCapacity,
+            snapshot.BusyRetryCount,
+            snapshot.DroppedOrdinaryCount,
+            snapshot.DroppedProgressCount,
+            snapshot.DroppedSearchResultCount,
+            snapshot.IncompleteSearchCount,
+            snapshot.EvictedTerminalProjectionCount,
+            snapshot.SuccessfulCommitCount,
+            snapshot.RowsWritten,
+            persistence.DatabaseSizeBytes,
+            persistence.WalSizeBytes,
+            snapshot.LastCommitDurationMilliseconds,
+            snapshot.LastBatchMutationCount,
+            snapshot.PermanentlyFailedMutationCount,
+            snapshot.IncompleteSearchTrackingCount,
+            snapshot.IncompleteSearchTrackingCapacity,
+            snapshot.IncompleteSearchTrackingOverflowed,
+            snapshot.CommitLatencyHistogram,
+            snapshot.BatchSizeHistogram,
+            reconciliation?.UnfinishedRuntimeCount ?? 0,
+            reconciliation?.InterruptedJobCount ?? 0,
+            reconciliation?.InterruptedTransferCount ?? 0,
+            reconciliation?.InterruptedAttemptCount ?? 0,
+            reconciliation?.InterruptedSearchCount ?? 0,
+            persistence.LastRetentionAtUtc,
+            lastRetention?.PrunedJobs ?? 0,
+            lastRetention?.PrunedSearchResults ?? 0,
+            lastRetention?.PrunedTransfers ?? 0,
+            lastRetention?.PrunedTransferAttempts ?? 0);
     }
 
     public IReadOnlyList<ProfileSummaryDto> GetProfiles()
@@ -344,6 +422,85 @@ public sealed class EngineSupervisor
             Items: songJob.Candidates?.Select(ToFileCandidateDto).ToList() ?? []);
     }
 
+    internal SearchResultSnapshotDto<FileCandidateDto> ProjectHistoricalFileResults(
+        IReadOnlyList<SearchProjectionInput> inputs,
+        PersistedSearchMetadata metadata,
+        FileSearchProjectionRequestDto projection)
+    {
+        var query = projection.SongQuery != null
+            ? JobRequestMapper.ToSongQuery(projection.SongQuery)
+            : new SongQuery { Title = metadata.Query };
+        var items = SearchResultProjector.SortedTrackCandidates(
+            inputs,
+            query,
+            defaultDownloadSettings.Search,
+            GetCurrentEngineUserSuccessCounts(),
+            useInfer: false,
+            includeFullResults: projection.IncludeFullResults);
+        return new SearchResultSnapshotDto<FileCandidateDto>(
+            checked((int)metadata.Revision),
+            metadata.IsComplete,
+            items.Select(ToFileCandidateDto).ToArray(),
+            metadata.ResultPersistenceState,
+            metadata.ResultsPrunedAtUtc);
+    }
+
+    internal SearchResultSnapshotDto<AlbumFolderDto> ProjectHistoricalFolderResults(
+        IReadOnlyList<SearchProjectionInput> inputs,
+        PersistedSearchMetadata metadata,
+        AlbumQueryDto query,
+        bool includeFiles)
+    {
+        var folders = SearchResultProjector.AlbumFolders(
+            inputs,
+            JobRequestMapper.ToAlbumQuery(query),
+            defaultDownloadSettings.Search,
+            GetCurrentEngineUserSuccessCounts());
+        return new SearchResultSnapshotDto<AlbumFolderDto>(
+            checked((int)metadata.Revision), metadata.IsComplete,
+            folders.Select(folder => ToAlbumFolderDto(folder, includeFiles)).ToArray(),
+            metadata.ResultPersistenceState, metadata.ResultsPrunedAtUtc);
+    }
+
+    internal SearchResultSnapshotDto<AggregateTrackCandidateDto> ProjectHistoricalAggregateTracks(
+        IReadOnlyList<SearchProjectionInput> inputs,
+        PersistedSearchMetadata metadata,
+        SongQueryDto query,
+        bool includeCandidates)
+    {
+        var tracks = SearchResultProjector.AggregateTracks(
+            inputs,
+            JobRequestMapper.ToSongQuery(query),
+            defaultDownloadSettings.Search,
+            GetCurrentEngineUserSuccessCounts());
+        return new SearchResultSnapshotDto<AggregateTrackCandidateDto>(
+            checked((int)metadata.Revision), metadata.IsComplete,
+            tracks.Select(song => new AggregateTrackCandidateDto(
+                ToSongQuery(song.Query), song.ItemName,
+                includeCandidates ? song.Candidates?.Select(ToFileCandidateDto).ToList() : null)).ToArray(),
+            metadata.ResultPersistenceState, metadata.ResultsPrunedAtUtc);
+    }
+
+    internal SearchResultSnapshotDto<AggregateAlbumCandidateDto> ProjectHistoricalAggregateAlbums(
+        IReadOnlyList<SearchProjectionInput> inputs,
+        PersistedSearchMetadata metadata,
+        AlbumQueryDto query,
+        bool includeFolders)
+    {
+        var albumQuery = JobRequestMapper.ToAlbumQuery(query);
+        var folders = SearchResultProjector.AlbumFolders(
+            inputs, albumQuery, defaultDownloadSettings.Search, GetCurrentEngineUserSuccessCounts(),
+            ignoreStringSortConditions: true,
+            sortMode: FolderSortMode.DeterministicUnranked);
+        var albums = SearchResultProjector.AggregateAlbums(folders, albumQuery, defaultDownloadSettings.Search);
+        return new SearchResultSnapshotDto<AggregateAlbumCandidateDto>(
+            checked((int)metadata.Revision), metadata.IsComplete,
+            albums.Select(album => new AggregateAlbumCandidateDto(
+                ToAlbumQuery(album.Query), album.ItemName,
+                includeFolders ? album.Results.Select(folder => ToAlbumFolderDto(folder, includeFiles: true)).ToList() : null)).ToArray(),
+            metadata.ResultPersistenceState, metadata.ResultsPrunedAtUtc);
+    }
+
     public SearchResultSnapshotDto<AlbumFolderDto>? GetFolderResults(Guid jobId, bool includeFiles)
         => GetFolderResults(jobId, null, includeFiles);
 
@@ -466,7 +623,7 @@ public sealed class EngineSupervisor
     {
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
-            return null;
+            return await StartHistoricalRetrieveFolderAsync(sourceJobId, request, ct).ConfigureAwait(false);
 
         var folder = FindAlbumFolderForRetrieval(sourceJob, request.Folder, request.AlbumQuery);
         if (folder == null)
@@ -474,20 +631,39 @@ public sealed class EngineSupervisor
 
         var retrieveJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
         retrieveJob.WorkflowId = sourceJob.WorkflowId;
-        StateStore.SetSourceJob(retrieveJob.Id, sourceJobId);
         retrieveJob.EnsureDisplayId();
-        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(retrieveJob, sourceJob.Config), ct);
+        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(retrieveJob, sourceJob.Config, SourceJobId: sourceJobId), ct);
+        return StateStore.GetJobSummary(retrieveJob.Id) ?? BuildSubmittedJobSummary(retrieveJob, sourceJobId);
+    }
+
+    private async Task<JobSummaryDto?> StartHistoricalRetrieveFolderAsync(
+        Guid sourceJobId,
+        RetrieveFolderRequestDto request,
+        CancellationToken ct)
+    {
+        var historical = await ResolveHistoricalFolderAsync(sourceJobId, request.Folder, request.AlbumQuery, ct).ConfigureAwait(false);
+        if (historical == null)
+            return null;
+        var retrieveJob = new RetrieveFolderJob(historical.Value.Folder)
+        {
+            ItemName = historical.Value.Folder.FolderPath,
+            WorkflowId = historical.Value.Job.WorkflowId,
+        };
+        var settings = jobSettingsResolver.ResolveFollowUp(retrieveJob, options: null);
+        retrieveJob.EnsureDisplayId();
+        await submissionChannel.Writer.WriteAsync(
+            new QueuedSubmission(retrieveJob, settings, SourceJobId: sourceJobId), ct).ConfigureAwait(false);
         return StateStore.GetJobSummary(retrieveJob.Id) ?? BuildSubmittedJobSummary(retrieveJob, sourceJobId);
     }
 
     public async Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid sourceJobId, StartFileDownloadsRequestDto request, CancellationToken ct)
     {
-        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
-        if (sourceJob?.Config == null)
-            return null;
-
         if (request.Files.Count == 0)
             throw new ArgumentException("At least one file is required.");
+
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
+        if (sourceJob?.Config == null)
+            return await StartHistoricalFileDownloadsAsync(sourceJobId, request, ct).ConfigureAwait(false);
 
         var summaries = new List<JobSummaryDto>();
 
@@ -541,11 +717,95 @@ public sealed class EngineSupervisor
         return summaries;
     }
 
+    private async Task<IReadOnlyList<JobSummaryDto>?> StartHistoricalFileDownloadsAsync(
+        Guid sourceJobId,
+        StartFileDownloadsRequestDto request,
+        CancellationToken ct)
+    {
+        if (persistence?.JobHistory == null || persistence.SearchHistory == null)
+            return null;
+
+        var persistedJob = await persistence.JobHistory.GetJobAsync(sourceJobId, ct).ConfigureAwait(false);
+        if (persistedJob == null)
+            return null;
+
+        var summaries = new List<JobSummaryDto>(request.Files.Count);
+        foreach (var file in request.Files)
+        {
+            var lookup = await persistence.SearchHistory
+                .GetResultAsync(sourceJobId, file.Username, file.Filename, ct)
+                .ConfigureAwait(false);
+            if (lookup == null)
+                throw new ArgumentException("The historical job has no retained search-result history.");
+            if (lookup.Result == null)
+            {
+                string detail = lookup.Metadata.ResultPersistenceState switch
+                {
+                    "Pruned" => "Its raw results were pruned by retention.",
+                    "Incomplete" => "Its persisted raw results are incomplete.",
+                    "Interrupted" => "The search was interrupted and the requested result was not committed.",
+                    "NotPersisted" => "Its raw results were not persisted.",
+                    _ => "The requested result was not found.",
+                };
+                throw new ArgumentException($"Cannot start a download from this historical search. {detail}");
+            }
+
+            var result = lookup.Result;
+            var candidate = new FileCandidate(
+                result.Username,
+                result.RemoteFilename,
+                result.SizeBytes,
+                result.BitRate,
+                result.BitDepth,
+                result.ResponseFileCount,
+                result.SampleRate,
+                result.DurationSeconds,
+                result.Extension,
+                result.UploadSpeed,
+                result.HasFreeUploadSlot,
+                DeserializeFileAttributes(result.AttributesJson));
+            var query = Searcher.InferSongQuery(
+                candidate.Filename,
+                new SongQuery { Title = lookup.Metadata.Query });
+            var followUp = new SongJob(query)
+            {
+                ResolvedTarget = candidate,
+                ItemName = persistedJob.ItemName,
+                WorkflowId = persistedJob.WorkflowId,
+            };
+            var settings = jobSettingsResolver.ResolveFollowUp(followUp, request.Options);
+            jobSettingsResolver.SetJobOptions(followUp.Id, request.Options);
+            followUp.EnsureDisplayId();
+            await submissionChannel.Writer.WriteAsync(
+                new QueuedSubmission(followUp, settings, SourceJobId: sourceJobId), ct).ConfigureAwait(false);
+            summaries.Add(StateStore.GetJobSummary(followUp.Id) ?? BuildSubmittedJobSummary(followUp, sourceJobId));
+        }
+
+        return summaries;
+    }
+
+    private static IReadOnlyList<FileAttributeSnapshot>? DeserializeFileAttributes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<PersistedFileAttribute[]>(json)?
+                .Select(attribute => new FileAttributeSnapshot(attribute.Name, attribute.Value, attribute.Code))
+                .ToArray();
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException("The retained result has invalid file-attribute data and cannot be downloaded safely.", ex);
+        }
+    }
+
     public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct)
     {
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
-            return null;
+            return await StartHistoricalFolderDownloadAsync(sourceJobId, request, ct).ConfigureAwait(false);
 
         var folder = FindAlbumFolder(sourceJob, request.Folder, request.AlbumQuery);
         if (folder == null)
@@ -575,9 +835,6 @@ public sealed class EngineSupervisor
             album => JobRequestMapper.ApplyFolderDownloadSelection(album, request.Selection),
             out var selectedAlbum) == true)
         {
-            if (sourceJob is AlbumAggregateJob)
-                StateStore.SetSourceJob(selectedAlbum!.Id, sourceJobId);
-
             return StateStore.GetJobSummary(selectedAlbum!.Id) ?? BuildSubmittedJobSummary(selectedAlbum!, sourceJobId);
         }
         if (albumQuery == null)
@@ -598,6 +855,70 @@ public sealed class EngineSupervisor
         var followUpSettings = jobSettingsResolver.ResolveFollowUp(albumJob, request.Options);
 
         return await SubmitFollowUpJobAsync(sourceJobId, sourceJob, albumJob, followUpSettings, request.Options, isolateOptions: true, ct);
+    }
+
+    private async Task<JobSummaryDto?> StartHistoricalFolderDownloadAsync(
+        Guid sourceJobId,
+        StartFolderDownloadRequestDto request,
+        CancellationToken ct)
+    {
+        var historical = await ResolveHistoricalFolderAsync(sourceJobId, request.Folder, request.AlbumQuery, ct).ConfigureAwait(false);
+        if (historical == null)
+            return null;
+        var folder = JobRequestMapper.ApplySelectedFolderSnapshot(historical.Value.Folder, request);
+        folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
+        var albumJob = new AlbumJob(new AlbumQuery(historical.Value.Query))
+        {
+            ResolvedTarget = folder,
+            ItemName = historical.Value.Job.ItemName,
+            DownloadBehaviorPolicy = new DownloadBehaviorPolicy(),
+            WorkflowId = historical.Value.Job.WorkflowId,
+        };
+        JobRequestMapper.ApplyFolderDownloadSelection(albumJob, request.Selection);
+        var settings = jobSettingsResolver.ResolveFollowUp(albumJob, request.Options);
+        jobSettingsResolver.SetJobOptions(albumJob.Id, request.Options);
+        albumJob.EnsureDisplayId();
+        await submissionChannel.Writer.WriteAsync(
+            new QueuedSubmission(albumJob, settings, SourceJobId: sourceJobId), ct).ConfigureAwait(false);
+        return StateStore.GetJobSummary(albumJob.Id) ?? BuildSubmittedJobSummary(albumJob, sourceJobId);
+    }
+
+    private async Task<(PersistedJob Job, AlbumFolder Folder, AlbumQuery Query)?> ResolveHistoricalFolderAsync(
+        Guid sourceJobId,
+        AlbumFolderRefDto folderRef,
+        AlbumQueryDto? requestedQuery,
+        CancellationToken ct)
+    {
+        if (persistence?.JobHistory == null || persistence.SearchHistory == null)
+            return null;
+        var job = await persistence.JobHistory.GetJobAsync(sourceJobId, ct).ConfigureAwait(false);
+        var metadata = await persistence.SearchHistory.GetMetadataAsync(sourceJobId, ct).ConfigureAwait(false);
+        if (job == null || metadata == null)
+            return null;
+        if (metadata.ResultPersistenceState is "Pruned" or "NotPersisted")
+            throw new ArgumentException($"Cannot use this historical folder because its result data is {metadata.ResultPersistenceState.ToLowerInvariant()}.");
+        var defaultProjection = HistoricalJobDtoMapper.DefaultFolderProjection(job);
+        var queryDto = requestedQuery ?? defaultProjection?.AlbumQuery
+            ?? throw new ArgumentException("Historical folder operations require an album query.");
+        var inputs = new List<SearchProjectionInput>();
+        await foreach (var input in persistence.SearchHistory
+            .ReadProjectionInputsAsync(sourceJobId, ct)
+            .ConfigureAwait(false))
+            inputs.Add(input);
+        var query = JobRequestMapper.ToAlbumQuery(queryDto);
+        var folder = SearchResultProjector.AlbumFolders(
+                inputs, query, defaultDownloadSettings.Search, GetCurrentEngineUserSuccessCounts())
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.Username, folderRef.Username, StringComparison.Ordinal)
+                && string.Equals(candidate.FolderPath, folderRef.FolderPath, StringComparison.Ordinal));
+        if (folder == null)
+        {
+            string detail = metadata.ResultPersistenceState is "Incomplete" or "Interrupted"
+                ? $" Persisted results are {metadata.ResultPersistenceState.ToLowerInvariant()}."
+                : "";
+            throw new ArgumentException("Requested folder was not found in retained search results." + detail);
+        }
+        return (job, folder, query);
     }
 
     public async Task<bool> CompleteManualSelectionAsync(Guid jobId)
@@ -622,6 +943,7 @@ public sealed class EngineSupervisor
     {
         var clientManager = new SoulseekClientManager(engineSettings, options.ClientFactory?.Invoke(engineSettings));
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
+        persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
         lock (engineGate)
             currentEngine = engine;
@@ -667,13 +989,13 @@ public sealed class EngineSupervisor
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
-            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+            new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
+            candidate.Size,
+            candidate.BitRate,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension,
+            candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(
@@ -682,8 +1004,8 @@ public sealed class EngineSupervisor
             folder.FolderPath,
             new PeerInfoDto(
                 folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
             includeFiles
@@ -826,8 +1148,8 @@ public sealed class EngineSupervisor
     }
 
     private static FileCandidate? FindRawFileCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
-        => searchJob.Snapshot()
-            .Select(pair => new FileCandidate(pair.Response, pair.File))
+        => searchJob.RawSnapshot()
+            .Select(result => result.ProjectionInput.ToFileCandidate())
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
                 && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
@@ -844,18 +1166,19 @@ public sealed class EngineSupervisor
         followUpJob.WorkflowId = sourceJob.WorkflowId;
         if (ShouldPropagateSourceMutationToFollowUp(sourceJob))
             followUpJob.CopySourceMutationFrom(sourceJob);
-        StateStore.SetSourceJob(followUpJob.Id, sourceJobId);
         if (isolateOptions)
             jobSettingsResolver.SetJobOptions(followUpJob.Id, options);
         followUpJob.EnsureDisplayId();
-        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings), ct);
+        await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings, SourceJobId: sourceJobId), ct);
         return StateStore.GetJobSummary(followUpJob.Id) ?? BuildSubmittedJobSummary(followUpJob, sourceJobId);
     }
 
     private static bool ShouldPropagateSourceMutationToFollowUp(Job sourceJob)
         => sourceJob is not AlbumAggregateJob;
 
-    private sealed record QueuedSubmission(Job Job, DownloadSettings? Settings, bool IsResume = false)
+    private sealed record PersistedFileAttribute(int Code, string Name, int Value);
+
+    private sealed record QueuedSubmission(Job Job, DownloadSettings? Settings, bool IsResume = false, Guid? SourceJobId = null)
     {
         public static QueuedSubmission Resume(Job job) => new(job, null, true);
     }

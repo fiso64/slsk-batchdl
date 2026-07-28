@@ -4,6 +4,21 @@ using System.Text.Json;
 
 namespace Sockseek.Api;
 
+public sealed record CursorPage<T>(IReadOnlyList<T> Items, string? NextCursor);
+public sealed record SequencePage<T>(IReadOnlyList<T> Items, long? NextSequence);
+public sealed record AttemptPage<T>(IReadOnlyList<T> Items, int? NextAttemptNumber);
+
+public sealed record TransferHistoryFilter(
+    Guid? JobId = null,
+    Guid? WorkflowId = null,
+    string? Direction = null,
+    string? Source = null,
+    string? State = null,
+    string? TerminalOutcome = null,
+    string? Username = null,
+    DateTimeOffset? FromUtc = null,
+    DateTimeOffset? ToUtc = null);
+
 /// <summary>Exception raised for daemon HTTP responses that intentionally return an API error body.</summary>
 public sealed class SockseekApiRequestException : InvalidOperationException
 {
@@ -85,6 +100,13 @@ public sealed class SockseekApiClient
     }
 
     public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)
+        => (await GetJobsPageAsync(query, cursor: null, limit: 100, ct)).Items;
+
+    public async Task<CursorPage<JobSummaryDto>> GetJobsPageAsync(
+        JobQuery query,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
     {
         var url = "api/jobs"
             + $"?includeAll={query.IncludeAll.ToString().ToLowerInvariant()}"
@@ -92,9 +114,11 @@ public sealed class SockseekApiClient
             + QueryPart("terminalOutcome", query.TerminalOutcome?.ToString())
             + QueryPart("skipReason", query.SkipReason?.ToString())
             + QueryPart("kind", query.Kind?.ToWireString())
-            + QueryPart("workflowId", query.WorkflowId?.ToString());
+            + QueryPart("workflowId", query.WorkflowId?.ToString())
+            + QueryPart("cursor", cursor)
+            + QueryPart("limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-        return await http.GetFromJsonAsync<IReadOnlyList<JobSummaryDto>>(url, jsonOptions, ct) ?? [];
+        return await GetCursorPageAsync<JobSummaryDto>(url, ct);
     }
 
     public async Task<JobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default)
@@ -129,6 +153,104 @@ public sealed class SockseekApiClient
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<WorkflowDetailDto>(response, ct);
     }
+
+    public async Task<CursorPage<WorkflowSummaryDto>> GetWorkflowsPageAsync(
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => await GetCursorPageAsync<WorkflowSummaryDto>(
+            "api/workflows?limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + QueryPart("cursor", cursor),
+            ct);
+
+    public async Task<WorkflowTreeDto?> GetWorkflowTreeAsync(Guid workflowId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/workflows/{workflowId}/tree", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<WorkflowTreeDto>(response, ct);
+    }
+
+    public async Task<SequencePage<SearchRawResultDto>?> GetRawSearchResultsPageAsync(
+        Guid jobId,
+        long afterSequence = 0,
+        int limit = 200,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync(
+            $"api/jobs/{jobId}/raw?afterSequence={afterSequence}&limit={limit}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return new SequencePage<SearchRawResultDto>(
+            await ReadRequiredAsync<IReadOnlyList<SearchRawResultDto>>(response, ct),
+            HeaderLong(response, "X-Next-Sequence"));
+    }
+
+    public async Task<CursorPage<TransferHistoryDto>> GetTransfersPageAsync(
+        TransferHistoryFilter? query = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        query ??= new TransferHistoryFilter();
+        string url = "api/transfers?limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + QueryPart("jobId", query.JobId?.ToString())
+            + QueryPart("workflowId", query.WorkflowId?.ToString())
+            + QueryPart("direction", query.Direction)
+            + QueryPart("source", query.Source)
+            + QueryPart("state", query.State)
+            + QueryPart("terminalOutcome", query.TerminalOutcome)
+            + QueryPart("username", query.Username)
+            + QueryPart("fromUtc", query.FromUtc?.ToString("O"))
+            + QueryPart("toUtc", query.ToUtc?.ToString("O"))
+            + QueryPart("cursor", cursor);
+        return await GetCursorPageAsync<TransferHistoryDto>(url, ct);
+    }
+
+    public async Task<TransferHistoryDetailDto?> GetTransferAsync(
+        Guid transferId,
+        int attemptLimit = 200,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/transfers/{transferId}?attemptLimit={attemptLimit}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<TransferHistoryDetailDto>(response, ct);
+    }
+
+    public async Task<AttemptPage<TransferAttemptHistoryDto>?> GetTransferAttemptsPageAsync(
+        Guid transferId,
+        int afterAttemptNumber = 0,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync(
+            $"api/transfers/{transferId}/attempts?afterAttemptNumber={afterAttemptNumber}&limit={limit}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return new AttemptPage<TransferAttemptHistoryDto>(
+            await ReadRequiredAsync<IReadOnlyList<TransferAttemptHistoryDto>>(response, ct),
+            HeaderInt(response, "X-Next-Attempt-Number"));
+    }
+
+    public async Task<PersistenceIntegrityResultDto> CheckPersistenceIntegrityAsync(CancellationToken ct = default)
+        => await PostWithoutBodyAsync<PersistenceIntegrityResultDto>("api/persistence/integrity", ct);
+
+    public async Task<PersistenceBackupResultDto> BackupPersistenceAsync(
+        PersistenceBackupRequestDto request,
+        CancellationToken ct = default)
+        => await PostRequiredAsync<PersistenceBackupResultDto, PersistenceBackupRequestDto>(
+            "api/persistence/backup", request, ct);
+
+    public async Task<PersistenceCheckpointResultDto> CheckpointPersistenceAsync(CancellationToken ct = default)
+        => await PostWithoutBodyAsync<PersistenceCheckpointResultDto>("api/persistence/checkpoint", ct);
+
+    public async Task<PersistenceRetentionResultDto> RunPersistenceRetentionAsync(CancellationToken ct = default)
+        => await PostWithoutBodyAsync<PersistenceRetentionResultDto>("api/persistence/retention", ct);
 
     public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
     {
@@ -325,6 +447,29 @@ public sealed class SockseekApiClient
         return await ReadRequiredAsync<TResponse>(response, ct);
     }
 
+    private async Task<TResponse> PostRequiredAsync<TResponse, TRequest>(string url, TRequest request, CancellationToken ct)
+    {
+        using var response = await http.PostAsJsonAsync(url, request, jsonOptions, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<TResponse>(response, ct);
+    }
+
+    private async Task<TResponse> PostWithoutBodyAsync<TResponse>(string url, CancellationToken ct)
+    {
+        using var response = await http.PostAsync(url, content: null, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<TResponse>(response, ct);
+    }
+
+    private async Task<CursorPage<T>> GetCursorPageAsync<T>(string url, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return new CursorPage<T>(
+            await ReadRequiredAsync<IReadOnlyList<T>>(response, ct),
+            Header(response, "X-Next-Cursor"));
+    }
+
     private async Task<T> ReadRequiredAsync<T>(HttpResponseMessage response, CancellationToken ct)
         => await response.Content.ReadFromJsonAsync<T>(jsonOptions, ct)
             ?? throw new InvalidOperationException($"Server returned an empty {typeof(T).Name} response.");
@@ -353,6 +498,15 @@ public sealed class SockseekApiClient
 
     private static string QueryPart(string name, string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : $"&{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
+
+    private static string? Header(HttpResponseMessage response, string name)
+        => response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
+
+    private static long? HeaderLong(HttpResponseMessage response, string name)
+        => long.TryParse(Header(response, name), out long value) ? value : null;
+
+    private static int? HeaderInt(HttpResponseMessage response, string name)
+        => int.TryParse(Header(response, name), out int value) ? value : null;
 
     private static bool IsActiveLifecycle(ServerJobLifecycleState state)
         => state != ServerJobLifecycleState.Terminal;

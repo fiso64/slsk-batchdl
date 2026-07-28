@@ -5,6 +5,8 @@ using Sockseek.Core.Models;
 using Sockseek.Core;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Transfers.Downloads.JobTracking;
+using Sockseek.Core.Transfers.Downloads.ManualSelection;
 
 namespace Tests.Cancellation
 {
@@ -681,6 +683,36 @@ namespace Tests.Cancellation
         }
 
         [TestMethod]
+        public async Task ManualSelection_SkipCommitsExplicitTerminalReasonAndFlushesEffects()
+        {
+            var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" })
+            {
+                Config = new DownloadSettings(),
+            };
+            album.SetAwaitingSelection();
+            int flushCount = 0;
+            var coordinator = new ManualSelectionCoordinator(
+                id => id == album.Id ? album : null,
+                new DownloadJobContextStore(),
+                (_, _, _) => { },
+                _ => { },
+                _ => { },
+                _ =>
+                {
+                    flushCount++;
+                    return Task.CompletedTask;
+                },
+                job => job.IsSuccessfulTerminal);
+
+            Assert.IsTrue(await coordinator.SkipAsync(album.Id));
+            Assert.AreEqual(JobLifecycleState.Terminal, album.LifecycleState);
+            Assert.AreEqual(JobTerminalOutcome.Skipped, album.TerminalOutcome);
+            Assert.AreEqual(JobSkipReason.Manual, album.SkipReason);
+            Assert.AreEqual(1, flushCount);
+            Assert.IsFalse(await coordinator.SkipAsync(album.Id));
+        }
+
+        [TestMethod]
         public async Task ExtractJob_CancelledDuringExtraction_RemainsCancelled()
         {
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-cancel-extract-" + Guid.NewGuid());
@@ -853,7 +885,7 @@ namespace Tests.Cancellation
                 JobList? aggregateList = null;
                 engine.Events.JobRegistered += change =>
                 {
-                    if (change.Parent?.Id == aggregateJob.Id
+                    if (change.ParentJobId == aggregateJob.Id
                         && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.JobList
                         && engine.GetJob(change.Job.Id) is JobList list)
                         aggregateList = list;

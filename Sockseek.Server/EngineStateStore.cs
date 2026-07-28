@@ -263,7 +263,9 @@ public sealed class EngineStateStore
         lock (gate)
         {
             jobs[change.Job.Id] = change.Job;
-            parentJobIds[change.Job.Id] = change.Parent?.Id;
+            parentJobIds[change.Job.Id] = change.ParentJobId;
+            if (change.SourceJobId is Guid sourceJobId)
+                sourceJobIds[change.Job.Id] = sourceJobId;
             summary = UpdateJobRecord(change.Job).Summary;
             workflowSummary = BuildWorkflowSummary(change.Job.WorkflowId);
         }

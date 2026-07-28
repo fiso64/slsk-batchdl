@@ -13,6 +13,13 @@ using Sockseek.Core.Settings;
 
 namespace Sockseek.Core.Transfers.Downloads.Runtime;
 
+internal sealed record PendingTerminalTransfer(
+    Guid TransferId,
+    int AttemptCount,
+    FileCandidate? Candidate,
+    string SourceReference,
+    string InitialOutputPath);
+
 internal sealed class DownloadExecutionContext
 {
     private readonly ConcurrentDictionary<Guid, byte> musicDirectoryIndexBuildLoggedByWorkflow = new();
@@ -66,10 +73,11 @@ internal sealed class DownloadExecutionContext
     public AutoProfileWorkflowReporter AutoProfiles { get; }
     public SkipEvaluationCoordinator SkipEvaluation { get; }
     public DownloadRunScope Runtime { get; }
+    public ConcurrentDictionary<Guid, PendingTerminalTransfer> PendingTerminalTransfers { get; } = new();
 
     public JobContext Ctx(Job job) => Contexts.Get(job);
 
-    public void RegisterJob(Job job, Job? parent) => Jobs.Register(job, parent);
+    public void RegisterJob(Job job, Job? parent, Guid? sourceJobId = null) => Jobs.Register(job, parent, sourceJobId);
 
     public void ObservePreparedAutoProfiles(Job preparedRoot) => AutoProfiles.ObservePreparedRoot(preparedRoot);
 

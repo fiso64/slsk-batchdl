@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Spectre.Console;
+using Sockseek.Core.Snapshots;
 using Soulseek;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
@@ -1344,19 +1345,18 @@ public class CliProgressReporter
 
     private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
         => new(
-            new SearchResponse(
-                candidate.Username,
-                -1,
-                candidate.Peer.HasFreeUploadSlot ?? false,
-                candidate.Peer.UploadSpeed ?? -1,
-                -1,
-                null),
-            new Soulseek.File(
-                0,
-                candidate.Filename,
-                candidate.Size,
-                candidate.Extension ?? Path.GetExtension(candidate.Filename),
-                candidate.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+            candidate.Username,
+            candidate.Filename,
+            candidate.Size,
+            candidate.BitRate,
+            bitDepth: null,
+            responseFileCount: 0,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension ?? Path.GetExtension(candidate.Filename),
+            candidate.Peer.UploadSpeed,
+            candidate.Peer.HasFreeUploadSlot,
+            candidate.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList());
 
     private static BarData ToBarData(SongJobPayloadDto song, string shortName)
     {

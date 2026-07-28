@@ -172,7 +172,7 @@ public class JsonStreamProgressReporter
             title     = song.Query.Title,
             username  = candidate.Username,
             filename  = candidate.Filename,
-            size      = candidate.File.Size,
+            size      = candidate.Size,
             extension = GetExtension(candidate.Filename),
         });
     }
@@ -271,8 +271,8 @@ public class JsonStreamProgressReporter
             downloadPath    = !string.IsNullOrEmpty(song.DownloadPath) ? song.DownloadPath : null,
             username        = chosen?.Username,
             filename        = chosen?.Filename,
-            size            = chosen?.File.Size,
-            bitRate         = chosen?.File.BitRate,
+            size            = chosen?.Size,
+            bitRate         = chosen?.BitRate,
             extension       = chosen != null ? GetExtension(chosen.Filename) : null,
             rawResultCount  = song.Discovery?.RawResultCount,
             lockedCount     = song.Discovery?.LockedFileCount,

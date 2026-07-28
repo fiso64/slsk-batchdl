@@ -47,21 +47,31 @@ namespace Tests.Eventing
             DownloadProgressedChange? progressed = null;
             DownloadStateChangedChange? stateChanged = null;
             DownloadAttemptFailedChange? failed = null;
+            TransferCompletedChange? completed = null;
+            var progressEventCount = 0;
 
             events.DownloadStarted += change => started = change;
-            events.DownloadProgress += change => progressed = change;
+            events.DownloadProgress += change =>
+            {
+                progressed = change;
+                progressEventCount++;
+            };
             events.DownloadStateChanged += change => stateChanged = change;
             events.DownloadAttemptFailed += change => failed = change;
+            events.TransferCompleted += change => completed = change;
 
             Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, outputPath);
             Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, outputPath, 4096L, 10_000L);
             Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate, outputPath, TransferStates.InProgress, 4096L, 10_000L);
             Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate, outputPath, attemptOutputPath, 1, 3, new InvalidOperationException("boom"));
+            Invoke(events, "RaiseTransferCompleted", transferId, song, candidate, outputPath, 10_000L, 2);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, outputPath, 9_000L, 10_000L);
 
             Assert.IsNotNull(started);
             Assert.IsNotNull(progressed);
             Assert.IsNotNull(stateChanged);
             Assert.IsNotNull(failed);
+            Assert.IsNotNull(completed);
             Assert.AreEqual(transferId, started.TransferId);
             Assert.AreEqual(transferId, progressed.TransferId);
             Assert.AreEqual(transferId, stateChanged.TransferId);
@@ -73,6 +83,56 @@ namespace Tests.Eventing
             Assert.AreEqual(outputPath, failed.Transfer.LocalPath);
             Assert.AreEqual(attemptOutputPath, failed.OutputPath);
             Assert.AreEqual(1, failed.Transfer.AttemptCount);
+            Assert.AreEqual(outputPath, completed.FinalLocalPath);
+            Assert.AreEqual(10_000L, completed.Transfer.BytesTransferred);
+            Assert.IsTrue(completed.Transfer.Revision > failed.Transfer.Revision);
+            Assert.AreEqual(1, progressEventCount, "Late progress must be discarded after the terminal barrier.");
+        }
+
+        [TestMethod]
+        public void DownloadEvents_UsesInjectedClock_AndIsolatesObservers()
+        {
+            var now = new DateTimeOffset(2032, 4, 5, 6, 7, 8, TimeSpan.Zero);
+            var events = new DownloadEvents(new FixedTimeProvider(now));
+            var job = new SearchJob("test");
+            var successfulSpecificObservers = 0;
+            CoreChange? published = null;
+
+            events.JobRegistered += _ => throw new InvalidOperationException("observer failed");
+            events.JobRegistered += _ => successfulSpecificObservers++;
+            events.ChangePublished += change => published = change;
+
+            Invoke(events, "RaiseJobRegistered", job, null!, null!);
+
+            Assert.AreEqual(1, successfulSpecificObservers);
+            Assert.IsNotNull(published);
+            Assert.AreEqual(now, published.OccurredAtUtc);
+        }
+
+        [TestMethod]
+        public void DownloadEvents_TransferOnlyChanges_DoNotAdvanceJobRevision()
+        {
+            var events = new DownloadEvents();
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", size: 10_000, length: 180);
+            var response = new SearchResponse("user", 1, true, 100_000, 0, [file]);
+            var candidate = new FileCandidate(response, file);
+            var transferId = Guid.NewGuid();
+            var observedRevisions = new List<long>();
+
+            events.JobRegistered += change => observedRevisions.Add(change.Job.Revision);
+            events.DownloadStarted += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadProgress += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadStateChanged += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadAttemptFailed += change => observedRevisions.Add(change.Song.Revision);
+
+            Invoke(events, "RaiseJobRegistered", song, null!, null!);
+            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, "C:/downloads/Track.mp3");
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, "C:/downloads/Track.mp3", 100L, 10_000L);
+            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate, "C:/downloads/Track.mp3", TransferStates.InProgress, 100L, 10_000L);
+            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete", 1, 3, new IOException("failed"));
+
+            CollectionAssert.AreEqual(new long[] { 1, 1, 1, 1, 1 }, observedRevisions);
         }
 
         [TestMethod]
@@ -110,7 +170,7 @@ namespace Tests.Eventing
 
                 engine.Events.JobRegistered += change =>
                 {
-                    lock (gate) registered.Add((change.Job.Id, change.Parent?.Id));
+                    lock (gate) registered.Add((change.Job.Id, change.ParentJobId));
                 };
                 engine.Events.JobStateChanged += change =>
                 {
@@ -172,6 +232,33 @@ namespace Tests.Eventing
                 if (System.IO.File.Exists(listFile)) System.IO.File.Delete(listFile);
                 if (System.IO.Directory.Exists(outputDir)) System.IO.Directory.Delete(outputDir, true);
             }
+        }
+
+        [TestMethod]
+        public async Task DownloadEvents_RootFollowUpRegistration_PublishesSourceIdentity()
+        {
+            var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+            var downloadSettings = new DownloadSettings();
+            var client = new ClientTests.MockSoulseekClient([]);
+            var engine = new DownloadEngine(
+                engineSettings,
+                TestHelpers.CreateMockClientManager(client, engineSettings));
+            var sourceJobId = Guid.NewGuid();
+            var job = new SearchJob("no results expected");
+            JobRegisteredChange? registration = null;
+            engine.Events.JobRegistered += change =>
+            {
+                if (change.Job.Id == job.Id)
+                    registration = change;
+            };
+
+            engine.Enqueue(job, downloadSettings, sourceJobId);
+            engine.CompleteEnqueue();
+            await engine.RunAsync(CancellationToken.None);
+
+            Assert.IsNotNull(registration);
+            Assert.IsNull(registration.ParentJobId);
+            Assert.AreEqual(sourceJobId, registration.SourceJobId);
         }
 
         [TestMethod]
@@ -1059,6 +1146,11 @@ namespace Tests.Eventing
             => typeof(DownloadEvents)
                 .GetMethod(methodName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .Invoke(events, args);
+
+        private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+        {
+            public override DateTimeOffset GetUtcNow() => utcNow;
+        }
 
         [TestMethod]
         public async Task DownloadEvents_AlbumJob_ExposesResolvedTarget_OnDownloadingState()

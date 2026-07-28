@@ -433,9 +433,7 @@ internal static class ResultPrintFormatter
     {
         bool printFull = printOption.HasFlag(PrintOption.Full);
         bool nonVerbose = IsMachineReadable(printOption);
-        var orderedResults = song.Candidates?
-            .Select(candidate => (candidate.Response, candidate.File))
-            .ToList();
+        var orderedResults = song.Candidates?.ToList();
 
         if (!nonVerbose)
             Printing.WriteLine($"Results for {song}:");
@@ -443,7 +441,7 @@ internal static class ResultPrintFormatter
         if (orderedResults == null || orderedResults.Count == 0)
         {
             if (printOption.HasFlag(PrintOption.Json))
-                JsonPrinter.PrintTrackResultJson(song.Query, []);
+                JsonPrinter.PrintTrackResultJson(song.Query, Array.Empty<FileCandidate>());
             if (!nonVerbose)
                 Printing.WriteLine("No results", ConsoleColor.Yellow);
             return;
@@ -455,10 +453,10 @@ internal static class ResultPrintFormatter
         if (printOption.HasFlag(PrintOption.Json))
             JsonPrinter.PrintTrackResultJson(song.Query, orderedResults, printFull);
         else if (printOption.HasFlag(PrintOption.Link))
-            Printing.PrintLink(orderedResults.First().Response.Username, orderedResults.First().File.Filename);
+            Printing.PrintLink(orderedResults[0].Username, orderedResults[0].Filename);
         else
-            Printing.PrintTrackResults(
-                orderedResults.Select(x => (x.Response, x.File)),
+            Printing.PrintTrackCandidates(
+                orderedResults,
                 song.Query,
                 printFull,
                 search.NecessaryCond,

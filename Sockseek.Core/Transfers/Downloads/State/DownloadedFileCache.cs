@@ -29,7 +29,7 @@ internal sealed class DownloadedFileCache
             }
 
             var existingFileInfo = new FileInfo(cached.OutputPath);
-            if (existingFileInfo.Exists && existingFileInfo.Length == candidate.File.Size)
+            if (existingFileInfo.Exists && existingFileInfo.Length == candidate.Size)
             {
                 result = cached;
                 return true;

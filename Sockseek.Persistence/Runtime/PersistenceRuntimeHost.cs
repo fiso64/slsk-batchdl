@@ -1,0 +1,327 @@
+using Microsoft.Data.Sqlite;
+using Sockseek.Core;
+using Sockseek.Persistence.Read;
+using Sockseek.Persistence.Sqlite;
+using Sockseek.Persistence.Write;
+
+namespace Sockseek.Persistence.Runtime;
+
+public sealed record PersistenceQueueSnapshot(
+    int CriticalDepth,
+    int OrdinaryDepth,
+    int ProgressCount,
+    int DegradedCount,
+    int BufferedSearchResultCount);
+
+public sealed record PersistenceRuntimeStartup(
+    SqliteInitializationResult Initialization,
+    StartupReconciliationResult Reconciliation,
+    long MaximumRetainedDisplayId);
+
+public sealed record PersistenceRuntimeStop(
+    bool Drained,
+    Guid? RuntimeId,
+    PersistenceQueueSnapshot Remaining);
+
+/// <summary>
+/// Owns the complete SQLite runtime boundary. Callers can enqueue immutable
+/// mutations, use history readers, and invoke bounded maintenance operations;
+/// EF contexts, connections, ownership locks, and writer lifetime stay here.
+/// </summary>
+public sealed class PersistenceRuntimeHost
+{
+    private readonly SockseekSqliteOptions sqliteOptions;
+    private readonly PersistenceWriterOptions writerOptions;
+    private readonly PersistenceRetentionOptions retentionOptions;
+    private readonly string version;
+    private readonly SemaphoreSlim maintenanceGate = new(1, 1);
+    private SqliteDatabaseOwner? owner;
+    private PersistenceRuntimeSession? runtimeSession;
+    private PersistenceInbox? inbox;
+    private PersistenceWriter? writer;
+    private Task? writerTask;
+    private CancellationTokenSource? writerStop;
+    private SqliteMaintenanceService? maintenance;
+    private RetentionService? retention;
+    private readonly object failureLogGate = new();
+    private DateTimeOffset? lastFailureLogAtUtc;
+    private PersistenceHealthState lastLoggedState = PersistenceHealthState.Healthy;
+    private int suppressedFailureLogs;
+
+    public PersistenceRuntimeHost(
+        SockseekSqliteOptions sqliteOptions,
+        PersistenceWriterOptions writerOptions,
+        PersistenceRetentionOptions retentionOptions,
+        string version)
+    {
+        this.sqliteOptions = sqliteOptions;
+        this.writerOptions = writerOptions;
+        this.retentionOptions = retentionOptions;
+        this.version = version;
+        writerOptions.Validate();
+        retentionOptions.Validate();
+        Health.FailureRecorded += LogFailure;
+        Health.CommitCompleted += LogRecovery;
+    }
+
+    public bool IsStarted { get; private set; }
+    public SqliteInitializationResult? Initialization { get; private set; }
+    public StartupReconciliationResult? Reconciliation { get; private set; }
+    public PersistenceRuntimeInfo? Runtime => runtimeSession?.Current;
+    public PersistenceHealth Health { get; } = new();
+    public PersistenceHealthSnapshot? HealthSnapshot => inbox == null ? null : Health.Snapshot(inbox);
+    public IPersistenceMutationSink? MutationSink => inbox;
+    public IJobHistoryReader? JobHistory { get; private set; }
+    public ISearchHistoryReader? SearchHistory { get; private set; }
+    public ITransferHistoryReader? TransferHistory { get; private set; }
+    public long? DatabaseSizeBytes => FileSize(sqliteOptions.DatabasePath);
+    public long? WalSizeBytes => FileSize(sqliteOptions.DatabasePath + "-wal");
+    public PersistenceQueueSnapshot Queue => SnapshotQueue();
+
+    public async Task<PersistenceRuntimeStartup> StartAsync(CancellationToken cancellationToken = default)
+    {
+        if (IsStarted)
+            throw new InvalidOperationException("The persistence runtime host is already started.");
+
+        owner = SqliteDatabaseOwner.Acquire(sqliteOptions);
+        try
+        {
+            var contextFactory = new SockseekDbContextFactory(SockseekDbContextOptions.Create(sqliteOptions));
+            JobHistory = new JobHistoryReader(contextFactory);
+            SearchHistory = new SearchHistoryReader(contextFactory);
+            TransferHistory = new TransferHistoryReader(contextFactory);
+
+            var initializer = new SqliteInitializer(contextFactory, sqliteOptions, owner);
+            Initialization = await initializer.InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+            maintenance = new SqliteMaintenanceService(contextFactory, sqliteOptions);
+            var integrity = await maintenance.CheckIntegrityAsync(cancellationToken).ConfigureAwait(false);
+            if (!integrity.IsHealthy)
+                throw new PersistenceDatabaseCorruptionException($"SQLite integrity check failed: {integrity.Result}");
+
+            retention = new RetentionService(contextFactory, retentionOptions);
+            runtimeSession = new PersistenceRuntimeSession(contextFactory);
+            var reconciliation = await runtimeSession.StartAsync(version, cancellationToken).ConfigureAwait(false);
+            Reconciliation = reconciliation;
+            long maximumDisplayId = await new PersistenceMetadataReader(contextFactory)
+                .GetMaximumDisplayIdAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            inbox = new PersistenceInbox(writerOptions, Health);
+            writer = new PersistenceWriter(contextFactory, inbox, Health, writerOptions);
+            writerStop = new CancellationTokenSource();
+            writerTask = writer.RunAsync(writerStop.Token);
+            IsStarted = true;
+
+            return new PersistenceRuntimeStartup(Initialization, reconciliation, maximumDisplayId);
+        }
+        catch (Exception ex)
+        {
+            ReleaseOwnership();
+            throw PersistenceDatabaseErrors.Classify(ex, sqliteOptions.GetFullDatabasePath());
+        }
+    }
+
+    public async Task<DatabaseIntegrityResult> CheckIntegrityAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureStarted();
+        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var result = await maintenance!.CheckIntegrityAsync(cancellationToken).ConfigureAwait(false);
+            if (!result.IsHealthy)
+                Health.RecordOperationalFailure(DateTimeOffset.UtcNow,
+                    new InvalidDataException($"SQLite integrity check failed: {result.Result}"));
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
+            throw;
+        }
+        finally
+        {
+            maintenanceGate.Release();
+        }
+    }
+
+    public async Task<DatabaseBackupResult> BackupAsync(string backupPath, CancellationToken cancellationToken = default)
+    {
+        EnsureStarted();
+        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await maintenance!.BackupAsync(backupPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
+            throw;
+        }
+        finally
+        {
+            maintenanceGate.Release();
+        }
+    }
+
+    public async Task<WalCheckpointResult> CheckpointAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureStarted();
+        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await maintenance!.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
+            throw;
+        }
+        finally
+        {
+            maintenanceGate.Release();
+        }
+    }
+
+    public async Task<RetentionResult> RunRetentionAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureStarted();
+        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await retention!.RunBatchAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
+            throw;
+        }
+        finally
+        {
+            maintenanceGate.Release();
+        }
+    }
+
+    public async Task<PersistenceRuntimeStop> StopAsync(
+        TimeSpan drainTimeout,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsStarted)
+            return new PersistenceRuntimeStop(true, null, SnapshotQueue());
+        if (drainTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(drainTimeout));
+
+        Guid? runtimeId = Runtime?.RuntimeId;
+        inbox!.Complete();
+        bool drained = false;
+        try
+        {
+            if (writerTask != null)
+                await writerTask.WaitAsync(drainTimeout, cancellationToken).ConfigureAwait(false);
+            drained = true;
+            if (runtimeSession?.Current != null)
+                await runtimeSession.StopAsync("Clean", cancellationToken).ConfigureAwait(false);
+            return new PersistenceRuntimeStop(true, runtimeId, SnapshotQueue());
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            writerStop?.Cancel();
+            if (writerTask != null)
+            {
+                try { await writerTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+
+            var remaining = SnapshotQueue();
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, new TimeoutException(
+                $"Persistence drain did not complete. critical={remaining.CriticalDepth}, ordinary={remaining.OrdinaryDepth}, " +
+                $"progress={remaining.ProgressCount}, degraded={remaining.DegradedCount}, searchResults={remaining.BufferedSearchResultCount}.", ex));
+            return new PersistenceRuntimeStop(false, runtimeId, remaining);
+        }
+        finally
+        {
+            if (!drained)
+                writerStop?.Cancel();
+            writerStop?.Dispose();
+            writerStop = null;
+            ReleaseOwnership();
+            IsStarted = false;
+        }
+    }
+
+    private void EnsureStarted()
+    {
+        if (!IsStarted || maintenance == null || retention == null)
+            throw new InvalidOperationException("Persistence maintenance is unavailable because the runtime host is not started.");
+    }
+
+    private void LogFailure()
+    {
+        var snapshot = HealthSnapshot;
+        if (snapshot == null)
+            return;
+        lock (failureLogGate)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            bool stateChanged = snapshot.State != lastLoggedState;
+            bool intervalElapsed = lastFailureLogAtUtc == null
+                || now - lastFailureLogAtUtc >= TimeSpan.FromSeconds(30);
+            if (!stateChanged && !intervalElapsed)
+            {
+                suppressedFailureLogs++;
+                return;
+            }
+
+            string suppressed = suppressedFailureLogs > 0
+                ? $" ({suppressedFailureLogs} similar failures suppressed)"
+                : "";
+            string message = $"Persistence writer is {snapshot.State}: {snapshot.LastFailure}{suppressed}";
+            if (snapshot.State == PersistenceHealthState.Unhealthy)
+                SockseekLog.Daemon.Error(message);
+            else
+                SockseekLog.Daemon.Warn(message);
+            suppressedFailureLogs = 0;
+            lastFailureLogAtUtc = now;
+            lastLoggedState = snapshot.State;
+        }
+    }
+
+    private void LogRecovery()
+    {
+        var snapshot = HealthSnapshot;
+        if (snapshot?.State != PersistenceHealthState.Healthy)
+            return;
+        lock (failureLogGate)
+        {
+            if (lastLoggedState == PersistenceHealthState.Healthy)
+                return;
+            SockseekLog.Daemon.Info("Persistence writer recovered after reconciling retained mutations.");
+            lastLoggedState = PersistenceHealthState.Healthy;
+            suppressedFailureLogs = 0;
+        }
+    }
+
+    private PersistenceQueueSnapshot SnapshotQueue()
+        => inbox == null
+            ? new PersistenceQueueSnapshot(0, 0, 0, 0, 0)
+            : new PersistenceQueueSnapshot(
+                inbox.CriticalDepth,
+                inbox.OrdinaryDepth,
+                inbox.ProgressCount,
+                inbox.DegradedCount,
+                inbox.BufferedSearchResultCount);
+
+    private void ReleaseOwnership()
+    {
+        owner?.Dispose();
+        owner = null;
+        SqliteConnection.ClearAllPools();
+    }
+
+    private static long? FileSize(string path)
+    {
+        try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+}

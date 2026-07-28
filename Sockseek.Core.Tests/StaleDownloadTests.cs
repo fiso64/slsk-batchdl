@@ -732,8 +732,13 @@ public class StaleDownloadTests
             DownloadSettings settings,
             FileManager organizer,
             IJobLog? log,
-            CancellationToken ct)
+            CancellationToken ct,
+            Action<FallbackTransferDescriptor>? transferStarting = null)
         {
+            transferStarting?.Invoke(new FallbackTransferDescriptor(
+                "blocking-fallback",
+                song.Query.ToString(),
+                organizer.GetSavePathNoExt(song.Query.ToString() + ".mp3")));
             started.TrySetResult();
             await release.Task.WaitAsync(ct);
             return string.IsNullOrWhiteSpace(downloadPath)

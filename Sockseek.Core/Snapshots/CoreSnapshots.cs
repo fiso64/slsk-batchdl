@@ -33,7 +33,7 @@ public sealed record AlbumQuerySnapshot(
     string? URI,
     bool ArtistMaybeWrong);
 
-public sealed record FileAttributeSnapshot(string Type, int Value);
+public sealed record FileAttributeSnapshot(string Type, int Value, int StableCode = 0);
 
 public sealed record PeerSnapshot(string Username, bool? HasFreeUploadSlot, int? UploadSpeed);
 
@@ -44,12 +44,15 @@ public sealed record SearchResultSnapshot(
     string Filename,
     long Size,
     int? BitRate,
+    int? BitDepth,
+    int ResponseFileCount,
     int? SampleRate,
     int? Length,
     string Extension,
     int? UploadSpeed,
     bool? HasFreeUploadSlot,
-    IReadOnlyList<FileAttributeSnapshot>? Attributes);
+    IReadOnlyList<FileAttributeSnapshot>? Attributes,
+    DateTimeOffset ObservedAtUtc);
 
 public sealed record FileCandidateSnapshot(
     string Username,
@@ -90,21 +93,28 @@ public enum TransferSnapshotDirection
     Upload,
 }
 
+public enum TransferSnapshotSource
+{
+    SoulseekPeer,
+    Fallback,
+}
+
 public sealed record TransferSnapshot(
     Guid Id,
     TransferSnapshotDirection Direction,
+    TransferSnapshotSource Source,
     Guid JobId,
     Guid WorkflowId,
     long Revision,
-    string Username,
-    string RemotePath,
-    string LocalPath,
-    string CandidateKey,
+    string? Username,
+    string? RemotePath,
+    string? LocalPath,
+    string? CandidateKey,
     string? State,
     long BytesTransferred,
     long TotalBytes,
     int AttemptCount,
-    FileCandidateSnapshot Candidate);
+    FileCandidateSnapshot? Candidate);
 
 public sealed record JobProvenanceSnapshot(
     int ItemNumber,

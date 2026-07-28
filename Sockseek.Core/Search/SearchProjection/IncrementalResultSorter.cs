@@ -75,6 +75,28 @@ public sealed class IncrementalResultSorter
         return newEntries.Count;
     }
 
+    public int AddRange(IEnumerable<SearchProjectionInput> results)
+    {
+        var newEntries = new List<ResultSorter.SortEntry>();
+        foreach (var input in results)
+        {
+            string key = input.Username + '\\' + input.Filename;
+            if (!seen.Add(key))
+                continue;
+            if (requireFileSatisfies
+                && !ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, input, query))
+                continue;
+            var entry = ResultSorter.CreateSortEntry(input, keyContext, nextOriginalIndex++);
+            if (entry.HasValue)
+                newEntries.Add(entry.Value);
+        }
+        if (newEntries.Count == 0)
+            return 0;
+        newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
+        MergeSortedEntries(newEntries);
+        return newEntries.Count;
+    }
+
     private void MergeSortedEntries(List<ResultSorter.SortEntry> newEntries)
     {
         if (entries.Count == 0)
@@ -108,7 +130,7 @@ public sealed class IncrementalResultSorter
     internal IEnumerable<(SearchResponse Response, SlFile File)> OrderedResults()
     {
         for (int i = 0; i < entries.Count; i++)
-            yield return (entries[i].Response, entries[i].File);
+            yield return (entries[i].Response!, entries[i].File!);
     }
 
     public List<(SearchResponse Response, SlFile File)> Snapshot()
@@ -117,4 +139,7 @@ public sealed class IncrementalResultSorter
         snapshot.AddRange(OrderedResults());
         return snapshot;
     }
+
+    public List<SearchProjectionInput> SnapshotInputs()
+        => entries.Select(entry => entry.Input).ToList();
 }

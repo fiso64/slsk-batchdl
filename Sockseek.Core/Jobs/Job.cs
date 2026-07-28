@@ -73,7 +73,6 @@ namespace Sockseek.Core.Jobs;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
 
-        private static int _nextDisplayId = 0;
         private int _displayId;
         private readonly object displayIdLock = new();
 
@@ -89,7 +88,7 @@ namespace Sockseek.Core.Jobs;
             lock (displayIdLock)
             {
                 if (_displayId == 0)
-                    _displayId = Interlocked.Increment(ref _nextDisplayId);
+                    _displayId = JobDisplayIds.Next();
 
                 return _displayId;
             }

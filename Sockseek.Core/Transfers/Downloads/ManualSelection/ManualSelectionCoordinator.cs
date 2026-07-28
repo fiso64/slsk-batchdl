@@ -10,7 +10,7 @@ internal sealed class ManualSelectionCoordinator
 {
     private readonly Func<Guid, Job?> getJob;
     private readonly DownloadJobContextStore contexts;
-    private readonly Action<Job, Job?> registerJob;
+    private readonly Action<Job, Job?, Guid?> registerJob;
     private readonly Action<Job> observePreparedAutoProfiles;
     private readonly Action<Job> resumeJob;
     private readonly Func<Job, Task> flushTerminalEffects;
@@ -21,7 +21,7 @@ internal sealed class ManualSelectionCoordinator
     public ManualSelectionCoordinator(
         Func<Guid, Job?> getJob,
         DownloadJobContextStore contexts,
-        Action<Job, Job?> registerJob,
+        Action<Job, Job?, Guid?> registerJob,
         Action<Job> observePreparedAutoProfiles,
         Action<Job> resumeJob,
         Func<Job, Task> flushTerminalEffects,
@@ -134,7 +134,7 @@ internal sealed class ManualSelectionCoordinator
         albumJob.DownloadBehaviorPolicy = albumJob.DownloadBehaviorPolicy with { Album = DownloadBehavior.Manual };
 
         aggregateParentByAlbumId[albumJob.Id] = aggregateJob.Id;
-        registerJob(albumJob, aggregateJob);
+        registerJob(albumJob, aggregateJob, aggregateJob.Id);
 
         if (contexts.ContainsKey(albumJob.Id))
             return;

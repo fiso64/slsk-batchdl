@@ -28,6 +28,17 @@ internal static class ConditionSatisfactionPolicy
         SongQuery? query)
         => conditions.FileSatisfies(ConditionFile.From(file), query, response, filenameChecks: true, checkUser: true);
 
+    internal static bool SearchFileSatisfies(
+        FileConditions conditions,
+        SearchProjectionInput input,
+        SongQuery? query)
+        => conditions.ProjectionFileSatisfies(
+            new ConditionFile(input.Filename, input.Length, input.BitRate, input.SampleRate, input.BitDepth),
+            query,
+            input.Username,
+            filenameChecks: true,
+            checkUser: true);
+
     internal static bool LocalFileSatisfies(
         FileConditions conditions,
         SimpleFile file,
@@ -144,6 +155,20 @@ internal static class ConditionSatisfactionPolicy
                 ConditionFile.From(file),
                 SortQuery,
                 response,
+                filenameChecks: true,
+                checkUser: false);
+        }
+
+        public bool Satisfies(SearchProjectionInput input)
+        {
+            if (checkUser && !nonQualityFileConditions.UsernameSatisfies(input.Username))
+                return false;
+            if (!checkFile || !Utils.IsMusicFile(input.Filename))
+                return true;
+            return nonQualityFileConditions.ProjectionFileSatisfies(
+                new ConditionFile(input.Filename, input.Length, input.BitRate, input.SampleRate, input.BitDepth),
+                SortQuery,
+                input.Username,
                 filenameChecks: true,
                 checkUser: false);
         }

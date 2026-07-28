@@ -6,6 +6,8 @@ using Sockseek.Core.Models;
 using Sockseek.Core;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Events;
+using Sockseek.Core.Snapshots;
 using Directory = System.IO.Directory;
 
 namespace Tests.Core
@@ -37,6 +39,8 @@ namespace Tests.Core
                 dl.Output.ParentDir = outputDir;
 
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                var transfersStarted = new List<DownloadStartedChange>();
+                app.Events.DownloadStarted += transfersStarted.Add;
                 app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();
 
@@ -47,6 +51,11 @@ namespace Tests.Core
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, songJob.TerminalOutcome);
                 Assert.AreEqual("gooduser", songJob.ChosenCandidate?.Username, "SongJob should have fallen back to gooduser after failuser failed.");
                 Assert.AreEqual(SongDownloadSource.Soulseek, songJob.DownloadSource);
+                Assert.AreEqual(2, transfersStarted.Count);
+                CollectionAssert.AreEqual(
+                    new[] { "failuser", "gooduser" },
+                    transfersStarted.Select(change => change.Candidate.Username).ToArray());
+                Assert.AreEqual(2, transfersStarted.Select(change => change.TransferId).Distinct().Count());
             }
             finally
             {
@@ -85,6 +94,19 @@ namespace Tests.Core
                     Title = "TEXAS HOLD 'EM",
                 });
                 var app = new DownloadEngine(eng, new SoulseekClientManager(eng), songDownloadFallback: fakeFallback);
+                FallbackTransferStartedChange? transferStarted = null;
+                TransferCompletedChange? transferCompleted = null;
+                TransferAttemptStartedChange? attemptStarted = null;
+                TransferAttemptCompletedChange? attemptCompleted = null;
+                bool finalPathExistedAtTerminalPublication = false;
+                app.Events.FallbackTransferStarted += change => transferStarted = change;
+                app.Events.TransferAttemptStarted += change => attemptStarted = change;
+                app.Events.TransferAttemptCompleted += change => attemptCompleted = change;
+                app.Events.TransferCompleted += change =>
+                {
+                    transferCompleted = change;
+                    finalPathExistedAtTerminalPublication = System.IO.File.Exists(change.FinalLocalPath);
+                };
                 app.Enqueue(song, dl);
                 app.CompleteEnqueue();
 
@@ -102,6 +124,18 @@ namespace Tests.Core
                 Assert.AreEqual(SongDownloadSource.Fallback, song.DownloadSource);
                 Assert.IsNull(song.ChosenCandidate);
                 Assert.IsTrue(System.IO.File.Exists(song.DownloadPath), $"Expected fallback output at {song.DownloadPath}");
+                Assert.IsNotNull(transferStarted);
+                Assert.IsNotNull(transferCompleted);
+                Assert.AreEqual(transferStarted.Transfer.Id, transferCompleted.Transfer.Id);
+                Assert.AreEqual(TransferSnapshotSource.Fallback, transferCompleted.Transfer.Source);
+                Assert.IsNull(transferCompleted.Transfer.Candidate);
+                Assert.AreEqual(song.DownloadPath, transferCompleted.FinalLocalPath);
+                Assert.IsTrue(finalPathExistedAtTerminalPublication, "Fallback completion must be published only after the final path exists.");
+                Assert.IsNotNull(attemptStarted);
+                Assert.IsNotNull(attemptCompleted);
+                Assert.AreEqual(TransferAttemptSource.Fallback, attemptStarted.Source);
+                Assert.AreEqual(attemptStarted.AttemptId, attemptCompleted.AttemptId);
+                Assert.AreEqual(transferStarted.Transfer.Id, attemptStarted.Transfer.Id);
             }
             finally
             {
@@ -191,6 +225,14 @@ namespace Tests.Core
                 dl.Output.ParentDir = outputDir;
 
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                var attemptsStarted = new List<TransferAttemptStartedChange>();
+                var attemptsFailed = new List<TransferAttemptFailedChange>();
+                var attemptsCompleted = new List<TransferAttemptCompletedChange>();
+                TransferCompletedChange? transferCompleted = null;
+                app.Events.TransferAttemptStarted += attemptsStarted.Add;
+                app.Events.TransferAttemptFailed += attemptsFailed.Add;
+                app.Events.TransferAttemptCompleted += attemptsCompleted.Add;
+                app.Events.TransferCompleted += change => transferCompleted = change;
                 app.Enqueue(new ExtractJob(dl.Extraction.Input, dl.Extraction.InputType), dl);
                 app.CompleteEnqueue();
 
@@ -201,6 +243,15 @@ namespace Tests.Core
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, songJob.TerminalOutcome);
                 Assert.AreEqual("flakyuser", songJob.ChosenCandidate?.Username);
                 Assert.IsTrue(testClient.DownloadCallCount >= 2, "Disconnect retry should attempt the same candidate again after reconnect.");
+                Assert.IsTrue(attemptsStarted.Count >= 2);
+                Assert.AreEqual(attemptsStarted.Count - 1, attemptsFailed.Count);
+                Assert.AreEqual(1, attemptsCompleted.Count);
+                Assert.AreEqual(attemptsStarted.Count, attemptsStarted.Select(attempt => attempt.AttemptId).Distinct().Count());
+                Assert.IsTrue(attemptsStarted.All(attempt => attempt.Transfer.Id == attemptsStarted[0].Transfer.Id));
+                Assert.AreEqual(attemptsStarted[0].AttemptId, attemptsFailed[0].AttemptId);
+                Assert.AreEqual(attemptsStarted[^1].AttemptId, attemptsCompleted[0].AttemptId);
+                Assert.IsNotNull(transferCompleted);
+                Assert.AreEqual(attemptsStarted[0].Transfer.Id, transferCompleted.Transfer.Id);
             }
             finally
             {
@@ -1018,11 +1069,13 @@ namespace Tests.Core
                 DownloadSettings settings,
                 FileManager organizer,
                 IJobLog? log,
-                CancellationToken ct)
+                CancellationToken ct,
+                Action<FallbackTransferDescriptor>? transferStarting = null)
             {
                 Calls++;
                 ObservedPhase = song.ActivityPhase;
                 var path = outputPath ?? organizer.GetSavePathNoExt($"{song.Query.Artist} - {song.Query.Title}.mp3") + ".mp3";
+                transferStarting?.Invoke(new FallbackTransferDescriptor("fake", song.Query.ToString(), path));
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 System.IO.File.WriteAllBytes(path, TestHelpers.EmptyMp3Bytes);
                 return Task.FromResult<JobOutcome?>(JobOutcome.Done(path, downloadSource: SongDownloadSource.Fallback));

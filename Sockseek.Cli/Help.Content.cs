@@ -76,13 +76,6 @@ public static partial class Help
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
 
-  Daemon / Remote Options
-
-    sockseek daemon                 Start the HTTP/SignalR daemon instead of running a download
-    --server-ip <ip>                IP/interface for the daemon HTTP API (default: 127.0.0.1)
-    --server-port <port>            Port for the daemon HTTP API (default: 5030)
-    --remote <url>                  Use an existing daemon instead of running locally
-
   Search Options
 
     --fast-search                   Begin downloading as soon as a file satisfying the preferred
@@ -243,6 +236,32 @@ public static partial class Help
                                     downloaded in aggregate mode. (Default: 2)
     --relax-filtering               Slightly relax file filtering in aggregate mode to include
                                     more results
+
+  Daemon / Remote Options
+
+    sockseek daemon                 Start the HTTP/SignalR daemon instead of running a download
+    --server-ip <ip>                IP/interface for the daemon HTTP API (default: 127.0.0.1)
+    --server-port <port>            Port for the daemon HTTP API (default: 5030)
+    --remote <url>                  Use an existing daemon instead of running locally
+    --data-dir <path>               Directory for daemon data, including sockseek.db
+    --no-retention                  Disable scheduled history retention
+    --successful-job-retention-days <days|forever>
+                                    Successful job retention (default: 90)
+    --unsuccessful-job-retention-days <days|forever>
+                                    Failed, cancelled, and interrupted job retention (default: 180)
+    --transfer-retention-days <days|forever>
+                                    Transfer history retention (default: 90)
+    --search-result-retention-days <days|forever>
+                                    Raw search-result retention (default: 30)
+
+  Sockseek Database
+
+    sockseek database migrate      Update the offline database to the current schema
+    sockseek database integrity    Check an offline database for corruption
+    sockseek database backup       Create and verify an offline backup
+    sockseek database restore      Verify and restore an offline backup
+    --data-dir <path>               Override the configured/default data directory
+    --backup <path>                 Backup destination for `backup`, source for `restore`
 
   Printing & Debug Options
 
@@ -732,4 +751,28 @@ Tips
     If you plan to use a large music library, you may want to add --mock-files-no-read-tags to
     improve the initial loading performance. But note that reading tags is required when filtering
     by metadata such as length or bitrate.";
+
+    const string daemonHelp = @"
+Daemon / remote mode
+  Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API, remote CLI access, and
+  durable job, search, and transfer history.
+  Run sockseek daemon to start the HTTP/SignalR daemon. It uses the same config/profile system as
+  the CLI and listens on 127.0.0.1:5030 by default.
+  Once the daemon is running, use --remote <url> to run the CLI as a thin client against it:
+
+  sockseek daemon --server-ip 0.0.0.0 --server-port 5030
+  sockseek ""Artist - Title"" --remote http://127.0.0.1:5030
+
+  For HTTP API, SignalR, and client integration notes, see docs/api.md. Daemon setup, history,
+  database, backup, and security are documented in docs/daemon.md.";
+
+    const string databaseHelp = @"
+Sockseek Database
+
+  sockseek database migrate      Update the offline database to the current schema
+  sockseek database integrity    Check an offline database for corruption
+  sockseek database backup       Create and verify an offline backup
+  sockseek database restore      Verify and restore an offline backup
+  --data-dir <path>               Override the configured/default data directory
+  --backup <path>                 Backup destination for `backup`, source for `restore`";
 }

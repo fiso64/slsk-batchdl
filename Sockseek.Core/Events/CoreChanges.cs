@@ -16,7 +16,11 @@ public interface ICoalescibleCoreChange : ICoreChange
     long Revision { get; }
 }
 
-public interface IDurableCoreEvent : ICoreChange;
+/// <summary>
+/// Marks a change whose relative publication order must be preserved. This does not
+/// imply that the change is persisted; persistence selects an explicit set of changes.
+/// </summary>
+public interface IOrderedCoreChange : ICoreChange;
 
 public abstract record CoreChange(long Sequence, DateTimeOffset OccurredAtUtc) : ICoreChange;
 
@@ -24,14 +28,15 @@ public sealed record JobRegisteredChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot Job,
-    JobSnapshot? Parent)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    Guid? ParentJobId,
+    Guid? SourceJobId)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record JobStateChangedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot Job)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent, ICoalescibleCoreChange
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange, ICoalescibleCoreChange
 {
     public string CoalescingKey => $"job:{Job.Id}:state";
     public long Revision => Job.Revision;
@@ -80,20 +85,20 @@ public sealed record JobExecutionCompletedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot Job)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record JobResultCreatedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot ExtractJob,
     JobSnapshot ResultJob)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record EngineCompletedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot Queue)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record JobStatusChange(
     long Sequence,
@@ -109,7 +114,7 @@ public sealed record JobMessageChange(
     LogLevel Level,
     string? Source,
     string Message)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record WorkflowMessageChange(
     long Sequence,
@@ -118,17 +123,17 @@ public sealed record WorkflowMessageChange(
     LogLevel Level,
     string? Source,
     string Message)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record DownloadStartedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     JobSnapshot Song,
     TransferSnapshot Transfer)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange
 {
     public Guid TransferId => Transfer.Id;
-    public FileCandidateSnapshot Candidate => Transfer.Candidate;
+    public FileCandidateSnapshot Candidate => Transfer.Candidate!;
 }
 
 public sealed record DownloadProgressedChange(
@@ -169,11 +174,108 @@ public sealed record DownloadAttemptFailedChange(
     int Attempt,
     int MaxAttempts,
     ExceptionSnapshot Exception)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange
 {
     public Guid TransferId => Transfer.Id;
-    public FileCandidateSnapshot Candidate => Transfer.Candidate;
+    public FileCandidateSnapshot Candidate => Transfer.Candidate!;
 }
+
+public sealed record FallbackTransferStartedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public enum TransferFailureReason
+{
+    Unknown,
+    PeerFailure,
+    Stale,
+    Finalization,
+}
+
+public enum TransferCancellationReason
+{
+    Requested,
+    ManualSkip,
+    Stale,
+}
+
+public enum TransferAttemptSource
+{
+    SoulseekPeer,
+    Fallback,
+}
+
+public sealed record TransferAttemptStartedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    Guid AttemptId,
+    int AttemptNumber,
+    long AttemptRevision,
+    TransferAttemptSource Source,
+    string? OutputPath)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferAttemptCompletedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    Guid AttemptId,
+    int AttemptNumber,
+    long AttemptRevision)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferAttemptFailedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    Guid AttemptId,
+    int AttemptNumber,
+    long AttemptRevision,
+    ExceptionSnapshot Exception)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferAttemptCancelledChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    Guid AttemptId,
+    int AttemptNumber,
+    long AttemptRevision,
+    TransferCancellationReason Reason)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferCompletedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    string FinalLocalPath)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferFailedChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    TransferFailureReason Reason,
+    ExceptionSnapshot Exception)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
+public sealed record TransferCancelledChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    JobSnapshot Song,
+    TransferSnapshot Transfer,
+    TransferCancellationReason Reason)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record SearchResultsAddedChange(
     long Sequence,
@@ -181,14 +283,17 @@ public sealed record SearchResultsAddedChange(
     Guid JobId,
     int Revision,
     IReadOnlyList<SearchResultSnapshot> Results)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record SearchCompletedChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     Guid JobId,
-    int Revision)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    int Revision,
+    string QueryText,
+    int ResultCount,
+    int LockedFileCount)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record TrackBatchResolvedChange(
     long Sequence,
@@ -197,13 +302,13 @@ public sealed record TrackBatchResolvedChange(
     IReadOnlyList<JobSnapshot> Pending,
     IReadOnlyList<JobSnapshot> Existing,
     IReadOnlyList<JobSnapshot> NotFound)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record TrackListReadyChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,
     IReadOnlyList<JobSnapshot> Songs)
-    : CoreChange(Sequence, OccurredAtUtc), IDurableCoreEvent;
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
 public sealed record ListProgressChange(
     long Sequence,

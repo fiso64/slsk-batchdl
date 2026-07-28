@@ -396,7 +396,7 @@ public class EngineStateStoreTests
         parent?.EnsureDisplayId();
         typeof(EngineStateStore)
             .GetMethod("OnJobRegistered", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [new JobRegisteredChange(1, DateTimeOffset.UtcNow, Snapshot(job), parent == null ? null : Snapshot(parent))]);
+            .Invoke(store, [new JobRegisteredChange(1, DateTimeOffset.UtcNow, Snapshot(job), parent?.Id, null)]);
     }
 
     private static void UpdateState(EngineStateStore store, Job job)

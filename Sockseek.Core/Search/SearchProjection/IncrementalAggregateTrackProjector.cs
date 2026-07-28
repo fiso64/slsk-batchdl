@@ -38,20 +38,24 @@ public sealed class IncrementalAggregateTrackProjector
         seen.Clear();
     }
 
-    public int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
+    internal int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
+        => AddRange(results.Select((result, index) => SearchProjectionInput.FromLive(
+            index + 1L, index + 1, result.Response, result.File, DateTimeOffset.UnixEpoch)));
+
+    public int AddRange(IEnumerable<SearchProjectionInput> results)
     {
         int added = 0;
-        foreach (var (response, file) in results)
+        foreach (var input in results)
         {
-            string seenKey = response.Username + '\\' + file.Filename;
+            string seenKey = input.Username + '\\' + input.Filename;
             if (!seen.Add(seenKey))
                 continue;
 
-            if (!SearchResultProjector.AggregateTrackProjectionIncludes(response, file, query, search))
+            if (!SearchResultProjector.AggregateTrackProjectionIncludes(input, query, search))
                 continue;
 
-            var inferred = Searcher.InferSongQuery(file.Filename, query);
-            var bucketKey = new SongQuery(inferred) { Length = file.Length ?? -1 };
+            var inferred = Searcher.InferSongQuery(input.Filename, query);
+            var bucketKey = new SongQuery(inferred) { Length = input.Length ?? -1 };
 
             if (!buckets.TryGetValue(bucketKey, out var bucket))
             {
@@ -64,7 +68,7 @@ public sealed class IncrementalAggregateTrackProjector
                 bucketOrder.Add(bucket);
             }
 
-            bucket.Add(response, file);
+            bucket.Add(input);
             added++;
         }
 
@@ -100,7 +104,7 @@ public sealed class IncrementalAggregateTrackProjector
     private sealed class AggregateTrackBucket
     {
         private readonly IncrementalResultSorter sorter;
-        private readonly List<(SearchResponse Response, SlFile File)> candidates = [];
+        private readonly List<SearchProjectionInput> candidates = [];
         private readonly HashSet<string> users = new(StringComparer.Ordinal);
 
         public int Index { get; }
@@ -123,11 +127,11 @@ public sealed class IncrementalAggregateTrackProjector
                 ignoreStringSortConditions: true);
         }
 
-        public void Add(SearchResponse response, SlFile file)
+        public void Add(SearchProjectionInput input)
         {
-            candidates.Add((response, file));
-            users.Add(response.Username);
-            sorter.AddRange([(response, file)]);
+            candidates.Add(input);
+            users.Add(input.Username);
+            sorter.AddRange([input]);
         }
 
         public SongQuery QueryWithKnownLength()
@@ -135,13 +139,13 @@ public sealed class IncrementalAggregateTrackProjector
             if (Query.Length != -1)
                 return Query;
 
-            int length = candidates.FirstOrDefault(x => x.File.Length != null).File?.Length ?? -1;
+            int length = candidates.FirstOrDefault(x => x.Length != null)?.Length ?? -1;
             return new SongQuery(Query) { Length = length };
         }
 
         public List<FileCandidate> SortedCandidates()
-            => sorter.OrderedResults()
-                .Select(x => new FileCandidate(x.Response, x.File))
+            => sorter.SnapshotInputs()
+                .Select(input => input.ToFileCandidate())
                 .ToList();
     }
 }

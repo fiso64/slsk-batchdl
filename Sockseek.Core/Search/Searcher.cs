@@ -11,6 +11,7 @@ using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Events;
 
 namespace Sockseek.Core.Services;
 
@@ -23,17 +24,20 @@ public partial class Searcher : IDisposable
     private readonly SearchEvents searchEvents;
     private readonly RateLimitedSemaphore rateSemaphore;
     private readonly SemaphoreSlim concurrencySemaphore;
+    private readonly TimeProvider timeProvider;
 
     public Searcher(ISoulseekClient client,
                     IUserSuccessStats userStats,
                     DownloadEvents downloadEvents,
                     int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
-                    SearchEvents? searchEvents = null)
+                    SearchEvents? searchEvents = null,
+                    TimeProvider? timeProvider = null)
     {
         this.client = client;
         this.userStats = userStats;
         this.downloadEvents = downloadEvents;
         this.searchEvents = searchEvents ?? new SearchEvents();
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -83,10 +87,13 @@ public partial class Searcher : IDisposable
         Job? phaseOwner = null)
     {
         var session = job.Session;
+        session.ConfigureTimeProvider(timeProvider);
         var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(activityJob, session);
+        void OnSearchChange(CoreChange change) => downloadEvents.RaiseSearchChange(ChangeOwner(change, activityJob.Id));
         session.RawResultAdded += OnRawResultAdded;
+        session.ChangePublished += OnSearchChange;
 
         try
         {
@@ -127,8 +134,17 @@ public partial class Searcher : IDisposable
         finally
         {
             session.RawResultAdded -= OnRawResultAdded;
+            session.ChangePublished -= OnSearchChange;
         }
     }
+
+    private static CoreChange ChangeOwner(CoreChange change, Guid ownerJobId)
+        => change switch
+        {
+            SearchResultsAddedChange added when added.JobId != ownerJobId => added with { JobId = ownerJobId },
+            SearchCompletedChange completed when completed.JobId != ownerJobId => completed with { JobId = ownerJobId },
+            _ => change,
+        };
 
 
     // ── song search ─────────────────────────────────────────────────────────
@@ -140,10 +156,11 @@ public partial class Searcher : IDisposable
         CancellationToken ct, Action? onSearch = null,
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
-        var session = new SearchSession(song.Id);
+        var session = new SearchSession(song.Id, timeProvider, song.Query.ToString(noInfo: true));
         InitializeDiscoveryProgress(song);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(song, session);
         session.RawResultAdded += OnRawResultAdded;
+        session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         void responseHandler(SearchResponse r)
         {
@@ -180,7 +197,9 @@ public partial class Searcher : IDisposable
         }
         finally
         {
+            session.Complete();
             session.RawResultAdded -= OnRawResultAdded;
+            session.ChangePublished -= downloadEvents.RaiseSearchChange;
             concurrencySemaphore.Release();
         }
 
@@ -226,10 +245,11 @@ public partial class Searcher : IDisposable
     // Populates job.Songs: one SongJob per distinct inferred track version found.
     public async Task<JobOutcome?> SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var session = new SearchSession(job.Id);
+        var session = new SearchSession(job.Id, timeProvider, job.Query.ToString(noInfo: true));
         InitializeDiscoveryProgress(job);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(job, session);
         session.RawResultAdded += OnRawResultAdded;
+        session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
             new(
@@ -245,7 +265,9 @@ public partial class Searcher : IDisposable
         try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct, ownerJob: job); }
         finally
         {
+            session.Complete();
             session.RawResultAdded -= OnRawResultAdded;
+            session.ChangePublished -= downloadEvents.RaiseSearchChange;
             concurrencySemaphore.Release();
         }
 
@@ -312,8 +334,14 @@ public partial class Searcher : IDisposable
                 .Select(f => f.Filename.Replace('/', '\\'))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Query ?? new SongQuery();
-            var firstResp = folder.Files.FirstOrDefault()?.Candidate.Response
-                            ?? new SearchResponse(folder.Username, -1, false, -1, -1, null);
+            var representative = folder.Files.FirstOrDefault()?.Candidate;
+            var firstResp = new SearchResponse(
+                folder.Username,
+                representative?.UploadSpeed ?? -1,
+                representative?.HasFreeUploadSlot ?? false,
+                -1,
+                -1,
+                null);
 
             foreach (var (dir, file) in allFiles)
             {
@@ -552,8 +580,8 @@ public partial class Searcher : IDisposable
         var audio2 = f2.Files.Where(f => !f.IsNotAudio).ToList();
         if (audio1.Count != audio2.Count) return false;
 
-        f1SortedLengths ??= audio1.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
-        var s2 = audio2.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
+        f1SortedLengths ??= audio1.Select(f => f.Candidate.Length ?? -1).OrderBy(x => x).ToArray();
+        var s2 = audio2.Select(f => f.Candidate.Length ?? -1).OrderBy(x => x).ToArray();
 
         for (int i = 0; i < f1SortedLengths.Length; i++)
             if (Math.Abs(f1SortedLengths[i] - s2[i]) > tolerance) return false;

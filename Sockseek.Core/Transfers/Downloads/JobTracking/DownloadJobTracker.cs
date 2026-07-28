@@ -9,6 +9,7 @@ internal sealed class DownloadJobTracker
     private readonly DownloadEvents events;
     private readonly ConcurrentDictionary<Guid, Job> jobsById = new();
     private readonly ConcurrentDictionary<int, Job> jobsByDisplayId = new();
+    private readonly ConcurrentDictionary<Guid, Guid> sourceJobIds = new();
 
     public DownloadJobTracker(DownloadEvents events)
     {
@@ -26,8 +27,14 @@ internal sealed class DownloadJobTracker
         .OrderBy(job => job.DisplayId)
         .ToList();
 
-    public void Register(Job job, Job? parent)
+    public void AssociateSource(Guid jobId, Guid sourceJobId)
+        => sourceJobIds[jobId] = sourceJobId;
+
+    public void Register(Job job, Job? parent, Guid? sourceJobId = null)
     {
+        if (sourceJobId is Guid sourceId)
+            AssociateSource(job.Id, sourceId);
+
         job.EnsureDisplayId();
         bool firstRegistration = jobsById.TryAdd(job.Id, job);
         jobsByDisplayId[job.DisplayId] = job;
@@ -46,6 +53,9 @@ internal sealed class DownloadJobTracker
             }
         };
 
-        events.RaiseJobRegistered(job, parent);
+        events.RaiseJobRegistered(
+            job,
+            parent?.Id,
+            sourceJobIds.TryGetValue(job.Id, out var registeredSourceId) ? registeredSourceId : null);
     }
 }

@@ -60,6 +60,48 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    public async Task SockseekApiClient_TransferPage_PreservesContinuationHeader()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("[]"),
+        };
+        response.Headers.Add("X-Next-Cursor", "next-transfer-page");
+        var handler = new CapturingResponseHandler(response);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:5030/") };
+        var client = new SockseekApiClient(http);
+
+        var page = await client.GetTransfersPageAsync(
+            new TransferHistoryFilter(Username: "peer name", State: "Active"),
+            cursor: "previous-page",
+            limit: 25);
+
+        Assert.AreEqual("next-transfer-page", page.NextCursor);
+        Assert.AreEqual(0, page.Items.Count);
+        StringAssert.Contains(handler.RequestUri!.Query, "username=peer%20name");
+        StringAssert.Contains(handler.RequestUri.Query, "cursor=previous-page");
+        StringAssert.Contains(handler.RequestUri.Query, "limit=25");
+    }
+
+    [TestMethod]
+    public async Task SockseekApiClient_PersistenceIntegrity_UsesTypedOperationRoute()
+    {
+        var handler = new CapturingResponseHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"isHealthy":true,"result":"ok"}"""),
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:5030/") };
+        var client = new SockseekApiClient(http);
+
+        var result = await client.CheckPersistenceIntegrityAsync();
+
+        Assert.IsTrue(result.IsHealthy);
+        Assert.AreEqual("ok", result.Result);
+        Assert.AreEqual(HttpMethod.Post, handler.Method);
+        Assert.AreEqual("/api/persistence/integrity", handler.RequestUri!.AbsolutePath);
+    }
+
+    [TestMethod]
     public async Task RemoteCliBackend_SearchProjectionAndDownloadFollowUp_Work()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-test-" + Guid.NewGuid());
@@ -1257,5 +1299,18 @@ public class RemoteCliBackendTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(response);
+    }
+
+    private sealed class CapturingResponseHandler(HttpResponseMessage response) : HttpMessageHandler
+    {
+        public Uri? RequestUri { get; private set; }
+        public HttpMethod? Method { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri;
+            Method = request.Method;
+            return Task.FromResult(response);
+        }
     }
 }

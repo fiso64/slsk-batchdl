@@ -5,7 +5,7 @@ using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Api;
 using Sockseek.Server;
-using Soulseek;
+using Sockseek.Core.Snapshots;
 
 namespace Sockseek.Cli;
 
@@ -23,6 +23,8 @@ internal static partial class Program
     {
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+        bool databaseMode = args.Length > 0
+            && string.Equals(args[0], "database", StringComparison.OrdinalIgnoreCase);
         if (Help.PrintAndExitIfNeeded(args))
             return (int)CliExitCode.Success;
 
@@ -31,6 +33,8 @@ internal static partial class Program
 
         try
         {
+            if (databaseMode)
+                return (int)await DatabaseCommandRunner.RunAsync(args.Skip(1).ToArray());
             return (int)await MainCore(args, output);
         }
         catch (Exception ex)
@@ -1405,6 +1409,17 @@ internal static partial class Program
             LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsPatch(args),
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
             ConfigDir = configFile.ConfigDir,
+            Persistence = new ServerPersistenceOptions
+            {
+                Enabled = true,
+                DataDirectory = daemonSettings.DataDirectory,
+                RetentionEnabled = daemonSettings.RetentionEnabled,
+                CompletedJobHistoryAge = daemonSettings.CompletedJobRetention,
+                UnsuccessfulJobHistoryAge = daemonSettings.UnsuccessfulJobRetention,
+                SearchResultAge = daemonSettings.SearchResultRetention,
+                TransferHistoryAge = daemonSettings.TransferRetention,
+                MaximumRetainedJobs = daemonSettings.MaximumRetainedJobs,
+            },
         };
 
         var app = ServerHost.Build(args, options, url);
@@ -1698,17 +1713,16 @@ internal static partial class Program
 
     private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
         => new(
-            new SearchResponse(
-                candidate.Username,
-                -1,
-                candidate.Peer.HasFreeUploadSlot ?? false,
-                candidate.Peer.UploadSpeed ?? -1,
-                -1,
-                null),
-            new Soulseek.File(
-                0,
-                candidate.Filename,
-                candidate.Size,
-                candidate.Extension ?? Path.GetExtension(candidate.Filename),
-                candidate.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+            candidate.Username,
+            candidate.Filename,
+            candidate.Size,
+            candidate.BitRate,
+            bitDepth: null,
+            responseFileCount: 0,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension ?? Path.GetExtension(candidate.Filename),
+            candidate.Peer.UploadSpeed,
+            candidate.Peer.HasFreeUploadSlot,
+            candidate.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList());
 }

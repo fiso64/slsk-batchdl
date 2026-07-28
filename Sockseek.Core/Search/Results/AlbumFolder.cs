@@ -29,7 +29,7 @@ namespace Sockseek.Core.Models;
             SearchFileCount = files.Count;
             SearchAudioFileCount = audioFiles.Count;
             SearchSortedAudioLengths = audioFiles
-                .Select(f => f.Candidate.File.Length ?? -1)
+                .Select(f => f.Candidate.Length ?? -1)
                 .OrderBy(x => x)
                 .ToArray();
             SearchRepresentativeAudioFilename = audioFiles

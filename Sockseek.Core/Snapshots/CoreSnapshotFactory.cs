@@ -17,17 +17,14 @@ public static class CoreSnapshotFactory
             candidate.Filename,
             new PeerSnapshot(
                 candidate.Username,
-                candidate.Response.HasFreeUploadSlot,
-                candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes == null
-                ? null
-                : SnapshotCollections.Freeze(candidate.File.Attributes.Select(attribute =>
-                    new FileAttributeSnapshot(attribute.Type.ToString(), attribute.Value))));
+                candidate.HasFreeUploadSlot,
+                candidate.UploadSpeed),
+            candidate.Size,
+            candidate.BitRate,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension,
+            candidate.Attributes);
 
     public static SearchResultSnapshot CreateSearchResult(SearchRawResult result)
         => new(
@@ -37,12 +34,15 @@ public static class CoreSnapshotFactory
             result.Filename,
             result.Size,
             result.BitRate,
+            result.BitDepth,
+            result.ResponseFileCount,
             result.SampleRate,
             result.Length,
             result.Extension,
             result.UploadSpeed,
             result.HasFreeUploadSlot,
-            result.Attributes);
+            result.Attributes,
+            result.ObservedAtUtc);
 
     public static TransferSnapshot CreateDownloadTransfer(
         Guid transferId,
@@ -59,6 +59,7 @@ public static class CoreSnapshotFactory
         return new TransferSnapshot(
             transferId,
             TransferSnapshotDirection.Download,
+            TransferSnapshotSource.SoulseekPeer,
             song.Id,
             song.WorkflowId,
             revision,
@@ -66,12 +67,39 @@ public static class CoreSnapshotFactory
             candidate.Filename,
             outputPath,
             CandidateKey(candidateSnapshot),
+            State: state,
+            BytesTransferred: bytesTransferred,
+            TotalBytes: totalBytes,
+            AttemptCount: attemptCount,
+            candidateSnapshot);
+    }
+
+    public static TransferSnapshot CreateFallbackTransfer(
+        Guid transferId,
+        SongJob song,
+        string? sourceReference,
+        string? outputPath,
+        long revision,
+        string? state,
+        long bytesTransferred,
+        long totalBytes,
+        int attemptCount)
+        => new(
+            transferId,
+            TransferSnapshotDirection.Download,
+            TransferSnapshotSource.Fallback,
+            song.Id,
+            song.WorkflowId,
+            revision,
+            Username: null,
+            RemotePath: sourceReference,
+            LocalPath: outputPath,
+            CandidateKey: null,
             state,
             bytesTransferred,
             totalBytes,
             attemptCount,
-            candidateSnapshot);
-    }
+            Candidate: null);
 
     public static AlbumFolderSnapshot CreateAlbumFolder(AlbumFolder folder, bool includeFiles)
     {
@@ -81,8 +109,8 @@ public static class CoreSnapshotFactory
             folder.FolderPath,
             new PeerSnapshot(
                 folder.Username,
-                first?.Response.HasFreeUploadSlot,
-                first?.Response.UploadSpeed),
+                first?.HasFreeUploadSlot,
+                first?.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
             includeFiles

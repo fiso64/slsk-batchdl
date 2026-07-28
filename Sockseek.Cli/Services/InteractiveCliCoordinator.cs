@@ -3,9 +3,9 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
-using Soulseek;
 
 namespace Sockseek.Cli;
 
@@ -536,8 +536,8 @@ internal sealed class InteractiveCliCoordinator
             folder.FolderPath,
             new PeerInfoDto(
                 folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
             folder.Files
@@ -548,9 +548,18 @@ internal sealed class InteractiveCliCoordinator
     private static AlbumFile ToAlbumFile(FileCandidateDto file)
     {
         var candidate = new FileCandidate(
-            new SearchResponse(file.Username, -1, file.Peer.HasFreeUploadSlot ?? false, file.Peer.UploadSpeed ?? -1, -1, null),
-            new Soulseek.File(0, file.Filename, file.Size, file.Extension ?? Path.GetExtension(file.Filename),
-                file.Attributes?.Select(x => new Soulseek.FileAttribute(Enum.Parse<Soulseek.FileAttributeType>(x.Type), x.Value))));
+            file.Username,
+            file.Filename,
+            file.Size,
+            file.BitRate,
+            bitDepth: null,
+            responseFileCount: 0,
+            file.SampleRate,
+            file.Length,
+            file.Extension ?? Path.GetExtension(file.Filename),
+            file.Peer.UploadSpeed,
+            file.Peer.HasFreeUploadSlot,
+            file.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList());
         return AlbumFile.WithLazyQuery(
             () => Searcher.InferSongQuery(candidate.Filename, new SongQuery()),
             candidate);
@@ -561,13 +570,13 @@ internal sealed class InteractiveCliCoordinator
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
-            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+            new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
+            candidate.Size,
+            candidate.BitRate,
+            candidate.SampleRate,
+            candidate.Length,
+            candidate.Extension,
+            candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
 
     private static DownloadBehaviorPolicyDto InteractiveDownloadBehavior(DownloadBehaviorPolicyDto? existing)
         => existing == null
