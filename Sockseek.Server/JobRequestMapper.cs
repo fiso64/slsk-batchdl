@@ -3,6 +3,7 @@ using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 
 namespace Sockseek.Server;
@@ -156,21 +157,18 @@ public static class JobRequestMapper
 
     private static FileCandidate ToFileCandidate(FileCandidateDto dto)
         => new(
-            new Soulseek.SearchResponse(
-                dto.Username,
-                token: -1,
-                dto.Peer.HasFreeUploadSlot ?? false,
-                dto.Peer.UploadSpeed ?? -1,
-                queueLength: -1,
-                fileList: null),
-            new Soulseek.File(
-                code: 0,
-                dto.Filename,
-                dto.Size,
-                dto.Extension ?? Path.GetExtension(dto.Filename),
-                dto.Attributes?.Select(attr => new Soulseek.FileAttribute(
-                    Enum.Parse<Soulseek.FileAttributeType>(attr.Type),
-                    attr.Value))));
+            dto.Username,
+            dto.Filename,
+            dto.Size,
+            dto.BitRate,
+            bitDepth: null,
+            responseFileCount: 0,
+            dto.SampleRate,
+            dto.Length,
+            dto.Extension ?? Path.GetExtension(dto.Filename),
+            dto.Peer.UploadSpeed,
+            dto.Peer.HasFreeUploadSlot,
+            dto.Attributes?.Select(attr => new FileAttributeSnapshot(attr.Type, attr.Value)).ToList());
 
     public static Job CreateJob(JobDraftDto item)
         => item switch
@@ -243,7 +241,7 @@ public static class JobRequestMapper
         var rawResults = albumJob.Results
             .SelectMany(folder => folder.Files)
             .Select(file => file.Candidate)
-            .Select(candidate => (Response: candidate.Response, File: candidate.File))
+            .Select(candidate => candidate.ToProjectionInput())
             .ToList();
 
         if (rawResults.Count == 0)

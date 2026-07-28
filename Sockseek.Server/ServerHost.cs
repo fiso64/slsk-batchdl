@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Sockseek.Api;
+using Sockseek.Server.Persistence;
 
 namespace Sockseek.Server;
 
@@ -27,7 +28,15 @@ public static class ServerHost
         if (options != null)
             builder.Services.AddSingleton<IOptions<ServerOptions>>(Options.Create(options));
         else
+        {
             builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("SockseekServer"));
+            bool isOpenApiGeneration = string.Equals(
+                Assembly.GetEntryAssembly()?.GetName().Name,
+                "GetDocument.Insider",
+                StringComparison.Ordinal);
+            if (!isOpenApiGeneration && builder.Configuration["SockseekServer:Persistence:Enabled"] == null)
+                builder.Services.PostConfigure<ServerOptions>(configured => configured.Persistence.Enabled = true);
+        }
 
         builder.Services.Configure<JsonOptions>(jsonOptions =>
         {
@@ -55,8 +64,12 @@ public static class ServerHost
                 return Task.CompletedTask;
             });
         });
+        builder.Services.AddSingleton<PersistenceCoordinator>();
+        builder.Services.AddHostedService<PersistenceRuntimeHostedService>();
+        builder.Services.AddHostedService<PersistenceMaintenanceHostedService>();
         builder.Services.AddSingleton<EngineSupervisor>();
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
+        builder.Services.AddSingleton<HistoricalQueryFacade>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
         builder.Services.AddSingleton<ServerActivityLogReporter>();
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
@@ -95,6 +108,48 @@ public static class ServerHost
             .WithTags("Server")
             .WithSummary("Gets current daemon and Soulseek client status.")
             .Produces<ServerStatusDto>();
+        app.MapPost("/api/persistence/integrity", async (
+            PersistenceCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await coordinator.CheckIntegrityAsync(cancellationToken)); }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _)) { return BadRequest(ex); }
+        })
+            .WithTags("Persistence")
+            .WithSummary("Runs SQLite integrity_check against the live database.")
+            .Produces<PersistenceIntegrityResultDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+        app.MapPost("/api/persistence/backup", async (
+            PersistenceBackupRequestDto request,
+            PersistenceCoordinator coordinator,
+            CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await coordinator.BackupAsync(request.BackupPath, cancellationToken)); }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _)) { return BadRequest(ex); }
+        })
+            .WithTags("Persistence")
+            .WithSummary("Creates and independently verifies a WAL-safe online backup.")
+            .Produces<PersistenceBackupResultDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+        app.MapPost("/api/persistence/checkpoint", async (
+            PersistenceCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await coordinator.CheckpointAsync(cancellationToken)); }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _)) { return BadRequest(ex); }
+        })
+            .WithTags("Persistence")
+            .WithSummary("Requests a bounded passive WAL checkpoint.")
+            .Produces<PersistenceCheckpointResultDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+        app.MapPost("/api/persistence/retention", async (
+            PersistenceCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await coordinator.RunRetentionAsync(cancellationToken)); }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _)) { return BadRequest(ex); }
+        })
+            .WithTags("Persistence")
+            .WithSummary("Runs one bounded retention batch.")
+            .Produces<PersistenceRetentionResultDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
         app.MapGet("/api/profiles", (EngineSupervisor supervisor) => Results.Ok(supervisor.GetProfiles()))
             .WithTags("Profiles")
             .WithSummary("Lists configured download profiles.")
@@ -104,26 +159,43 @@ public static class ServerHost
             .WithSummary("Lists SignalR event types and their snapshot invalidation behavior.")
             .Produces<IReadOnlyList<ServerEventDescriptorDto>>();
 
-        app.MapGet("/api/jobs", (
-            EngineStateStore stateStore,
+        app.MapGet("/api/jobs", async (
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
             ServerJobLifecycleState? lifecycleState,
             ServerJobTerminalOutcome? terminalOutcome,
             ServerJobSkipReason? skipReason,
             ServerJobKind? kind,
             Guid? workflowId,
-            bool includeAll = false) =>
+            bool includeAll,
+            string? cursor,
+            int? limit,
+            CancellationToken cancellationToken) =>
         {
-            var jobs = stateStore.GetJobs(new JobQuery(lifecycleState, terminalOutcome, kind, workflowId, includeAll, skipReason));
-            return Results.Ok(jobs);
+            try
+            {
+                var page = await queryFacade.GetJobsAsync(
+                    new JobQuery(lifecycleState, terminalOutcome, kind, workflowId, includeAll, skipReason),
+                    cursor,
+                    limit ?? 100,
+                    cancellationToken);
+                if (page.NextCursor != null)
+                    httpContext.Response.Headers["X-Next-Cursor"] = page.NextCursor;
+                return Results.Ok(page.Items);
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
         })
             .WithTags("Jobs")
             .WithSummary("Lists known jobs.")
             .WithDescription("Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every matching job.")
             .Produces<IReadOnlyList<JobSummaryDto>>();
 
-        app.MapGet("/api/jobs/{jobId:guid}", (Guid jobId, EngineStateStore stateStore) =>
+        app.MapGet("/api/jobs/{jobId:guid}", async (Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var detail = stateStore.GetJobDetail(jobId);
+            var detail = await queryFacade.GetJobAsync(jobId, cancellationToken);
             return detail != null ? Results.Ok(detail) : Results.NotFound();
         })
             .WithTags("Jobs")
@@ -131,9 +203,10 @@ public static class ServerHost
             .Produces<JobDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/workflows/{workflowId:guid}/jobs/display/{displayId:int}", (Guid workflowId, int displayId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/workflows/{workflowId:guid}/jobs/display/{displayId:int}", async (
+            Guid workflowId, int displayId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var detail = supervisor.GetJobDetailByDisplayId(workflowId, displayId);
+            var detail = await queryFacade.GetJobByDisplayIdAsync(workflowId, displayId, cancellationToken);
             return detail != null ? Results.Ok(detail) : Results.NotFound();
         })
             .WithTags("Jobs")
@@ -141,10 +214,25 @@ public static class ServerHost
             .Produces<JobDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/jobs/{jobId:guid}/raw", (Guid jobId, long afterSequence, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/raw", async (
+            Guid jobId,
+            long afterSequence,
+            int? limit,
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
         {
-            var results = supervisor.GetSearchRawResults(jobId, afterSequence);
-            return results != null ? Results.Ok(results) : Results.NotFound();
+            try
+            {
+                var page = await queryFacade.GetRawSearchResultsAsync(jobId, afterSequence, limit ?? 200, cancellationToken);
+                if (page?.NextSequence != null)
+                    httpContext.Response.Headers["X-Next-Sequence"] = page.NextSequence.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return page != null ? Results.Ok(page.Items) : Results.NotFound();
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
         })
             .WithTags("Search Results")
             .WithSummary("Gets raw search responses for a search job.")
@@ -152,9 +240,97 @@ public static class ServerHost
             .Produces<IReadOnlyList<SearchRawResultDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/files", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/transfers", async (
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
+            Guid? jobId,
+            Guid? workflowId,
+            string? direction,
+            string? source,
+            string? state,
+            string? terminalOutcome,
+            string? username,
+            DateTimeOffset? fromUtc,
+            DateTimeOffset? toUtc,
+            string? cursor,
+            int? limit,
+            CancellationToken cancellationToken) =>
         {
-            var results = supervisor.GetFileResults(jobId);
+            try
+            {
+                var page = await queryFacade.GetTransfersAsync(
+                    cursor, limit ?? 100, jobId, workflowId,
+                    direction, source, state, terminalOutcome, username, fromUtc, toUtc,
+                    cancellationToken);
+                if (page.NextCursor != null)
+                    httpContext.Response.Headers["X-Next-Cursor"] = page.NextCursor;
+                return Results.Ok(page.Items);
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Transfers")
+            .WithSummary("Lists durable transfer history.")
+            .Produces<IReadOnlyList<TransferHistoryDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+
+        app.MapGet("/api/transfers/{transferId:guid}", async (
+            Guid transferId,
+            int? attemptLimit,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var detail = await queryFacade.GetTransferAsync(transferId, attemptLimit ?? 200, cancellationToken);
+                return detail != null ? Results.Ok(detail) : Results.NotFound();
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Transfers")
+            .WithSummary("Gets one durable transfer and its first attempt page.")
+            .Produces<TransferHistoryDetailDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound);
+
+        app.MapGet("/api/transfers/{transferId:guid}/attempts", async (
+            Guid transferId,
+            int afterAttemptNumber,
+            int? limit,
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var page = await queryFacade.GetTransferAttemptsAsync(
+                    transferId, afterAttemptNumber, limit ?? 100, cancellationToken);
+                if (page?.NextAttemptNumber != null)
+                    httpContext.Response.Headers["X-Next-Attempt-Number"] = page.NextAttemptNumber.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return page != null ? Results.Ok(page.Items) : Results.NotFound();
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Transfers")
+            .WithSummary("Lists durable attempts for one transfer.")
+            .Produces<IReadOnlyList<TransferAttemptHistoryDto>>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound);
+
+        app.MapGet("/api/jobs/{jobId:guid}/results/files", async (
+            Guid jobId,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            var results = await queryFacade.GetFileResultsAsync(jobId, null, cancellationToken);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
             .WithTags("Search Results")
@@ -162,9 +338,13 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapPost("/api/jobs/{jobId:guid}/results/files/project", (Guid jobId, FileSearchProjectionRequestDto request, EngineSupervisor supervisor) =>
+        app.MapPost("/api/jobs/{jobId:guid}/results/files/project", async (
+            Guid jobId,
+            FileSearchProjectionRequestDto request,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
         {
-            var results = supervisor.GetFileResults(jobId, request);
+            var results = await queryFacade.GetFileResultsAsync(jobId, request, cancellationToken);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
             .WithTags("Search Results")
@@ -172,11 +352,12 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/folders", (Guid jobId, bool includeFiles, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/folders", async (
+            Guid jobId, bool includeFiles, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
             try
             {
-                var results = supervisor.GetFolderResults(jobId, includeFiles);
+                var results = await queryFacade.GetFolderResultsAsync(jobId, null, includeFiles, cancellationToken);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
@@ -191,11 +372,12 @@ public static class ServerHost
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapPost("/api/jobs/{jobId:guid}/results/folders/project", (Guid jobId, FolderSearchProjectionRequestDto request, EngineSupervisor supervisor) =>
+        app.MapPost("/api/jobs/{jobId:guid}/results/folders/project", async (
+            Guid jobId, FolderSearchProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
             try
             {
-                var results = supervisor.GetFolderResults(jobId, request);
+                var results = await queryFacade.GetFolderResultsAsync(jobId, request, request.IncludeFiles, cancellationToken);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
@@ -209,9 +391,10 @@ public static class ServerHost
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", async (
+            Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var results = supervisor.GetAggregateTrackResults(jobId);
+            var results = await queryFacade.GetAggregateTrackResultsAsync(jobId, null, cancellationToken);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
             .WithTags("Search Results")
@@ -219,9 +402,10 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-tracks/project", (Guid jobId, AggregateTrackProjectionRequestDto request, EngineSupervisor supervisor) =>
+        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-tracks/project", async (
+            Guid jobId, AggregateTrackProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var results = supervisor.GetAggregateTrackResults(jobId, request);
+            var results = await queryFacade.GetAggregateTrackResultsAsync(jobId, request, cancellationToken);
             return results != null ? Results.Ok(results) : Results.NotFound();
         })
             .WithTags("Search Results")
@@ -229,11 +413,12 @@ public static class ServerHost
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", (Guid jobId, EngineSupervisor supervisor) =>
+        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", async (
+            Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
             try
             {
-                var results = supervisor.GetAggregateAlbumResults(jobId);
+                var results = await queryFacade.GetAggregateAlbumResultsAsync(jobId, null, cancellationToken);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
@@ -247,11 +432,12 @@ public static class ServerHost
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-albums/project", (Guid jobId, AggregateAlbumProjectionRequestDto request, EngineSupervisor supervisor) =>
+        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-albums/project", async (
+            Guid jobId, AggregateAlbumProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
             try
             {
-                var results = supervisor.GetAggregateAlbumResults(jobId, request);
+                var results = await queryFacade.GetAggregateAlbumResultsAsync(jobId, request, cancellationToken);
                 return results != null ? Results.Ok(results) : Results.NotFound();
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
@@ -480,14 +666,33 @@ public static class ServerHost
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
-        app.MapGet("/api/workflows", (EngineStateStore stateStore) => Results.Ok(stateStore.GetWorkflows()))
+        app.MapGet("/api/workflows", async (
+            string? cursor,
+            int? limit,
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var page = await queryFacade.GetWorkflowsAsync(cursor, limit ?? 100, cancellationToken);
+                if (page.NextCursor != null)
+                    httpContext.Response.Headers["X-Next-Cursor"] = page.NextCursor;
+                return Results.Ok(page.Items);
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
             .WithTags("Workflows")
             .WithSummary("Lists known workflows.")
             .Produces<IReadOnlyList<WorkflowSummaryDto>>();
 
-        app.MapGet("/api/workflows/{workflowId:guid}", (Guid workflowId, bool? includeAll, EngineStateStore stateStore) =>
+        app.MapGet("/api/workflows/{workflowId:guid}", async (
+            Guid workflowId, bool? includeAll, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var workflow = stateStore.GetWorkflow(workflowId, includeAll == true);
+            var workflow = await queryFacade.GetWorkflowAsync(workflowId, includeAll == true, cancellationToken);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
             .WithTags("Workflows")
@@ -496,9 +701,10 @@ public static class ServerHost
             .Produces<WorkflowDetailDto>()
             .Produces(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/workflows/{workflowId:guid}/tree", (Guid workflowId, EngineStateStore stateStore) =>
+        app.MapGet("/api/workflows/{workflowId:guid}/tree", async (
+            Guid workflowId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var workflow = stateStore.GetWorkflowTree(workflowId);
+            var workflow = await queryFacade.GetWorkflowTreeAsync(workflowId, cancellationToken);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
             .WithTags("Workflows")

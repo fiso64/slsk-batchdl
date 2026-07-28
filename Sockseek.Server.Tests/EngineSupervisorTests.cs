@@ -263,7 +263,7 @@ public class EngineSupervisorTests
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, ExpectedJobStatus.Succeeded);
-            var searchJob = supervisor.StateStore.GetJob<SearchJob>(searchSummary.JobId);
+            var searchJob = supervisor.GetRuntimeJob<SearchJob>(searchSummary.JobId);
             Assert.IsNotNull(searchJob);
             Assert.IsTrue(searchJob.Config?.Search.NoBrowseFolder);
 
@@ -277,10 +277,10 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(downloadSummary);
             await WaitForConditionAsync(
-                () => supervisor.StateStore.GetJob<AlbumJob>(downloadSummary.JobId)?.Config != null,
+                () => supervisor.GetRuntimeJob<AlbumJob>(downloadSummary.JobId)?.Config != null,
                 "Timed out waiting for album download settings.");
 
-            var albumJob = supervisor.StateStore.GetJob<AlbumJob>(downloadSummary.JobId);
+            var albumJob = supervisor.GetRuntimeJob<AlbumJob>(downloadSummary.JobId);
             Assert.IsNotNull(albumJob);
             Assert.IsFalse(albumJob.Config?.Search.NoBrowseFolder, "Download should use default settings, not the search submission delta.");
 
@@ -337,7 +337,7 @@ public class EngineSupervisorTests
                 {
                     var children = SearchChildren(supervisor, summary.WorkflowId);
                     return children.Count == 2
-                        && children.All(child => supervisor.StateStore.GetJob<SearchJob>(child.JobId)?.Config != null);
+                        && children.All(child => supervisor.GetRuntimeJob<SearchJob>(child.JobId)?.Config != null);
                 },
                 "Timed out waiting for job-list child settings.");
 
@@ -767,7 +767,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(9999999, job.Config?.Search.MaxStaleTime);
             CollectionAssert.Contains(job.Config?.AppliedAutoProfiles?.ToList(), "my-interactive");
@@ -815,7 +815,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(
                 Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Music", "Inbox")),
@@ -878,7 +878,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(Path.GetFullPath(launchOutputDir), job.Config?.Output.ParentDir);
             Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
@@ -929,7 +929,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(123456, job.Config?.Search.MaxStaleTime);
 
@@ -982,7 +982,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
             CollectionAssert.AreEqual(new[] { "flac" }, job.Config?.Search.NecessaryCond.Formats);
@@ -1032,7 +1032,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.IsTrue(job.Config?.Skip.SkipExisting);
 
@@ -1082,7 +1082,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             CollectionAssert.AreEqual(new[] { "-- first", "-- second" }, job.Config?.Output.OnComplete);
 
@@ -1246,7 +1246,7 @@ public class EngineSupervisorTests
     private static SearchJob SearchChildByQuery(EngineSupervisor supervisor, IReadOnlyList<JobSummaryDto> children, string queryText)
     {
         var summary = children.Single(child => child.QueryText?.Contains(queryText, StringComparison.OrdinalIgnoreCase) == true);
-        var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+        var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
         Assert.IsNotNull(job);
         return job;
     }

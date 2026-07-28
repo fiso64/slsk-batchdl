@@ -569,8 +569,8 @@ namespace Tests.EndToEnd
 
                 var messages = new List<(string Scope, LogLevel Level, string Message)>();
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(new ClientTests.MockSoulseekClient([]), eng), resolver);
-                app.Events.JobMessage += (_, level, _, message) => messages.Add(("job", level, message));
-                app.Events.WorkflowMessage += (_, level, _, message) => messages.Add(("workflow", level, message));
+                app.Events.JobMessage += change => messages.Add(("job", change.Level, change.Message));
+                app.Events.WorkflowMessage += change => messages.Add(("workflow", change.Level, change.Message));
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
                 app.CompleteEnqueue();
 
@@ -1222,9 +1222,10 @@ namespace Tests.EndToEnd
                     normalize: SettingsNormalizer.Normalize);
                 var app = new DownloadEngine(engineSettings, clientManager, resolver);
                 AlbumJob? albumJob = null;
-                app.Events.JobRegistered += (job, _) =>
+                app.Events.JobRegistered += change =>
                 {
-                    if (job is AlbumJob aj)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && app.GetJob(change.Job.Id) is AlbumJob aj)
                         albumJob = aj;
                 };
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
@@ -1317,9 +1318,10 @@ namespace Tests.EndToEnd
                     normalize: SettingsNormalizer.Normalize);
                 var app = new DownloadEngine(engineSettings, clientManager, resolver);
                 AlbumJob? albumJob = null;
-                app.Events.JobRegistered += (job, _) =>
+                app.Events.JobRegistered += change =>
                 {
-                    if (job is AlbumJob aj)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && app.GetJob(change.Job.Id) is AlbumJob aj)
                         albumJob = aj;
                 };
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
@@ -1620,9 +1622,10 @@ namespace Tests.EndToEnd
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
                 var app = new DownloadEngine(engineSettings, clientManager);
                 var searchedAlbumJobs = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Searching && job is AlbumJob)
+                    if (change.ActivityPhase == JobActivityPhase.Searching
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         searchedAlbumJobs++;
                 };
                 app.Enqueue(aggregateJob, rootSettings);
@@ -1691,11 +1694,13 @@ namespace Tests.EndToEnd
                 var app = new DownloadEngine(engineSettings, clientManager);
                 var searchedAlbumJobs = 0;
                 var albumDownloadsStarted = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Searching && job is AlbumJob)
+                    if (change.ActivityPhase == JobActivityPhase.Searching
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         searchedAlbumJobs++;
-                    else if (job.ActivityPhase == JobActivityPhase.Downloading && job is AlbumJob)
+                    else if (change.ActivityPhase == JobActivityPhase.Downloading
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         albumDownloadsStarted++;
                 };
                 app.Enqueue(aggregateJob, rootSettings);
@@ -2146,12 +2151,13 @@ namespace Tests.EndToEnd
 
                 var songSearchesStarted = 0;
                 var downloadsStarted = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job is SongJob && job.ActivityPhase == JobActivityPhase.Searching)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Song
+                        && change.ActivityPhase == JobActivityPhase.Searching)
                         songSearchesStarted++;
                 };
-                app.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                app.Events.DownloadStarted += _ => downloadsStarted++;
                 app.Enqueue(aggregateJob, rootSettings);
                 app.CompleteEnqueue();
 

@@ -127,7 +127,7 @@ internal sealed class StaleDownloadCoordinator
             var download = attempt.Download;
             download.MarkStaleCancelled(attempt.MaxStaleTimeMs);
             try { download.Cts.Cancel(); } catch { }
-            activeDownloads.TryRemove(download.Candidate.Filename, out _);
+            activeDownloads.TryRemove(download.TransferId, out _);
         }
 
         return staleAttempts.Count;

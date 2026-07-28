@@ -15,6 +15,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
     private readonly DownloadEvents events;
     private readonly SearchEvents searchEvents;
     private readonly StaleDownloadCoordinator staleDownloads;
+    private readonly TimeProvider timeProvider;
     private readonly CancellationTokenSource appCts = new();
     private readonly SemaphoreSlim jobSemaphore;
     private readonly SemaphoreSlim extractorSemaphore;
@@ -32,7 +33,8 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         UserSuccessTracker userSuccesses,
         DownloadEvents events,
         SearchEvents searchEvents,
-        StaleDownloadCoordinator staleDownloads)
+        StaleDownloadCoordinator staleDownloads,
+        TimeProvider? timeProvider = null)
     {
         this.settings = settings;
         this.clientManager = clientManager;
@@ -42,6 +44,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         this.events = events;
         this.searchEvents = searchEvents;
         this.staleDownloads = staleDownloads;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         jobSemaphore = new SemaphoreSlim(settings.ConcurrentJobs);
         extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
     }
@@ -76,7 +79,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
 
         await clientManager.WaitUntilReadyAsync(ct);
         var client = clientManager.Client ?? throw new InvalidOperationException("Soulseek client is not available after login.");
-        searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents);
+        searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents, timeProvider);
         downloader = new Downloader(client, clientManager, activeDownloads, downloadedFiles, events, staleDownloads);
 
         if (automaticStaleChecksEnabled)

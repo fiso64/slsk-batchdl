@@ -13,4 +13,30 @@ public sealed class ServerOptions
     public ProfileCatalog Profiles { get; set; } = ProfileCatalog.Empty;
     public string? ConfigDir { get; set; }
     public Func<EngineSettings, ISoulseekClient>? ClientFactory { get; set; }
+    public ServerPersistenceOptions Persistence { get; set; } = new();
+}
+
+public sealed class ServerPersistenceOptions
+{
+    public bool Enabled { get; set; }
+    public string? DataDirectory { get; set; }
+    public int CriticalQueueCapacity { get; set; } = 512;
+    public int OrdinaryQueueCapacity { get; set; } = 2_048;
+    public int ProgressEntityCapacity { get; set; } = 512;
+    public int DegradedProjectionCapacity { get; set; } = 1_024;
+    public int SearchResultCapacityPerSearch { get; set; } = 2_000;
+    public int SearchResultGlobalCapacity { get; set; } = 20_000;
+    public int IncompleteSearchTrackingCapacity { get; set; } = 1_024;
+    public int SearchResultFlushCount { get; set; } = 200;
+    public TimeSpan SearchResultFlushInterval { get; set; } = TimeSpan.FromMilliseconds(200);
+    public TimeSpan TransferProgressFlushInterval { get; set; } = TimeSpan.FromSeconds(3);
+    public bool RetentionEnabled { get; set; } = true;
+    public TimeSpan RetentionInterval { get; set; } = TimeSpan.FromHours(24);
+    public TimeSpan? CompletedJobHistoryAge { get; set; } = TimeSpan.FromDays(90);
+    public TimeSpan? UnsuccessfulJobHistoryAge { get; set; } = TimeSpan.FromDays(180);
+    public int? MaximumRetainedJobs { get; set; } = 100_000;
+    public TimeSpan? SearchResultAge { get; set; } = TimeSpan.FromDays(30);
+    public TimeSpan? TransferHistoryAge { get; set; } = TimeSpan.FromDays(90);
+    public int RetentionBatchSize { get; set; } = 500;
+    public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(15);
 }

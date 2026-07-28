@@ -556,6 +556,27 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void DatabaseAndRetentionFlags_BindToDaemonSettings()
+        {
+            string dataDirectory = Path.Combine(Path.GetTempPath(), "sockseek-data");
+            var (_, _, _, daemon, _) = BindAll(
+                "--data-dir", dataDirectory,
+                "--no-retention",
+                "--successful-job-retention-days", "45",
+                "--unsuccessful-job-retention-days", "forever",
+                "--transfer-retention-days", "60",
+                "--search-result-retention-days", "10");
+
+            Assert.AreEqual(Path.GetFullPath(dataDirectory), daemon.DataDirectory);
+            Assert.IsFalse(daemon.RetentionEnabled);
+            Assert.AreEqual(TimeSpan.FromDays(45), daemon.CompletedJobRetention);
+            Assert.IsNull(daemon.UnsuccessfulJobRetention);
+            Assert.AreEqual(TimeSpan.FromDays(10), daemon.SearchResultRetention);
+            Assert.AreEqual(TimeSpan.FromDays(60), daemon.TransferRetention);
+            Assert.IsNull(daemon.MaximumRetainedJobs);
+        }
+
+        [TestMethod]
         public void Enum_SkipMode_ParsedCaseInsensitive()
         {
             var (_, dl, _) = Bind("--skip-mode-output-dir", "name");
@@ -615,10 +636,11 @@ namespace Tests.ConfigParsingTests
                     "skip-music-dir = {configdir}/skip",
                     "incomplete-album-action = move:{configdir}/failed",
                     "log-file = {configdir}/logs/sockseek.log",
-                    "mock-files-dir = {configdir}/mock"));
+                    "mock-files-dir = {configdir}/mock",
+                    "data-dir = {configdir}/data"));
 
                 var file = ConfigManager.Load(configPath);
-                var (engine, download, _) = ConfigManager.Bind(file, ["input"]);
+                var (engine, download, _, daemon, _) = ConfigManager.BindAll(file, ["input"]);
 
                 Assert.AreEqual(tempDir, download.RuntimePathContext.ConfigDir);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "downloads")), download.Output.ParentDir);
@@ -629,6 +651,7 @@ namespace Tests.ConfigParsingTests
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "failed")), download.Output.IncompleteAlbumAction.Path);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "logs", "sockseek.log")), engine.LogFilePath);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "mock")), engine.MockFilesDir);
+                Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "data")), daemon.DataDirectory);
             }
             finally
             {

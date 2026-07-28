@@ -301,8 +301,8 @@ songs shared by only one user will be ignored.
 
 <!-- sockseek-help:start(daemon) -->
 ## Daemon / remote mode
-Daemon mode is the first step toward running Sockseek as a persistent Soulseek client rather than a one-shot downloader. 
-Right now it exposes the download engine for remote CLI use; future releases may expand it with long-running client features such as sharing.
+Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API,
+remote CLI access, and durable job, search, and transfer history.
 
 Run `sockseek daemon` to start the HTTP/SignalR daemon. It uses the same config/profile system as the
 CLI and listens on `127.0.0.1:5030` by default.
@@ -315,6 +315,8 @@ sockseek "Artist - Title" --remote http://127.0.0.1:5030
 ```
 
 For HTTP API, SignalR, and client integration notes, see [docs/api.md](docs/api.md).
+Daemon setup, history, database, backup, and security are documented in
+[docs/daemon.md](docs/daemon.md).
 <!-- sockseek-help:end -->
 
 <!-- sockseek-help:start(config) -->
@@ -815,13 +817,6 @@ Most used flags at a glance:
 --on-complete <command>         Run a command when a download completes. See `--help
                                 on-complete`
 ```
-#### Daemon / Remote Options
-```
-sockseek daemon                 Start the HTTP/SignalR daemon instead of running a download
---server-ip <ip>                IP/interface for the daemon HTTP API (default: 127.0.0.1)
---server-port <port>            Port for the daemon HTTP API (default: 5030)
---remote <url>                  Use an existing daemon instead of running locally
-```
 #### Search Options
 ```
 --fast-search                   Begin downloading as soon as a file satisfying the preferred
@@ -984,6 +979,34 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
 --relax-filtering               Slightly relax file filtering in aggregate mode to include
                                 more results
 ```
+#### Daemon / Remote Options
+```
+sockseek daemon                 Start the HTTP/SignalR daemon instead of running a download
+--server-ip <ip>                IP/interface for the daemon HTTP API (default: 127.0.0.1)
+--server-port <port>            Port for the daemon HTTP API (default: 5030)
+--remote <url>                  Use an existing daemon instead of running locally
+--data-dir <path>               Directory for daemon data, including sockseek.db
+--no-retention                  Disable scheduled history retention
+--successful-job-retention-days <days|forever>
+                                Successful job retention (default: 90)
+--unsuccessful-job-retention-days <days|forever>
+                                Failed, cancelled, and interrupted job retention (default: 180)
+--transfer-retention-days <days|forever>
+                                Transfer history retention (default: 90)
+--search-result-retention-days <days|forever>
+                                Raw search-result retention (default: 30)
+```
+<!-- sockseek-help-topic:start(database) -->
+#### Sockseek Database
+```
+sockseek database migrate      Update the offline database to the current schema
+sockseek database integrity    Check an offline database for corruption
+sockseek database backup       Create and verify an offline backup
+sockseek database restore      Verify and restore an offline backup
+--data-dir <path>               Override the configured/default data directory
+--backup <path>                 Backup destination for `backup`, source for `restore`
+```
+<!-- sockseek-help-topic:end -->
 #### Printing & Debug Options
 ```
 -v, --verbose                   Print extra debug info

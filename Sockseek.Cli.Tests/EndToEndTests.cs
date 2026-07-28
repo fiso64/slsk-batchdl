@@ -463,9 +463,13 @@ public class CliEndToEndTests
             string? cancelledFolderKey = null;
             var cancellationIssued = 0;
 
-            app.Events.JobStateChanged += job =>
+            app.Events.JobStateChanged += change =>
             {
-                if (job.ActivityPhase != JobActivityPhase.Downloading || job is not AlbumJob albumJob || albumJob.ResolvedTarget == null || cancelledFolderKey == null)
+                if (change.ActivityPhase != JobActivityPhase.Downloading
+                    || change.Job.Kind != Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                    || app.GetJob(change.Job.Id) is not AlbumJob albumJob
+                    || albumJob.ResolvedTarget == null
+                    || cancelledFolderKey == null)
                     return;
 
                 var key = albumJob.ResolvedTarget.Username + "\\" + albumJob.ResolvedTarget.FolderPath;
@@ -554,10 +558,10 @@ public class CliEndToEndTests
             var app = new DownloadEngine(engineSettings, clientManager);
             var pickerCalls = 0;
             var parentAlbumFailedBeforeRetry = false;
-            app.Events.JobStateChanged += job =>
+            app.Events.JobStateChanged += change =>
             {
-                if (job is AlbumJob
-                    && job.TerminalOutcome == JobTerminalOutcome.Failed
+                if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                    && change.TerminalOutcome == JobTerminalOutcome.Failed
                     && pickerCalls < 2)
                 {
                     parentAlbumFailedBeforeRetry = true;

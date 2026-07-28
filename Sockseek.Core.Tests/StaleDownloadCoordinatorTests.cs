@@ -69,7 +69,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
         AssertStaleTransferCancelled(attempt);
-        Assert.IsFalse(scenario.ActiveDownloads.Contains(attempt.Download.Candidate.Filename));
+        Assert.IsFalse(scenario.ActiveDownloads.Contains(attempt.Download.TransferId));
     }
 
     [TestMethod]
@@ -298,7 +298,7 @@ public class StaleDownloadCoordinatorTests
             {
                 Cts = new CancellationTokenSource(),
             };
-            var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource(), parentJob);
+            var activeDownload = new ActiveDownload(Guid.NewGuid(), song, candidate, "C:/downloads/song.mp3", new CancellationTokenSource(), parentJob);
             ActiveDownloads.TryAdd(activeDownload);
             var activityReady = new TaskCompletionSource<StaleDownloadCoordinator.PeerTransferActivity>(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

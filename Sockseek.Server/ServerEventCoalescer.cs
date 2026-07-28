@@ -41,7 +41,7 @@ public sealed class ServerEventCoalescer : IDisposable
         {
             if (type == "download.progress" && payload is DownloadProgressEventDto progress)
             {
-                pendingDownloadProgress[progress.JobId] = progress;
+                pendingDownloadProgress[ProgressKey(progress)] = progress;
                 return;
             }
 
@@ -244,6 +244,9 @@ public sealed class ServerEventCoalescer : IDisposable
             TrackBatchResolvedEventDto e => e.Summary.JobId,
             _ => null,
         };
+
+    private static Guid ProgressKey(DownloadProgressEventDto progress)
+        => progress.TransferId == Guid.Empty ? progress.JobId : progress.TransferId;
 
     private static bool IsBulkCancellationSummary(JobSummaryDto summary)
         => summary.LifecycleState == ServerJobLifecycleState.Terminal

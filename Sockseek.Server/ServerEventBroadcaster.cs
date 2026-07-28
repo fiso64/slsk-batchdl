@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using System.Collections.Concurrent;
 using Sockseek.Core;
-using Sockseek.Core.Jobs;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 
 namespace Sockseek.Server;
@@ -132,31 +132,8 @@ public sealed class ServerEventBroadcaster : IDisposable
         coalescer.Dispose();
     }
 
-    private JobSummaryDto GetSummary(Job job)
-        => stateStore.GetJobSummary(job.Id) ?? new JobSummaryDto(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            EngineStateStore.GetJobKind(job),
-            EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
-            job.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
-            EngineStateStore.ToServerJobSkipReason(job.SkipReason),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            EngineStateStore.ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
-            null,
-            null,
-            null,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            [],
-            job.FailureDetail,
-            EngineStateStore.ToServerJobCancellationSource(job.CancellationSource),
-            job.Config?.PrintOption ?? PrintOption.None);
+    private JobSummaryDto GetSummary(JobSnapshot job)
+        => stateStore.GetJobSummary(job.Id) ?? ServerSnapshotMapper.ToJobSummary(job);
 
     private static Guid? GetWorkflowId(object payload)
         => payload switch

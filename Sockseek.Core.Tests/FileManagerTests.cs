@@ -76,7 +76,7 @@ namespace Tests.FileManagerTests
         private static string? InvokeGetFolderName(Soulseek.File? slfile, string? remoteBaseDir)
         {
             var method = typeof(FileManager).GetMethod("GetFolderName", BindingFlags.NonPublic | BindingFlags.Static);
-            return (string?)method!.Invoke(null, new object?[] { slfile, remoteBaseDir });
+            return (string?)method!.Invoke(null, new object?[] { slfile?.Filename, remoteBaseDir });
         }
 
         [TestMethod]

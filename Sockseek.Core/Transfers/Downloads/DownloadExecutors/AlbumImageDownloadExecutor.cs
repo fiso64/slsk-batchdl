@@ -46,23 +46,23 @@ internal sealed class AlbumImageDownloadExecutor
         if (option == AlbumArtOption.Largest)
         {
             imageFolders = imageFolders
-                .OrderByDescending(ls => ls.Max(af => af.Candidate.File.Size) / 1024 / 100)
-                .ThenByDescending(ls => ls[0].Candidate.Response.UploadSpeed / 1024 / 300)
-                .ThenByDescending(ls => ls.Sum(af => af.Candidate.File.Size) / 1024 / 100)
+                .OrderByDescending(ls => ls.Max(af => af.Candidate.Size) / 1024 / 100)
+                .ThenByDescending(ls => (ls[0].Candidate.UploadSpeed ?? -1) / 1024 / 300)
+                .ThenByDescending(ls => ls.Sum(af => af.Candidate.Size) / 1024 / 100)
                 .ToList();
 
             if (chosenFolder != null)
                 mSize = job.TrackJobs
                     .Where(af => af.TerminalOutcome == JobTerminalOutcome.Succeeded && Utils.IsImageFile(af.DownloadPath ?? ""))
-                    .Select(af => af.ResolvedTarget!.File.Size)
+                    .Select(af => af.ResolvedTarget!.Size)
                     .DefaultIfEmpty(0).Max();
         }
         else if (option == AlbumArtOption.Most)
         {
             imageFolders = imageFolders
                 .OrderByDescending(ls => ls.Count)
-                .ThenByDescending(ls => ls[0].Candidate.Response.UploadSpeed / 1024 / 300)
-                .ThenByDescending(ls => ls.Sum(af => af.Candidate.File.Size) / 1024 / 100)
+                .ThenByDescending(ls => (ls[0].Candidate.UploadSpeed ?? -1) / 1024 / 300)
+                .ThenByDescending(ls => ls.Sum(af => af.Candidate.Size) / 1024 / 100)
                 .ToList();
 
             if (chosenFolder != null)
@@ -72,7 +72,7 @@ internal sealed class AlbumImageDownloadExecutor
         bool needsDownload(List<AlbumFile> ls) => option == AlbumArtOption.Most
             ? mCount < ls.Count
             : option == AlbumArtOption.Largest
-                ? mSize == 0 || mSize < ls.Max(af => af.Candidate.File.Size) - 1024 * 50
+                ? mSize == 0 || mSize < ls.Max(af => af.Candidate.Size) - 1024 * 50
                 : true;
 
         bool SameCandidate(FileCandidate? left, FileCandidate right)

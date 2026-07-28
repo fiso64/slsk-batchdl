@@ -33,7 +33,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
     internal bool AutomaticStaleChecksEnabled { get; set; } = true;
 
-    public DownloadEvents Events { get; } = new();
+    public DownloadEvents Events { get; }
     public SearchEvents SearchEvents { get; } = new();
 
     public JobList Queue { get; } = new();
@@ -103,8 +103,13 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     private readonly DownloadJobQueue _jobQueue = new();
 
     /// <summary>Enqueues a new root job for processing. Call <see cref="CompleteEnqueue"/> when done adding jobs.</summary>
-    public void Enqueue(Job job, DownloadSettings settings)
-        => _jobQueue.Enqueue(job, settings);
+    public void Enqueue(Job job, DownloadSettings settings, Guid? sourceJobId = null)
+    {
+        if (sourceJobId is Guid sourceId)
+            _jobs.AssociateSource(job.Id, sourceId);
+
+        _jobQueue.Enqueue(job, settings);
+    }
 
     /// <summary>Resumes an existing job without re-parenting it or replacing its prepared context.</summary>
     public void Resume(Job job)
@@ -194,6 +199,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         TimeProvider? timeProvider = null)
     {
         engineSettings = settings;
+        Events = new DownloadEvents(timeProvider);
         _clientManager = clientManager;
         _jobSettingsResolver = jobSettingsResolver ?? DefaultJobSettingsResolver.Instance;
         _songDownloadFallback = songDownloadFallback ?? SongDownloadFallback.Default;
@@ -208,7 +214,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             job => _executionContext!.RaiseBuildingMusicDirectoryIndex(job));
         if (settings.ConcurrentJobs <= 0)
             throw new ArgumentOutOfRangeException(nameof(settings.ConcurrentJobs), "ConcurrentJobs must be greater than zero.");
-        _runtime = new DownloadRunScope(settings, _clientManager, _activeDownloads, _downloadedFiles, _userSuccesses, Events, SearchEvents, _staleDownloadCoordinator);
+        _runtime = new DownloadRunScope(settings, _clientManager, _activeDownloads, _downloadedFiles, _userSuccesses, Events, SearchEvents, _staleDownloadCoordinator, timeProvider);
         _executionContext = new DownloadExecutionContext(
             engineSettings,
             _clientManager,

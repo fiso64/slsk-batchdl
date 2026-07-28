@@ -10,7 +10,7 @@ internal sealed class ManualSelectionCoordinator
 {
     private readonly Func<Guid, Job?> getJob;
     private readonly DownloadJobContextStore contexts;
-    private readonly Action<Job, Job?> registerJob;
+    private readonly Action<Job, Job?, Guid?> registerJob;
     private readonly Action<Job> observePreparedAutoProfiles;
     private readonly Action<Job> resumeJob;
     private readonly Func<Job, Task> flushTerminalEffects;
@@ -21,7 +21,7 @@ internal sealed class ManualSelectionCoordinator
     public ManualSelectionCoordinator(
         Func<Guid, Job?> getJob,
         DownloadJobContextStore contexts,
-        Action<Job, Job?> registerJob,
+        Action<Job, Job?, Guid?> registerJob,
         Action<Job> observePreparedAutoProfiles,
         Action<Job> resumeJob,
         Func<Job, Task> flushTerminalEffects,
@@ -81,7 +81,7 @@ internal sealed class ManualSelectionCoordinator
             return true;
         }
 
-        job.Fail(JobFailureReason.NoMatchingResults);
+        JobOutcomeCommitter.Commit(job, JobOutcome.Failed(JobFailureReason.NoMatchingResults));
         await flushTerminalEffects(job);
         return true;
     }
@@ -92,7 +92,7 @@ internal sealed class ManualSelectionCoordinator
         if (job == null || !job.IsAwaitingSelection || job.Config == null)
             return false;
 
-        job.SetSkipped(JobSkipReason.Manual);
+        JobOutcomeCommitter.Commit(job, JobOutcome.Skipped(JobSkipReason.Manual));
         await flushTerminalEffects(job);
         return true;
     }
@@ -134,7 +134,7 @@ internal sealed class ManualSelectionCoordinator
         albumJob.DownloadBehaviorPolicy = albumJob.DownloadBehaviorPolicy with { Album = DownloadBehavior.Manual };
 
         aggregateParentByAlbumId[albumJob.Id] = aggregateJob.Id;
-        registerJob(albumJob, aggregateJob);
+        registerJob(albumJob, aggregateJob, aggregateJob.Id);
 
         if (contexts.ContainsKey(albumJob.Id))
             return;
@@ -169,7 +169,7 @@ internal sealed class ManualSelectionCoordinator
 
         if (selectedAlbums.Count == 0)
         {
-            aggregateJob.Fail(JobFailureReason.NoMatchingResults);
+            JobOutcomeCommitter.Commit(aggregateJob, JobOutcome.Failed(JobFailureReason.NoMatchingResults));
             await flushTerminalEffects(aggregateJob);
             return;
         }
@@ -177,10 +177,10 @@ internal sealed class ManualSelectionCoordinator
         if (selectedAlbums.Any(IsActiveManualSelectionChild))
             return;
 
-        if (selectedAlbums.All(isSuccessfulTerminal))
-            aggregateJob.SetDone();
-        else
-            aggregateJob.Fail(JobFailureReason.NoMatchingResults);
+        var outcome = selectedAlbums.All(isSuccessfulTerminal)
+            ? JobOutcome.Done()
+            : JobOutcome.Failed(JobFailureReason.NoMatchingResults);
+        JobOutcomeCommitter.Commit(aggregateJob, outcome);
 
         await flushTerminalEffects(aggregateJob);
     }

@@ -436,8 +436,8 @@ public partial class FileManager
         // Soulseek file path vars (from the remote file)
         { "slsk-filename", (ctx, _) => Utils.GetFileNameWithoutExtSlsk(ctx.Candidate?.Filename ?? "") },
         { "filename",      (ctx, _) => Utils.GetFileNameWithoutExtSlsk(ctx.Candidate?.Filename ?? "") },
-        { "slsk-foldername", (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
-        { "foldername",      (ctx, _) => GetFolderName(ctx.Candidate?.File, ctx.RemoteBaseDir) },
+        { "slsk-foldername", (ctx, _) => GetFolderName(ctx.Candidate?.Filename, ctx.RemoteBaseDir) },
+        { "foldername",      (ctx, _) => GetFolderName(ctx.Candidate?.Filename, ctx.RemoteBaseDir) },
 
         // Job / config vars
         { "extractor",      (ctx, _) => ctx.ExtractorName },
@@ -508,19 +508,19 @@ public partial class FileManager
             _ => ctx.ActivityPhase != JobActivityPhase.None ? ctx.ActivityPhase.ToString() : ctx.LifecycleState.ToString(),
         };
 
-    private static string GetFolderName(Soulseek.File? slfile, string? remoteBaseDir)
+    private static string GetFolderName(string? remoteFilename, string? remoteBaseDir)
     {
-        if (string.IsNullOrEmpty(remoteBaseDir) || slfile == null)
+        if (string.IsNullOrEmpty(remoteBaseDir) || string.IsNullOrEmpty(remoteFilename))
         {
             if (!string.IsNullOrEmpty(remoteBaseDir))
                 return Path.GetFileName(Utils.NormalizedPath(remoteBaseDir)) ?? "";
-            if (slfile != null)
-                return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename))) ?? "";
+            if (!string.IsNullOrEmpty(remoteFilename))
+                return Path.GetFileName(Path.GetDirectoryName(Utils.NormalizedPath(remoteFilename))) ?? "";
             return "";
         }
 
         string normalizedRbd = Utils.NormalizedPath(remoteBaseDir);
-        string d = Path.GetDirectoryName(Utils.NormalizedPath(slfile.Filename)) ?? "";
+        string d = Path.GetDirectoryName(Utils.NormalizedPath(remoteFilename)) ?? "";
         string r = Path.GetFileName(normalizedRbd) ?? "";
         string result = Path.Join(r, Path.GetRelativePath(normalizedRbd, d));
         return result;

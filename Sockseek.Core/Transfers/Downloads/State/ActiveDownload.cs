@@ -9,8 +9,10 @@ namespace Sockseek.Core.Transfers.Downloads.State;
 // No progress bar or display logic — those belong in the CLI layer.
 internal sealed class ActiveDownload
 {
+    public Guid TransferId { get; }
     public SongJob Song { get; }
     public FileCandidate Candidate { get; }
+    public string OutputPath { get; }
     public CancellationTokenSource Cts { get; }
     public Job? ParentJob { get; }
 
@@ -20,10 +22,12 @@ internal sealed class ActiveDownload
     public bool IsStaleCancelled => StaleMaxStaleTimeMs.HasValue;
     public int? StaleMaxStaleTimeMs { get; private set; }
 
-    public ActiveDownload(SongJob song, FileCandidate candidate, CancellationTokenSource cts, Job? parentJob = null)
+    public ActiveDownload(Guid transferId, SongJob song, FileCandidate candidate, string outputPath, CancellationTokenSource cts, Job? parentJob = null)
     {
+        TransferId = transferId;
         Song = song;
         Candidate = candidate;
+        OutputPath = outputPath;
         Cts = cts;
         ParentJob = parentJob;
     }

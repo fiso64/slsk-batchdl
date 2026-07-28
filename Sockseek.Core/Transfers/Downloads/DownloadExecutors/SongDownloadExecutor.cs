@@ -3,6 +3,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Events;
 
 namespace Sockseek.Core;
 
@@ -150,7 +151,12 @@ internal sealed class SongDownloadExecutor
     {
         var finalization = context.OutputFinalizer.FinalizeSongPlacement(song, parentJob, outcome, organizer, organize);
         if (finalization.OrganizationException != null)
+        {
+            FailPendingTerminalTransfer(song, finalization.OrganizationException, TransferFailureReason.Finalization);
             return finalization.Outcome;
+        }
+
+        CompletePendingTerminalTransfer(song, finalization.Outcome.DownloadPath ?? song.DownloadPath);
 
         var postProcessOutcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(song, finalization.Outcome);
         postProcessOutcome = await RunOnCompleteIfApplicable(parentJob, song, jobCtx, postProcessOutcome);
@@ -403,6 +409,15 @@ internal sealed class SongDownloadExecutor
             var result = download.Result
                 ?? throw new InvalidOperationException($"Completed download outcome missing result for '{candidate.Username}\\{candidate.Filename}'.");
             context.UserSuccesses.RecordSuccess(result.Candidate.Username);
+            if (result.TransferId is Guid transferId)
+            {
+                context.PendingTerminalTransfers[song.Id] = new PendingTerminalTransfer(
+                    transferId,
+                    result.AttemptCount,
+                    result.Candidate,
+                    result.Candidate.Filename,
+                    result.OutputPath);
+            }
             SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: download succeeded from {result.Candidate.Username}\\{result.Candidate.Filename} to '{result.OutputPath}': {song}");
             return JobOutcome.Done(result.OutputPath, result.Candidate);
         }
@@ -413,6 +428,66 @@ internal sealed class SongDownloadExecutor
                 lastDownloadFailureMessage ?? DownloadFailureMessage(lastDownloadException));
 
         return DownloadOutcomes.NoMatchingCandidates();
+    }
+
+    private void CompletePendingTerminalTransfer(SongJob song, string? finalPath)
+    {
+        if (!context.PendingTerminalTransfers.TryRemove(song.Id, out var pending))
+            return;
+
+        var resolvedPath = string.IsNullOrWhiteSpace(finalPath) ? pending.InitialOutputPath : finalPath;
+        long size = System.IO.File.Exists(resolvedPath) ? new FileInfo(resolvedPath).Length : 0;
+        if (pending.Candidate is { } candidate)
+        {
+            context.Events.RaiseTransferCompleted(
+                pending.TransferId,
+                song,
+                candidate,
+                resolvedPath,
+                size > 0 ? size : Math.Max(candidate.Size, 0),
+                pending.AttemptCount);
+        }
+        else
+        {
+            context.Events.RaiseFallbackTransferCompleted(
+                pending.TransferId,
+                song,
+                pending.SourceReference,
+                resolvedPath,
+                size,
+                pending.AttemptCount);
+        }
+    }
+
+    private void FailPendingTerminalTransfer(SongJob song, Exception exception, TransferFailureReason reason)
+    {
+        if (!context.PendingTerminalTransfers.TryRemove(song.Id, out var pending))
+            return;
+
+        if (pending.Candidate is { } candidate)
+        {
+            context.Events.RaiseTransferFailed(
+                pending.TransferId,
+                song,
+                candidate,
+                pending.InitialOutputPath,
+                song.BytesTransferred,
+                Math.Max(candidate.Size, 0),
+                pending.AttemptCount,
+                reason,
+                exception);
+        }
+        else
+        {
+            context.Events.RaiseFallbackTransferFailed(
+                pending.TransferId,
+                song,
+                pending.SourceReference,
+                pending.InitialOutputPath,
+                pending.AttemptCount,
+                reason,
+                exception);
+        }
     }
 
     private static bool ShouldCancelGroupOnEmbeddedOutcome(JobOutcome outcome)

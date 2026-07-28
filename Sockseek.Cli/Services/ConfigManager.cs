@@ -89,7 +89,7 @@ public static partial class ConfigManager
 
         ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli, daemon, remote);
 
-        PostProcess(engine, dl, file.ConfigDir);
+        PostProcess(engine, dl, daemon, file.ConfigDir);
 
         return (engine, dl, cli, daemon, remote);
     }
@@ -324,11 +324,20 @@ public static partial class ConfigManager
 
     // ── Post-processing ───────────────────────────────────────────────────────
 
-    private static void PostProcess(EngineSettings engine, DownloadSettings dl, string? configDir)
+    private static void PostProcess(
+        EngineSettings engine,
+        DownloadSettings dl,
+        DaemonSettings daemon,
+        string? configDir)
     {
         var pathContext = new PathVariableContext(ConfigDir: configDir);
         PostProcessDownload(dl, pathContext);
         SettingsNormalizer.NormalizeEnginePaths(engine, pathContext);
+        if (!string.IsNullOrWhiteSpace(daemon.DataDirectory))
+        {
+            daemon.DataDirectory = Path.GetFullPath(
+                Utils.ExpandVariables(daemon.DataDirectory, pathContext));
+        }
     }
 
     private static void PostProcessDownload(DownloadSettings dl, PathVariableContext pathContext)
@@ -480,7 +489,14 @@ public static partial class ConfigManager
                 return 1.0;
             return ParseDouble(value, flag);
         }
-
+        TimeSpan? RetentionDays()
+        {
+            if (probe != null) return TimeSpan.FromDays(1);
+            if (string.Equals(value, "forever", StringComparison.OrdinalIgnoreCase)) return null;
+            double days = ParseDouble(value, flag);
+            if (days <= 0) throw new ArgumentException($"{flag} must be a positive number of days or 'forever'.");
+            return TimeSpan.FromDays(days);
+        }
         switch (flag)
         {
             // ── Meta ─────────────────────────────────────────────────────────
@@ -556,6 +572,32 @@ public static partial class ConfigManager
                 Daemon(d => d.ListenIp = value); break;
             case "--server-port": case "--daemon-port": case "--api-port":
                 Daemon(d => d.ListenPort = Port()); break;
+            case "--data-dir":
+                Daemon(d => d.DataDirectory = value); break;
+            case "--no-retention":
+                Daemon(d => d.RetentionEnabled = false); break;
+            case "--successful-job-retention-days":
+                Daemon(d =>
+                {
+                    var retention = RetentionDays();
+                    d.CompletedJobRetention = retention;
+                    if (retention == null)
+                        d.MaximumRetainedJobs = null;
+                });
+                break;
+            case "--unsuccessful-job-retention-days":
+                Daemon(d =>
+                {
+                    var retention = RetentionDays();
+                    d.UnsuccessfulJobRetention = retention;
+                    if (retention == null)
+                        d.MaximumRetainedJobs = null;
+                });
+                break;
+            case "--transfer-retention-days":
+                Daemon(d => d.TransferRetention = RetentionDays()); break;
+            case "--search-result-retention-days":
+                Daemon(d => d.SearchResultRetention = RetentionDays()); break;
             case "--remote": case "--server-url":
                 Remote(r => r.ServerUrl = value); break;
 
@@ -1306,6 +1348,7 @@ public static partial class ConfigManager
         "--no-listen"
         or "-v" or "--verbose" or "--debug" or "-vv" or "--trace"
         or "--mock-files-no-read-tags"
+        or "--no-retention"
         or "--np" or "--no-progress"
         or "--progress"
         or "--nwp" or "--no-write-playlist"

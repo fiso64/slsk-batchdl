@@ -25,9 +25,9 @@ public class SearchJob : Job
     public AggregateTrackProjection? DefaultAggregateTrackProjection { get; init; }
     public AggregateAlbumProjection? DefaultAggregateAlbumProjection { get; init; }
 
-    public SearchSession Session { get; } = new();
+    public SearchSession Session { get; }
 
-    public int ResultCount => Session.Results.Count;
+    public int ResultCount => Session.ResultCount;
     public int Revision => Session.Revision;
     public bool IsComplete => Session.IsComplete;
 
@@ -36,29 +36,32 @@ public class SearchJob : Job
 
     public SongQuery NetworkQuery => new() { Title = QueryText };
 
-    public SearchJob(string queryText)
+    public SearchJob(string queryText, TimeProvider? timeProvider = null)
     {
         if (string.IsNullOrWhiteSpace(queryText))
             throw new ArgumentException("queryText is required for search jobs");
 
         QueryText = queryText;
+        Session = new SearchSession(Id, timeProvider, QueryText);
     }
 
-    public SearchJob(SongQuery query, bool includeFullResults = false)
+    public SearchJob(SongQuery query, bool includeFullResults = false, TimeProvider? timeProvider = null)
     {
         QueryText = query.ToString(noInfo: true);
         DefaultFileProjection = new FileSearchProjection(query, includeFullResults);
         DefaultAggregateTrackProjection = new AggregateTrackProjection(query);
+        Session = new SearchSession(Id, timeProvider, QueryText);
     }
 
-    public SearchJob(AlbumQuery query)
+    public SearchJob(AlbumQuery query, TimeProvider? timeProvider = null)
     {
         QueryText = SearchResultProjector.AlbumNetworkQuery(query).ToString(noInfo: true);
         DefaultFolderProjection = new FolderSearchProjection(query);
         DefaultAggregateAlbumProjection = new AggregateAlbumProjection(query);
+        Session = new SearchSession(Id, timeProvider, QueryText);
     }
 
-    public IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)> Snapshot()
+    internal IReadOnlyCollection<(Soulseek.SearchResponse Response, Soulseek.File File)> Snapshot()
         => Session.Snapshot();
 
     public IReadOnlyList<SearchRawResult> RawSnapshot(long afterSequence = 0)
@@ -92,17 +95,13 @@ public class SearchJob : Job
     {
         var state = GetOrCreateIncrementalProjectionState(
             ProjectionKey("sorted-track", projection, search, userSuccessCounts),
-            () => new IncrementalRawProjectionState<IncrementalResultSorter, FileCandidate>(
+            () => new IncrementalNeutralFileProjectionState(
                 new IncrementalResultSorter(
                     projection.Query,
                     search,
                     userSuccessCounts,
                     useInfer: false,
-                    requireFileSatisfies: !projection.IncludeFullResults),
-                (projector, results) => projector.AddRange(results),
-                projector => projector.Snapshot()
-                    .Select(x => new FileCandidate(x.Response, x.File))
-                    .ToList()));
+                    requireFileSatisfies: !projection.IncludeFullResults)));
 
         return state.Snapshot(this);
     }
@@ -122,7 +121,7 @@ public class SearchJob : Job
     {
         var state = GetOrCreateIncrementalProjectionState(
             ProjectionKey("album-folders", projection, search),
-            () => new IncrementalRawProjectionState<IncrementalAlbumFolderProjector, AlbumFolder>(
+            () => new IncrementalNeutralProjectionState<IncrementalAlbumFolderProjector, AlbumFolder>(
                 new IncrementalAlbumFolderProjector(
                     projection.Query,
                     search,
@@ -158,7 +157,7 @@ public class SearchJob : Job
     {
         var state = GetOrCreateIncrementalProjectionState(
             ProjectionKey("aggregate-tracks", projection, search, userSuccessCounts),
-            () => new IncrementalRawProjectionState<IncrementalAggregateTrackProjector, SongJob>(
+            () => new IncrementalNeutralProjectionState<IncrementalAggregateTrackProjector, SongJob>(
                 new IncrementalAggregateTrackProjector(projection.Query, search, userSuccessCounts),
                 (projector, results) => projector.AddRange(results),
                 projector => projector.Snapshot()));
@@ -203,10 +202,8 @@ public class SearchJob : Job
         }
     }
 
-    private static List<(Soulseek.SearchResponse Response, Soulseek.File File)> RawPairs(IReadOnlyList<SearchRawResult> rawResults)
-        => rawResults
-            .Select(x => (x.Response, x.File))
-            .ToList();
+    private static List<SearchProjectionInput> RawInputs(IReadOnlyList<SearchRawResult> rawResults)
+        => rawResults.Select(result => result.ProjectionInput).ToList();
 
     private static string ProjectionKey(string name, params object[] dependencies)
         => name + ":" + string.Join(':', dependencies.Select(ProjectionDependencyKey));
@@ -247,18 +244,18 @@ public class SearchJob : Job
             _ => dependency.GetHashCode().ToString(),
         };
 
-    private sealed class IncrementalRawProjectionState<TProjector, TItem>
+    private sealed class IncrementalNeutralProjectionState<TProjector, TItem>
     {
         private readonly Lock gate = new();
         private readonly TProjector projector;
-        private readonly Func<TProjector, IEnumerable<(Soulseek.SearchResponse Response, Soulseek.File File)>, int> addRange;
+        private readonly Func<TProjector, IEnumerable<SearchProjectionInput>, int> addRange;
         private readonly Func<TProjector, List<TItem>> snapshot;
         private long lastSequence;
         private SearchProjectionSnapshot<TItem>? cachedSnapshot;
 
-        public IncrementalRawProjectionState(
+        public IncrementalNeutralProjectionState(
             TProjector projector,
-            Func<TProjector, IEnumerable<(Soulseek.SearchResponse Response, Soulseek.File File)>, int> addRange,
+            Func<TProjector, IEnumerable<SearchProjectionInput>, int> addRange,
             Func<TProjector, List<TItem>> snapshot)
         {
             this.projector = projector;
@@ -273,7 +270,7 @@ public class SearchJob : Job
                 var newResults = job.RawSnapshot(lastSequence);
                 if (newResults.Count > 0)
                 {
-                    addRange(projector, RawPairs(newResults));
+                    addRange(projector, RawInputs(newResults));
                     lastSequence = newResults[^1].Sequence;
                     cachedSnapshot = null;
                 }
@@ -289,6 +286,36 @@ public class SearchJob : Job
 
                 var items = snapshot(projector);
                 cachedSnapshot = new SearchProjectionSnapshot<TItem>(revision, items, isComplete);
+                return cachedSnapshot;
+            }
+        }
+    }
+
+    private sealed class IncrementalNeutralFileProjectionState(IncrementalResultSorter projector)
+    {
+        private readonly Lock gate = new();
+        private long lastSequence;
+        private SearchProjectionSnapshot<FileCandidate>? cachedSnapshot;
+
+        public SearchProjectionSnapshot<FileCandidate> Snapshot(SearchJob job)
+        {
+            lock (gate)
+            {
+                var newResults = job.RawSnapshot(lastSequence);
+                if (newResults.Count > 0)
+                {
+                    projector.AddRange(RawInputs(newResults));
+                    lastSequence = newResults[^1].Sequence;
+                    cachedSnapshot = null;
+                }
+                if (cachedSnapshot != null
+                    && cachedSnapshot.Revision == job.Revision
+                    && cachedSnapshot.IsComplete == job.IsComplete)
+                    return cachedSnapshot;
+                cachedSnapshot = new SearchProjectionSnapshot<FileCandidate>(
+                    job.Revision,
+                    projector.SnapshotInputs().Select(input => input.ToFileCandidate()).ToList(),
+                    job.IsComplete);
                 return cachedSnapshot;
             }
         }
@@ -319,7 +346,7 @@ public class SearchJob : Job
                 var newResults = job.RawSnapshot(lastSequence);
                 if (newResults.Count > 0)
                 {
-                    var changes = albumProjector.AddRangeAndGetChanges(RawPairs(newResults));
+                    var changes = albumProjector.AddRangeAndGetChanges(RawInputs(newResults));
                     aggregateProjector.ApplyChanges(changes);
                     lastSequence = newResults[^1].Sequence;
                     cachedSnapshot = null;

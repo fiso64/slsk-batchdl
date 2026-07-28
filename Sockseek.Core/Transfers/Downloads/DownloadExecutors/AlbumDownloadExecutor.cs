@@ -616,8 +616,7 @@ internal sealed class AlbumDownloadExecutor
     {
         foreach (var song in job.EnsureTrackJobs(folder).Where(song => song.LifecycleState != JobLifecycleState.Terminal))
         {
-            song.MarkCancellationSource(JobCancellationSource.ParentJob);
-            song.SetCancelled(JobCancellationSource.ParentJob);
+            JobOutcomeCommitter.Commit(song, JobOutcome.Cancelled(JobCancellationSource.ParentJob));
         }
     }
 

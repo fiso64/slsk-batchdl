@@ -171,7 +171,7 @@ public sealed class IncrementalAlbumAggregateProjector
             ? folder.SearchSortedAudioLengths
             : folder.Files
                 .Where(f => !f.IsNotAudio)
-                .Select(f => f.Candidate.File.Length ?? -1)
+                .Select(f => f.Candidate.Length ?? -1)
                 .OrderBy(x => x)
                 .ToArray();
 

@@ -597,10 +597,10 @@ namespace Tests.OnCompleteExecutorTests
                 var client = LocalFilesSoulseekClient.FromLocalPaths(useTags: false, slowMode: false, albumDir);
                 var app = new DownloadEngine(engineSettings, TestHelpers.CreateMockClientManager(client, engineSettings));
                 var albumActivityPhases = new List<JobActivityPhase>();
-                app.Events.JobActivityChanged += (job, phase, _) =>
+                app.Events.JobActivityChanged += change =>
                 {
-                    if (job is AlbumJob)
-                        albumActivityPhases.Add(phase);
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
+                        albumActivityPhases.Add(change.Phase);
                 };
                 app.Enqueue(new ExtractJob(settings.Extraction.Input, settings.Extraction.InputType), settings);
                 app.CompleteEnqueue();

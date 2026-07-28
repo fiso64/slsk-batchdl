@@ -651,7 +651,7 @@ internal sealed class DiscoveryCoordinator
                 : await CompleteFolder();
             rfJob.NewFilesFoundCount = count;
             rfJob.RetrievalOutcome = FolderRetrievalOutcome.Completed;
-            rfJob.SetDone();
+            JobOutcomeCommitter.Commit(rfJob, JobOutcome.Done());
             SockseekLog.Jobs.Debug($"[{rfJob.DisplayId}] RetrieveFolderJob: retrieved folder with {count} new file{(count == 1 ? "" : "s")}: {folder.FolderPath}");
             return rfJob;
         }
@@ -659,7 +659,7 @@ internal sealed class DiscoveryCoordinator
         {
             // Suppress upward exception so cancelling this retrieval job doesn't cancel its parent.
             rfJob.RetrievalOutcome = FolderRetrievalOutcome.Cancelled;
-            rfJob.SetCancelled(jobs.CancellationSourceFor(rfJob, parentJob.Cts!.Token));
+            JobOutcomeCommitter.Commit(rfJob, JobOutcome.Cancelled(jobs.CancellationSourceFor(rfJob, parentJob.Cts!.Token)));
             context.Events.RaiseJobStatus(rfJob, "cancelled");
             SockseekLog.Jobs.Info(rfJob, $"Cancelled folder retrieval for {folder.FolderPath}");
             return rfJob;

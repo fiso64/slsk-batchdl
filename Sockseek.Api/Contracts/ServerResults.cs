@@ -75,7 +75,9 @@ public sealed record SearchRawResultDto(
 public sealed record SearchResultSnapshotDto<T>(
     int Revision,
     bool IsComplete,
-    IReadOnlyList<T> Items);
+    IReadOnlyList<T> Items,
+    string? PersistenceState = null,
+    DateTimeOffset? ResultsPrunedAtUtc = null);
 
 /// <summary>
 /// Downloadable file candidate shown in track search results.

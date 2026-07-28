@@ -2,6 +2,13 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Sockseek.Core;
+using Sockseek.Core.Events;
+using Sockseek.Core.Jobs;
+using Sockseek.Core.Models;
+using Sockseek.Core.Services;
+using Sockseek.Core.Settings;
+using System.Reflection;
 
 namespace Tests;
 
@@ -34,7 +41,16 @@ public class ArchitectureTests
         "SetDone",
         "SetAlreadyExists",
         "SetSkipped",
+        "SetCancelled",
         "Fail",
+    ];
+
+    private static readonly HashSet<string> TerminalMutatorAllowedFiles =
+    [
+        Path.Combine("Sockseek.Core", "Jobs", "Job.cs"),
+        Path.Combine("Sockseek.Core", "Jobs", "SongJob.cs"),
+        Path.Combine("Sockseek.Core", "Jobs", "AlbumJob.cs"),
+        Path.Combine("Sockseek.Core", "Transfers", "Downloads", "JobOrchestration", "JobOutcomeCommitter.cs"),
     ];
 
     [TestMethod]
@@ -83,6 +99,27 @@ public class ArchitectureTests
                 {
                     Assert.Fail($"{FormatLocation(source, invocation)} should use JobOutcome.Cancelled(source) / SetCancelled(source) instead of source-less cancelled failure.");
                 }
+            }
+        }
+    }
+
+    [TestMethod]
+    public void TerminalStateMutatorTripwire_OnlyOutcomeCommitterAndJobTypesCallTerminalMutators()
+    {
+        foreach (var source in LoadCoreSources())
+        {
+            if (TerminalMutatorAllowedFiles.Contains(RelativePath(source.Path)))
+                continue;
+
+            foreach (var invocation in source.Root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
+                    continue;
+
+                var invocationName = memberAccess.Name.Identifier.ValueText;
+                Assert.IsFalse(
+                    LegacyTerminalMutators.Contains(invocationName),
+                    $"{FormatLocation(source, invocation)} should commit a JobOutcome instead of directly calling {invocationName}.");
             }
         }
     }
@@ -143,6 +180,123 @@ public class ArchitectureTests
             "Retired mixed registry types should not be reintroduced:\n" + string.Join("\n", declarations));
     }
 
+    [TestMethod]
+    public void DownloadEvents_PublicContracts_DoNotExposeMutableRuntimeTypes()
+    {
+        var events = typeof(DownloadEvents).GetEvents(BindingFlags.Instance | BindingFlags.Public);
+        Assert.IsTrue(events.Length > 0, "DownloadEvents should expose public event contracts.");
+
+        foreach (var eventInfo in events)
+        {
+            var invoke = eventInfo.EventHandlerType?.GetMethod("Invoke");
+            Assert.IsNotNull(invoke, $"{eventInfo.Name} should have an invokable delegate type.");
+
+            var parameters = invoke.GetParameters();
+            Assert.AreEqual(1, parameters.Length, $"{eventInfo.Name} should publish one immutable change record.");
+            Assert.IsTrue(
+                typeof(CoreChange).IsAssignableFrom(parameters[0].ParameterType),
+                $"{eventInfo.Name} should publish a CoreChange-derived immutable contract, not ad hoc runtime arguments.");
+        }
+
+        foreach (var eventInfo in typeof(SearchSession).GetEvents(BindingFlags.Instance | BindingFlags.Public))
+        {
+            var invoke = eventInfo.EventHandlerType?.GetMethod("Invoke");
+            Assert.IsNotNull(invoke, $"{eventInfo.Name} should have an invokable delegate type.");
+
+            foreach (var parameter in invoke.GetParameters())
+                AssertNoForbiddenPublicContractTypes(parameter.ParameterType, $"SearchSession.{eventInfo.Name}", []);
+        }
+
+        var contractTypes = typeof(CoreChange).Assembly
+            .GetTypes()
+            .Where(type => type.IsPublic
+                && type.Namespace is "Sockseek.Core.Events" or "Sockseek.Core.Snapshots")
+            .Append(typeof(SearchRawResult))
+            .ToList();
+
+        foreach (var contractType in contractTypes)
+            AssertNoForbiddenPublicContractTypes(contractType, contractType.Name, []);
+    }
+
+    private static void AssertNoForbiddenPublicContractTypes(Type type, string path, HashSet<Type> visited)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (IsSimpleContractType(type))
+            return;
+
+        if (type.IsArray)
+            Assert.Fail($"{path} exposes array type {type.FullName}; use immutable/read-only collection records.");
+
+        if (type.IsGenericType)
+        {
+            var definition = type.GetGenericTypeDefinition();
+            Assert.IsFalse(
+                definition == typeof(List<>)
+                || definition == typeof(Dictionary<,>)
+                || definition == typeof(IList<>)
+                || definition == typeof(ICollection<>),
+                $"{path} exposes mutable collection type {type.FullName}.");
+
+            foreach (var argument in type.GetGenericArguments())
+                AssertNoForbiddenPublicContractTypes(argument, $"{path}<{argument.Name}>", visited);
+
+            if (definition == typeof(IReadOnlyList<>)
+                || definition == typeof(IReadOnlyCollection<>)
+                || definition == typeof(IReadOnlyDictionary<,>))
+            {
+                return;
+            }
+        }
+
+        AssertForbiddenRuntimeTypeNotExposed(type, path);
+
+        if (type.Namespace == null || !type.Namespace.StartsWith("Sockseek.Core.", StringComparison.Ordinal))
+            return;
+
+        if (!visited.Add(type))
+            return;
+
+        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+            AssertNoForbiddenPublicContractTypes(property.PropertyType, $"{path}.{property.Name}", visited);
+    }
+
+    private static void AssertForbiddenRuntimeTypeNotExposed(Type type, string path)
+    {
+        var forbiddenTypes = new[]
+        {
+            typeof(Job),
+            typeof(SearchSession),
+            typeof(FileCandidate),
+            typeof(AlbumFolder),
+            typeof(AlbumFile),
+            typeof(SourceMutation),
+            typeof(DownloadSettings),
+            typeof(CancellationToken),
+            typeof(CancellationTokenSource),
+            typeof(Soulseek.SearchResponse),
+            typeof(Soulseek.File),
+            typeof(Soulseek.TransferStates),
+        };
+
+        foreach (var forbiddenType in forbiddenTypes)
+        {
+            Assert.IsFalse(
+                forbiddenType.IsAssignableFrom(type),
+                $"{path} exposes mutable/runtime type {type.FullName}; publish a Sockseek-owned immutable snapshot instead.");
+        }
+    }
+
+    private static bool IsSimpleContractType(Type type)
+        => type.IsPrimitive
+            || type.IsEnum
+            || type == typeof(string)
+            || type == typeof(Guid)
+            || type == typeof(DateTimeOffset)
+            || type == typeof(DateTime)
+            || type == typeof(TimeSpan)
+            || type == typeof(decimal);
+
     private static void AssertNoLegacyTerminalMutators(CoreSource source, MethodDeclarationSyntax method, string methodName)
     {
         foreach (var invocation in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -183,8 +337,11 @@ public class ArchitectureTests
     private static string FormatLocation(CoreSource source, SyntaxNode node)
     {
         var lineSpan = node.GetLocation().GetLineSpan();
-        return $"{Path.GetRelativePath(FindRepositoryRoot(), source.Path)}:{lineSpan.StartLinePosition.Line + 1}";
+        return $"{RelativePath(source.Path)}:{lineSpan.StartLinePosition.Line + 1}";
     }
+
+    private static string RelativePath(string path)
+        => Path.GetRelativePath(FindRepositoryRoot(), path);
 
     private static List<CoreSource> LoadCoreSources()
     {

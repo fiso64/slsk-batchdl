@@ -168,7 +168,7 @@ public class SockseekLogTests
         var events = new DownloadEvents();
         var job = new ExtractJob("spotify://playlist");
         var messages = new List<(int DisplayId, LogLevel Level, string? Source, string Message)>();
-        events.JobMessage += (eventJob, level, source, message) => messages.Add((eventJob.DisplayId, level, source, message));
+        events.JobMessage += change => messages.Add((change.Job.DisplayId, change.Level, change.Source, change.Message));
 
         var context = ExtractorContext.ForExtractJob(job, events, "Spotify");
 

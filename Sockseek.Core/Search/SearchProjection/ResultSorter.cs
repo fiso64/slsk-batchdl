@@ -75,7 +75,32 @@ public static partial class ResultSorter
 
         entries.Sort(SortEntryComparer.Instance);
 
-        return entries.Select(x => (x.Response, x.File));
+        return entries.Select(x => (x.Response!, x.File!));
+    }
+
+    public static IEnumerable<SearchProjectionInput> OrderedInputs(
+        IEnumerable<SearchProjectionInput> results,
+        SongQuery query,
+        SearchSettings search,
+        ConcurrentDictionary<string, int> userSuccessCounts,
+        bool useInfer = false,
+        bool albumMode = false,
+        bool ignoreStringSortConditions = false)
+    {
+        var resultList = results as IReadOnlyCollection<SearchProjectionInput> ?? results.ToArray();
+        var keyContext = new SortKeyContext(
+            resultList, query, search, userSuccessCounts,
+            useBracketCheck: !albumMode, useInfer: false, albumMode, ignoreStringSortConditions);
+        var entries = new List<SortEntry>(resultList.Count);
+        int index = 0;
+        foreach (var input in resultList)
+        {
+            var entry = CreateSortEntry(input, keyContext, index++);
+            if (entry.HasValue)
+                entries.Add(entry.Value);
+        }
+        entries.Sort(SortEntryComparer.Instance);
+        return entries.Select(entry => entry.Input);
     }
 
     internal static SortKeyContext CreateSortKeyContext(
@@ -99,14 +124,41 @@ public static partial class ResultSorter
             return null;
 
         return new SortEntry(
+            ToInput(response, file),
             response,
             file,
-            keyContext.CreateKey(response, file),
+            keyContext.CreateKey(ToInput(response, file)),
             originalIndex);
     }
 
+    internal static SortEntry? CreateSortEntry(
+        SearchProjectionInput input,
+        SortKeyContext keyContext,
+        int originalIndex)
+    {
+        if (keyContext.UserSuccessCounts.GetValueOrDefault(input.Username, 0) <= keyContext.Search.IgnoreOn)
+            return null;
+        return new SortEntry(input, null, null, keyContext.CreateKey(input), originalIndex);
+    }
+
+    internal static SortEntry? CreateSortEntry(
+        FileCandidate candidate,
+        SortKeyContext keyContext,
+        int originalIndex)
+        => CreateSortEntry(new SearchProjectionInput(
+            0, 0, candidate.Username, 0, candidate.Filename, candidate.Size,
+            candidate.BitRate, candidate.BitDepth, candidate.SampleRate, candidate.Length,
+            candidate.Extension, candidate.UploadSpeed, candidate.HasFreeUploadSlot,
+            candidate.Attributes, DateTimeOffset.UnixEpoch), keyContext, originalIndex);
+
+    private static SearchProjectionInput ToInput(SearchResponse response, Soulseek.File file)
+        => new(
+            0, 0, response.Username, response.Files.Count, file.Filename, file.Size,
+            file.BitRate, file.BitDepth, file.SampleRate, file.Length, file.Extension,
+            response.UploadSpeed, response.HasFreeUploadSlot, null, DateTimeOffset.UnixEpoch);
+
     private static Dictionary<(string Username, string Filename), InferredResultGroup> GetInferredQueries(
-        IEnumerable<(SearchResponse, Soulseek.File)> results,
+        IEnumerable<SearchProjectionInput> results,
         SongQuery query,
         SearchSettings search)
     {
@@ -115,15 +167,15 @@ public static partial class ResultSorter
         var inferredByFilename = new Dictionary<string, SongQuery>();
         var inferredQueries = new Dictionary<(string Username, string Filename), InferredResultGroup>();
 
-        foreach (var (response, file) in results)
+        foreach (var input in results)
         {
-            if (!inferredByFilename.TryGetValue(file.Filename, out var inferred))
+            if (!inferredByFilename.TryGetValue(input.Filename, out var inferred))
             {
-                inferred = Searcher.InferSongQuery(file.Filename, query);
-                inferredByFilename.Add(file.Filename, inferred);
+                inferred = Searcher.InferSongQuery(input.Filename, query);
+                inferredByFilename.Add(input.Filename, inferred);
             }
 
-            var key = new SongQuery(inferred) { Length = file.Length ?? -1 };
+            var key = new SongQuery(inferred) { Length = input.Length ?? -1 };
 
             if (!groups.TryGetValue(key, out var group))
             {
@@ -132,7 +184,7 @@ public static partial class ResultSorter
             }
 
             group.Count++;
-            inferredQueries[(response.Username, file.Filename)] = group;
+            inferredQueries[(input.Username, input.Filename)] = group;
         }
 
         return inferredQueries;
@@ -186,7 +238,7 @@ public static partial class ResultSorter
             SortableResults = resultList ?? results;
             infQueriesAndCounts = useInfer
                 ? new Lazy<Dictionary<(string Username, string Filename), InferredResultGroup>>(
-                    () => GetInferredQueries(resultList!, query, search))
+                    () => GetInferredQueries(resultList!.Select(pair => ToInput(pair.Item1, pair.Item2)), query, search))
                 : null;
             strictTitle = FileConditions.StrictStringPreprocess(query.Title);
             strictArtist = FileConditions.StrictStringPreprocess(query.Artist);
@@ -203,7 +255,43 @@ public static partial class ResultSorter
             queryTitleAllowsBrackets = query.Title.RemoveFt().Replace('[', '(').Contains('(');
         }
 
+        public SortKeyContext(
+            IEnumerable<SearchProjectionInput> results,
+            SongQuery query,
+            SearchSettings search,
+            ConcurrentDictionary<string, int> userSuccessCounts,
+            bool useBracketCheck,
+            bool useInfer,
+            bool albumMode,
+            bool ignoreStringSortConditions)
+        {
+            Query = query;
+            Search = search;
+            UserSuccessCounts = userSuccessCounts;
+            UseBracketCheck = useBracketCheck;
+            UseInfer = useInfer;
+            AlbumMode = albumMode;
+            this.ignoreStringSortConditions = ignoreStringSortConditions;
+            var resultList = useInfer ? results.ToList() : null;
+            InputResults = resultList ?? results;
+            SortableResults = [];
+            infQueriesAndCounts = useInfer
+                ? new Lazy<Dictionary<(string Username, string Filename), InferredResultGroup>>(
+                    () => GetInferredQueries(resultList!, query, search))
+                : null;
+            strictTitle = FileConditions.StrictStringPreprocess(query.Title);
+            strictArtist = FileConditions.StrictStringPreprocess(query.Artist);
+            strictAlbum = FileConditions.StrictStringPreprocess(query.Album);
+            fuzzyTitle = FileConditions.FuzzyPhrasePreprocess(query.Title);
+            fuzzyArtist = FileConditions.FuzzyPhrasePreprocess(query.Artist);
+            fuzzyAlbum = FileConditions.FuzzyPhrasePreprocess(query.Album);
+            necessaryCond = ignoreStringSortConditions ? WithoutStringConditions(search.NecessaryCond) : search.NecessaryCond;
+            preferredCond = ignoreStringSortConditions ? WithoutStringConditions(search.PreferredCond) : search.PreferredCond;
+            queryTitleAllowsBrackets = query.Title.RemoveFt().Replace('[', '(').Contains('(');
+        }
+
         public IEnumerable<(SearchResponse, Soulseek.File)> SortableResults { get; }
+        public IEnumerable<SearchProjectionInput> InputResults { get; } = [];
         public SongQuery Query { get; }
         public SearchSettings Search { get; }
         public ConcurrentDictionary<string, int> UserSuccessCounts { get; }
@@ -212,11 +300,14 @@ public static partial class ResultSorter
         public bool AlbumMode { get; }
 
         public SortKey CreateKey(SearchResponse response, Soulseek.File file)
+            => CreateKey(ToInput(response, file));
+
+        public SortKey CreateKey(SearchProjectionInput input)
         {
             (SongQuery Query, int Count)? inferred = null;
-            (SongQuery Query, int Count) getInferred() => inferred ??= InferredQuery(response, file);
+            (SongQuery Query, int Count) getInferred() => inferred ??= InferredQuery(input);
 
-            string filename = file.Filename;
+            string filename = input.Filename;
             string? strictFullFilename = null;
             string? strictFilenameNoExt = null;
             string? strictDirectoryName = null;
@@ -243,18 +334,18 @@ public static partial class ResultSorter
             bool fuzzyArtistMatch = ignoreStringSortConditions || !preferredCond.StrictArtist || fuzzyArtist.Length == 0 || strictArtistMatch
                 || FuzzyPhrasePrepared(getFuzzyFullFilename(), fuzzyArtist, boundarySkipWs: false);
 
-            bool lengthToleranceMatch = preferredCond.LengthToleranceSatisfies(file, Query.Length);
+            bool lengthToleranceMatch = preferredCond.LengthToleranceSatisfies(input.Length, Query.Length);
             bool formatMatch = preferredCond.FormatSatisfies(filename);
-            bool bitrateMatch = preferredCond.BitrateSatisfies(file);
-            bool sampleRateMatch = preferredCond.SampleRateSatisfies(file);
-            bool bitDepthMatch = preferredCond.BitDepthSatisfies(file);
-            bool preferredUserConditionsMet = preferredCond.UserSatisfies(response);
+            bool bitrateMatch = preferredCond.BitrateSatisfies(input.BitRate);
+            bool sampleRateMatch = preferredCond.SampleRateSatisfies(input.SampleRate);
+            bool bitDepthMatch = preferredCond.BitDepthSatisfies(input.BitDepth);
+            bool preferredUserConditionsMet = preferredCond.UsernameSatisfies(input.Username);
 
             return new SortKey(
-                UserSuccessCounts.GetValueOrDefault(response.Username, 0) > Search.DownrankOn,
-                ConditionSatisfactionPolicy.SearchFileSatisfies(necessaryCond, response, file, Query),
+                UserSuccessCounts.GetValueOrDefault(input.Username, 0) > Search.DownrankOn,
+                ConditionSatisfactionPolicy.SearchFileSatisfies(necessaryCond, input, Query),
                 preferredUserConditionsMet,
-                (file.Length != null && file.Length > 0) || Search.PreferredCond.AcceptNoLength,
+                (input.Length != null && input.Length > 0) || Search.PreferredCond.AcceptNoLength,
                 !UseBracketCheck || CheapBracketCheck(queryTitleAllowsBrackets, filename),
                 strictTitleMatch,
                 fuzzyTitleMatch,
@@ -276,15 +367,15 @@ public static partial class ResultSorter
                     && strictAlbumMatch
                     && preferredUserConditionsMet
                     && bitDepthMatch,
-                response.HasFreeUploadSlot,
-                response.UploadSpeed / 1024 / 650,
+                input.HasFreeUploadSlot ?? false,
+                (input.UploadSpeed ?? -1) / 1024 / 650,
                 ignoreStringSortConditions || AlbumMode || strictTitle.Length == 0 || StrictStringPrepared(getStrictFullFilename(), strictTitle),
                 ignoreStringSortConditions || !AlbumMode || strictAlbum.Length == 0 || StrictStringPrepared(getStrictDirectoryName(), strictAlbum),
                 ignoreStringSortConditions || strictArtist.Length == 0 || StrictStringPrepared(getStrictFullFilename(), strictArtist, boundarySkipWs: false),
                 UseInfer ? getInferred().Count : 0,
-                response.UploadSpeed / 1024 / 350,
-                (file.BitRate ?? 0) / 80,
-                StableTieBreaker(response.Username, filename));
+                (input.UploadSpeed ?? -1) / 1024 / 350,
+                (input.BitRate ?? 0) / 80,
+                StableTieBreaker(input.Username, filename));
         }
 
         private static FileConditions WithoutStringConditions(FileConditions conditions)
@@ -329,9 +420,9 @@ public static partial class ResultSorter
             return index <= 0 ? string.Empty : filename[..index];
         }
 
-        private (SongQuery, int) InferredQuery(SearchResponse response, Soulseek.File file)
+        private (SongQuery, int) InferredQuery(SearchProjectionInput input)
         {
-            var key = (response.Username, file.Filename);
+            var key = (input.Username, input.Filename);
             if (infQueriesAndCounts != null && infQueriesAndCounts.Value.TryGetValue(key, out var inferred))
                 return (inferred.Query, inferred.Count);
             return (emptyQuery, 0);
@@ -358,8 +449,9 @@ public static partial class ResultSorter
     }
 
     internal readonly record struct SortEntry(
-        SearchResponse Response,
-        Soulseek.File File,
+        SearchProjectionInput Input,
+        SearchResponse? Response,
+        Soulseek.File? File,
         SortKey Key,
         int OriginalIndex);
 
