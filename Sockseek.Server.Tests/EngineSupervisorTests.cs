@@ -541,7 +541,7 @@ public class EngineSupervisorTests
         try
         {
             var supervisor = CreateSupervisor(musicRoot, outputDir);
-            var updates = new ConcurrentBag<SearchUpdatedDto>();
+            var updates = new ConcurrentBag<SearchStateDto>();
             supervisor.StateStore.SearchUpdated += update => updates.Add(update);
 
             runTask = supervisor.RunAsync(cts.Token);

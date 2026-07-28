@@ -14,13 +14,7 @@ internal abstract record CliOutputEvent
 
     public sealed record RawLine(string Text) : CliOutputEvent;
 
-    public sealed record UpsertJobView(JobView Job) : CliOutputEvent;
-
-    public sealed record UpsertJobRecord(TerminalJobRecord Job) : CliOutputEvent;
-
-    public sealed record RemoveJob(string Id) : CliOutputEvent;
-
-    public sealed record StatusMessage(string? Message) : CliOutputEvent;
+    public sealed record ReplaceRenderState(TerminalRenderState State) : CliOutputEvent;
 
     public sealed record RateLimit(DateTimeOffset? ResetsAt) : CliOutputEvent;
 

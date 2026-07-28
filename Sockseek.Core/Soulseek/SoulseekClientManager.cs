@@ -35,6 +35,8 @@ public class SoulseekClientManager : IDisposable
     private CancellationTokenSource? _monitorCts;
     private Task? _monitorTask;
 
+    public event Action<SoulseekClientStates>? StateChanged;
+
     public ISoulseekClient? Client => _client;
 
     public SoulseekClientStates State => _client?.State ?? SoulseekClientStates.None;
@@ -82,7 +84,11 @@ public class SoulseekClientManager : IDisposable
     private void AttachClientEvents(ISoulseekClient client)
     {
         client.KickedFromServer += OnKickedFromServer;
+        client.StateChanged += OnStateChanged;
     }
+
+    private void OnStateChanged(object? sender, SoulseekClientStateChangedEventArgs e)
+        => StateChanged?.Invoke(State);
 
     private void OnKickedFromServer(object? sender, EventArgs e)
     {
@@ -386,7 +392,10 @@ public class SoulseekClientManager : IDisposable
     {
         _monitorCts?.Cancel();
         if (_client != null)
+        {
             _client.KickedFromServer -= OnKickedFromServer;
+            _client.StateChanged -= OnStateChanged;
+        }
         _client?.Dispose();
         _monitorCts?.Dispose();
         _initializationSemaphore.Dispose();

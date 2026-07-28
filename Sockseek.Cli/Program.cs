@@ -47,10 +47,24 @@ internal static partial class Program
     internal static async Task<CliExitCode> MainCore(string[] args)
     {
         using var output = CliOutputController.CreateDetached();
-        return await MainCore(args, output);
+        return await MainCore(args, output, CancellationToken.None);
     }
 
-    internal static async Task<CliExitCode> MainCore(string[] args, CliOutputController output)
+    internal static async Task<CliExitCode> MainCore(
+        string[] args,
+        CancellationToken cancellationToken)
+    {
+        using var output = CliOutputController.CreateDetached();
+        return await MainCore(args, output, cancellationToken);
+    }
+
+    internal static Task<CliExitCode> MainCore(string[] args, CliOutputController output)
+        => MainCore(args, output, CancellationToken.None);
+
+    internal static async Task<CliExitCode> MainCore(
+        string[] args,
+        CliOutputController output,
+        CancellationToken cancellationToken)
     {
         bool daemonMode = args.Length > 0 && string.Equals(args[0], "daemon", StringComparison.OrdinalIgnoreCase);
         var bindArgs = daemonMode ? args.Skip(1).ToArray() : args;
@@ -159,7 +173,37 @@ internal static partial class Program
 
         LogCliSessionStart(remoteSettings);
 
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        if (cliSettings.Monitor)
+        {
+            if (!remoteSettings.IsEnabled)
+            {
+                SockseekLog.Error("Monitor mode requires --remote <url>.");
+                return CliExitCode.UsageError;
+            }
+
+            try
+            {
+                return await RunRemoteMonitorAsync(
+                    bindArgs,
+                    engineSettings,
+                    rootSettings,
+                    cliSettings,
+                    remoteSettings,
+                    output,
+                    cts);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                return CliExitCode.Cancelled;
+            }
+            catch (Exception ex)
+            {
+                SockseekLog.Error($"Remote monitor failed: {SockseekLog.ExceptionSummary(ex)}");
+                return CliExitCode.WorkFailed;
+            }
+        }
 
         if (remoteSettings.IsEnabled)
         {
@@ -234,15 +278,14 @@ internal static partial class Program
         var eventLogger = new EventLogger(backend, includeDiagnosticDetails: engineSettings.LogLevel <= LogLevel.Debug);
         eventLogger.Attach();
 
-        backend.EventReceived += envelope =>
+        backend.ActivityReceived += activity =>
         {
-            if (envelope.Type == "track-batch.resolved"
-                && envelope.Payload is TrackBatchResolvedEventDto batch
+            if (activity.Payload is TrackBatchResolvedActivityDto batch
                 && batch.PrintOption == PrintOption.None
                 && ShouldPrintHumanBatchPreview(batch.PrintOption)
                 && cliReporter?.UsesLiveRendering != true)
             {
-                PrintTrackBatchResolved(batch);
+                PrintCompactTrackBatchResolved(activity, batch);
             }
         };
 
@@ -269,127 +312,18 @@ internal static partial class Program
             engine.CompleteEnqueue();
         }
 
-        ConsoleInputManager.Reporter = cliReporter;
-        ConsoleInputManager.OnCancelRequested = async () =>
-        {
-            lock (Printing.ConsoleLock)
+        using var consoleControls = StartConsoleControls(
+            backend,
+            cliReporter,
+            workflowId: null,
+            cancelPrompt: "Cancel job ID or all jobs? id/[A]ll/n: ",
+            cancelAllMessage: "Cancelling all jobs...",
+            cancelAll: _ =>
             {
-                Printing.WriteLine(force: true);
-                Printing.Write("Cancel job ID or all jobs? id/[A]ll/n: ", ConsoleColor.Yellow, force: true);
-            }
-
-            var result = ConsoleInputManager.ReadCancelPromptResult();
-
-            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
-                return;
-
-            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
-            {
-                SockseekLog.Info("Cancelling all jobs...");
-                Printing.WriteLine("Cancelling all jobs...", ConsoleColor.Gray, force: true);
                 engine.Cancel();
-                return;
-            }
-
-            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
-            {
-                if (await backend.CancelJobByDisplayIdAsync(id, ct: cts.Token))
-                {
-                    SockseekLog.Info($"Cancelling job [{id}]...");
-                }
-                else
-                {
-                    SockseekLog.Error($"Job ID [{id}] not found.");
-                }
-            }
-            else
-            {
-                SockseekLog.Error($"Invalid input '{result.Input}'.");
-            }
-        };
-
-        ConsoleInputManager.OnNextCandidateRequested = async () =>
-        {
-            lock (Printing.ConsoleLock)
-            {
-                Printing.WriteLine(force: true);
-                Printing.Write("Try next candidate for job ID or n: ", ConsoleColor.Yellow, force: true);
-            }
-
-            var result = ConsoleInputManager.ReadCancelPromptResult();
-
-            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
-                return;
-
-            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
-            {
-                if (await backend.TryNextCandidateByDisplayIdAsync(id, ct: cts.Token))
-                {
-                    SockseekLog.Info($"Trying next candidate for job [{id}]...");
-                }
-                else
-                {
-                    SockseekLog.Error($"Job ID [{id}] not found or has no active download.");
-                }
-            }
-            else
-            {
-                SockseekLog.Error($"Invalid input '{result.Input}'.");
-            }
-        };
-
-        ConsoleInputManager.OnInfoRequested = async () =>
-        {
-            lock (Printing.ConsoleLock)
-            {
-                Printing.WriteLine(force: true);
-                Printing.Write("Info for job ID (blank to cancel): ", ConsoleColor.Yellow, force: true);
-            }
-            var id = ConsoleInputManager.ReadJobIdInput();
-            if (id == null) return;
-
-            while (true)
-            {
-                int printStart = Console.IsOutputRedirected ? -1 : Console.CursorTop;
-
-                var detail = await backend.GetJobDetailByDisplayIdAsync(id.Value, ct: cts.Token);
-                if (detail == null)
-                    SockseekLog.Error($"Job ID [{id}] not found.");
-                else
-                    JobInfoPrinter.Print(detail);
-
-                lock (Printing.ConsoleLock)
-                    Printing.Write("Info for job ID (r to refresh, blank to exit): ", ConsoleColor.Yellow, force: true);
-
-                var result = ConsoleInputManager.ReadJobIdOrRefreshResult();
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.Refresh)
-                {
-                    if (printStart >= 0)
-                    {
-                        int pos = Console.CursorTop;
-                        while (pos > printStart && pos > 0)
-                        {
-                            Console.SetCursorPosition(0, pos - 1);
-                            Console.Write(new string(' ', Console.BufferWidth));
-                            Console.SetCursorPosition(0, pos - 1);
-                            pos--;
-                        }
-                        Console.SetCursorPosition(0, printStart);
-                    }
-                }
-                else if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId.HasValue)
-                {
-                    id = result.JobId.Value;
-                }
-                else
-                {
-                    return;
-                }
-            }
-        };
-
-        _ = Task.Run(() => ConsoleInputManager.RunLoopAsync(cts.Token), cts.Token);
+                return Task.CompletedTask;
+            },
+            cts);
 
         try
         {
@@ -492,15 +426,14 @@ internal static partial class Program
         var eventLogger = new EventLogger(backend, includeDiagnosticDetails: false);
         eventLogger.Attach();
 
-        backend.EventReceived += envelope =>
+        backend.ActivityReceived += activity =>
         {
-            if (envelope.Type == "track-batch.resolved"
-                && envelope.Payload is TrackBatchResolvedEventDto batch
+            if (activity.Payload is TrackBatchResolvedActivityDto batch
                 && batch.PrintOption == PrintOption.None
                 && ShouldPrintHumanBatchPreview(batch.PrintOption)
                 && cliReporter?.UsesLiveRendering != true)
             {
-                PrintTrackBatchResolved(batch);
+                PrintCompactTrackBatchResolved(activity, batch);
             }
         };
 
@@ -528,119 +461,17 @@ internal static partial class Program
                 submission = await backend.SubmitExtractJobAsync(request, cts.Token);
             }
 
-            ConsoleInputManager.Reporter = cliReporter;
-            ConsoleInputManager.OnCancelRequested = async () =>
-            {
-                lock (Printing.ConsoleLock)
+            using var consoleControls = StartConsoleControls(
+                backend,
+                cliReporter,
+                submission.WorkflowId,
+                cancelPrompt: "Cancel job ID or current workflow? id/[A]ll/n: ",
+                cancelAllMessage: "Cancelling workflow...",
+                cancelAll: async ct =>
                 {
-                    Printing.WriteLine(force: true);
-                    Printing.Write("Cancel job ID or current workflow? id/[A]ll/n: ", ConsoleColor.Yellow, force: true);
-                }
-
-                var result = ConsoleInputManager.ReadCancelPromptResult();
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
-                    return;
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
-                {
-                    SockseekLog.Info("Cancelling workflow...");
-                    Printing.WriteLine("Cancelling workflow...", ConsoleColor.Gray, force: true);
-                    await backend.CancelWorkflowAsync(submission.WorkflowId, cts.Token);
-                    return;
-                }
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
-                {
-                    if (await backend.CancelJobByDisplayIdAsync(id, submission.WorkflowId, cts.Token))
-                        SockseekLog.Info($"Cancelling job [{id}]...");
-                    else
-                        SockseekLog.Error($"Job ID [{id}] not found.");
-                }
-                else
-                {
-                    SockseekLog.Error($"Invalid input '{result.Input}'.");
-                }
-            };
-
-            ConsoleInputManager.OnNextCandidateRequested = async () =>
-            {
-                lock (Printing.ConsoleLock)
-                {
-                    Printing.WriteLine(force: true);
-                    Printing.Write("Try next candidate for job ID or n: ", ConsoleColor.Yellow, force: true);
-                }
-
-                var result = ConsoleInputManager.ReadCancelPromptResult();
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
-                    return;
-
-                if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId is int id)
-                {
-                    if (await backend.TryNextCandidateByDisplayIdAsync(id, submission.WorkflowId, cts.Token))
-                        SockseekLog.Info($"Trying next candidate for job [{id}]...");
-                    else
-                        SockseekLog.Error($"Job ID [{id}] not found or has no active download.");
-                }
-                else
-                {
-                    SockseekLog.Error($"Invalid input '{result.Input}'.");
-                }
-            };
-
-            ConsoleInputManager.OnInfoRequested = async () =>
-            {
-                lock (Printing.ConsoleLock)
-                {
-                    Printing.WriteLine(force: true);
-                    Printing.Write("Info for job ID (blank to cancel): ", ConsoleColor.Yellow, force: true);
-                }
-                var id = ConsoleInputManager.ReadJobIdInput();
-                if (id == null) return;
-
-                while (true)
-                {
-                    int printStart = Console.IsOutputRedirected ? -1 : Console.CursorTop;
-
-                    var detail = await backend.GetJobDetailByDisplayIdAsync(id.Value, submission.WorkflowId, cts.Token);
-                    if (detail == null)
-                        SockseekLog.Error($"Job ID [{id}] not found.");
-                    else
-                        JobInfoPrinter.Print(detail);
-
-                    lock (Printing.ConsoleLock)
-                        Printing.Write("Info for job ID (r to refresh, blank to exit): ", ConsoleColor.Yellow, force: true);
-
-                    var result = ConsoleInputManager.ReadJobIdOrRefreshResult();
-
-                    if (result.Action == ConsoleInputManager.CancelPromptAction.Refresh)
-                    {
-                        if (printStart >= 0)
-                        {
-                            int pos = Console.CursorTop;
-                            while (pos > printStart && pos > 0)
-                            {
-                                Console.SetCursorPosition(0, pos - 1);
-                                Console.Write(new string(' ', Console.BufferWidth));
-                                Console.SetCursorPosition(0, pos - 1);
-                                pos--;
-                            }
-                            Console.SetCursorPosition(0, printStart);
-                        }
-                    }
-                    else if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob && result.JobId.HasValue)
-                    {
-                        id = result.JobId.Value;
-                    }
-                    else
-                    {
-                        return;
-                    }
-                }
-            };
-
-            _ = Task.Run(() => ConsoleInputManager.RunLoopAsync(cts.Token), cts.Token);
+                    await backend.CancelWorkflowAsync(submission.WorkflowId, ct);
+                },
+                cts);
 
             if (interactiveCoordinator != null)
                 await interactiveCoordinator.RunUntilCompleteAsync(submission.WorkflowId, cts.Token);
@@ -690,16 +521,284 @@ internal static partial class Program
         }
     }
 
-    private static async Task WaitForRemoteWorkflowAsync(ICliBackend backend, Guid workflowId, CancellationToken ct)
+    private static async Task<CliExitCode> RunRemoteMonitorAsync(
+        string[] args,
+        EngineSettings engineSettings,
+        DownloadSettings rootSettings,
+        CliSettings cliSettings,
+        RemoteSettings remoteSettings,
+        CliOutputController output,
+        CancellationTokenSource cts)
     {
-        while (true)
+        await using var backend = new RemoteCliBackend(remoteSettings.ServerUrl!);
+        CliProgressReporter? reporter = null;
+        if (cliSettings.ProgressJson)
+            new JsonStreamProgressReporter(Console.Out).Attach(backend);
+        else
         {
-            ct.ThrowIfCancellationRequested();
-            var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-            if (workflow?.Summary.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
+            output.ConfigureLiveRendering(cliSettings, engineSettings.LogLevel);
+            reporter = new CliProgressReporter(cliSettings, output);
+            reporter.Attach(backend);
+        }
+
+        var eventLogger = new EventLogger(backend, includeDiagnosticDetails: false);
+        eventLogger.Attach();
+
+        ConsoleCancelEventHandler cancel = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cts.Cancel();
+        };
+        Console.CancelKeyPress += cancel;
+        try
+        {
+            await backend.SubscribeAllAsync(cts.Token);
+            using var consoleControls = StartConsoleControls(
+                backend,
+                reporter,
+                workflowId: null,
+                cancelPrompt: "Cancel job ID or all daemon jobs? id/[A]ll/n: ",
+                cancelAllMessage: "Cancelling all daemon jobs...",
+                cancelAll: async ct =>
+                {
+                    await backend.CancelAllJobsAsync(ct);
+                },
+                cts);
+
+            if (!string.IsNullOrWhiteSpace(rootSettings.Extraction.Input))
+            {
+                var options = BuildRemoteSubmissionOptions(args, cliSettings) with
+                {
+                    WorkflowId = Guid.NewGuid(),
+                };
+                await backend.SubmitExtractJobAsync(
+                    new SubmitExtractJobRequestDto(
+                        rootSettings.Extraction.Input,
+                        rootSettings.Extraction.InputType.ToString(),
+                        Options: options),
+                    cts.Token);
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
+            return CliExitCode.Success;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancel;
+            reporter?.Stop();
+        }
+    }
+
+    private static IDisposable StartConsoleControls(
+        ICliBackend backend,
+        CliProgressReporter? reporter,
+        Guid? workflowId,
+        string cancelPrompt,
+        string cancelAllMessage,
+        Func<CancellationToken, Task> cancelAll,
+        CancellationTokenSource cts)
+    {
+        ConsoleInputManager.Reporter = reporter;
+
+        Func<Task> cancelHandler = async () =>
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Printing.WriteLine(force: true);
+                Printing.Write(cancelPrompt, ConsoleColor.Yellow, force: true);
+            }
+
+            var result = ConsoleInputManager.ReadCancelPromptResult();
+            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
                 return;
 
-            await Task.Delay(200, ct);
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
+            {
+                SockseekLog.Info(cancelAllMessage);
+                Printing.WriteLine(cancelAllMessage, ConsoleColor.Gray, force: true);
+                await cancelAll(cts.Token);
+                return;
+            }
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob
+                && result.JobId is int id)
+            {
+                if (await backend.CancelJobByDisplayIdAsync(id, workflowId, cts.Token))
+                    SockseekLog.Info($"Cancelling job [{id}]...");
+                else
+                    SockseekLog.Error($"Job ID [{id}] not found.");
+                return;
+            }
+
+            SockseekLog.Error($"Invalid input '{result.Input}'.");
+        };
+
+        Func<Task> nextCandidateHandler = async () =>
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Printing.WriteLine(force: true);
+                Printing.Write(
+                    "Try next candidate for job ID or n: ",
+                    ConsoleColor.Yellow,
+                    force: true);
+            }
+
+            var result = ConsoleInputManager.ReadCancelPromptResult();
+            if (result.Action == ConsoleInputManager.CancelPromptAction.Abort)
+                return;
+
+            if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob
+                && result.JobId is int id)
+            {
+                if (await backend.TryNextCandidateByDisplayIdAsync(
+                    id,
+                    workflowId,
+                    cts.Token))
+                {
+                    SockseekLog.Info($"Trying next candidate for job [{id}]...");
+                }
+                else
+                {
+                    SockseekLog.Error(
+                        $"Job ID [{id}] not found or has no active download.");
+                }
+                return;
+            }
+
+            SockseekLog.Error($"Invalid input '{result.Input}'.");
+        };
+
+        Func<Task> infoHandler = async () =>
+        {
+            lock (Printing.ConsoleLock)
+            {
+                Printing.WriteLine(force: true);
+                Printing.Write(
+                    "Info for job ID (blank to cancel): ",
+                    ConsoleColor.Yellow,
+                    force: true);
+            }
+
+            var id = ConsoleInputManager.ReadJobIdInput();
+            if (id == null)
+                return;
+
+            while (true)
+            {
+                int printStart = Console.IsOutputRedirected ? -1 : Console.CursorTop;
+                var detail = await backend.GetJobDetailByDisplayIdAsync(
+                    id.Value,
+                    workflowId,
+                    cts.Token);
+                if (detail == null)
+                    SockseekLog.Error($"Job ID [{id}] not found.");
+                else
+                    JobInfoPrinter.Print(detail);
+
+                lock (Printing.ConsoleLock)
+                {
+                    Printing.Write(
+                        "Info for job ID (r to refresh, blank to exit): ",
+                        ConsoleColor.Yellow,
+                        force: true);
+                }
+
+                var result = ConsoleInputManager.ReadJobIdOrRefreshResult();
+                if (result.Action == ConsoleInputManager.CancelPromptAction.Refresh)
+                {
+                    ClearPrintedJobInfo(printStart);
+                }
+                else if (result.Action == ConsoleInputManager.CancelPromptAction.CancelJob
+                         && result.JobId.HasValue)
+                {
+                    id = result.JobId.Value;
+                }
+                else
+                {
+                    return;
+                }
+            }
+        };
+
+        ConsoleInputManager.OnCancelRequested = cancelHandler;
+        ConsoleInputManager.OnNextCandidateRequested = nextCandidateHandler;
+        ConsoleInputManager.OnInfoRequested = infoHandler;
+        _ = Task.Run(() => ConsoleInputManager.RunLoopAsync(cts.Token), cts.Token);
+
+        return new ConsoleControlRegistration(
+            reporter,
+            cancelHandler,
+            nextCandidateHandler,
+            infoHandler);
+    }
+
+    private static void ClearPrintedJobInfo(int printStart)
+    {
+        if (printStart < 0)
+            return;
+
+        int pos = Console.CursorTop;
+        while (pos > printStart && pos > 0)
+        {
+            Console.SetCursorPosition(0, pos - 1);
+            Console.Write(new string(' ', Console.BufferWidth));
+            Console.SetCursorPosition(0, pos - 1);
+            pos--;
+        }
+        Console.SetCursorPosition(0, printStart);
+    }
+
+    private sealed class ConsoleControlRegistration(
+        CliProgressReporter? reporter,
+        Func<Task> cancelHandler,
+        Func<Task> nextCandidateHandler,
+        Func<Task> infoHandler) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) != 0)
+                return;
+
+            if (ReferenceEquals(ConsoleInputManager.OnCancelRequested, cancelHandler))
+                ConsoleInputManager.OnCancelRequested = null;
+            if (ReferenceEquals(ConsoleInputManager.OnNextCandidateRequested, nextCandidateHandler))
+                ConsoleInputManager.OnNextCandidateRequested = null;
+            if (ReferenceEquals(ConsoleInputManager.OnInfoRequested, infoHandler))
+                ConsoleInputManager.OnInfoRequested = null;
+            if (ReferenceEquals(ConsoleInputManager.Reporter, reporter))
+                ConsoleInputManager.Reporter = null;
+        }
+    }
+
+    private static async Task WaitForRemoteWorkflowAsync(ICliBackend backend, Guid workflowId, CancellationToken ct)
+    {
+        if (backend.ClientStore.GetWorkflow(workflowId)?.State
+            is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
+        {
+            return;
+        }
+
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnStateUpdated(DaemonClientUpdate _)
+        {
+            if (backend.ClientStore.GetWorkflow(workflowId)?.State
+                is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
+            {
+                completed.TrySetResult();
+            }
+        }
+
+        backend.StateUpdated += OnStateUpdated;
+        try
+        {
+            OnStateUpdated(default!);
+            await completed.Task.WaitAsync(ct);
+        }
+        finally
+        {
+            backend.StateUpdated -= OnStateUpdated;
         }
     }
 
@@ -715,7 +814,7 @@ internal static partial class Program
         {
             this.backend = backend;
             this.workflowId = workflowId;
-            backend.WorkflowUpdated += OnWorkflowUpdated;
+            backend.StateUpdated += OnStateUpdated;
         }
 
         public async Task WaitForTerminalUpdateAsync(CancellationToken ct)
@@ -735,14 +834,16 @@ internal static partial class Program
         }
 
         public void Dispose()
-            => backend.WorkflowUpdated -= OnWorkflowUpdated;
+            => backend.StateUpdated -= OnStateUpdated;
 
-        private void OnWorkflowUpdated(WorkflowClientUpdate update)
+        private void OnStateUpdated(DaemonClientUpdate update)
         {
-            if (update.WorkflowId != workflowId || update.IsStale)
+            if (update.Status != DaemonClientApplyStatus.Applied)
                 return;
 
-            if (update.Workflow?.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
+            if (update.ChangedWorkflows.Any(workflow =>
+                    workflow.WorkflowId == workflowId
+                    && workflow.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
                 terminalUpdateSeen.TrySetResult();
         }
     }
@@ -808,87 +909,41 @@ internal static partial class Program
         return CliExitCode.Success;
     }
 
-    private static void PrintTrackBatchResolved(TrackBatchResolvedEventDto batch)
+    private static void PrintCompactTrackBatchResolved(
+        ActivityEventDto activity,
+        TrackBatchResolvedActivityDto batch)
     {
-        bool needsRows = (batch.PrintOption & (PrintOption.Results | PrintOption.Json | PrintOption.Link)) != 0;
-        if (needsRows)
-        {
-            Printing.PrintTracksTbd(
-                batch.Pending.Select(ToSongJob).ToList(),
-                batch.Existing.Select(ToSongJob).ToList(),
-                batch.NotFound.Select(ToSongJob).ToList(),
-                batch.IsNormal,
-                batch.PrintOption);
-            return;
-        }
-
         if (batch.IsNormal && batch.PendingCount == 1 && batch.ExistingCount + batch.NotFoundCount == 0)
             return;
 
-        if (batch.PendingCount > 0)
-        {
-            string notFoundLastTime = batch.NotFoundCount > 0 ? $"{batch.NotFoundCount} not found" : "";
-            string alreadyExist = batch.ExistingCount > 0 ? $"{batch.ExistingCount} already exist" : "";
-            notFoundLastTime = alreadyExist.Length > 0 && notFoundLastTime.Length > 0 ? ", " + notFoundLastTime : notFoundLastTime;
-            string skippedTracks = alreadyExist.Length + notFoundLastTime.Length > 0 ? $" ({alreadyExist}{notFoundLastTime})" : "";
-            bool allSkipped = batch.ExistingCount + batch.NotFoundCount > batch.PendingCount;
-            var message = $"Downloading {batch.PendingCount} tracks{skippedTracks}{(allSkipped ? '.' : ':')}";
-            if (batch.IsNormal)
-                SockseekLog.Info(message);
-            else
-                WriteBatchJobLog(batch.Summary, message);
-
-            var preview = batch.Pending.Select(ToSongJob).ToList();
-            if (preview.Count > 0)
+        string skipped = string.Join(
+            ", ",
+            new[]
             {
-                Printing.PrintTracks(preview, int.MaxValue, fullInfo: false);
-                if (batch.PendingCount > preview.Count)
-                    Printing.WriteLine($"  ... and {batch.PendingCount - preview.Count} more");
-            }
+                batch.ExistingCount > 0 ? $"{batch.ExistingCount} already exist" : null,
+                batch.NotFoundCount > 0 ? $"{batch.NotFoundCount} not found" : null,
+            }.Where(value => value != null));
+        string message = batch.PendingCount > 0
+            ? $"Downloading {batch.PendingCount} tracks{(skipped.Length > 0 ? $" ({skipped})" : "")}."
+            : $"No tracks pending{(skipped.Length > 0 ? $" ({skipped})" : "")}.";
+
+        if (batch.IsNormal || activity.JobId == null)
+        {
+            SockseekLog.Info(message);
+            return;
         }
 
-        // For aggregate batches print the skipped/not-found songs so the user can see what was skipped.
-        if (!batch.IsNormal)
-        {
-            if (batch.ExistingCount > 0)
-            {
-                WriteBatchJobLog(batch.Summary, $"{batch.ExistingCount} tracks already exist:");
-                Printing.PrintTracks([.. batch.Existing.Select(ToSongJob)], int.MaxValue, fullInfo: false);
-            }
-            if (batch.NotFoundCount > 0)
-            {
-                WriteBatchJobLog(batch.Summary, $"{batch.NotFoundCount} tracks were not found in a prior run:");
-                Printing.PrintTracks([.. batch.NotFound.Select(ToSongJob)], int.MaxValue, fullInfo: false);
-            }
-        }
-    }
-
-    private static void WriteBatchJobLog(JobSummaryDto summary, string message)
-    {
         var line = new TerminalLogLine(
             TerminalLogKind.Status,
-            summary.JobId.ToString(),
-            summary.DisplayId,
-            BatchJobTypeLabel(summary.Kind),
+            activity.JobId.Value.ToString(),
+            batch.DisplayId,
+            "Job List",
             message);
         SockseekLog.Write(new SockseekLog.StructuredLogEntry(
             LogLevel.Information,
             SockseekLog.Categories.Jobs,
             CliLogStyle.FormatTerminalLogText(line),
             Context: new CliOutputEvent.JobLog(line)));
-    }
-
-    private static string BatchJobTypeLabel(ServerJobKind kind)
-    {
-        if (kind == ServerJobKind.RetrieveFolder)
-            return "Retrieve Folder";
-        if (kind == ServerJobKind.JobList)
-            return "Job List";
-        if (kind == ServerJobKind.AlbumAggregate)
-            return "Album Aggregate";
-
-        string kindText = kind.ToWireString();
-        return $"{char.ToUpperInvariant(kindText[0])}{kindText[1..]}";
     }
 
     private static bool ShouldAttachHumanProgressReporter(PrintOption printOption)

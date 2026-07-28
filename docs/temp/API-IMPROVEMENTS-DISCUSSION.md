@@ -24,9 +24,9 @@ in parallel.
 
 ---
 
-## What exists today
+## Starting point before this work
 
-The current implementation already has useful pieces:
+The implementation at the start of this work already had useful pieces:
 
 - `EngineStateStore` projects mutable engine state into Sockseek-owned DTOs.
 - HTTP exposes job and workflow snapshots plus paginated durable history.
@@ -389,15 +389,20 @@ subscription may bypass SignalR transport, but it must feed the same snapshot
 and delta DTOs through the same client reducer.
 
 The CLI must expose this as a user-facing daemon monitor, not only as a backend
-method. The proposed shape is:
+method. Monitoring is an orthogonal option, not a command:
 
 ```text
-sockseek monitor --remote <url>
+sockseek --remote <url> --monitor
+sockseek <input> --remote <url> --monitor
 ```
 
-It starts no workflow, invokes `SubscribeAll`, hydrates the daemon snapshot, and
-renders daemon-wide activity until interrupted. Narrow command execution may
-continue using `SubscribeWorkflow`.
+`--monitor` invokes `SubscribeAll`, hydrates the daemon snapshot, and renders
+daemon-wide activity through the same existing live-render UI until interrupted.
+Input is optional in monitor mode. When an input is present, the CLI submits it
+after the daemon subscription handoff and its jobs appear alongside every other
+active daemon job; it must not add a workflow subscription to the same
+connection. Without `--monitor`, ordinary remote command execution continues to
+require an input, uses `SubscribeWorkflow`, and exits with that workflow.
 
 ---
 
@@ -496,14 +501,49 @@ Normal state handling should not depend on string event names.
 
 - route local monitoring through the same reducer;
 - add `SubscribeAll` parity tests;
-- add the user-facing `monitor --remote` daemon-wide CLI flow;
+- add the user-facing `--monitor` daemon-wide CLI option, with and without an
+  input;
 - update plain CLI formatting to consume compact activity;
 - delete obsolete DTOs, converters, catalog entries, and compatibility aliases;
 - regenerate OpenAPI;
 - update `docs/api.md` only where the implemented public contract needs
   explanation.
+- update the `README.md` command reference and examples for `--monitor`; the
+  broader README presentation redesign remains separate v4 work.
 
-Do not update `README.md` as part of this branch.
+Do not perform the broader README presentation reorganization as part of this
+branch.
+
+---
+
+# Implementation result
+
+The five-stage sequence above is implemented. The v3 envelope contracts and
+compatibility client store were removed rather than kept in parallel. The
+public v4 surface now consists of bounded daemon/workflow snapshots, typed
+ordered delta batches, compact best-effort activity, `DaemonClientStore`, and
+`SockseekLiveClient`.
+
+The CLI exposes daemon monitoring as `--monitor`, not as a subcommand. It can be
+used with no input, or combined with a normal input so the submitted workflow is
+rendered alongside all other active daemon work in the existing live UI. The
+same `c`, `t`, and `i` controls operate daemon-wide by display ID, and the
+cancel-all choice cancels active jobs without stopping the daemon. README
+command examples and generated help cover both forms.
+
+The live renderer is a replace-only projection of one coherent
+`DaemonClientStore.GetLiveStateView()` read. Current rows and active/queued
+counts therefore converge immediately after snapshot recovery instead of
+retaining a separate incremental ledger. Completed/failed counts include
+terminal jobs observed during the current CLI session, while jobs that merely
+disappear from a bounded recovery snapshot are not assigned an invented
+outcome. Album-child exclusion and hierarchy projection are computed from the
+whole state view, so arrival order cannot change the status bar.
+
+The evidence below is covered by reducer/coalescer/projection tests,
+local/remote parity tests, real SignalR reconnect tests, CLI flow tests,
+serialized traffic comparisons, JSON round trips, the checked-in live batch
+example, recovery-safe render projection tests, and regenerated OpenAPI.
 
 ---
 
@@ -511,72 +551,75 @@ Do not update `README.md` as part of this branch.
 
 ## Architecture
 
-- [ ] **ARCH-01** Correct client state is reconstructable without activity
+- [x] **ARCH-01** Correct client state is reconstructable without activity
   replay.
-- [ ] **ARCH-02** Snapshot capture and stream positions share a coherent ordering
+- [x] **ARCH-02** Snapshot capture and stream positions share a coherent ordering
   boundary.
-- [ ] **ARCH-03** Daemon and workflow streams have independent, documented
+- [x] **ARCH-03** Daemon and workflow streams have independent, documented
   positions.
-- [ ] **ARCH-04** Active transfer state is keyed by `TransferId`.
-- [ ] **ARCH-05** Persisted history is not loaded wholesale into a replication
+- [x] **ARCH-04** Active transfer state is keyed by `TransferId`.
+- [x] **ARCH-05** Persisted history is not loaded wholesale into a replication
   snapshot.
-- [ ] **ARCH-06** No mutable Core or Soulseek.NET object crosses the public API
+- [x] **ARCH-06** No mutable Core or Soulseek.NET object crosses the public API
   boundary.
-- [ ] **ARCH-07** SignalR is the normal live-update loop; HTTP snapshots are used
+- [x] **ARCH-07** SignalR is the normal live-update loop; HTTP snapshots are used
   only for hydration, recovery, explicit queries, and paginated history.
 
 ## Protocol
 
-- [ ] **PROTO-01** Snapshot DTOs contain every field needed to render current
+- [x] **PROTO-01** Snapshot DTOs contain every field needed to render current
   state.
-- [ ] **PROTO-02** Batches contain typed compact deltas and no nested
+- [x] **PROTO-02** Batches contain typed compact deltas and no nested
   `ServerEventEnvelopeDto`.
-- [ ] **PROTO-03** Nullable fields can be explicitly cleared without ambiguity.
-- [ ] **PROTO-04** New entities, component replacement, terminal state, and
+- [x] **PROTO-03** Nullable fields can be explicitly cleared without ambiguity.
+- [x] **PROTO-04** New entities, component replacement, terminal state, and
   removal are all representable.
-- [ ] **PROTO-05** Epoch changes, stale batches, overlapping batches, and real
+- [x] **PROTO-05** Epoch changes, stale batches, overlapping batches, and real
   gaps have deterministic behavior.
-- [ ] **PROTO-06** `SubscribeAll` and `SubscribeWorkflow` have non-overlapping
+- [x] **PROTO-06** `SubscribeAll` and `SubscribeWorkflow` have non-overlapping
   documented semantics.
-- [ ] **PROTO-07** The server exposes and enforces a live-protocol version.
+- [x] **PROTO-07** The server exposes and enforces a live-protocol version.
 
 ## Client
 
-- [ ] **CLIENT-01** One client reducer is used by local CLI, remote CLI, and
+- [x] **CLIENT-01** One client reducer is used by local CLI, remote CLI, and
   future GUI code.
-- [ ] **CLIENT-02** The store exposes daemon-wide workflow, job, transfer, and
+- [x] **CLIENT-02** The store exposes daemon-wide workflow, job, transfer, and
   search views.
-- [ ] **CLIENT-03** Grouped jobs have one documented meaning: jobs grouped by
+- [x] **CLIENT-03** Grouped jobs have one documented meaning: jobs grouped by
   workflow.
-- [ ] **CLIENT-04** Every retained workflow and job can be paged into the store
+- [x] **CLIENT-04** Every retained workflow and job can be paged into the store
   and displayed without requiring it in the startup snapshot.
-- [ ] **CLIENT-05** The CLI exposes a daemon-wide monitor that uses
-  `SubscribeAll`.
-- [ ] **CLIENT-06** A gapped scope is not rendered as current before recovery.
-- [ ] **CLIENT-07** Reconnect uses subscribe, snapshot, buffered-delta handoff,
+- [x] **CLIENT-05** The CLI exposes `--monitor`, uses `SubscribeAll`, permits
+  input to be omitted, and shows an optional submitted workflow alongside all
+  other active daemon work in the existing live renderer with the normal job
+  controls.
+- [x] **CLIENT-06** A gapped scope is not rendered as current before recovery.
+- [x] **CLIENT-07** Reconnect uses subscribe, snapshot, buffered-delta handoff,
   and then live delivery.
-- [ ] **CLIENT-08** Replacing live state preserves independently hydrated
+- [x] **CLIENT-08** Replacing live state preserves independently hydrated
   history.
-- [ ] **CLIENT-09** SignalR and recovery logic is reusable outside the CLI
+- [x] **CLIENT-09** SignalR and recovery logic is reusable outside the CLI
   project.
 
 ## Tests and evidence
 
-- [ ] **TEST-01** Applying a snapshot and every subsequent delta produces the
+- [x] **TEST-01** Applying a snapshot and every subsequent delta produces the
   same state as the server projection.
-- [ ] **TEST-02** Daemon-wide local and remote monitoring produce equivalent
+- [x] **TEST-02** Daemon-wide local and remote monitoring produce equivalent
   client-store state.
-- [ ] **TEST-03** Workflow-scoped local and remote monitoring remain equivalent.
-- [ ] **TEST-04** The user-facing CLI monitor hydrates daemon state and observes
-  jobs from multiple workflows without polling.
-- [ ] **TEST-05** Snapshot races, reconnects, sequence gaps, duplicate batches,
+- [x] **TEST-03** Workflow-scoped local and remote monitoring remain equivalent.
+- [x] **TEST-04** The user-facing `--monitor` flow hydrates daemon state and
+  observes jobs from multiple workflows without polling, both with no input and
+  while submitting an input.
+- [x] **TEST-05** Snapshot races, reconnects, sequence gaps, duplicate batches,
   stale batches, and epoch changes use deterministic synchronization tests.
-- [ ] **TEST-06** Coalescing cannot lose an entity add, terminal transition,
+- [x] **TEST-06** Coalescing cannot lose an entity add, terminal transition,
   relationship change, or final transfer progress.
-- [ ] **TEST-07** Activity loss does not affect reconstructed state.
-- [ ] **TEST-08** Event traffic profiling demonstrates a material reduction in
+- [x] **TEST-07** Activity loss does not affect reconstructed state.
+- [x] **TEST-08** Event traffic profiling demonstrates a material reduction in
   serialized bytes for large workflows and active transfers.
-- [ ] **TEST-09** OpenAPI, JSON round-trip tests, and checked-in examples match
+- [x] **TEST-09** OpenAPI, JSON round-trip tests, and checked-in examples match
   the final DTOs.
 
 ## Out of scope
@@ -586,7 +629,8 @@ Do not update `README.md` as part of this branch.
 - sharing, uploads, chat, and user browsing;
 - durable activity/event replay;
 - persistence schema redesign;
-- README presentation changes;
+- broad README presentation/reorganization beyond the required `--monitor`
+  command documentation;
 - a general-purpose event-sourcing or JSON-patch framework.
 
 The API-improvements branch is complete when a daemon-wide client can connect,

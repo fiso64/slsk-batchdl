@@ -114,7 +114,7 @@ public sealed class EngineSupervisor
     public ServerInfoDto GetInfo()
     {
         string version = typeof(EngineSupervisor).Assembly.GetName().Version?.ToString() ?? "dev";
-        return new ServerInfoDto(options.Name, version, StartedAtUtc);
+        return new ServerInfoDto(options.Name, version, StartedAtUtc, LiveProtocol.Version);
     }
 
     public ServerStatusDto GetStatus()
@@ -347,6 +347,15 @@ public sealed class EngineSupervisor
             engine = currentEngine;
 
         return engine?.CancelWorkflow(workflowId) ?? 0;
+    }
+
+    public int CancelAllJobs()
+    {
+        DownloadEngine? engine;
+        lock (engineGate)
+            engine = currentEngine;
+
+        return engine?.CancelAllJobs() ?? 0;
     }
 
     public bool TryNextCandidate(Guid jobId)
@@ -942,11 +951,14 @@ public sealed class EngineSupervisor
     private (DownloadEngine Engine, SoulseekClientManager ClientManager) CreateEngine()
     {
         var clientManager = new SoulseekClientManager(engineSettings, options.ClientFactory?.Invoke(engineSettings));
+        clientManager.StateChanged += state =>
+            StateStore.UpdateDaemonRuntime(ToSoulseekClientStatusDto(state), restartCount);
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
         lock (engineGate)
             currentEngine = engine;
+        StateStore.UpdateDaemonRuntime(ToSoulseekClientStatusDto(clientManager.State), restartCount);
         EngineCreated?.Invoke(engine);
         return (engine, clientManager);
     }

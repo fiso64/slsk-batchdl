@@ -171,7 +171,7 @@ public static partial class ConfigManager
 
         for (int pass = 0; pass < maxPasses; pass++)
         {
-            var before = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            var before = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson, cli.Monitor);
             var context = CreateProfileContext(cli);
 
             foreach (var profile in file.Profiles
@@ -182,7 +182,7 @@ public static partial class ConfigManager
                 profile.Cli.ApplyTo(cli);
             }
 
-            var after = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            var after = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson, cli.Monitor);
             if (after.Equals(before))
                 return;
         }
@@ -204,6 +204,7 @@ public static partial class ConfigManager
         context.Values["interactive"] = cli.InteractiveMode;
         context.Values["progress-json"] = cli.ProgressJson;
         context.Values["no-progress"] = cli.NoProgress;
+        context.Values["monitor"] = cli.Monitor;
         return context;
     }
 
@@ -568,6 +569,8 @@ public static partial class ConfigManager
                 Cli(c => c.NoProgress = !Bool()); break;
             case "--progress-json":
                 Cli(c => c.ProgressJson = Bool()); break;
+            case "--monitor":
+                Cli(c => c.Monitor = Bool()); break;
             case "--server-ip": case "--daemon-ip": case "--api-ip":
                 Daemon(d => d.ListenIp = value); break;
             case "--server-port": case "--daemon-port": case "--api-port":

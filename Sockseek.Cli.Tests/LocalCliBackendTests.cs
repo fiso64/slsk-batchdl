@@ -43,10 +43,8 @@ public class LocalCliBackendTests
             var clientManager = new SoulseekClientManager(engineSettings);
             var engine = new DownloadEngine(engineSettings, clientManager);
             var backend = new LocalCliBackend(engine, downloadSettings);
-            var seenEvents = new ConcurrentBag<ServerEventEnvelopeDto>();
-            var seenWorkflowUpdates = new ConcurrentBag<WorkflowClientUpdate>();
-            backend.EventReceived += envelope => seenEvents.Add(envelope);
-            backend.WorkflowUpdated += update => seenWorkflowUpdates.Add(update);
+            var seenUpdates = new ConcurrentBag<DaemonClientUpdate>();
+            backend.StateUpdated += update => seenUpdates.Add(update);
 
             var submitted = await backend.SubmitTrackSearchJobAsync(
                 new SubmitTrackSearchJobRequestDto(
@@ -64,11 +62,9 @@ public class LocalCliBackendTests
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
-            Assert.IsTrue(seenEvents.Any(e => e.Type == "job.upserted"));
-            Assert.IsTrue(seenEvents.Any(e => e.Type == "workflow.upserted"));
-            Assert.IsTrue(seenEvents.Any(e => e.Type == "search.updated"));
-            Assert.IsTrue(seenWorkflowUpdates.Any(update => update.JobUpserts.Any(job => job.JobId == submitted.JobId)));
-            Assert.IsTrue(seenWorkflowUpdates.Any(update => update.SearchUpdates.Any(search => search.JobId == submitted.JobId)));
+            Assert.IsTrue(seenUpdates.Any(update => update.ChangedJobs.Any(job => job.JobId == submitted.JobId)));
+            Assert.IsTrue(seenUpdates.Any(update => update.ChangedWorkflows.Any(workflow => workflow.WorkflowId == submitted.WorkflowId)));
+            Assert.IsTrue(seenUpdates.Any(update => update.State.Searches.Any(search => search.JobId == submitted.JobId)));
         }
         finally
         {
@@ -435,7 +431,7 @@ public class LocalCliBackendTests
     }
 
     [TestMethod]
-    public async Task LocalCliBackend_PublishesSharedProgressEvents_ForSongDownload()
+    public async Task LocalCliBackend_PublishesTypedStateAndCompactActivity_ForSongDownload()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-cli-backend-progress-" + Guid.NewGuid());
         string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-cli-backend-progress-out-" + Guid.NewGuid());
@@ -466,26 +462,10 @@ public class LocalCliBackendTests
             var clientManager = new SoulseekClientManager(engineSettings);
             var engine = new DownloadEngine(engineSettings, clientManager);
             var backend = new LocalCliBackend(engine, downloadSettings);
-            var seenTypes = new ConcurrentBag<string>();
-            var deliveryOrder = new List<string>();
-            object deliveryGate = new();
-            backend.EventReceived += envelope =>
-            {
-                seenTypes.Add(envelope.Type);
-                if (envelope.Type == "song.searching")
-                {
-                    lock (deliveryGate)
-                        deliveryOrder.Add("event");
-                }
-            };
-            backend.WorkflowUpdated += update =>
-            {
-                if (update.Activity.Any(envelope => envelope.Type == "song.searching"))
-                {
-                    lock (deliveryGate)
-                        deliveryOrder.Add("update");
-                }
-            };
+            var updates = new ConcurrentBag<DaemonClientUpdate>();
+            var activity = new ConcurrentBag<ActivityEventDto>();
+            backend.StateUpdated += update => updates.Add(update);
+            backend.ActivityReceived += item => activity.Add(item);
 
             await backend.SubmitSongJobAsync(
                 new SubmitSongJobRequestDto(
@@ -495,14 +475,13 @@ public class LocalCliBackendTests
             engine.CompleteEnqueue();
             await engine.RunAsync(cts.Token);
 
-            Assert.IsTrue(seenTypes.Contains("job.upserted"));
-            Assert.IsTrue(seenTypes.Contains("song.searching"));
-            Assert.IsTrue(seenTypes.Contains("download.started"));
-            Assert.IsTrue(seenTypes.Contains("download.state-changed"));
-            Assert.IsTrue(seenTypes.Contains("song.state-changed"));
-            Assert.IsTrue(deliveryOrder.Count >= 2);
-            Assert.AreEqual("event", deliveryOrder[0]);
-            Assert.AreEqual("update", deliveryOrder[1]);
+            Assert.IsTrue(updates.Any(update => update.ChangedJobs.Any()));
+            Assert.IsTrue(updates.Any(update => update.ChangedTransfers.Any()));
+            Assert.IsTrue(updates
+                .SelectMany(update => update.ChangedJobs)
+                .Any(job => job.Kind == ServerJobKind.Song
+                    && job.LifecycleState == ServerJobLifecycleState.Terminal));
+            Assert.IsFalse(activity.Any(item => item.Type is "download.started" or "download.state-changed" or "song.state-changed"));
         }
         finally
         {

@@ -15,6 +15,35 @@ namespace Tests.Server;
 public class EngineStateStoreTests
 {
     [TestMethod]
+    public void SnapshotAndEverySubsequentDelta_MatchCurrentServerProjection()
+    {
+        var server = new EngineStateStore();
+        var client = new DaemonClientStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var scope = StateStreamScopeDto.Workflow(song.WorkflowId);
+        client.ApplySnapshot(server.GetWorkflowSnapshot(song.WorkflowId));
+        server.StateBatchPublished += batch =>
+        {
+            if (batch.Scope == scope)
+                Assert.AreEqual(DaemonClientApplyStatus.Applied, client.Apply(batch).Status);
+        };
+
+        Register(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        song.UpdateActivity(JobActivityPhase.Downloading);
+        UpdateState(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        DownloadStateChanged(server, song, TransferStates.InProgress);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        song.SetDone("C:/music/track.mp3");
+        UpdateState(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+    }
+
+    [TestMethod]
     public void SongPayload_IncludesSnapshotProgress()
     {
         var store = new EngineStateStore();
@@ -504,4 +533,27 @@ public class EngineStateStoreTests
             or ServerJobTerminalOutcome.PartialSuccess
             || (job.TerminalOutcome == ServerJobTerminalOutcome.Skipped
                 && job.SkipReason != ServerJobSkipReason.AlreadyExists);
+
+    private static void AssertClientMatchesProjection(
+        EngineStateStore server,
+        DaemonClientStore client,
+        Guid workflowId)
+    {
+        var expected = server.GetWorkflowSnapshot(workflowId);
+        Assert.AreEqual(expected.Position, client.GetPosition(expected.Scope));
+        CollectionAssert.AreEqual(
+            expected.Workflows.Select(row => row.Summary).ToArray(),
+            client.GetWorkflows().Where(row => row.WorkflowId == workflowId).ToArray());
+        CollectionAssert.AreEqual(
+            expected.Jobs.Select(row => row.ToSummary()).OrderBy(row => row.JobId).ToArray(),
+            client.GetWorkflowJobs(workflowId).OrderBy(row => row.JobId).ToArray());
+        CollectionAssert.AreEqual(
+            expected.Transfers.OrderBy(row => row.TransferId).ToArray(),
+            client.GetTransfers()
+                .Where(row => row.Identity.WorkflowId == workflowId)
+                .OrderBy(row => row.TransferId)
+                .ToArray());
+        foreach (var search in expected.Searches)
+            Assert.AreEqual(search, client.GetSearchState(search.JobId));
+    }
 }

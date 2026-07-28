@@ -63,12 +63,23 @@ public class OpenApiContractTests
             StringAssert.Contains(json, nameof(AlbumJobPayloadDto));
             StringAssert.Contains(json, nameof(FileCandidateDto));
             StringAssert.Contains(json, nameof(WorkflowTreeDto));
+            StringAssert.Contains(json, nameof(StateSnapshotDto));
             StringAssert.Contains(json, nameof(ApiErrorDto));
             StringAssert.Contains(json, "lifecycleState");
             StringAssert.Contains(json, "activityPhase");
             StringAssert.Contains(json, "terminalOutcome");
             StringAssert.Contains(json, "discriminator");
             StringAssert.Contains(json, "kind");
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/daemon/snapshot", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/workflows/{workflowId}/snapshot", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/jobs/cancel-all", out _));
+            Assert.IsFalse(json.Contains("ServerEventEnvelopeDto", StringComparison.Ordinal));
 
             var jobListParameterNames = document.RootElement
                 .GetProperty("paths")
@@ -138,6 +149,123 @@ public class OpenApiContractTests
             "Missing SockseekApiJsonContext metadata for:" + "\n" + string.Join("\n", missing));
     }
 
+    [TestMethod]
+    public void LiveBatch_JsonRoundTrip_PreservesTypedDeltaAndPolymorphicActivity()
+    {
+        var workflowId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        var epoch = Guid.NewGuid();
+        var summary = new JobSummaryDto(
+            jobId,
+            4,
+            workflowId,
+            ServerJobKind.Search,
+            ServerJobLifecycleState.Running,
+            ServerJobActivityPhase.Searching,
+            null,
+            ServerJobTerminalOutcome.None,
+            ServerJobSkipReason.None,
+            "item",
+            "query",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            [],
+            []);
+        var batch = new StateUpdateBatchDto(
+            StateStreamScopeDto.Workflow(workflowId),
+            epoch,
+            7,
+            8,
+            DateTimeOffset.UtcNow,
+            StateDeltaDto.Empty with
+            {
+                Jobs =
+                [
+                    new JobDeltaDto(
+                        jobId,
+                        1,
+                        Added: JobStateDto.FromSummary(summary, 1)),
+                ],
+            },
+            [
+                new ActivityEventDto(
+                    8,
+                    DateTimeOffset.UtcNow,
+                    "job.message",
+                    workflowId,
+                    jobId,
+                    null,
+                    new JobMessageActivityDto(4, "Information", "test", "hello")),
+            ]);
+        var options = SockseekApiJson.CreateSerializerOptions();
+
+        string json = JsonSerializer.Serialize(batch, options);
+        var roundTripped = JsonSerializer.Deserialize<StateUpdateBatchDto>(json, options);
+
+        Assert.IsNotNull(roundTripped);
+        Assert.AreEqual(batch.Scope, roundTripped.Scope);
+        Assert.AreEqual(epoch, roundTripped.Epoch);
+        Assert.AreEqual(jobId, roundTripped.State.Jobs.Single().Added?.JobId);
+        Assert.IsInstanceOfType<JobMessageActivityDto>(roundTripped.Activity.Single().Payload, out var message);
+        Assert.AreEqual("hello", message.Message);
+        StringAssert.Contains(json, "\"kind\":\"jobMessage\"");
+    }
+
+    [TestMethod]
+    public void CheckedInLiveBatchExample_MatchesFinalJsonContract()
+    {
+        string examplePath = FindRepositoryFile(
+            "docs",
+            "examples",
+            "live-state-update.json");
+        string json = File.ReadAllText(examplePath);
+        var batch = JsonSerializer.Deserialize<StateUpdateBatchDto>(
+            json,
+            SockseekApiJson.CreateSerializerOptions());
+
+        Assert.IsNotNull(batch);
+        batch.Scope.Validate();
+        Assert.AreEqual(StateStreamScopeKind.Workflow, batch.Scope.Kind);
+        Assert.AreEqual(41L, batch.PreviousSequence);
+        Assert.AreEqual(42L, batch.Sequence);
+        Assert.IsTrue(batch.State.IsEmpty);
+        Assert.IsInstanceOfType<WorkflowMessageActivityDto>(
+            batch.Activity.Single().Payload,
+            out var message);
+        Assert.AreEqual("monitor attached", message.Message);
+    }
+
+    [TestMethod]
+    public async Task ServerInfo_AdvertisesEnforcedLiveProtocolVersion()
+    {
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings(),
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        await app.StartAsync();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(url) };
+            var info = await new SockseekApiClient(http).GetServerInfoAsync();
+
+            Assert.AreEqual(LiveProtocol.Version, info.LiveProtocolVersion);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     private static bool HasApiJsonTypeInfo(Type type)
     {
         try
@@ -148,6 +276,25 @@ public class OpenApiContractTests
         {
             return false;
         }
+    }
+
+    private static string FindRepositoryFile(params string[] relativeSegments)
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            if (!File.Exists(Path.Combine(directory.FullName, "Sockseek.sln")))
+                continue;
+
+            return Path.Combine(
+                new[] { directory.FullName }
+                    .Concat(relativeSegments)
+                    .ToArray());
+        }
+
+        throw new FileNotFoundException(
+            "Could not locate the Sockseek repository from the test output directory.");
     }
 
     private static int GetFreeTcpPort()

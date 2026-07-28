@@ -1,9 +1,5 @@
 using System.Text.Json;
-using System.Collections.Concurrent;
-using Microsoft.AspNetCore.SignalR.Client;
-using Microsoft.Extensions.DependencyInjection;
 using Sockseek.Api;
-using Sockseek.Core;
 
 namespace Sockseek.Cli;
 
@@ -11,14 +7,13 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
 {
     private readonly HttpClient http;
     private readonly SockseekApiClient api;
-    private readonly HubConnection connection;
-    private readonly JsonSerializerOptions jsonOptions;
-    private readonly WorkflowClientStore workflowStore = new();
-    private readonly ConcurrentDictionary<Guid, byte> subscribedWorkflows = [];
-    private volatile bool subscribedAll;
+    private readonly SockseekLiveClient live;
 
-    public event Action<ServerEventEnvelopeDto>? EventReceived;
-    public event Action<WorkflowClientUpdate>? WorkflowUpdated;
+    public event Action<DaemonClientUpdate>? StateUpdated;
+    public event Action<ActivityEventDto>? ActivityReceived;
+    public event Action<StateSnapshotDto>? LiveSnapshotApplied;
+
+    public DaemonClientStore ClientStore => live.Store;
 
     internal static JsonSerializerOptions CreateJsonOptions()
         => SockseekApiJson.CreateSerializerOptions();
@@ -27,43 +22,23 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     {
         var baseUri = SockseekApiClient.NormalizeServerUrl(serverUrl);
         http = new HttpClient { BaseAddress = baseUri };
-        jsonOptions = CreateJsonOptions();
+        var jsonOptions = CreateJsonOptions();
         api = new SockseekApiClient(http, jsonOptions);
-
-        connection = new HubConnectionBuilder()
-            .WithUrl(new Uri(baseUri, "api/events"))
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true;
-                options.PayloadSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
-                SockseekApiJson.ConfigureSerializerOptions(options.PayloadSerializerOptions);
-            })
-            .WithAutomaticReconnect()
-            .Build();
-
-        connection.On<ServerEventEnvelopeDto>("serverEvent", envelope =>
-        {
-            EventReceived?.Invoke(RehydrateEnvelope(envelope));
-        });
-        connection.On<WorkflowUpdateBatchDto>("workflowUpdateBatch", batch =>
-        {
-            var update = workflowStore.Apply(RehydrateBatch(batch));
-            foreach (var envelope in update.Events)
-                EventReceived?.Invoke(envelope);
-            WorkflowUpdated?.Invoke(update);
-
-            if (update.SequenceGapDetected)
-                _ = HydrateWorkflowSnapshotAsync(update.WorkflowId);
-        });
-        connection.Reconnected += async _ => await ResubscribeAsync();
+        live = new SockseekLiveClient(http, ownsHttp: false, jsonOptions);
+        live.Updated += HandleStateUpdate;
+        live.ActivityReceived += HandleActivity;
+        live.SnapshotApplied += snapshot => LiveSnapshotApplied?.Invoke(snapshot);
     }
 
     public Task StartAsync(CancellationToken ct = default)
-        => connection.StartAsync(ct);
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
 
     public async ValueTask DisposeAsync()
     {
-        await connection.DisposeAsync();
+        await live.DisposeAsync();
         http.Dispose();
     }
 
@@ -108,32 +83,22 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         var workflowId = options?.WorkflowId ?? Guid.NewGuid();
         var scopedOptions = (options ?? new SubmissionOptionsDto()) with { WorkflowId = workflowId };
 
-        await SubscribeWorkflowAsync(workflowId, ct);
+        if (live.Mode != LiveSubscriptionMode.Daemon)
+            await SubscribeWorkflowAsync(workflowId, ct);
         var summary = await submit(scopedOptions);
-        if (summary.WorkflowId != workflowId)
+        if (live.Mode != LiveSubscriptionMode.Daemon && summary.WorkflowId != workflowId)
             await SubscribeWorkflowAsync(summary.WorkflowId, ct);
         return summary;
     }
 
     private async Task SubscribeWorkflowCoreAsync(Guid workflowId, CancellationToken ct = default)
     {
-        await connection.InvokeAsync("SubscribeWorkflow", workflowId, ct);
-        subscribedWorkflows[workflowId] = 0;
+        await live.StartWorkflowAsync(workflowId, ct);
     }
 
     private async Task SubscribeAllCoreAsync(CancellationToken ct = default)
     {
-        await connection.InvokeAsync("SubscribeAll", ct);
-        subscribedAll = true;
-    }
-
-    private async Task ResubscribeAsync()
-    {
-        if (subscribedAll)
-            await connection.InvokeAsync("SubscribeAll");
-
-        foreach (var workflowId in subscribedWorkflows.Keys)
-            await connection.InvokeAsync("SubscribeWorkflow", workflowId);
+        await live.StartDaemonAsync(ct);
     }
 
     public Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)
@@ -147,29 +112,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
 
     public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
     {
-        var workflow = await api.GetWorkflowAsync(workflowId, ct);
-        if (workflow != null)
-            workflowStore.ApplySnapshot(workflow);
-        return workflow;
-    }
-
-    private async Task HydrateWorkflowSnapshotAsync(Guid workflowId)
-    {
-        try
-        {
-            var workflow = await api.GetWorkflowAsync(workflowId, includeAll: true);
-            if (workflow == null)
-                return;
-
-            var update = workflowStore.ApplySnapshot(workflow, replaceKnownWorkflowJobs: true);
-            foreach (var envelope in update.Events)
-                EventReceived?.Invoke(envelope);
-            WorkflowUpdated?.Invoke(update);
-        }
-        catch (Exception ex)
-        {
-            SockseekLog.Debug($"Failed to hydrate workflow snapshot after event sequence gap: {ex.Message}");
-        }
+        return await api.GetWorkflowAsync(workflowId, ct);
     }
 
     public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
@@ -220,6 +163,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
         => api.CancelJobByDisplayIdAsync(displayId, workflowId, ct);
 
+    public Task<int> CancelAllJobsAsync(CancellationToken ct = default)
+        => api.CancelAllJobsAsync(ct);
+
     public Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)
         => api.CancelWorkflowAsync(workflowId, ct);
 
@@ -229,9 +175,9 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public Task<bool> TryNextCandidateByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
         => api.TryNextCandidateByDisplayIdAsync(displayId, workflowId, ct);
 
-    private ServerEventEnvelopeDto RehydrateEnvelope(ServerEventEnvelopeDto envelope)
-        => ServerEventPayloadConverter.RehydrateEnvelope(envelope, jsonOptions);
+    private void HandleStateUpdate(DaemonClientUpdate update)
+        => StateUpdated?.Invoke(update);
 
-    private WorkflowUpdateBatchDto RehydrateBatch(WorkflowUpdateBatchDto batch)
-        => ServerEventPayloadConverter.RehydrateBatch(batch, jsonOptions);
+    private void HandleActivity(ActivityEventDto activity)
+        => ActivityReceived?.Invoke(activity);
 }

@@ -174,6 +174,27 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         return cancelled;
     }
 
+    /// <summary>
+    /// Cancels every currently cancellable job without stopping the engine runtime.
+    /// Daemon callers use this instead of <see cref="Cancel"/> so the engine remains
+    /// available for later submissions.
+    /// </summary>
+    public int CancelAllJobs()
+    {
+        int cancelled = 0;
+        foreach (var job in _jobs.Jobs)
+        {
+            var cts = job.Cts;
+            if (job.IsTerminal || cts == null || cts.IsCancellationRequested)
+                continue;
+
+            job.Cancel(JobCancellationSource.UserRequestedAllJobs);
+            cancelled++;
+        }
+
+        return cancelled;
+    }
+
     public bool CancelJob(Guid jobId)
         => CancelCommandTarget(_commandTargets.Resolve(jobId), JobCancellationSource.UserRequestedJob);
 
