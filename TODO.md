@@ -15,13 +15,16 @@
 
 - Implement soulseek client features (Look how slskd does it for a start):
     - Sharing / Uploads
-    - Chats (private, public)
-    - User browsing
+    - Chats (private DMs & public chatrooms, notification API)
+    - User browsing (user description, profile picture, shares)
 
 - Create a webui
     - All the usual functions of a soulseek client
 
-- User+password webui authentication.
+- Secure API authentication, user+pass webui login.
+
+- Rethink README presentation when daemon mode becomes the primary feature, reorganize.
+    - Acknowledgements section: Soulseek.NET, architecture inspiration from slskd
 
 - Test performance again for song and album searches (CPU and allocations, include the raw search collection phase + projection) on big queries (e.g. `love`)
 
