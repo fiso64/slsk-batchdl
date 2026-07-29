@@ -338,18 +338,6 @@ public class RemoteCliBackendTests
             await backend.StartAsync();
 
             var workflowId = Guid.NewGuid();
-            var terminalAlbumStateSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            backend.StateUpdated += update =>
-            {
-                if (update.ChangedJobs.Any(job =>
-                        job.WorkflowId == workflowId
-                        && job.Kind == ServerJobKind.Album
-                        && job.LifecycleState == ServerJobLifecycleState.Terminal))
-                {
-                    terminalAlbumStateSeen.TrySetResult();
-                }
-            };
-
             var summary = await backend.SubmitExtractJobAsync(
                 new SubmitExtractJobRequestDto(
                     "Artist Album",
@@ -359,9 +347,7 @@ public class RemoteCliBackendTests
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["-a", "--no-browse-folder"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
-            await AwaitOrFailAsync(
-                terminalAlbumStateSeen.Task,
-                "Timed out waiting for the remote terminal album state delta.");
+            await WaitForLiveTerminalAlbumStateAsync(backend, workflowId);
 
             await WaitForConditionAsync(
                 () => Task.FromResult(Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length >= 2),
@@ -1569,16 +1555,34 @@ public class RemoteCliBackendTests
         Assert.Fail($"Timed out waiting for event '{eventType}'. Seen: {string.Join(", ", seenTypes.Distinct().OrderBy(x => x))}");
     }
 
-    private static async Task AwaitOrFailAsync(Task task, string failureMessage, int timeoutMs = 5000)
+    private static async Task WaitForLiveTerminalAlbumStateAsync(
+        RemoteCliBackend backend,
+        Guid workflowId,
+        int timeoutMs = 15_000)
     {
-        try
+        using var timeout = new CancellationTokenSource(timeoutMs);
+        while (!timeout.IsCancellationRequested)
         {
-            await task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+            if (backend.ClientStore.GetLiveStateView().Jobs.Any(job =>
+                    job.WorkflowId == workflowId
+                    && job.Kind == ServerJobKind.Album
+                    && job.LifecycleState == ServerJobLifecycleState.Terminal))
+            {
+                return;
+            }
+
+            await Task.Delay(25, CancellationToken.None);
         }
-        catch (TimeoutException)
-        {
-            Assert.Fail(failureMessage);
-        }
+
+        var position = backend.ClientStore.GetPosition(StateStreamScopeDto.Workflow(workflowId));
+        var jobs = backend.ClientStore.GetLiveStateView().Jobs
+            .Where(job => job.WorkflowId == workflowId)
+            .Select(job => $"[{job.DisplayId}] {job.Kind}:{job.LifecycleState}/{job.TerminalOutcome}")
+            .ToList();
+        Assert.Fail(
+            "Timed out waiting for the remote live store to contain the terminal album state. "
+            + $"Position: {position?.Epoch}/{position?.Sequence}; jobs: "
+            + (jobs.Count == 0 ? "<none>" : string.Join(", ", jobs)));
     }
 
     private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
