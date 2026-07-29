@@ -44,6 +44,65 @@ public class EngineStateStoreTests
     }
 
     [TestMethod]
+    public async Task ConcurrentCompletions_PublishWorkflowBatchesInSequence()
+    {
+        var server = new EngineStateStore();
+        var client = new DaemonClientStore();
+        var first = new SongJob(new SongQuery { Artist = "Artist", Title = "First" });
+        var second = new SongJob(new SongQuery { Artist = "Artist", Title = "Second" })
+        {
+            WorkflowId = first.WorkflowId,
+        };
+        Register(server, first);
+        Register(server, second);
+
+        var scope = StateStreamScopeDto.Workflow(first.WorkflowId);
+        client.ApplySnapshot(server.GetWorkflowSnapshot(first.WorkflowId));
+        var statuses = new List<DaemonClientApplyStatus>();
+        server.StateBatchPublished += batch =>
+        {
+            if (batch.Scope != scope)
+                return;
+
+            lock (statuses)
+                statuses.Add(client.Apply(batch).Status);
+        };
+
+        using var firstUpsertEntered = new ManualResetEventSlim();
+        using var releaseFirstUpsert = new ManualResetEventSlim();
+        server.JobUpserted += summary =>
+        {
+            if (summary.JobId != first.Id)
+                return;
+
+            firstUpsertEntered.Set();
+            releaseFirstUpsert.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        var firstCompletion = Task.Run(() => ExecutionCompleted(server, first));
+        var secondCompletion = Task.CompletedTask;
+        try
+        {
+            Assert.IsTrue(firstUpsertEntered.Wait(TimeSpan.FromSeconds(5)));
+            secondCompletion = Task.Run(() => ExecutionCompleted(server, second));
+            await secondCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseFirstUpsert.Set();
+            await Task.WhenAll(firstCompletion, secondCompletion).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        lock (statuses)
+        {
+            CollectionAssert.AreEqual(
+                new[] { DaemonClientApplyStatus.Applied, DaemonClientApplyStatus.Applied },
+                statuses.ToArray());
+        }
+        AssertClientMatchesProjection(server, client, first.WorkflowId);
+    }
+
+    [TestMethod]
     public void SongPayload_IncludesSnapshotProgress()
     {
         var store = new EngineStateStore();

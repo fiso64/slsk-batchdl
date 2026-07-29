@@ -10,6 +10,12 @@ namespace Sockseek.Server;
 public sealed class EngineStateStore
 {
     private readonly Lock gate = new();
+    // Sequence allocation is protected by gate, while event callbacks run outside it.
+    // Buffer per scope so concurrent handlers cannot publish a later sequence first.
+    private readonly Lock stateBatchPublicationGate = new();
+    private readonly Dictionary<StateStreamScopeDto, Dictionary<long, StateUpdateBatchDto>> pendingStateBatches = [];
+    private readonly Dictionary<StateStreamScopeDto, long> publishedStateBatchSequences = [];
+    private bool publishingStateBatches;
     // Keep records and workflow aggregate indexes in sync only through UpdateJobRecord.
     private readonly Dictionary<Guid, JobSnapshot> jobs = [];
     private readonly Dictionary<Guid, JobRecord> records = [];
@@ -1036,8 +1042,84 @@ public sealed class EngineStateStore
 
     private void PublishStateBatches(IReadOnlyList<StateUpdateBatchDto> batches)
     {
-        foreach (var batch in batches)
-            StateBatchPublished?.Invoke(batch);
+        if (batches.Count == 0)
+            return;
+
+        lock (stateBatchPublicationGate)
+        {
+            foreach (var batch in batches)
+            {
+                long publishedSequence = publishedStateBatchSequences.GetValueOrDefault(batch.Scope);
+                if (batch.Sequence <= publishedSequence)
+                    continue;
+
+                if (!pendingStateBatches.TryGetValue(batch.Scope, out var pending))
+                {
+                    pending = [];
+                    pendingStateBatches[batch.Scope] = pending;
+                }
+
+                pending[batch.Sequence] = batch;
+            }
+
+            if (publishingStateBatches)
+                return;
+
+            publishingStateBatches = true;
+        }
+
+        try
+        {
+            while (true)
+            {
+                StateUpdateBatchDto? batch;
+                lock (stateBatchPublicationGate)
+                {
+                    batch = DequeueNextStateBatch();
+                    if (batch == null)
+                    {
+                        publishingStateBatches = false;
+                        return;
+                    }
+                }
+
+                StateBatchPublished?.Invoke(batch);
+            }
+        }
+        catch
+        {
+            lock (stateBatchPublicationGate)
+                publishingStateBatches = false;
+            throw;
+        }
+    }
+
+    private StateUpdateBatchDto? DequeueNextStateBatch()
+    {
+        StateStreamScopeDto? readyScope = null;
+        StateUpdateBatchDto? readyBatch = null;
+
+        foreach (var (scope, pending) in pendingStateBatches)
+        {
+            long nextSequence = publishedStateBatchSequences.GetValueOrDefault(scope) + 1;
+            if (!pending.TryGetValue(nextSequence, out var batch))
+                continue;
+
+            readyScope = scope;
+            readyBatch = batch;
+            break;
+        }
+
+        if (readyScope == null || readyBatch == null)
+            return null;
+
+        var readyPending = pendingStateBatches[readyScope];
+        readyPending.Remove(readyBatch.Sequence);
+        if (readyPending.Count == 0)
+            pendingStateBatches.Remove(readyScope);
+
+        publishedStateBatchSequences[readyScope] = readyBatch.Sequence;
+        return readyBatch;
     }
 
     private Guid JobWorkflowId(JobDeltaDto delta)
