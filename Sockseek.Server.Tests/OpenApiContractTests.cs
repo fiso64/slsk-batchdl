@@ -201,6 +201,14 @@ public class OpenApiContractTests
                     jobId,
                     null,
                     new JobMessageActivityDto(4, "Information", "test", "hello")),
+                new ActivityEventDto(
+                    9,
+                    DateTimeOffset.UtcNow,
+                    "workflow.message",
+                    workflowId,
+                    null,
+                    null,
+                    new WorkflowMessageActivityDto("Information", "test", "monitor attached")),
             ]);
         var options = SockseekApiJson.CreateSerializerOptions();
 
@@ -211,33 +219,14 @@ public class OpenApiContractTests
         Assert.AreEqual(batch.Scope, roundTripped.Scope);
         Assert.AreEqual(epoch, roundTripped.Epoch);
         Assert.AreEqual(jobId, roundTripped.State.Jobs.Single().Added?.JobId);
-        Assert.IsInstanceOfType<JobMessageActivityDto>(roundTripped.Activity.Single().Payload, out var message);
-        Assert.AreEqual("hello", message.Message);
-        StringAssert.Contains(json, "\"kind\":\"jobMessage\"");
-    }
-
-    [TestMethod]
-    public void CheckedInLiveBatchExample_MatchesFinalJsonContract()
-    {
-        string examplePath = FindRepositoryFile(
-            "docs",
-            "examples",
-            "live-state-update.json");
-        string json = File.ReadAllText(examplePath);
-        var batch = JsonSerializer.Deserialize<StateUpdateBatchDto>(
-            json,
-            SockseekApiJson.CreateSerializerOptions());
-
-        Assert.IsNotNull(batch);
-        batch.Scope.Validate();
-        Assert.AreEqual(StateStreamScopeKind.Workflow, batch.Scope.Kind);
-        Assert.AreEqual(41L, batch.PreviousSequence);
-        Assert.AreEqual(42L, batch.Sequence);
-        Assert.IsTrue(batch.State.IsEmpty);
+        Assert.IsInstanceOfType<JobMessageActivityDto>(roundTripped.Activity[0].Payload, out var jobMessage);
+        Assert.AreEqual("hello", jobMessage.Message);
         Assert.IsInstanceOfType<WorkflowMessageActivityDto>(
-            batch.Activity.Single().Payload,
-            out var message);
-        Assert.AreEqual("monitor attached", message.Message);
+            roundTripped.Activity[1].Payload,
+            out var workflowMessage);
+        Assert.AreEqual("monitor attached", workflowMessage.Message);
+        StringAssert.Contains(json, "\"kind\":\"jobMessage\"");
+        StringAssert.Contains(json, "\"kind\":\"workflowMessage\"");
     }
 
     [TestMethod]
@@ -276,25 +265,6 @@ public class OpenApiContractTests
         {
             return false;
         }
-    }
-
-    private static string FindRepositoryFile(params string[] relativeSegments)
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
-             directory != null;
-             directory = directory.Parent)
-        {
-            if (!File.Exists(Path.Combine(directory.FullName, "Sockseek.sln")))
-                continue;
-
-            return Path.Combine(
-                new[] { directory.FullName }
-                    .Concat(relativeSegments)
-                    .ToArray());
-        }
-
-        throw new FileNotFoundException(
-            "Could not locate the Sockseek repository from the test output directory.");
     }
 
     private static int GetFreeTcpPort()

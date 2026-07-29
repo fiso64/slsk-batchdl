@@ -8,36 +8,11 @@ for ordered live-state deltas and compact activity.
 
 ## .NET clients
 
-.NET consumers should use `Sockseek.Api.SockseekApiClient` for stateless HTTP
-queries and `Sockseek.Api.SockseekLiveClient` for live monitoring. The live
-client performs the subscribe/snapshot/buffered-delta handoff, detects stream
-gaps and epoch changes, recovers through HTTP snapshots, and exposes its current
-state through `DaemonClientStore`.
-
-Live protocol version 4 has two non-overlapping subscription modes:
-
-- `SubscribeAll` produces one daemon-wide stream and hydrates from
-  `GET /api/daemon/snapshot`.
-- `SubscribeWorkflow(workflowId)` produces independently positioned workflow
-  streams and hydrates from `GET /api/workflows/{workflowId}/snapshot`.
-
-A connection cannot mix daemon and workflow subscriptions. Each stream uses an
-epoch and sequence position. State must be rendered from `StateSnapshotDto`
-plus `StateUpdateBatchDto.State`; `ActivityEventDto` is best-effort and is not
-required to reconstruct correct current state. SignalR is the normal update
-loop. HTTP snapshots are used for initial hydration and recovery, while retained
-history remains available through paginated HTTP endpoints.
-
-Renderers that need several entity types should use
-`DaemonClientStore.GetLiveStateView()`. It returns workflows, jobs, searches,
-transfers, and daemon state from one store lock, and deliberately excludes
-independently hydrated history. Replacing the rendered current-state model from
-that view keeps rows and status counts correct after snapshot recovery.
-
-The checked-in
-[`live-state-update.json`](examples/live-state-update.json) document shows the
-wire shape of a compact workflow update batch. Server contract tests deserialize
-this example with the same source-generated JSON metadata used by clients.
+.NET consumers should use `Sockseek.Api.SockseekApiClient` for HTTP queries and
+`Sockseek.Api.SockseekLiveClient` for live monitoring. The live client supports
+either daemon-wide or workflow-scoped subscriptions per connection, handles
+snapshot hydration and recovery, and exposes current state through
+`DaemonClientStore`.
 
 ## OpenAPI
 
