@@ -8,6 +8,7 @@ using System.Text.Json;
 namespace Tests.Cli;
 
 [TestClass]
+[DoNotParallelize]
 public class CliExitCodeTests
 {
     [TestMethod]

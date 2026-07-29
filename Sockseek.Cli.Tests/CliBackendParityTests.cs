@@ -90,12 +90,6 @@ public class CliBackendParityTests
         CollectionAssert.AreEqual(projections[0], projections[1]);
     }
 
-    [TestInitialize]
-    public void Initialize()
-    {
-        SockseekLog.RemoveNonFileOutputs();
-    }
-
     [TestCleanup]
     public void Cleanup()
     {

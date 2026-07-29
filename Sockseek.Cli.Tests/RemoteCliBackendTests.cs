@@ -13,12 +13,6 @@ namespace Tests.Cli;
 [TestClass]
 public class RemoteCliBackendTests
 {
-    [TestInitialize]
-    public void Initialize()
-    {
-        SockseekLog.RemoveNonFileOutputs();
-    }
-
     [TestCleanup]
     public void Cleanup()
     {
@@ -305,6 +299,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsDelta()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-album-test-" + Guid.NewGuid());
@@ -728,6 +723,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintCompleteCountsCancelledAlbumAsUserFacingFailure()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-cancel-music-" + Guid.NewGuid());
@@ -909,6 +905,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintResults_RendersCompletedSearchPayloadWithoutDownloading()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-test-" + Guid.NewGuid());
@@ -987,6 +984,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintJobs_RendersInputJobsFromWorkflowSnapshot()
     {
         string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-" + Guid.NewGuid() + ".txt");
@@ -1167,6 +1165,7 @@ public class RemoteCliBackendTests
 
         var options = new ServerOptions
         {
+            ShutdownTimeout = TimeSpan.FromMilliseconds(100),
             Engine = new EngineSettings
             {
                 MockFilesDir = musicRoot,
@@ -1185,7 +1184,6 @@ public class RemoteCliBackendTests
             var firstPosition = monitor.ClientStore.GetPosition(StateStreamScopeDto.Daemon);
             Assert.IsNotNull(firstPosition);
 
-            await firstApp.StopAsync();
             await firstApp.DisposeAsync();
 
             await using var secondApp = ServerHost.Build([], options, url);
@@ -1226,6 +1224,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task Program_MonitorWithoutInput_StaysAttachedUntilCancelled()
     {
         int port = GetFreeTcpPort();
@@ -1240,11 +1239,20 @@ public class RemoteCliBackendTests
         await app.StartAsync();
         try
         {
-            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(750));
-            var exit = await Sockseek.Cli.Program.MainCore(
+            using var cancellation = new CancellationTokenSource();
+            var monitorTask = Sockseek.Cli.Program.MainCore(
                 ["--no-config", "--remote", url, "--monitor", "--no-progress"],
                 cancellation.Token);
 
+            await WaitForConditionAsync(
+                () => Task.FromResult(ConsoleInputManager.OnCancelRequested != null),
+                "Monitor mode did not finish attaching.");
+            Assert.IsFalse(
+                monitorTask.IsCompleted,
+                "Monitor mode must remain attached when no input is supplied.");
+
+            await cancellation.CancelAsync();
+            var exit = await monitorTask;
             Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.Cancelled, exit);
         }
         finally
@@ -1393,6 +1401,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task Program_MonitorWithInput_SubmitsWorkAndRemainsAttached()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-monitor-input-" + Guid.NewGuid());

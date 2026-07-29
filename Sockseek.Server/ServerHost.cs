@@ -38,6 +38,15 @@ public static class ServerHost
                 builder.Services.PostConfigure<ServerOptions>(configured => configured.Persistence.Enabled = true);
         }
 
+        builder.Services.AddOptions<HostOptions>()
+            .Configure<IOptions<ServerOptions>>((host, server) =>
+            {
+                if (server.Value.ShutdownTimeout <= TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(ServerOptions.ShutdownTimeout));
+                host.ShutdownTimeout = server.Value.ShutdownTimeout;
+            });
+
         builder.Services.Configure<JsonOptions>(jsonOptions =>
         {
             jsonOptions.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
