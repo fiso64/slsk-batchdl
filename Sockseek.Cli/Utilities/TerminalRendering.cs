@@ -1001,6 +1001,25 @@ internal sealed class TerminalLiveRenderer : IDisposable
             ? $" ({rawResultCount.Value})"
             : "";
 
+    internal static string JobProgressAnnotation(JobView job)
+    {
+        if (IsAlbumKind(job.Kind)
+            && job.TotalChildren is int albumTotal
+            && albumTotal > 0)
+            return $" [{job.DoneChildren ?? 0}/{albumTotal}]";
+
+        if (job.Percent is int percent
+            && string.Equals(job.State, "downloading", StringComparison.OrdinalIgnoreCase))
+        {
+            var speed = job.SpeedBytesPerSecond is long bytesPerSecond
+                ? $", {FormatSpeed(bytesPerSecond)}"
+                : "";
+            return $" ({percent,2}%{speed})";
+        }
+
+        return SearchingResultAnnotation(job.State, job.DiscoveryRawResultCount);
+    }
+
     private static IReadOnlyList<LiveCell> JobLeftCells(JobView job, IReadOnlyList<JobChildView> visibleChildren, int hiddenChildren, out TerminalFileMetadata? outMetadata)
     {
         bool isAlbum = IsAlbumKind(job.Kind);
@@ -1013,24 +1032,16 @@ internal sealed class TerminalLiveRenderer : IDisposable
         };
 
         Style? stateStyle;
-        string annotation;
+        string annotation = JobProgressAnnotation(job);
         string displayName = job.Name;
         List<LiveCell>? extraDisplayCells = null;
 
-        if (isAlbum && job.TotalChildren is int albumTotal)
+        if (isAlbum && job.TotalChildren is > 0)
         {
-            annotation = $" [{job.DoneChildren ?? 0}/{albumTotal}]";
             stateStyle = null;
-        }
-        else if (job.Percent is int pct && string.Equals(job.State, "downloading", StringComparison.OrdinalIgnoreCase))
-        {
-            var speedStr = job.SpeedBytesPerSecond is long spd ? $", {FormatSpeed(spd)}" : "";
-            annotation = $" ({pct,2}%{speedStr})";
-            stateStyle = StateStyle(job.State);
         }
         else
         {
-            annotation = SearchingResultAnnotation(job.State, job.DiscoveryRawResultCount);
             stateStyle = StateStyle(job.State);
         }
 

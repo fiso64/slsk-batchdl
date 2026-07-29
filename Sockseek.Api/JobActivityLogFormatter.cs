@@ -96,7 +96,7 @@ public sealed class JobActivityLogFormatter
                 message,
                 level,
                 displayKind,
-                highlight: level >= LogLevel.Error ? status : null);
+                highlight: status);
         }
     }
 

@@ -22,7 +22,33 @@ public class JobActivityLogFormatterTests
         Assert.IsNotNull(first);
         StringAssert.Contains(first.Message, "succeeded");
         Assert.AreEqual(ActivityLogDisplayKind.Succeeded, first.Display?.Kind);
+        Assert.AreEqual("succeeded", first.Display?.Highlight);
         Assert.IsNull(duplicate);
+    }
+
+    [DataTestMethod]
+    [DataRow(ServerJobTerminalOutcome.Succeeded, ServerJobSkipReason.None)]
+    [DataRow(ServerJobTerminalOutcome.Skipped, ServerJobSkipReason.None)]
+    [DataRow(ServerJobTerminalOutcome.Skipped, ServerJobSkipReason.AlreadyExists)]
+    [DataRow(ServerJobTerminalOutcome.Skipped, ServerJobSkipReason.NotFoundLastTime)]
+    [DataRow(ServerJobTerminalOutcome.Cancelled, ServerJobSkipReason.None)]
+    [DataRow(ServerJobTerminalOutcome.PartialSuccess, ServerJobSkipReason.None)]
+    [DataRow(ServerJobTerminalOutcome.Failed, ServerJobSkipReason.None)]
+    public void TerminalState_HighlightsOnlyStatusPrefix(
+        ServerJobTerminalOutcome outcome,
+        ServerJobSkipReason skipReason)
+    {
+        var entry = new JobActivityLogFormatter().Format(Summary(
+            ServerJobLifecycleState.Terminal,
+            outcome,
+            skipReason: skipReason));
+
+        Assert.IsNotNull(entry?.Display);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(entry.Display.Highlight));
+        StringAssert.StartsWith(
+            entry.Display.Message,
+            $"{entry.Display.Highlight}: ");
+        Assert.IsTrue(entry.Display.Message.Length > entry.Display.Highlight.Length + 2);
     }
 
     [TestMethod]
@@ -147,7 +173,8 @@ public class JobActivityLogFormatterTests
         Guid? jobId = null,
         Guid? workflowId = null,
         ServerJobKind kind = ServerJobKind.Search,
-        Guid? parentJobId = null)
+        Guid? parentJobId = null,
+        ServerJobSkipReason skipReason = ServerJobSkipReason.None)
         => new(
             jobId ?? Guid.NewGuid(),
             7,
@@ -159,7 +186,7 @@ public class JobActivityLogFormatterTests
                 : ServerJobActivityPhase.None,
             null,
             outcome,
-            ServerJobSkipReason.None,
+            skipReason,
             "item",
             "Artist - Title",
             outcome == ServerJobTerminalOutcome.Failed

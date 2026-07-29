@@ -18,6 +18,17 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void TerminalLogMarkup_ColorsStatusWithoutColoringJobDetail()
+    {
+        var markup = CliLogStyle.FormatMainLogContentMarkup(
+            "succeeded: artist - song",
+            TerminalLogKind.JobSucceeded,
+            "succeeded");
+
+        Assert.AreEqual("[green]succeeded[/]: artist - song", markup);
+    }
+
+    [TestMethod]
     public void JobStatusPresenter_UsesSplitTerminalState()
     {
         var status = CliJobStatusPresenter.ForSplit(
@@ -126,6 +137,39 @@ public class CliProgressReporterTests
             new TerminalJobCounts(Active: 1, Queued: 0, Completed: 0, Failed: 0)));
         Assert.IsFalse(TerminalLiveRenderer.IsIdle(
             new TerminalJobCounts(Active: 0, Queued: 1, Completed: 0, Failed: 0)));
+    }
+
+    [TestMethod]
+    public void AlbumSearchProgress_DoesNotTreatZeroChildrenAsChildProgress()
+    {
+        var searching = new JobView(
+            Guid.NewGuid().ToString(),
+            1,
+            "Album",
+            "Artist - Album",
+            "searching",
+            DoneChildren: 0,
+            TotalChildren: 0,
+            DiscoveryRawResultCount: 42);
+
+        Assert.AreEqual(
+            " (42)",
+            TerminalLiveRenderer.JobProgressAnnotation(searching));
+        Assert.AreEqual(
+            "",
+            TerminalLiveRenderer.JobProgressAnnotation(searching with
+            {
+                State = "waiting search",
+                DiscoveryRawResultCount = null,
+            }));
+        Assert.AreEqual(
+            " [1/2]",
+            TerminalLiveRenderer.JobProgressAnnotation(searching with
+            {
+                State = "downloading tracks",
+                DoneChildren = 1,
+                TotalChildren = 2,
+            }));
     }
 
     [TestMethod]
