@@ -16,7 +16,7 @@ public class CoreLoggerBridgeTests
     }
 
     [TestMethod]
-    public void Configure_RoutesDaemonLogsToTimestampedStdout()
+    public void Configure_DefaultInformationLevel_RoutesDebugDaemonLogsToTimestampedStdout()
     {
         var originalOut = Console.Out;
         using var output = new StringWriter();
@@ -24,9 +24,9 @@ public class CoreLoggerBridgeTests
         try
         {
             Console.SetOut(output);
-            CoreLoggerBridge.Configure(null!, LogLevel.Information);
+            CoreLoggerBridge.Configure(LogLevel.Information);
 
-            SockseekLog.Info("daemon is ready", categoryName: SockseekLog.Categories.Daemon);
+            SockseekLog.Debug("download started", categoryName: SockseekLog.Categories.Daemon);
         }
         finally
         {
@@ -34,7 +34,19 @@ public class CoreLoggerBridgeTests
         }
 
         var line = output.ToString().Trim();
-        StringAssert.Contains(line, "[info] [daemon] daemon is ready");
+        StringAssert.Contains(line, "[debug] [daemon] download started");
         StringAssert.Matches(line, new System.Text.RegularExpressions.Regex(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "));
+    }
+
+    [TestMethod]
+    public async Task ServerHostBuild_DoesNotReplaceProcessLogRouting()
+    {
+        var messages = new List<string>();
+        SockseekLog.AddSink((_, message) => messages.Add(message), LogLevel.Debug);
+
+        await using var app = ServerHost.Build([], new ServerOptions());
+        SockseekLog.Debug("existing sink remains active");
+
+        Assert.IsTrue(messages.Any(message => message.Contains("existing sink remains active")));
     }
 }

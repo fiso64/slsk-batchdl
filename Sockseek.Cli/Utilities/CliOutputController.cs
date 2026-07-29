@@ -23,6 +23,8 @@ internal sealed class CliOutputController : IDisposable
 
     public bool UsesLiveRendering => _live != null;
 
+    public bool WillUseLiveRendering => _canUseLiveRendering;
+
     public bool IsPaused
     {
         get => _live?.IsPaused ?? false;

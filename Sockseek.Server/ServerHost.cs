@@ -83,7 +83,6 @@ public static class ServerHost
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
         var app = builder.Build();
-        CoreLoggerBridge.Configure(app.Services, (options ?? app.Services.GetRequiredService<IOptions<ServerOptions>>().Value).Engine.LogLevel);
         _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
 
         app.MapOpenApi("/api/openapi.json");

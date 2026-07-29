@@ -144,8 +144,6 @@ internal static partial class Program
             SockseekLog.AddOrReplaceFile(engineSettings.LogFilePath, engineSettings.LogLevel < LogLevel.Debug ? engineSettings.LogLevel : LogLevel.Debug);
 
         SockseekLog.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? LogLevel.Error : engineSettings.LogLevel);
-        if (CliOutputController.WouldUseLiveRendering(cliSettings))
-            engineSettings.ReportIntervalProgress = false;
 
         if (daemonMode)
         {
@@ -262,15 +260,25 @@ internal static partial class Program
         var localSubmissionOptionsResolver = new SubmissionOptionsJobSettingsResolver(
             jobSettingsResolver,
             normalize: settings => SettingsNormalizer.NormalizeDownloadPaths(settings, settings.RuntimePathContext));
+
+        bool attachHumanProgressReporter = ShouldAttachHumanProgressReporter(rootSettings.PrintOption);
+        if (attachHumanProgressReporter)
+        {
+            output.ConfigureLiveRendering(cliSettings, engineSettings.LogLevel);
+            // Only the foreground local renderer replaces the engine's plain interval
+            // progress logs. Daemon and remote execution must retain their own policy.
+            if (output.WillUseLiveRendering)
+                engineSettings.ReportIntervalProgress = false;
+        }
+
         var engine = new DownloadEngine(engineSettings, clientManager, localSubmissionOptionsResolver);
         var backend = new LocalCliBackend(engine, rootSettings, localSubmissionOptionsResolver);
 
         CliProgressReporter? cliReporter = null;
         if (cliSettings.ProgressJson)
             new JsonStreamProgressReporter(Console.Out).Attach(backend);
-        else if (ShouldAttachHumanProgressReporter(rootSettings.PrintOption))
+        else if (attachHumanProgressReporter)
         {
-            output.ConfigureLiveRendering(cliSettings, engineSettings.LogLevel);
             cliReporter = new CliProgressReporter(cliSettings, output);
             cliReporter.Attach(backend);
         }
@@ -1478,6 +1486,7 @@ internal static partial class Program
         };
 
         var app = ServerHost.Build(args, options, url);
+        CoreLoggerBridge.Configure(engineSettings.LogLevel);
         SockseekLog.Info($"Starting Sockseek daemon on {url}", categoryName: SockseekLog.Categories.Daemon);
         if (IsDaemonListenAddressNetworkExposed(daemonSettings))
         {
