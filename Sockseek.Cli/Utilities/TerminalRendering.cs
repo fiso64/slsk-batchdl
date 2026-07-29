@@ -101,12 +101,14 @@ internal sealed class TerminalLiveRenderer : IDisposable
     private int _retiredFailed;
     private readonly ConcurrentQueue<CliOutputEvent> _pendingLogs = new();
     private readonly List<CliOutputEvent> _printedLogHistory = [];
-    private readonly CancellationTokenSource _cts = new();
-    private readonly Task _renderTask;
+    private readonly Func<CancellationToken, Task> _runRenderLoop;
     private readonly TimeSpan _refreshInterval = TimeSpan.FromMilliseconds(100);
     private readonly Lock _sync = new();
+    private readonly Lock _lifecycleSync = new();
 
-    private volatile bool _paused;
+    private CancellationTokenSource? _renderCts;
+    private Task? _renderTask;
+    private volatile bool _suspended;
     private long _rateLimitResetTicks; // 0 = not rate-limited; otherwise UTC ticks of reset time
     private int _spinFrame;
     private bool _disposed;
@@ -143,32 +145,48 @@ internal sealed class TerminalLiveRenderer : IDisposable
     private static bool SupportsUnicodeSpinner() => AnsiConsole.Profile.Capabilities.Unicode;
 
     public TerminalLiveRenderer()
+        : this(null)
     {
+    }
+
+    internal TerminalLiveRenderer(Func<CancellationToken, Task>? runRenderLoop)
+    {
+        _runRenderLoop = runRenderLoop ?? RenderLoopAsync;
         _lastTerminalSize = GetTerminalSize();
-        _renderTask = Task.Run(RenderLoopAsync);
+        StartRenderLoop();
     }
 
     public bool IsPaused
     {
-        get => _paused;
-        set => _paused = value;
+        get => _suspended;
+        set
+        {
+            if (value)
+                Suspend();
+            else
+                Resume();
+        }
     }
 
     public void Publish(CliOutputEvent outputEvent)
     {
-        if (_disposed) return;
-
-        switch (outputEvent)
+        lock (_lifecycleSync)
         {
-            case CliOutputEvent.JobLog or CliOutputEvent.ProcessLog or CliOutputEvent.RawLine:
-                _pendingLogs.Enqueue(outputEvent);
-                break;
-            case CliOutputEvent.ReplaceRenderState replace:
-                ReplaceRenderState(replace.State);
-                break;
-            case CliOutputEvent.RateLimit rateLimit:
-                SetRateLimited(rateLimit.ResetsAt);
-                break;
+            if (_disposed)
+                return;
+
+            switch (outputEvent)
+            {
+                case CliOutputEvent.JobLog or CliOutputEvent.ProcessLog or CliOutputEvent.RawLine:
+                    _pendingLogs.Enqueue(outputEvent);
+                    break;
+                case CliOutputEvent.ReplaceRenderState replace:
+                    ReplaceRenderState(replace.State);
+                    break;
+                case CliOutputEvent.RateLimit rateLimit:
+                    SetRateLimited(rateLimit.ResetsAt);
+                    break;
+            }
         }
     }
 
@@ -201,11 +219,16 @@ internal sealed class TerminalLiveRenderer : IDisposable
 
     public void Dispose(bool printSummary)
     {
-        if (_disposed) return;
-        _disposed = true;
-        _cts.Cancel();
-        try { _renderTask.Wait(TimeSpan.FromSeconds(2)); }
-        catch { }
+        lock (_lifecycleSync)
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            StopRenderLoop();
+        }
+
+        FlushLogs();
         // When the terminal shrinks, Spectre.Live's repaint can clear the wrong rows and
         // eat into real log scrollback above the live region (see comment in FlushLogs).
         // Replaying the log history at the end recovers those lost lines.
@@ -213,10 +236,70 @@ internal sealed class TerminalLiveRenderer : IDisposable
             ReplayPrintedLogHistory();
         if (printSummary)
             AnsiConsole.MarkupLine(BuildCountsMarkup(CountKnownJobs()));
-        _cts.Dispose();
     }
 
-    private async Task RenderLoopAsync()
+    private void Suspend()
+    {
+        lock (_lifecycleSync)
+        {
+            if (_disposed || _suspended)
+                return;
+
+            _suspended = true;
+            StopRenderLoop();
+        }
+    }
+
+    private void Resume()
+    {
+        lock (_lifecycleSync)
+        {
+            if (_disposed || !_suspended)
+                return;
+
+            _suspended = false;
+            StartRenderLoop();
+        }
+    }
+
+    private void StartRenderLoop()
+    {
+        _renderCts = new CancellationTokenSource();
+        var cancellationToken = _renderCts.Token;
+        _renderTask = Task.Run(() => _runRenderLoop(cancellationToken));
+    }
+
+    private void StopRenderLoop()
+    {
+        var cts = _renderCts;
+        var task = _renderTask;
+        _renderCts = null;
+        _renderTask = null;
+
+        if (cts == null || task == null)
+            return;
+
+        cts.Cancel();
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        finally
+        {
+            cts.Dispose();
+        }
+    }
+
+    private async Task RenderLoopAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -226,18 +309,15 @@ internal sealed class TerminalLiveRenderer : IDisposable
                 .Cropping(VerticalOverflowCropping.Top)
                 .StartAsync(async ctx =>
                 {
-                    while (!_cts.IsCancellationRequested)
+                    while (!cancellationToken.IsCancellationRequested)
                     {
                         RememberTerminalResize();
 
-                        if (!_paused)
-                        {
-                            FlushLogs();
-                            ctx.UpdateTarget(Render());
-                            ctx.Refresh();
-                        }
+                        FlushLogs();
+                        ctx.UpdateTarget(Render());
+                        ctx.Refresh();
 
-                        try { await Task.Delay(_refreshInterval, _cts.Token); }
+                        try { await Task.Delay(_refreshInterval, cancellationToken); }
                         catch (OperationCanceledException) { }
                     }
 
@@ -613,12 +693,16 @@ internal sealed class TerminalLiveRenderer : IDisposable
 
         long resetTicks = Interlocked.Read(ref _rateLimitResetTicks);
         bool isRateLimited = resetTicks != 0;
-        bool useRateLimitSpinner = isRateLimited
-            && !allJobs.Values.Any(j => string.Equals(j.State, "downloading", StringComparison.OrdinalIgnoreCase));
-        var frames = useRateLimitSpinner ? RateLimitSpinFrames : SpinFrames;
-        var spin = frames[_spinFrame++ % frames.Count];
+        var statusLine = BuildCountsMarkup(counts);
+        if (!IsIdle(counts))
+        {
+            bool useRateLimitSpinner = isRateLimited
+                && !allJobs.Values.Any(j => string.Equals(j.State, "downloading", StringComparison.OrdinalIgnoreCase));
+            var frames = useRateLimitSpinner ? RateLimitSpinFrames : SpinFrames;
+            var spin = frames[_spinFrame++ % frames.Count];
+            statusLine = $"{spin} {statusLine}";
+        }
 
-        var statusLine = $"{spin} {BuildCountsMarkup(counts)}";
         if (isRateLimited)
         {
             var remaining = new DateTimeOffset(new DateTime(resetTicks, DateTimeKind.Utc)) - DateTimeOffset.UtcNow;
@@ -832,6 +916,9 @@ internal sealed class TerminalLiveRenderer : IDisposable
             Failed = counts.Failed + state.RetiredFailed,
         };
     }
+
+    internal static bool IsIdle(TerminalJobCounts counts)
+        => counts.Active == 0 && counts.Queued == 0;
 
     private static string BuildCountsMarkup(TerminalJobCounts counts)
     {

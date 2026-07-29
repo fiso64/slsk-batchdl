@@ -118,6 +118,17 @@ public class CliProgressReporterTests
     }
 
     [TestMethod]
+    public void TerminalLiveRenderer_IdleDependsOnlyOnProjectedActiveAndQueuedWork()
+    {
+        Assert.IsTrue(TerminalLiveRenderer.IsIdle(
+            new TerminalJobCounts(Active: 0, Queued: 0, Completed: 4, Failed: 2)));
+        Assert.IsFalse(TerminalLiveRenderer.IsIdle(
+            new TerminalJobCounts(Active: 1, Queued: 0, Completed: 0, Failed: 0)));
+        Assert.IsFalse(TerminalLiveRenderer.IsIdle(
+            new TerminalJobCounts(Active: 0, Queued: 1, Completed: 0, Failed: 0)));
+    }
+
+    [TestMethod]
     public void RecoverySnapshot_RemovesMissingActiveRowsAndCounts()
     {
         var workflowId = Guid.NewGuid();
