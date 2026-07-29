@@ -314,6 +314,18 @@ sockseek daemon --server-ip 0.0.0.0 --server-port 5030
 sockseek "Artist - Title" --remote http://127.0.0.1:5030
 ```
 
+Add `--monitor` to follow every active workflow on the daemon in the normal live
+render UI. Input is optional. When an input is supplied, its workflow is shown
+alongside all other daemon work. The normal `c`, `t`, and `i` job shortcuts work
+daemon-wide by display ID; choosing “all” from the cancel prompt cancels all
+currently active daemon jobs without stopping the daemon. Monitor mode remains
+attached until interrupted:
+
+```bash
+sockseek --remote http://127.0.0.1:5030 --monitor
+sockseek "Artist - Title" --remote http://127.0.0.1:5030 --monitor
+```
+
 For HTTP API, SignalR, and client integration notes, see [docs/api.md](docs/api.md).
 Daemon setup, history, database, backup, and security are documented in
 [docs/daemon.md](docs/daemon.md).
@@ -985,6 +997,9 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
 --server-ip <ip>                IP/interface for the daemon HTTP API (default: 127.0.0.1)
 --server-port <port>            Port for the daemon HTTP API (default: 5030)
 --remote <url>                  Use an existing daemon instead of running locally
+--monitor                       Monitor all active daemon workflows. Input is optional;
+                                an input submitted with this option appears alongside
+                                all other daemon work until the monitor is interrupted
 --data-dir <path>               Directory for daemon data, including sockseek.db
 --no-retention                  Disable scheduled history retention
 --successful-job-retention-days <days|forever>

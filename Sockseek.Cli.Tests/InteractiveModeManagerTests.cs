@@ -6,6 +6,7 @@ using Sockseek.Core.Models;
 namespace Tests.InteractiveModeManagerTests;
 
 [TestClass]
+[DoNotParallelize]
 public class InteractiveModeManagerTests
 {
     [TestMethod]

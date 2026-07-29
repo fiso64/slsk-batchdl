@@ -37,7 +37,7 @@ public enum ServerJobKind
     Generic,
 }
 
-/// <summary>High-level runtime lifecycle returned by job, workflow, and event DTOs.</summary>
+/// <summary>High-level runtime lifecycle returned by job, workflow, and live-state DTOs.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ServerJobLifecycleState>))]
 public enum ServerJobLifecycleState
 {
@@ -139,7 +139,7 @@ public enum ServerWorkflowState
 }
 
 /// <summary>
-/// Stable failure reason returned by job and event DTOs.
+/// Stable failure reason returned by job and live-state DTOs.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ServerJobFailureReason>))]
 public enum ServerJobFailureReason

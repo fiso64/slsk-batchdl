@@ -7,6 +7,8 @@ namespace Sockseek.Server;
 public sealed class ServerOptions
 {
     public string Name { get; set; } = "Sockseek";
+    /// <summary>Maximum time allowed for graceful connection and service shutdown.</summary>
+    public TimeSpan ShutdownTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public EngineSettings Engine { get; set; } = new();
     public DownloadSettings DefaultDownload { get; set; } = new();
     public DownloadSettingsPatchDto? LaunchDownloadSettings { get; set; }

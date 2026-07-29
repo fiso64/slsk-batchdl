@@ -861,6 +861,18 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void Monitor_IsIndependentBooleanCliOption()
+        {
+            var (_, _, cli, _, remote) = BindAll(
+                "--remote",
+                "http://127.0.0.1:5030",
+                "--monitor");
+
+            Assert.IsTrue(cli.Monitor);
+            Assert.IsTrue(remote.IsEnabled);
+        }
+
+        [TestMethod]
         public void RemoteSubmissionOptions_DoNotOverrideServerPathByDefault()
         {
             var options = Sockseek.Cli.Program.BuildRemoteSubmissionOptions(

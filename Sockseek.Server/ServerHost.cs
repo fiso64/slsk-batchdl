@@ -38,6 +38,15 @@ public static class ServerHost
                 builder.Services.PostConfigure<ServerOptions>(configured => configured.Persistence.Enabled = true);
         }
 
+        builder.Services.AddOptions<HostOptions>()
+            .Configure<IOptions<ServerOptions>>((host, server) =>
+            {
+                if (server.Value.ShutdownTimeout <= TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(
+                        nameof(ServerOptions.ShutdownTimeout));
+                host.ShutdownTimeout = server.Value.ShutdownTimeout;
+            });
+
         builder.Services.Configure<JsonOptions>(jsonOptions =>
         {
             jsonOptions.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
@@ -71,13 +80,11 @@ public static class ServerHost
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<HistoricalQueryFacade>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
-        builder.Services.AddSingleton<ServerActivityLogReporter>();
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
         var app = builder.Build();
         CoreLoggerBridge.Configure(app.Services, (options ?? app.Services.GetRequiredService<IOptions<ServerOptions>>().Value).Engine.LogLevel);
         _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
-        _ = app.Services.GetRequiredService<ServerActivityLogReporter>();
 
         app.MapOpenApi("/api/openapi.json");
         MapEndpoints(app);
@@ -108,6 +115,19 @@ public static class ServerHost
             .WithTags("Server")
             .WithSummary("Gets current daemon and Soulseek client status.")
             .Produces<ServerStatusDto>();
+        app.MapGet("/api/daemon/snapshot", (EngineStateStore stateStore) =>
+                Results.Ok(stateStore.GetDaemonSnapshot()))
+            .WithTags("Live State")
+            .WithSummary("Gets the bounded daemon replication snapshot and stream position.")
+            .WithDescription("Contains active workflows and the jobs, searches, and transfers needed to render them. Retained terminal history remains paginated.")
+            .Produces<StateSnapshotDto>();
+        app.MapGet("/api/workflows/{workflowId:guid}/snapshot", (
+            Guid workflowId,
+            EngineStateStore stateStore) =>
+                Results.Ok(stateStore.GetWorkflowSnapshot(workflowId)))
+            .WithTags("Live State")
+            .WithSummary("Gets one complete workflow replication snapshot and its workflow-local stream position.")
+            .Produces<StateSnapshotDto>();
         app.MapPost("/api/persistence/integrity", async (
             PersistenceCoordinator coordinator, CancellationToken cancellationToken) =>
         {
@@ -154,11 +174,6 @@ public static class ServerHost
             .WithTags("Profiles")
             .WithSummary("Lists configured download profiles.")
             .Produces<IReadOnlyList<ProfileSummaryDto>>();
-        app.MapGet("/api/events/catalog", () => Results.Ok(ServerEventCatalog.All))
-            .WithTags("Events")
-            .WithSummary("Lists SignalR event types and their snapshot invalidation behavior.")
-            .Produces<IReadOnlyList<ServerEventDescriptorDto>>();
-
         app.MapGet("/api/jobs", async (
             HistoricalQueryFacade queryFacade,
             HttpContext httpContext,
@@ -560,6 +575,18 @@ public static class ServerHost
             .WithSummary("Cancels a job when cancellation is available.")
             .Produces(StatusCodes.Status202Accepted)
             .Produces(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/jobs/cancel-all", (EngineSupervisor supervisor) =>
+        {
+            int cancelled = supervisor.CancelAllJobs();
+            return Results.Accepted(
+                "/api/jobs",
+                new CancelJobsResponseDto(cancelled));
+        })
+            .WithTags("Jobs")
+            .WithSummary("Cancels all currently cancellable daemon jobs.")
+            .WithDescription("The daemon remains running and can accept later submissions.")
+            .Produces<CancelJobsResponseDto>(StatusCodes.Status202Accepted);
 
         app.MapPost("/api/workflows/{workflowId:guid}/jobs/display/{displayId:int}/cancel", (Guid workflowId, int displayId, EngineSupervisor supervisor) =>
         {

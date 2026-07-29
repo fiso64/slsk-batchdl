@@ -116,26 +116,7 @@ public static class TooManyMegabytesAlbumLogRepro
             NoProgress = mode != ReproRenderMode.Live,
         });
 
-        if (mode == ReproRenderMode.Live)
-        {
-            backend.EventReceived += envelope =>
-            {
-                if (envelope.Type == "album.track-download-started"
-                    && envelope.Payload is AlbumTrackDownloadStartedEventDto albumTrack)
-                {
-                    ReportAlbumTrackDownloadStartedMethod.Invoke(reporter, [albumTrack]);
-                }
-                else if (envelope.Type == "download.attempt-failed"
-                    && envelope.Payload is DownloadAttemptFailedEventDto failure)
-                {
-                    ReportDownloadAttemptFailedMethod.Invoke(reporter, [failure]);
-                }
-            };
-        }
-        else
-        {
-            reporter.Attach(backend);
-        }
+        reporter.Attach(backend);
 
         var eventLogger = new EventLogger(backend, includeDiagnosticDetails: false);
         eventLogger.Attach();

@@ -17,12 +17,15 @@ internal sealed class LocalCliBackend
     private readonly DownloadSettings? defaultSubmitSettings;
     private readonly SubmissionOptionsJobSettingsResolver? submissionOptionsResolver;
     private readonly EngineStateStore stateStore = new();
-    private readonly WorkflowClientStore workflowStore = new();
-    private readonly ConcurrentDictionary<Guid, long> workflowUpdateSequences = [];
-    private long nextSequence;
+    private readonly DaemonClientStore daemonStore = new();
+    private readonly ConcurrentDictionary<Guid, byte> liveWorkflowSubscriptions = [];
+    private volatile bool liveDaemonSubscription;
 
-    public event Action<ServerEventEnvelopeDto>? EventReceived;
-    public event Action<WorkflowClientUpdate>? WorkflowUpdated;
+    public event Action<DaemonClientUpdate>? StateUpdated;
+    public event Action<ActivityEventDto>? ActivityReceived;
+    public event Action<StateSnapshotDto>? LiveSnapshotApplied;
+
+    public DaemonClientStore ClientStore => daemonStore;
 
     public LocalCliBackend(
         DownloadEngine engine,
@@ -35,10 +38,8 @@ internal sealed class LocalCliBackend
             ? SettingsCloner.Clone(defaultSubmitSettings)
             : null;
         stateStore.AttachEngine(engine);
-        stateStore.JobUpserted += summary => Publish("job.upserted", summary);
-        stateStore.WorkflowUpserted += summary => Publish("workflow.upserted", summary);
-        stateStore.SearchUpdated += update => Publish("search.updated", update);
-        new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events, engine.SearchEvents);
+        stateStore.StateBatchPublished += HandleStateBatch;
+        new EngineActivityDtoAdapter(stateStore, GetSummary).Attach(engine.Events, engine.SearchEvents);
     }
 
     public Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
@@ -71,12 +72,31 @@ internal sealed class LocalCliBackend
     public Task SubscribeWorkflowAsync(Guid workflowId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (liveDaemonSubscription)
+            throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions in one local backend.");
+        if (liveWorkflowSubscriptions.TryAdd(workflowId, 0))
+        {
+            var snapshot = stateStore.GetWorkflowSnapshot(workflowId);
+            LiveSnapshotApplied?.Invoke(snapshot);
+            var update = daemonStore.ApplySnapshot(snapshot);
+            StateUpdated?.Invoke(update);
+        }
         return Task.CompletedTask;
     }
 
     public Task SubscribeAllAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (!liveWorkflowSubscriptions.IsEmpty)
+            throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions in one local backend.");
+        if (!liveDaemonSubscription)
+        {
+            liveDaemonSubscription = true;
+            var snapshot = stateStore.GetDaemonSnapshot();
+            LiveSnapshotApplied?.Invoke(snapshot);
+            var update = daemonStore.ApplySnapshot(snapshot);
+            StateUpdated?.Invoke(update);
+        }
         return Task.CompletedTask;
     }
 
@@ -89,6 +109,9 @@ internal sealed class LocalCliBackend
         if (options?.WorkflowId is Guid workflowId)
             job.WorkflowId = workflowId;
         JobRequestMapper.AssignWorkflowId(job, job.WorkflowId);
+
+        if (!liveDaemonSubscription)
+            SubscribeWorkflowAsync(job.WorkflowId, ct).GetAwaiter().GetResult();
 
         submissionOptionsResolver?.SetJobOptions(job.Id, options);
 
@@ -530,6 +553,12 @@ internal sealed class LocalCliBackend
         return await Task.FromResult(engine.CancelJobByDisplayId(displayId, workflowId));
     }
 
+    public Task<int> CancelAllJobsAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(engine.CancelAllJobs());
+    }
+
     public Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -548,113 +577,19 @@ internal sealed class LocalCliBackend
         return Task.FromResult(engine.TryNextCandidateByDisplayId(displayId, workflowId));
     }
 
-    private void Publish(string type, object payload)
+    private void HandleStateBatch(StateUpdateBatchDto batch)
     {
-        var descriptor = ServerEventCatalog.Describe(type);
-        var envelope = new ServerEventEnvelopeDto(
-            Interlocked.Increment(ref nextSequence),
-            type,
-            DateTimeOffset.UtcNow,
-            descriptor.Category,
-            descriptor.SnapshotInvalidation,
-            GetWorkflowId(payload),
-            payload);
-
-        EventReceived?.Invoke(envelope);
-        PublishWorkflowUpdate(envelope);
-    }
-
-    private void PublishWorkflowUpdate(ServerEventEnvelopeDto envelope)
-    {
-        if (envelope.WorkflowId is not Guid workflowId)
+        bool subscribed = batch.Scope.Kind == StateStreamScopeKind.Daemon
+            ? liveDaemonSubscription
+            : liveWorkflowSubscriptions.ContainsKey(batch.Scope.WorkflowId!.Value);
+        if (!subscribed)
             return;
 
-        var sequence = workflowUpdateSequences.AddOrUpdate(workflowId, 1, static (_, current) => current + 1);
-        var batch = envelope.Payload switch
-        {
-            JobSummaryDto summary => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [summary],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: []),
-
-            WorkflowSummaryDto summary => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                summary,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: []),
-
-            SearchUpdatedDto update => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [update],
-                Progress: [],
-                Activity: []),
-
-            DownloadProgressEventDto progress => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [progress],
-                Activity: []),
-
-            _ => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: [envelope]),
-        };
-
-        WorkflowUpdated?.Invoke(workflowStore.Apply(batch));
+        var update = daemonStore.Apply(batch);
+        StateUpdated?.Invoke(update);
+        foreach (var activity in update.Activity)
+            ActivityReceived?.Invoke(activity);
     }
-
-    private static Guid? GetWorkflowId(object payload)
-        => payload switch
-        {
-            JobSummaryDto summary => summary.WorkflowId,
-            WorkflowSummaryDto summary => summary.WorkflowId,
-            WorkflowDetailDto detail => detail.Summary.WorkflowId,
-            WorkflowTreeDto workflow => workflow.Summary.WorkflowId,
-            JobDetailDto detail => detail.Summary.WorkflowId,
-            SearchUpdatedDto update => update.WorkflowId,
-            ExtractionStartedEventDto e => e.Summary.WorkflowId,
-            ExtractionFailedEventDto e => e.Summary.WorkflowId,
-            JobStartedEventDto e => e.Summary.WorkflowId,
-            JobStatusEventDto e => e.Summary.WorkflowId,
-            JobMessageEventDto e => e.Summary.WorkflowId,
-            WorkflowMessageEventDto e => e.WorkflowId,
-            JobActivityChangedEventDto e => e.Summary.WorkflowId,
-            SongSearchingEventDto e => e.WorkflowId,
-            DownloadStartedEventDto e => e.WorkflowId,
-            DownloadProgressEventDto e => e.WorkflowId,
-            DownloadStateChangedEventDto e => e.WorkflowId,
-            DownloadAttemptFailedEventDto e => e.WorkflowId,
-            SongStateChangedEventDto e => e.WorkflowId,
-            AlbumDownloadStartedEventDto e => e.Summary.WorkflowId,
-            AlbumTrackDownloadStartedEventDto e => e.Summary.WorkflowId,
-            AlbumStateChangedEventDto e => e.Summary.WorkflowId,
-            JobFolderRetrievingEventDto e => e.Summary.WorkflowId,
-            TrackBatchResolvedEventDto e => e.Summary.WorkflowId,
-            _ => null,
-        };
 
     private AlbumFolder? FindAlbumFolderForRetrieval(Job sourceJob, AlbumFolderRefDto folderRef, AlbumQueryDto? albumQuery = null)
     {

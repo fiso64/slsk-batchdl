@@ -28,7 +28,10 @@ public sealed class SockseekApiRequestException : InvalidOperationException
     }
 }
 
-/// <summary>Reusable HTTP client for the daemon API. SignalR clients should pair this with the event DTOs and payload converter in this project.</summary>
+/// <summary>
+/// Reusable HTTP client for daemon snapshots, commands, and history queries.
+/// Pair it with <see cref="SockseekLiveClient"/> for SignalR live monitoring.
+/// </summary>
 public sealed class SockseekApiClient
 {
     private readonly HttpClient http;
@@ -60,6 +63,29 @@ public sealed class SockseekApiClient
     /// <summary>Creates an <see cref="HttpClient"/> with a normalized daemon base address.</summary>
     public static HttpClient CreateHttpClient(string serverUrl)
         => new() { BaseAddress = NormalizeServerUrl(serverUrl) };
+
+    public async Task<ServerInfoDto> GetServerInfoAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/server/info", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ServerInfoDto>(response, ct);
+    }
+
+    public async Task<StateSnapshotDto> GetDaemonSnapshotAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/daemon/snapshot", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
+    }
+
+    public async Task<StateSnapshotDto> GetWorkflowSnapshotAsync(
+        Guid workflowId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/workflows/{workflowId}/snapshot", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
+    }
 
     public async Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/extract", request, ct);
@@ -390,6 +416,14 @@ public sealed class SockseekApiClient
         var jobs = await GetJobsAsync(new JobQuery(null, null, null, null, IncludeAll: true), ct);
         var match = jobs.FirstOrDefault(job => job.DisplayId == displayId);
         return match != null && await CancelJobAsync(match.JobId, ct);
+    }
+
+    public async Task<int> CancelAllJobsAsync(CancellationToken ct = default)
+    {
+        using var response = await http.PostAsync("api/jobs/cancel-all", null, ct);
+        await EnsureSuccessAsync(response, ct);
+        var result = await ReadRequiredAsync<CancelJobsResponseDto>(response, ct);
+        return result.Cancelled;
     }
 
     public async Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)

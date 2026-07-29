@@ -6,7 +6,7 @@ namespace Sockseek.Cli;
 
 internal sealed class EventLogger
 {
-    internal static readonly IReadOnlySet<string> HandledEventTypes = JobActivityLogFormatter.HandledEventTypes;
+    internal static readonly IReadOnlySet<string> HandledEventTypes = JobActivityLogFormatter.HandledActivityTypes;
 
     private readonly ICliBackend _backend;
     private readonly bool _includeDiagnosticDetails;
@@ -20,15 +20,29 @@ internal sealed class EventLogger
 
     public void Attach()
     {
-        _backend.EventReceived += HandleEvent;
+        _backend.StateUpdated += HandleStateUpdate;
+        _backend.ActivityReceived += HandleActivity;
     }
 
-    private void HandleEvent(ServerEventEnvelopeDto envelope)
+    private void HandleStateUpdate(DaemonClientUpdate update)
     {
-        if (envelope.Type == "diagnostic.error" && !_includeDiagnosticDetails)
+        if (update.Status != DaemonClientApplyStatus.Applied)
             return;
 
-        var entry = _formatter.Format(envelope);
+        foreach (var summary in update.ChangedJobs)
+        {
+            var entry = _formatter.Format(summary);
+            if (entry != null)
+                Write(entry);
+        }
+    }
+
+    private void HandleActivity(ActivityEventDto activity)
+    {
+        if (activity.Payload is DiagnosticActivityDto && !_includeDiagnosticDetails)
+            return;
+
+        var entry = _formatter.Format(activity, _backend.ClientStore);
         if (entry == null)
             return;
 

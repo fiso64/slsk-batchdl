@@ -391,6 +391,8 @@
       "sockseek.api": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.AspNetCore.SignalR.Client": "[10.0.9, )",
+          "Microsoft.AspNetCore.SignalR.Protocols.Json": "[10.0.9, )",
           "Sockseek.Core": "[3.0.5, )"
         }
       },

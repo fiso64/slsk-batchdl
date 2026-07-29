@@ -3,10 +3,16 @@
 > [!WARNING]
 > The API is experimental and has not yet been tested much. Expect bugs and breaking changes.
 
-The daemon exposes an HTTP API for durable state plus a SignalR hub for live invalidation/progress events.
+The daemon exposes HTTP snapshots and durable history queries plus a SignalR hub
+for ordered live-state deltas and compact activity.
 
 ## .NET clients
-.NET consumers should prefer `Sockseek.Api.SockseekApiClient` over hand-written endpoint calls.
+
+.NET consumers should use `Sockseek.Api.SockseekApiClient` for HTTP queries and
+`Sockseek.Api.SockseekLiveClient` for live monitoring. The live client supports
+either daemon-wide or workflow-scoped subscriptions per connection, handles
+snapshot hydration and recovery, and exposes current state through
+`DaemonClientStore`.
 
 ## OpenAPI
 
@@ -32,9 +38,13 @@ sockseek daemon \
 ## Source map
 
 - `Sockseek.Api/Client/SockseekApiClient.cs` — .NET client wrapper and the most convenient reference for supported client flows.
+- `Sockseek.Api/Client/SockseekLiveClient.cs` — reusable SignalR subscription,
+  buffering, and recovery coordinator.
+- `Sockseek.Api/Client/DaemonClientStore.cs` — shared reducer and daemon/workflow
+  query store.
 - `Sockseek.Api/Contracts/` — request/response DTOs shared by the server, CLI, and .NET clients.
-- `Sockseek.Api/Contracts/ServerEvents.cs` — SignalR event envelope and event payload DTOs.
-- `Sockseek.Api/Client/ServerEventPayloadConverter.cs` — typed event payload rehydration for .NET clients.
+- `Sockseek.Api/Contracts/LiveState.cs` — versioned snapshot, typed delta,
+  transfer, stream-position, and compact activity DTOs.
 - `Sockseek.Server/ServerHost.cs` — endpoint registration and OpenAPI metadata.
 - `Sockseek.Cli/Services/RemoteCliBackend.cs` — real remote client usage, including SignalR subscription behavior.
 - `Sockseek.Cli.Tests/RemoteCliBackendTests.cs` — executable examples of remote API flows.

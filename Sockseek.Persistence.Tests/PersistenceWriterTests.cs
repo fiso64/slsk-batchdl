@@ -688,7 +688,9 @@ public sealed class PersistenceWriterTests
     [TestMethod]
     public async Task Writer_RecoversAfterExhaustedSqliteBusy_WithoutStoppingProducer()
     {
-        await using var database = new WriterDatabase(busyTimeoutMilliseconds: 25);
+        await using var database = new WriterDatabase(
+            defaultTimeoutSeconds: 1,
+            busyTimeoutMilliseconds: 25);
         await database.Initializer.InitializeAsync();
         var runtimeSession = new PersistenceRuntimeSession(database.Factory);
         var runtime = (await runtimeSession.StartAsync("busy-recovery-test")).Runtime;
@@ -735,7 +737,7 @@ public sealed class PersistenceWriterTests
     [TestMethod]
     public async Task Writer_StopsRetryingRecoverableFailure_AfterConfiguredRecoveryLimit()
     {
-        await using var database = new WriterDatabase(busyTimeoutMilliseconds: 25);
+        await using var database = new WriterDatabase();
         await database.Initializer.InitializeAsync();
         var runtimeSession = new PersistenceRuntimeSession(database.Factory);
         var runtime = (await runtimeSession.StartAsync("bounded-recovery-test")).Runtime;
@@ -749,27 +751,16 @@ public sealed class PersistenceWriterTests
         var inbox = new PersistenceInbox(options, health);
         Guid jobId = Guid.NewGuid();
 
-        await using var lockingContext = await database.Factory.CreateDbContextAsync();
-        await lockingContext.Database.OpenConnectionAsync();
-        await using var lockCommand = lockingContext.Database.GetDbConnection().CreateCommand();
-        lockCommand.CommandText = "BEGIN IMMEDIATE;";
-        await lockCommand.ExecuteNonQueryAsync();
         Assert.IsTrue(inbox.TryEnqueue(Job(runtime.RuntimeId, jobId, 1, PersistenceMutationPriority.Structural)));
         inbox.Complete();
 
-        await new PersistenceWriter(database.Factory, inbox, health, options)
+        await new PersistenceWriter(new UnavailableContextFactory(), inbox, health, options)
             .RunAsync(CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(15));
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         var snapshot = health.Snapshot(inbox);
         Assert.AreEqual(PersistenceHealthState.Unhealthy, snapshot.State);
         Assert.AreEqual(1L, snapshot.PermanentlyFailedMutationCount);
-        await using (var rollback = lockingContext.Database.GetDbConnection().CreateCommand())
-        {
-            rollback.CommandText = "ROLLBACK;";
-            await rollback.ExecuteNonQueryAsync();
-        }
-        await lockingContext.Database.CloseConnectionAsync();
         await using (var verify = await database.Factory.CreateDbContextAsync())
             Assert.IsFalse(await verify.Jobs.AnyAsync(job => job.Id == jobId));
         await runtimeSession.StopAsync();
@@ -903,11 +894,14 @@ public sealed class PersistenceWriterTests
         private readonly string directory = Path.Combine(Path.GetTempPath(), "sockseek-writer-tests", Guid.NewGuid().ToString("N"));
         private readonly SqliteDatabaseOwner owner;
 
-        public WriterDatabase(int busyTimeoutMilliseconds = 5_000)
+        public WriterDatabase(
+            int defaultTimeoutSeconds = 5,
+            int busyTimeoutMilliseconds = 5_000)
         {
             Directory.CreateDirectory(directory);
             var sqliteOptions = new SockseekSqliteOptions(
                 Path.Combine(directory, "sockseek.db"),
+                DefaultTimeoutSeconds: defaultTimeoutSeconds,
                 BusyTimeoutMilliseconds: busyTimeoutMilliseconds);
             owner = SqliteDatabaseOwner.Acquire(sqliteOptions);
             Factory = new SockseekDbContextFactory(SockseekDbContextOptions.Create(sqliteOptions));

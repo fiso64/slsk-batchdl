@@ -15,10 +15,79 @@ namespace Tests.Cli;
 [TestClass]
 public class CliBackendParityTests
 {
-    [TestInitialize]
-    public void Initialize()
+    [TestMethod]
+    public async Task CliBackendParity_DaemonWideStores_ProjectEquivalentState()
     {
-        SockseekLog.RemoveNonFileOutputs();
+        var projections = new List<string[]>();
+        await RunForEachBackendAsync(
+            seedMusic: musicRoot =>
+            {
+                string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+                Directory.CreateDirectory(albumDir);
+                File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
+            },
+            scenario: async ctx =>
+            {
+                await ctx.Backend.SubscribeAllAsync(ctx.Token);
+                var summary = await ctx.Backend.SubmitAlbumJobAsync(
+                    new SubmitAlbumJobRequestDto(
+                        new AlbumQueryDto("Artist", "Album", "", "", false),
+                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)),
+                    ctx.Token);
+                await WaitForJobStateAsync(
+                    ctx.Backend,
+                    summary.JobId,
+                    ExpectedJobStatus.AwaitingSelection);
+                await WaitForConditionAsync(
+                    () => ctx.Backend.ClientStore.GetJob(summary.JobId)?.LifecycleState
+                        == ServerJobLifecycleState.AwaitingSelection,
+                    $"{ctx.Name}: daemon store did not receive awaiting-selection state. " +
+                    $"Jobs: {string.Join(", ", ctx.Backend.ClientStore.GetJobs().Select(job => $"{job.JobId}:{job.LifecycleState}"))}");
+
+                projections.Add(ctx.Backend.ClientStore.GetJobs()
+                    .Select(job =>
+                        $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray());
+            });
+
+        Assert.AreEqual(2, projections.Count);
+        CollectionAssert.AreEqual(projections[0], projections[1]);
+    }
+
+    [TestMethod]
+    public async Task CliBackendParity_WorkflowStores_ProjectEquivalentState()
+    {
+        var projections = new List<string[]>();
+        await RunForEachBackendAsync(
+            seedMusic: musicRoot =>
+            {
+                string trackDir = Path.Combine(musicRoot, "Artist");
+                Directory.CreateDirectory(trackDir);
+                File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+            },
+            scenario: async ctx =>
+            {
+                var summary = await ctx.Backend.SubmitTrackSearchJobAsync(
+                    new SubmitTrackSearchJobRequestDto(
+                        new SongQueryDto("Artist", "Track One", "", "", -1, false)),
+                    ctx.Token);
+                await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.Succeeded);
+                await WaitForConditionAsync(
+                    () => ctx.Backend.ClientStore.GetJob(summary.JobId)?.LifecycleState
+                        == ServerJobLifecycleState.Terminal,
+                    $"{ctx.Name}: workflow store did not receive terminal state. " +
+                    $"Jobs: {string.Join(", ", ctx.Backend.ClientStore.GetJobs().Select(job => $"{job.JobId}:{job.LifecycleState}"))}");
+
+                projections.Add(ctx.Backend.ClientStore.GetWorkflowJobs(summary.WorkflowId)
+                    .Select(job =>
+                        $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
+                    .OrderBy(value => value, StringComparer.Ordinal)
+                    .ToArray());
+            });
+
+        Assert.AreEqual(2, projections.Count);
+        CollectionAssert.AreEqual(projections[0], projections[1]);
     }
 
     [TestCleanup]
@@ -279,10 +348,11 @@ public class CliBackendParityTests
             scenario: async ctx =>
             {
                 var messages = new ConcurrentBag<string>();
-                ctx.Backend.EventReceived += envelope =>
+                var observed = new ConcurrentBag<string>();
+                ctx.Backend.ActivityReceived += activity =>
                 {
-                    if (envelope.Type == "workflow.message"
-                        && envelope.Payload is WorkflowMessageEventDto message)
+                    observed.Add($"{activity.Type}:{activity.Payload.GetType().Name}");
+                    if (activity.Payload is WorkflowMessageActivityDto message)
                     {
                         messages.Add(message.Message);
                     }
@@ -295,7 +365,7 @@ public class CliBackendParityTests
                 await WaitForWorkflowStateAsync(ctx.Backend, summary.WorkflowId, ServerWorkflowState.Completed);
                 await WaitForConditionAsync(
                     () => messages.Contains("Auto profiles active: album-auto"),
-                    $"Timed out waiting for workflow message on {ctx.Name}.");
+                    $"Timed out waiting for workflow message on {ctx.Name}. Observed: {string.Join(", ", observed)}");
             },
             profiles: AlbumAutoProfileCatalog());
     }

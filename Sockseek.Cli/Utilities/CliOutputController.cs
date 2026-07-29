@@ -115,20 +115,11 @@ internal sealed class CliOutputController : IDisposable
         _live?.Publish(outputEvent);
     }
 
-    public void UpsertJob(JobView job)
-        => Publish(new CliOutputEvent.UpsertJobView(job));
-
-    public void UpsertJobRecord(TerminalJobRecord job)
-        => Publish(new CliOutputEvent.UpsertJobRecord(job));
-
-    public void RemoveJob(string id)
-        => Publish(new CliOutputEvent.RemoveJob(id));
+    public void ReplaceRenderState(TerminalRenderState state)
+        => Publish(new CliOutputEvent.ReplaceRenderState(state));
 
     public void SetRateLimited(DateTimeOffset? resetsAt)
         => Publish(new CliOutputEvent.RateLimit(resetsAt));
-
-    public void SetStatusMessage(string? message)
-        => Publish(new CliOutputEvent.StatusMessage(message));
 
     public void StopLiveRendering(bool printSummary = true)
     {

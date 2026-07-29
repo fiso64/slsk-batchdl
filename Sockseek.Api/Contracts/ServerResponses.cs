@@ -9,7 +9,8 @@ namespace Sockseek.Api;
 public sealed record ServerInfoDto(
     string Name,
     string Version,
-    DateTimeOffset StartedAtUtc);
+    DateTimeOffset StartedAtUtc,
+    int LiveProtocolVersion);
 
 /// <summary>
 /// Current daemon and engine activity counters.
@@ -103,6 +104,12 @@ public sealed record ApiErrorDto(
 /// Response body returned when cancelling a workflow.
 /// </summary>
 public sealed record CancelWorkflowResponseDto(
+    int Cancelled);
+
+/// <summary>
+/// Response body returned when cancelling all currently cancellable daemon jobs.
+/// </summary>
+public sealed record CancelJobsResponseDto(
     int Cancelled);
 
 /// <summary>

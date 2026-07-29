@@ -13,12 +13,6 @@ namespace Tests.Cli;
 [TestClass]
 public class RemoteCliBackendTests
 {
-    [TestInitialize]
-    public void Initialize()
-    {
-        SockseekLog.RemoveNonFileOutputs();
-    }
-
     [TestCleanup]
     public void Cleanup()
     {
@@ -57,6 +51,42 @@ public class RemoteCliBackendTests
             () => client.GetProfilesAsync(CancellationToken.None));
 
         StringAssert.Contains(ex.Message, "Bad request from daemon");
+    }
+
+    [TestMethod]
+    public async Task SockseekLiveClient_InitialSnapshotFailureCanBeRetried()
+    {
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings(),
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        await app.StartAsync();
+        try
+        {
+            using var http = new HttpClient(new FailFirstDaemonSnapshotHandler())
+            {
+                BaseAddress = new Uri(url),
+            };
+            await using var live = new SockseekLiveClient(http);
+
+            await Assert.ThrowsExceptionAsync<SockseekApiRequestException>(
+                () => live.StartDaemonAsync());
+            Assert.AreEqual(LiveSubscriptionMode.None, live.Mode);
+
+            await live.StartDaemonAsync();
+
+            Assert.AreEqual(LiveSubscriptionMode.Daemon, live.Mode);
+            Assert.IsNotNull(live.Store.GetPosition(StateStreamScopeDto.Daemon));
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
     }
 
     [TestMethod]
@@ -135,10 +165,8 @@ public class RemoteCliBackendTests
         {
             await app.StartAsync();
             await using var backend = new RemoteCliBackend(url);
-            var seenTypes = new ConcurrentBag<string>();
-            var seenWorkflowUpdates = new ConcurrentBag<WorkflowClientUpdate>();
-            backend.EventReceived += envelope => seenTypes.Add(envelope.Type);
-            backend.WorkflowUpdated += update => seenWorkflowUpdates.Add(update);
+            var seenUpdates = new ConcurrentBag<DaemonClientUpdate>();
+            backend.StateUpdated += update => seenUpdates.Add(update);
             await backend.StartAsync();
 
             var searchSummary = await backend.SubmitTrackSearchJobAsync(
@@ -171,15 +199,13 @@ public class RemoteCliBackendTests
                 .ToArray();
             CollectionAssert.Contains(downloaded, "01. Artist - Track One.mp3");
 
-            await WaitForEventTypeAsync(seenTypes, "job.upserted");
-            await WaitForEventTypeAsync(seenTypes, "search.updated");
-            await WaitForEventTypeAsync(seenTypes, "download.started");
-            Assert.IsTrue(seenTypes.Contains("job.upserted"));
-            Assert.IsTrue(seenTypes.Contains("search.updated"));
-            Assert.IsTrue(seenTypes.Contains("download.started"));
-            Assert.IsTrue(seenWorkflowUpdates.Any(update => update.JobUpserts.Any(job => job.JobId == searchSummary.JobId)));
-            Assert.IsTrue(seenWorkflowUpdates.Any(update => update.SearchUpdates.Any(search => search.JobId == searchSummary.JobId)));
-            Assert.IsTrue(seenWorkflowUpdates.Any(update => update.Activity.Any(envelope => envelope.Type == "download.started")));
+            await WaitForConditionAsync(
+                () => Task.FromResult(seenUpdates.Any(update => update.ChangedTransfers.Any())),
+                "Timed out waiting for typed transfer state.");
+            Assert.IsTrue(seenUpdates.Any(update => update.ChangedJobs.Any(job => job.JobId == searchSummary.JobId)));
+            Assert.IsTrue(seenUpdates.Any(update => update.State.Searches.Any(search => search.JobId == searchSummary.JobId)));
+            Assert.IsTrue(seenUpdates.Any(update => update.ChangedTransfers.Any(
+                transfer => transfer.Identity.JobId == downloadedSummary.JobId)));
         }
         finally
         {
@@ -273,6 +299,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsDelta()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-album-test-" + Guid.NewGuid());
@@ -311,15 +338,15 @@ public class RemoteCliBackendTests
             await backend.StartAsync();
 
             var workflowId = Guid.NewGuid();
-            var terminalAlbumActivitySeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            backend.EventReceived += envelope =>
+            var terminalAlbumStateSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            backend.StateUpdated += update =>
             {
-                if (envelope.WorkflowId == workflowId
-                    && envelope.Type == "album.state-changed"
-                    && envelope.Payload is AlbumStateChangedEventDto album
-                    && album.Summary.LifecycleState == ServerJobLifecycleState.Terminal)
+                if (update.ChangedJobs.Any(job =>
+                        job.WorkflowId == workflowId
+                        && job.Kind == ServerJobKind.Album
+                        && job.LifecycleState == ServerJobLifecycleState.Terminal))
                 {
-                    terminalAlbumActivitySeen.TrySetResult();
+                    terminalAlbumStateSeen.TrySetResult();
                 }
             };
 
@@ -333,8 +360,8 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
             await AwaitOrFailAsync(
-                terminalAlbumActivitySeen.Task,
-                "Timed out waiting for the remote terminal album activity event.");
+                terminalAlbumStateSeen.Task,
+                "Timed out waiting for the remote terminal album state delta.");
 
             await WaitForConditionAsync(
                 () => Task.FromResult(Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length >= 2),
@@ -696,6 +723,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintCompleteCountsCancelledAlbumAsUserFacingFailure()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-cancel-music-" + Guid.NewGuid());
@@ -877,6 +905,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintResults_RendersCompletedSearchPayloadWithoutDownloading()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-test-" + Guid.NewGuid());
@@ -955,6 +984,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintJobs_RendersInputJobsFromWorkflowSnapshot()
     {
         string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-" + Guid.NewGuid() + ".txt");
@@ -1036,6 +1066,402 @@ public class RemoteCliBackendTests
         }
     }
 
+
+    [TestMethod]
+    public async Task RemoteCliBackend_DaemonSubscription_ObservesMultipleSubmittedWorkflows()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-monitor-multi-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            await using var monitor = new RemoteCliBackend(url);
+            var scopes = new ConcurrentBag<StateStreamScopeDto>();
+            monitor.StateUpdated += update => scopes.Add(update.Scope);
+            await monitor.SubscribeAllAsync();
+
+            var firstWorkflowId = Guid.NewGuid();
+            var secondWorkflowId = Guid.NewGuid();
+            var manual = new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual);
+            var first = await monitor.SubmitAlbumJobAsync(new SubmitAlbumJobRequestDto(
+                new AlbumQueryDto("Artist", "Album", "", "", false),
+                new SubmissionOptionsDto(firstWorkflowId),
+                manual));
+            var second = await monitor.SubmitAlbumJobAsync(new SubmitAlbumJobRequestDto(
+                new AlbumQueryDto("Artist", "Album", "", "", false),
+                new SubmissionOptionsDto(secondWorkflowId),
+                manual));
+
+            await WaitForConditionAsync(
+                () => Task.FromResult(
+                    monitor.ClientStore.GetWorkflowJobs(first.WorkflowId)
+                        .Any(job => job.LifecycleState == ServerJobLifecycleState.AwaitingSelection)
+                    && monitor.ClientStore.GetWorkflowJobs(second.WorkflowId)
+                        .Any(job => job.LifecycleState == ServerJobLifecycleState.AwaitingSelection)),
+                "Daemon monitor did not observe both active workflows.");
+
+            Assert.IsTrue(scopes.Count > 0);
+            Assert.IsTrue(scopes.All(scope => scope.Kind == StateStreamScopeKind.Daemon));
+        }
+        finally
+        {
+            await app.StopAsync();
+            await DeleteDirectoryIfExistsWithRetryAsync(musicRoot);
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteCliBackend_DaemonAndWorkflowSubscriptionsCannotMix()
+    {
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings(),
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        await app.StartAsync();
+        try
+        {
+            await using var backend = new RemoteCliBackend(url);
+            await backend.SubscribeAllAsync();
+
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+                () => backend.SubscribeWorkflowAsync(Guid.NewGuid()));
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteCliBackend_ReconnectsWithSubscribeSnapshotBufferedDeltaHandoff()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-reconnect-" + Guid.NewGuid());
+        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
+        Directory.CreateDirectory(albumDir);
+        File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+
+        var options = new ServerOptions
+        {
+            ShutdownTimeout = TimeSpan.FromMilliseconds(100),
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        };
+        var firstApp = ServerHost.Build([], options, url);
+        await firstApp.StartAsync();
+
+        try
+        {
+            await using var monitor = new RemoteCliBackend(url);
+            await monitor.SubscribeAllAsync();
+            var firstPosition = monitor.ClientStore.GetPosition(StateStreamScopeDto.Daemon);
+            Assert.IsNotNull(firstPosition);
+
+            await firstApp.DisposeAsync();
+
+            await using var secondApp = ServerHost.Build([], options, url);
+            await secondApp.StartAsync();
+            try
+            {
+                var workflowId = Guid.NewGuid();
+                var submitted = await monitor.SubmitAlbumJobAsync(new SubmitAlbumJobRequestDto(
+                    new AlbumQueryDto("Artist", "Album", "", "", false),
+                    new SubmissionOptionsDto(workflowId),
+                    new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)));
+
+                await WaitForConditionAsync(
+                    () => Task.FromResult(
+                        monitor.ClientStore.GetPosition(StateStreamScopeDto.Daemon) is { } position
+                        && position.Epoch != firstPosition.Epoch
+                        && monitor.ClientStore.GetJob(submitted.JobId)?.LifecycleState
+                            == ServerJobLifecycleState.AwaitingSelection),
+                    "Monitor did not recover the restarted daemon epoch and active workflow.",
+                    timeoutMs: 15000);
+            }
+            finally
+            {
+                await secondApp.StopAsync();
+            }
+        }
+        finally
+        {
+            try
+            {
+                await firstApp.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            await DeleteDirectoryIfExistsWithRetryAsync(musicRoot);
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task Program_MonitorWithoutInput_StaysAttachedUntilCancelled()
+    {
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings(),
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        await app.StartAsync();
+        try
+        {
+            using var cancellation = new CancellationTokenSource();
+            var monitorTask = Sockseek.Cli.Program.MainCore(
+                ["--no-config", "--remote", url, "--monitor", "--no-progress"],
+                cancellation.Token);
+
+            await WaitForConditionAsync(
+                () => Task.FromResult(ConsoleInputManager.OnCancelRequested != null),
+                "Monitor mode did not finish attaching.");
+            Assert.IsFalse(
+                monitorTask.IsCompleted,
+                "Monitor mode must remain attached when no input is supplied.");
+
+            await cancellation.CancelAsync();
+            var exit = await monitorTask;
+            Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.Cancelled, exit);
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task Program_MonitorControlsOperateAcrossDaemonWorkflows()
+    {
+        string musicRoot = Path.Combine(
+            Path.GetTempPath(),
+            "Sockseek-monitor-controls-" + Guid.NewGuid());
+        string outputDir = Path.Combine(
+            Path.GetTempPath(),
+            "Sockseek-monitor-controls-out-" + Guid.NewGuid());
+        string albumOneDir = Path.Combine(musicRoot, "Artist One", "Album One");
+        string albumTwoDir = Path.Combine(musicRoot, "Artist Two", "Album Two");
+        Directory.CreateDirectory(albumOneDir);
+        Directory.CreateDirectory(albumTwoDir);
+        Directory.CreateDirectory(outputDir);
+        for (int i = 1; i <= 12; i++)
+        {
+            File.WriteAllBytes(
+                Path.Combine(albumOneDir, $"{i:00}. Artist One - Track {i:00}.mp3"),
+                new byte[1024]);
+            File.WriteAllBytes(
+                Path.Combine(albumTwoDir, $"{i:00}. Artist Two - Track {i:00}.mp3"),
+                new byte[1024]);
+        }
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+                MockFilesSlow = true,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{foldername}/{filename}",
+                },
+                Search =
+                {
+                    NoBrowseFolder = true,
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        var originalIn = Console.In;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await app.StartAsync();
+        try
+        {
+            var monitorTask = Sockseek.Cli.Program.MainCore(
+                ["--no-config", "--remote", url, "--monitor", "--no-progress"],
+                cancellation.Token);
+
+            await WaitForConditionAsync(
+                () => Task.FromResult(
+                    ConsoleInputManager.OnCancelRequested != null
+                    && ConsoleInputManager.OnNextCandidateRequested != null
+                    && ConsoleInputManager.OnInfoRequested != null),
+                "Monitor mode did not install the normal console controls.");
+
+            await using var controller = new RemoteCliBackend(url);
+            var firstSearch = await StartAlbumSearchAsync(
+                controller,
+                "Artist One",
+                "Album One");
+            var secondSearch = await StartAlbumSearchAsync(
+                controller,
+                "Artist Two",
+                "Album Two");
+            await WaitForJobStateAsync(
+                controller,
+                firstSearch.JobId,
+                ExpectedJobStatus.Succeeded);
+            await WaitForJobStateAsync(
+                controller,
+                secondSearch.JobId,
+                ExpectedJobStatus.Succeeded);
+
+            var first = await StartFirstAlbumDownloadAsync(
+                controller,
+                firstSearch.JobId);
+            var second = await StartFirstAlbumDownloadAsync(
+                controller,
+                secondSearch.JobId);
+            await WaitForAlbumFileDownloadToStartAsync(controller, first.JobId);
+            await WaitForAlbumFileDownloadToStartAsync(controller, second.JobId);
+
+            Console.SetIn(new StringReader(first.DisplayId + Environment.NewLine));
+            await ConsoleInputManager.OnCancelRequested!();
+            await WaitForJobStateAsync(
+                controller,
+                first.JobId,
+                ExpectedJobStatus.Failed);
+            var secondBeforeCancelAll = await controller.GetJobDetailAsync(second.JobId);
+            Assert.AreNotEqual(
+                ServerJobLifecycleState.Terminal,
+                secondBeforeCancelAll?.Summary.LifecycleState,
+                "Cancelling one daemon job by display id must not cancel another workflow.");
+
+            Console.SetIn(new StringReader("all" + Environment.NewLine));
+            await ConsoleInputManager.OnCancelRequested!();
+            await WaitForJobStateAsync(
+                controller,
+                second.JobId,
+                ExpectedJobStatus.Failed);
+
+            var afterCancelAll = await StartAlbumSearchAsync(
+                controller,
+                "Artist One",
+                "Album One");
+            await WaitForJobStateAsync(
+                controller,
+                afterCancelAll.JobId,
+                ExpectedJobStatus.Succeeded);
+
+            await cancellation.CancelAsync();
+            Assert.AreEqual(
+                Sockseek.Cli.Program.CliExitCode.Cancelled,
+                await monitorTask);
+            Assert.IsNull(ConsoleInputManager.OnCancelRequested);
+            Assert.IsNull(ConsoleInputManager.OnNextCandidateRequested);
+            Assert.IsNull(ConsoleInputManager.OnInfoRequested);
+        }
+        finally
+        {
+            Console.SetIn(originalIn);
+            await cancellation.CancelAsync();
+            await app.StopAsync();
+            await DeleteDirectoryIfExistsWithRetryAsync(musicRoot);
+            await DeleteDirectoryIfExistsWithRetryAsync(outputDir);
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task Program_MonitorWithInput_SubmitsWorkAndRemainsAttached()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-monitor-input-" + Guid.NewGuid());
+        string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-monitor-input-out-" + Guid.NewGuid());
+        Directory.CreateDirectory(Path.Combine(musicRoot, "Artist"));
+        Directory.CreateDirectory(outputDir);
+        File.WriteAllText(Path.Combine(musicRoot, "Artist", "Artist - Track One.mp3"), "a");
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings
+            {
+                Output =
+                {
+                    ParentDir = outputDir,
+                    NameFormat = "{filename}",
+                },
+            },
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await app.StartAsync();
+        try
+        {
+            var monitorTask = Sockseek.Cli.Program.MainCore(
+                [
+                    "Artist - Track One",
+                    "--song",
+                    "--no-config",
+                    "--remote", url,
+                    "--monitor",
+                    "--no-progress",
+                    "--output-dir", outputDir,
+                ],
+                cancellation.Token);
+
+            await WaitForConditionAsync(
+                () => Task.FromResult(Directory.GetFiles(outputDir, "*.mp3", SearchOption.AllDirectories).Length > 0),
+                "Input supplied with --monitor was not downloaded.",
+                timeoutMs: 10000);
+
+            await cancellation.CancelAsync();
+            Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.Cancelled, await monitorTask);
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            await app.StopAsync();
+            await DeleteDirectoryIfExistsWithRetryAsync(musicRoot);
+            await DeleteDirectoryIfExistsWithRetryAsync(outputDir);
+        }
+    }
 
     private static int GetFreeTcpPort()
     {
@@ -1311,6 +1737,29 @@ public class RemoteCliBackendTests
             RequestUri = request.RequestUri;
             Method = request.Method;
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class FailFirstDaemonSnapshotHandler()
+        : DelegatingHandler(new HttpClientHandler())
+    {
+        private int remainingFailures = 1;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/daemon/snapshot"
+                && Interlocked.Exchange(ref remainingFailures, 0) == 1)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                {
+                    Content = new StringContent("""{"error":"Synthetic snapshot failure"}"""),
+                    RequestMessage = request,
+                });
+            }
+
+            return base.SendAsync(request, cancellationToken);
         }
     }
 }

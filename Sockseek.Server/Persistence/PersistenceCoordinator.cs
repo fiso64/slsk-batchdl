@@ -71,8 +71,24 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
         };
         writerOptions.Validate();
         string version = typeof(PersistenceCoordinator).Assembly.GetName().Version?.ToString() ?? "dev";
+        // SQLite can otherwise remain in its own five-second lock wait after the
+        // configured persistence drain deadline has elapsed.
+        int busyTimeoutMilliseconds = (int)Math.Clamp(
+            options.Persistence.DrainTimeout.TotalMilliseconds,
+            1,
+            5_000);
+        int defaultTimeoutSeconds = (int)Math.Clamp(
+            Math.Ceiling(options.Persistence.DrainTimeout.TotalSeconds),
+            1,
+            5);
         host = new PersistenceRuntimeHost(
-            new SockseekSqliteOptions(databasePath), writerOptions, retentionOptions, version);
+            new SockseekSqliteOptions(
+                databasePath,
+                DefaultTimeoutSeconds: defaultTimeoutSeconds,
+                BusyTimeoutMilliseconds: busyTimeoutMilliseconds),
+            writerOptions,
+            retentionOptions,
+            version);
         var startup = await host.StartAsync(cancellationToken).ConfigureAwait(false);
         JobDisplayIds.ContinueAfter(startup.MaximumRetainedDisplayId);
     }

@@ -3,7 +3,7 @@
   "info": {
     "title": "Sockseek daemon API",
     "description": "HTTP API for the Sockseek daemon.",
-    "version": "3.0.5"
+    "version": "4.0.0"
   },
   "paths": {
     "/api/server/info": {
@@ -39,6 +39,58 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/daemon/snapshot": {
+      "get": {
+        "tags": [
+          "Live State"
+        ],
+        "summary": "Gets the bounded daemon replication snapshot and stream position.",
+        "description": "Contains active workflows and the jobs, searches, and transfers needed to render them. Retained terminal history remains paginated.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateSnapshotDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workflows/{workflowId}/snapshot": {
+      "get": {
+        "tags": [
+          "Live State"
+        ],
+        "summary": "Gets one complete workflow replication snapshot and its workflow-local stream position.",
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateSnapshotDto"
                 }
               }
             }
@@ -191,29 +243,6 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ProfileSummaryDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/events/catalog": {
-      "get": {
-        "tags": [
-          "Events"
-        ],
-        "summary": "Lists SignalR event types and their snapshot invalidation behavior.",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ServerEventDescriptorDto"
                   }
                 }
               }
@@ -1313,6 +1342,27 @@
         }
       }
     },
+    "/api/jobs/cancel-all": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Cancels all currently cancellable daemon jobs.",
+        "description": "The daemon remains running and can accept later submissions.",
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelJobsResponseDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/workflows/{workflowId}/jobs/display/{displayId}/cancel": {
       "post": {
         "tags": [
@@ -2182,6 +2232,22 @@
           }
         }
       },
+      "CancelJobsResponseDto": {
+        "required": [
+          "cancelled"
+        ],
+        "type": "object",
+        "properties": {
+          "cancelled": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "CancelWorkflowResponseDto": {
         "required": [
           "cancelled"
@@ -2300,6 +2366,43 @@
               "null",
               "boolean"
             ]
+          }
+        }
+      },
+      "DaemonStateDto": {
+        "required": [
+          "revision",
+          "soulseekClient",
+          "restartCount",
+          "searchRateLimitResetsAtUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "soulseekClient": {
+            "$ref": "#/components/schemas/SoulseekClientStatusDto"
+          },
+          "restartCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "searchRateLimitResetsAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -2933,6 +3036,83 @@
           }
         }
       },
+      "JobDiscoveryFieldsDto": {
+        "required": [
+          "rawResultCount",
+          "lockedFileCount"
+        ],
+        "type": "object",
+        "properties": {
+          "rawResultCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "lockedFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "JobDisplayFieldsDto": {
+        "required": [
+          "displayId",
+          "workflowId",
+          "kind",
+          "itemName",
+          "queryText",
+          "appliedAutoProfiles",
+          "printOption"
+        ],
+        "type": "object",
+        "properties": {
+          "displayId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ServerJobKind"
+          },
+          "itemName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "queryText": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "appliedAutoProfiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "printOption": {
+            "$ref": "#/components/schemas/PrintOption"
+          }
+        }
+      },
       "JobDraftDto": {
         "required": [
           "kind"
@@ -3339,6 +3519,73 @@
                 "$ref": "#/components/schemas/JobProvenanceDto"
               }
             ]
+          }
+        }
+      },
+      "JobLifecycleFieldsDto": {
+        "required": [
+          "lifecycleState",
+          "activityPhase",
+          "activityUntilUtc",
+          "terminalOutcome",
+          "skipReason",
+          "failureReason",
+          "failureMessage",
+          "failureDetail",
+          "cancellationSource",
+          "availableActions"
+        ],
+        "type": "object",
+        "properties": {
+          "lifecycleState": {
+            "$ref": "#/components/schemas/ServerJobLifecycleState"
+          },
+          "activityPhase": {
+            "$ref": "#/components/schemas/ServerJobActivityPhase"
+          },
+          "activityUntilUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "terminalOutcome": {
+            "$ref": "#/components/schemas/ServerJobTerminalOutcome"
+          },
+          "skipReason": {
+            "$ref": "#/components/schemas/ServerJobSkipReason"
+          },
+          "failureReason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ServerJobFailureReason"
+              }
+            ]
+          },
+          "failureMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "failureDetail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "cancellationSource": {
+            "$ref": "#/components/schemas/ServerJobCancellationSource"
+          },
+          "availableActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceActionDto"
+            }
           }
         }
       },
@@ -4071,6 +4318,74 @@
                 "$ref": "#/components/schemas/SourceMutationDto"
               }
             ]
+          }
+        }
+      },
+      "JobRelationshipFieldsDto": {
+        "required": [
+          "parentJobId",
+          "resultJobId",
+          "sourceJobId"
+        ],
+        "type": "object",
+        "properties": {
+          "parentJobId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "resultJobId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "sourceJobId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "JobStateDto": {
+        "required": [
+          "jobId",
+          "revision",
+          "display",
+          "lifecycle",
+          "discovery",
+          "relationships"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "display": {
+            "$ref": "#/components/schemas/JobDisplayFieldsDto"
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/JobLifecycleFieldsDto"
+          },
+          "discovery": {
+            "$ref": "#/components/schemas/JobDiscoveryFieldsDto"
+          },
+          "relationships": {
+            "$ref": "#/components/schemas/JobRelationshipFieldsDto"
           }
         }
       },
@@ -5431,26 +5746,42 @@
           }
         }
       },
-      "ServerEventDescriptorDto": {
+      "SearchStateDto": {
         "required": [
-          "type",
-          "category",
-          "snapshotInvalidation",
-          "payloadDto"
+          "jobId",
+          "workflowId",
+          "revision",
+          "resultCount",
+          "isComplete"
         ],
         "type": "object",
         "properties": {
-          "type": {
-            "type": "string"
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
           },
-          "category": {
-            "type": "string"
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
           },
-          "snapshotInvalidation": {
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "resultCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "isComplete": {
             "type": "boolean"
-          },
-          "payloadDto": {
-            "type": "string"
           }
         }
       },
@@ -5466,7 +5797,8 @@
         "required": [
           "name",
           "version",
-          "startedAtUtc"
+          "startedAtUtc",
+          "liveProtocolVersion"
         ],
         "type": "object",
         "properties": {
@@ -5479,6 +5811,14 @@
           "startedAtUtc": {
             "type": "string",
             "format": "date-time"
+          },
+          "liveProtocolVersion": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -6123,6 +6463,110 @@
           }
         }
       },
+      "StateSnapshotDto": {
+        "required": [
+          "scope",
+          "position",
+          "capturedAtUtc",
+          "daemon",
+          "workflows",
+          "jobs",
+          "searches",
+          "transfers"
+        ],
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/StateStreamScopeDto"
+          },
+          "position": {
+            "$ref": "#/components/schemas/StateStreamPositionDto"
+          },
+          "capturedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "daemon": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DaemonStateDto"
+              }
+            ]
+          },
+          "workflows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowStateDto"
+            }
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobStateDto"
+            }
+          },
+          "searches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchStateDto"
+            }
+          },
+          "transfers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferStateDto"
+            }
+          }
+        }
+      },
+      "StateStreamPositionDto": {
+        "required": [
+          "epoch",
+          "sequence"
+        ],
+        "type": "object",
+        "properties": {
+          "epoch": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sequence": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "StateStreamScopeDto": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StateStreamScopeKind"
+          },
+          "workflowId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "StateStreamScopeKind": {
+        "enum": [
+          "daemon",
+          "workflow"
+        ]
+      },
       "SubmissionOptionsDto": {
         "type": "object",
         "properties": {
@@ -6666,6 +7110,77 @@
           }
         }
       },
+      "TransferIdentityFieldsDto": {
+        "required": [
+          "jobId",
+          "workflowId",
+          "direction",
+          "source",
+          "username",
+          "remotePath",
+          "candidateKey"
+        ],
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "remotePath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "candidateKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "TransferProgressFieldsDto": {
+        "required": [
+          "bytesTransferred",
+          "totalBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "bytesTransferred": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "totalBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "TransferSettingsPatchDto": {
         "type": "object",
         "properties": {
@@ -6704,6 +7219,70 @@
           }
         }
       },
+      "TransferStateDto": {
+        "required": [
+          "transferId",
+          "revision",
+          "identity",
+          "status",
+          "progress"
+        ],
+        "type": "object",
+        "properties": {
+          "transferId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/TransferIdentityFieldsDto"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TransferStatusFieldsDto"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TransferProgressFieldsDto"
+          }
+        }
+      },
+      "TransferStatusFieldsDto": {
+        "required": [
+          "state",
+          "localPath",
+          "attemptCount",
+          "isTerminal"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "localPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "attemptCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "isTerminal": {
+            "type": "boolean"
+          }
+        }
+      },
       "WorkflowDetailDto": {
         "required": [
           "summary",
@@ -6737,6 +7316,26 @@
             "items": {
               "$ref": "#/components/schemas/WorkflowJobNodeDto"
             }
+          }
+        }
+      },
+      "WorkflowStateDto": {
+        "required": [
+          "revision",
+          "summary"
+        ],
+        "type": "object",
+        "properties": {
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/WorkflowSummaryDto"
           }
         }
       },
@@ -6860,13 +7459,13 @@
       "name": "Server"
     },
     {
+      "name": "Live State"
+    },
+    {
       "name": "Persistence"
     },
     {
       "name": "Profiles"
-    },
-    {
-      "name": "Events"
     },
     {
       "name": "Jobs"
