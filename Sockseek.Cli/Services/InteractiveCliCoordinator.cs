@@ -114,7 +114,7 @@ internal sealed class InteractiveCliCoordinator
                 && interactiveAlbumSessions.TryGetValue(summary.JobId, out var session))
             {
                 interactiveAlbumSessions.Remove(summary.JobId);
-                await HandleCompletedInteractiveAlbumAsync(summary.JobId, session, ct);
+                await HandleCompletedInteractiveAlbumAsync(summary, session, ct);
                 startedFollowUp = true;
             }
         }
@@ -278,26 +278,21 @@ internal sealed class InteractiveCliCoordinator
     }
 
     private async Task HandleCompletedInteractiveAlbumAsync(
-        Guid albumJobId,
+        JobSummaryDto summary,
         InteractiveAlbumSession session,
         CancellationToken ct)
     {
         if (appToken.IsCancellationRequested)
             return;
 
-        var detail = await backend.GetJobDetailAsync(albumJobId, ct);
-        if (detail?.Summary is { } summary && IsCompleted(summary.TerminalOutcome, summary.SkipReason))
+        if (IsCompleted(summary.TerminalOutcome, summary.SkipReason))
             return;
 
-        if (detail?.Summary.FailureReason == ServerProtocol.FailureReasons.Cancelled)
+        if (summary.FailureReason == ServerProtocol.FailureReasons.Cancelled)
             return;
 
-        if (detail?.Payload is AlbumJobPayloadDto album
-            && !string.IsNullOrWhiteSpace(album.ResolvedFolderUsername)
-            && !string.IsNullOrWhiteSpace(album.ResolvedFolderPath))
-        {
-            session.ExcludedFolderKeys.Add(album.ResolvedFolderUsername + "\\" + album.ResolvedFolderPath);
-        }
+        if (session.LastSelectedFolderKey != null)
+            session.ExcludedFolderKeys.Add(session.LastSelectedFolderKey);
 
         var outcome = await PromptForAlbumSelectionAsync(session, InteractiveAlbumPromptPurpose.RetryAcceptedAlbumPrompt);
         if (outcome.Selection == null)
@@ -312,6 +307,7 @@ internal sealed class InteractiveCliCoordinator
         CancellationToken ct)
     {
         var selectedFolder = selected.Folder;
+        session.LastSelectedFolderKey = FolderKey(selectedFolder);
         bool exactFiles = !selected.RetrieveCurrentFolder;
         var selectedFiles = !exactFiles
             ? null
@@ -610,6 +606,7 @@ internal sealed class InteractiveCliCoordinator
         public HashSet<string> ExcludedFolderKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> RetrievedFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string? FilterStr { get; set; }
+        public string? LastSelectedFolderKey { get; set; }
 
         public InteractiveAlbumSession(
             Guid sourceSearchJobId,

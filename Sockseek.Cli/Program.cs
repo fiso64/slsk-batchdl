@@ -297,6 +297,7 @@ internal static partial class Program
             }
         };
 
+        Task? interactiveCoordinatorTask = null;
         if (cliSettings.InteractiveMode)
         {
             var workflowId = Guid.NewGuid();
@@ -307,7 +308,8 @@ internal static partial class Program
                     rootSettings.Extraction.InputType.ToString(),
                     Options: new SubmissionOptionsDto(workflowId)),
                 cts.Token);
-            _ = coordinator.RunUntilCompleteAsync(submission.WorkflowId, cts.Token)
+            interactiveCoordinatorTask = coordinator.RunUntilCompleteAsync(submission.WorkflowId, cts.Token);
+            _ = interactiveCoordinatorTask
                 .ContinueWith(_ => engine.CompleteEnqueue(), TaskScheduler.Default);
         }
         else
@@ -336,6 +338,9 @@ internal static partial class Program
         try
         {
             await engine.RunAsync(cts.Token);
+            if (interactiveCoordinatorTask != null)
+                await interactiveCoordinatorTask;
+
             SockseekLog.Trace("Main: RunAsync returned.");
             bool hasDownloadableJobs = PrintOutputRenderer.HasDownloadableJobs(engine.Queue);
             bool hasRequestedOutput = PrintOutputRenderer.HasRequestedOutput(engine.Queue);
