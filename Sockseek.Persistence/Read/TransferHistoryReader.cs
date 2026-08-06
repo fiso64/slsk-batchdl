@@ -21,6 +21,7 @@ public sealed record PersistedTransfer(
     DateTimeOffset? CompletedAtUtc,
     string FailureReason,
     string? FailureMessage,
+    string CancellationSource,
     long Revision);
 
 public sealed record PersistedTransferAttempt(
@@ -150,7 +151,7 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             transfer.TotalBytes == long.MaxValue ? null : transfer.TotalBytes,
             transfer.TransferredBytes, transfer.AttemptCount,
             DateTimeOffset.FromUnixTimeMilliseconds(transfer.CreatedAtUtc), FromUnix(transfer.CompletedAtUtc),
-            transfer.FailureReason, transfer.FailureMessage, transfer.Revision);
+            transfer.FailureReason, transfer.FailureMessage, transfer.CancellationSource, transfer.Revision);
 
     private static PersistedTransferAttempt MapAttempt(Entities.TransferAttemptEntity attempt)
         => new(

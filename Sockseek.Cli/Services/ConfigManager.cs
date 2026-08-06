@@ -3,6 +3,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Extractors;
 using Sockseek.Core.Services;
+using Sockseek.Core.Sharing;
 using Sockseek.Core.Settings;
 using Sockseek.Api;
 using Sockseek.Server;
@@ -498,6 +499,32 @@ public static partial class ConfigManager
             if (days <= 0) throw new ArgumentException($"{flag} must be a positive number of days or 'forever'.");
             return TimeSpan.FromDays(days);
         }
+        TimeSpan? RescanInterval()
+        {
+            if (probe != null)
+                return TimeSpan.FromMinutes(1);
+            return ParseOptionalDuration(value, flag);
+        }
+        (bool Append, string Item) ListOperation()
+        {
+            string trimmed = value.TrimStart();
+            bool append = trimmed.StartsWith("+ ", StringComparison.Ordinal);
+            string item = append ? trimmed[2..].Trim() : value.Trim();
+            if (item.Length == 0)
+                throw new ArgumentException($"Input error: Option '{flag}' requires a non-empty value.");
+            return (append, item);
+        }
+        void DaemonEngine(Action<EngineSettings> action)
+        {
+            if (entry.Profile.Name != "default"
+                && !entry.Profile.Name.StartsWith('<'))
+            {
+                throw new ArgumentException(
+                    $"Input error: Daemon setting '{flag}' is not allowed in named or automatic profile '{entry.Profile.Name}'.");
+            }
+
+            Engine(action);
+        }
         switch (flag)
         {
             // ── Meta ─────────────────────────────────────────────────────────
@@ -535,8 +562,6 @@ public static partial class ConfigManager
                 Engine(e => e.SearchesPerTime = Int()); break;
             case "--srt": case "--searches-renew-time":
                 Engine(e => e.SearchRenewTime = Int()); break;
-            case "--nmsc": case "--no-modify-share-count":
-                Engine(e => e.NoModifyShareCount = Bool()); break;
             case "-v": case "--verbose": case "--debug":
                 Engine(e => e.LogLevel = LogLevel.Debug); break;
             case "-vv": case "--trace":
@@ -547,10 +572,69 @@ public static partial class ConfigManager
                 Engine(e => e.ConnectTimeout = Int()); break;
             case "--user-description":
                 Engine(e => e.UserDescription = value); break;
-            case "--shared-files":
-                Engine(e => e.SharedFiles = Int()); break;
-            case "--shared-folders":
-                Engine(e => e.SharedFolders = Int()); break;
+            case "--share":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.Roots.Clear();
+                        e.Sharing.Roots.Add(ShareRootParser.Parse(operation.Item));
+                    });
+                    break;
+                }
+            case "--share-exclude":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.ExcludedDirectories.Clear();
+                        e.Sharing.ExcludedDirectories.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--share-filter":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.Filters.Clear();
+                        e.Sharing.Filters.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--share-scan-on-start":
+                DaemonEngine(e => e.Sharing.ScanOnStart = Bool()); break;
+            case "--share-rescan-interval":
+                DaemonEngine(e => e.Sharing.RescanInterval = RescanInterval()); break;
+            case "--upload-slots":
+                DaemonEngine(e => e.Uploads.Slots = Int()); break;
+            case "--upload-speed-limit-kib":
+                DaemonEngine(e => e.Uploads.SpeedLimitKiBPerSecond = Int()); break;
+            case "--peer-blocked-user":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.PeerAccess.BlockedUsernames.Clear();
+                        e.PeerAccess.BlockedUsernames.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--peer-blocked-ip":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.PeerAccess.BlockedIpAddresses.Clear();
+                        e.PeerAccess.BlockedIpAddresses.Add(operation.Item);
+                    });
+                    break;
+                }
             case "--mock-files-dir":
                 Engine(e => e.MockFilesDir = value); break;
             case "--mock-files-no-read-tags":
@@ -1458,6 +1542,47 @@ public static partial class ConfigManager
         if (!double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double v))
             throw new Exception($"Input error: Option '{flag}' requires a numeric parameter, got '{s}'");
         return v;
+    }
+
+    private static TimeSpan? ParseOptionalDuration(string value, string flag)
+    {
+        value = value.Trim();
+        if (value.Equals("off", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (TimeSpan.TryParse(
+                value,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        if (value.Length > 1
+            && double.TryParse(
+                value[..^1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out double amount))
+        {
+            return char.ToLowerInvariant(value[^1]) switch
+            {
+                'm' => TimeSpan.FromMinutes(amount),
+                'h' => TimeSpan.FromHours(amount),
+                'd' => TimeSpan.FromDays(amount),
+                _ => throw InvalidDuration(),
+            };
+        }
+
+        throw InvalidDuration();
+
+        ArgumentException InvalidDuration()
+            => new(
+                $"Input error: Option '{flag}' requires a duration such as " +
+                "'00:30:00', '30m', '12h', '7d', or 'off'.");
     }
 
     private static bool ParseBool(string s, string flag)

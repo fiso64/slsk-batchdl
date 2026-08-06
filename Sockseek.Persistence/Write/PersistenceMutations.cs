@@ -68,7 +68,8 @@ public sealed record TransferPersistenceMutation(
     long TransferredBytes,
     int AttemptCount,
     string FailureReason,
-    string? FailureMessage)
+    string? FailureMessage,
+    string CancellationSource = "None")
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, TransferId, Revision, Priority);
 
 public sealed record TransferAttemptPersistenceMutation(

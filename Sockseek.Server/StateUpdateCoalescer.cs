@@ -209,6 +209,7 @@ public sealed class StateUpdateCoalescer : IDisposable
                 Revision = second.Revision,
                 Status = second.Status ?? added.Status,
                 Progress = second.Progress ?? added.Progress,
+                Scheduling = second.Scheduling ?? added.Scheduling,
             };
             return new TransferDeltaDto(first.TransferId, second.Revision, Added: mergedAdded);
         }
@@ -217,7 +218,8 @@ public sealed class StateUpdateCoalescer : IDisposable
             first.TransferId,
             second.Revision,
             Status: second.Status ?? first.Status,
-            Progress: second.Progress ?? first.Progress);
+            Progress: second.Progress ?? first.Progress,
+            Scheduling: second.Scheduling ?? first.Scheduling);
     }
 
     private static DaemonStateDto? Latest(DaemonStateDto? first, DaemonStateDto? second)

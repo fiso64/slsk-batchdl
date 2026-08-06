@@ -66,6 +66,108 @@ sockseek "Artist - Album" \
 
 The daemon performs the work. Closing the remote CLI does not stop the daemon.
 
+## Monitor daemon work
+
+Use `--monitor` to follow every active workflow in the normal live renderer.
+Input is optional; when supplied, its workflow appears alongside other daemon
+work:
+
+```bash
+sockseek --remote http://127.0.0.1:5030 --monitor
+sockseek "Artist - Title" --remote http://127.0.0.1:5030 --monitor
+```
+
+The normal `c`, `t`, and `i` shortcuts work daemon-wide by display ID. Choosing
+all from the cancel prompt cancels active jobs without stopping the daemon.
+
+## Sharing and transfer commands
+
+Sharing, scans, and uploads belong to the running daemon. These commands require
+`--remote`; they never start a temporary local daemon:
+
+```bash
+sockseek share status --remote http://127.0.0.1:5030
+sockseek share scan --remote http://127.0.0.1:5030
+sockseek share scan --cancel --remote http://127.0.0.1:5030
+sockseek transfers --direction upload --remote http://127.0.0.1:5030
+sockseek transfer cancel <id> --remote http://127.0.0.1:5030
+```
+
+`share status` reports the sharing health, published generation, public aliases,
+aggregate catalog counts, recent scan state, and blocked-peer counts
+without exposing local roots or blacklist contents. `transfers` is a paginated
+durable-history query; use `--limit`, `--cursor`, `--state`, `--username`, and
+`--direction` to narrow it. Add `--json` to these commands for typed JSON
+output. Scan and transfer cancellation use the same advertised actions and HTTP
+contracts as other API clients.
+
+### Configure sharing and uploads
+
+Sharing is off until at least one root is configured. A root may use its final
+directory name as the public alias, or specify an alias explicitly:
+
+```ini
+share = /srv/music
+share = + [Archive]/mnt/archive/audio
+share-exclude = + /srv/music/private
+share-filter = + \.(part|tmp)$
+
+share-scan-on-start = true
+# share-rescan-interval = 6h
+
+upload-slots = 10
+# upload-speed-limit-kib = 2048
+
+peer-blocked-user = + unwanted-user
+peer-blocked-ip = + 192.0.2.10
+```
+
+The leading `+` appends another value; an unprefixed list value replaces values
+from an earlier configuration layer. Public aliases and relative remote paths
+are visible to peers. Local roots and the contents of peer deny lists are not
+returned by ordinary status APIs.
+
+Scans skip Windows `Hidden` or `System` entries, Unix dotfiles and
+dot-directories, and every symbolic link or reparse point. A hidden directory's
+entire subtree is skipped. Attribute or entry-read failures skip that entry;
+they do not invalidate the filesystem. Zero-byte files are indexed and served.
+This hidden-file policy is fixed in v4 rather than configurable. A failed or
+cancelled rescan leaves the previous complete generation active.
+
+The initial scan runs in the background: daemon HTTP and ordinary download work
+start without waiting for a large library. Until the first generation publishes,
+sharing status reports the catalog unavailable and Sockseek advertises no
+shares. When a prior valid generation exists, it remains searchable, browsable,
+and upload-resolvable while the replacement is built.
+
+The catalog and browse artifact live under the daemon data directory, separately
+from durable history. A disk-full or write failure removes the incomplete
+staging generation and leaves the previously published generation active.
+Sockseek retains the current and rollback generations; an older generation is
+deleted only after its outstanding request streams release it.
+The dedicated sharing directory and its manifest, SQLite generations, and browse
+artifacts are restricted to the daemon account (protected owner-only ACLs on
+Windows and `0700`/`0600` modes on Unix).
+
+### Sharing filesystem behavior
+
+Sockseek does not maintain a filesystem allowlist. A configured root is eligible
+when the daemon account can enumerate and open it through .NET, including common
+NAS mounts, ZFS/Btrfs, Docker bind mounts, and FUSE-backed storage. A volume root
+such as `/` or `C:\` requires an explicit public alias. Local roots may overlap
+when their aliases are distinct.
+
+Peer paths are resolved only through the published catalog, checked for canonical
+containment, and never concatenated into an unchecked filesystem probe. Symbolic
+links and reparse points are excluded. Immediately before an upload, Sockseek
+opens the file read-only and validates its current size and modification time;
+native stable-file identity is optional hardening rather than a platform gate.
+Individual inaccessible or changed files fail without disabling the whole root.
+
+The catalog database itself should still live on reliable local storage under
+the daemon data directory. That operational recommendation is independent of
+where shared media is mounted.
+
 For application integration, see [API and client integration](api.md) and the
 generated [OpenAPI document](openapi.json).
 
@@ -78,8 +180,11 @@ Binding to `0.0.0.0`, `::`, or another network address makes the API reachable
 from that network. Only do this on a trusted network or when access is protected
 by a VPN, firewall, or authenticated reverse proxy.
 
-Anyone who can reach the API may be able to view download history and submit
-work using the daemon's configured credentials.
+Anyone who can reach the API can use its current pass-through operator trust
+domain: they may view history, submit work, start/cancel share scans, and cancel
+eligible jobs or uploads using the daemon's configured credentials. The
+`Sockseek.Operator` endpoint marker is an integration seam for the planned v4
+authentication work; it is not access control today.
 
 ## History and restarts
 

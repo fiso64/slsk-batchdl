@@ -18,6 +18,7 @@ public sealed record TransferHistoryDto(
     DateTimeOffset? CompletedAtUtc,
     string FailureReason,
     string? FailureMessage,
+    TransferCancellationSource CancellationSource,
     long Revision);
 
 public sealed record TransferAttemptHistoryDto(

@@ -156,6 +156,27 @@ public sealed class DaemonClientStore
             return daemon;
     }
 
+    public SharingStateDto? GetSharing()
+    {
+        lock (gate)
+            return daemon?.Sharing;
+    }
+
+    public UploadRuntimeStateDto? GetUploadRuntime()
+    {
+        lock (gate)
+            return daemon?.Uploads;
+    }
+
+    public IReadOnlyList<TransferStateDto> GetActiveTransfers()
+    {
+        lock (gate)
+            return liveTransfers.Values
+                .Where(transfer => !transfer.Status.IsTerminal)
+                .OrderBy(transfer => transfer.TransferId)
+                .ToList();
+    }
+
     public DaemonClientStateView GetLiveStateView()
     {
         lock (gate)
@@ -455,6 +476,7 @@ public sealed class DaemonClientStore
             Revision = delta.Revision,
             Status = delta.Status ?? current.Status,
             Progress = delta.Progress ?? current.Progress,
+            Scheduling = delta.Scheduling ?? current.Scheduling,
         };
     }
 

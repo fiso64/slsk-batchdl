@@ -55,6 +55,18 @@ namespace Tests.ClientTests
             KickedFromServer?.Invoke(this, EventArgs.Empty);
         }
 
+        public void RaiseExcludedSearchPhrases(params string[] phrases)
+            => ExcludedSearchPhrasesReceived?.Invoke(this, phrases);
+
+        public void RaiseStateChanged(SoulseekClientStates state)
+        {
+            SoulseekClientStates previous = State;
+            State = state;
+            StateChanged?.Invoke(
+                this,
+                new SoulseekClientStateChangedEventArgs(previous, state, "test"));
+        }
+
         public MockSoulseekClient(
             List<Soulseek.SearchResponse> index,
             int searchDelayMs = 0,

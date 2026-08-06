@@ -70,7 +70,7 @@ public sealed class HelpReferenceTests
             Assert.IsTrue(Help.PrintAndExitIfNeeded(["daemon", "--help"]));
 
             StringAssert.Contains(output.ToString(), "Daemon / remote mode");
-            StringAssert.Contains(output.ToString(), "docs/daemon.md");
+            StringAssert.Contains(output.ToString(), "daemon setup and remote commands");
         }
         finally
         {

@@ -7,6 +7,7 @@ using Sockseek.Persistence.Sqlite;
 using Sockseek.Persistence.Write;
 using System.Diagnostics;
 using Sockseek.Api;
+using Sockseek.Core.Transfers.Uploads;
 
 namespace Sockseek.Server.Persistence;
 
@@ -16,6 +17,7 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
     private readonly Dictionary<DownloadEngine, EnginePersistenceAdapter> adapters = [];
     private readonly object gate = new();
     private PersistenceRuntimeHost? host;
+    private UploadPersistenceAdapter? uploadAdapter;
     private string? databasePath;
 
     public bool IsEnabled => options.Persistence.Enabled;
@@ -34,6 +36,7 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
     public long? WalSizeBytes => host?.WalSizeBytes;
     public DateTimeOffset? LastRetentionAtUtc { get; private set; }
     public RetentionResult? LastRetentionResult { get; private set; }
+    public event Action? HistoryHealthChanged;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -90,6 +93,8 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
             retentionOptions,
             version);
         var startup = await host.StartAsync(cancellationToken).ConfigureAwait(false);
+        host.Health.CommitCompleted += OnHistoryHealthChanged;
+        host.Health.FailureRecorded += OnHistoryHealthChanged;
         JobDisplayIds.ContinueAfter(startup.MaximumRetainedDisplayId);
     }
 
@@ -153,12 +158,38 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
         }
     }
 
+    public void AttachUploads(UploadCoordinator uploads)
+    {
+        if (!IsStarted || Runtime == null || host?.MutationSink == null)
+            return;
+        lock (gate)
+        {
+            if (uploadAdapter is not null)
+                throw new InvalidOperationException("An upload runtime is already attached.");
+            uploadAdapter = new UploadPersistenceAdapter(
+                Runtime.RuntimeId,
+                host.MutationSink);
+            uploadAdapter.Attach(uploads);
+        }
+    }
+
+    public void DetachUploads(UploadCoordinator uploads)
+    {
+        lock (gate)
+        {
+            uploadAdapter?.Detach(uploads);
+            uploadAdapter = null;
+        }
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (!IsStarted)
             return;
 
-        var stop = await host!.StopAsync(options.Persistence.DrainTimeout, cancellationToken).ConfigureAwait(false);
+        host!.Health.CommitCompleted -= OnHistoryHealthChanged;
+        host.Health.FailureRecorded -= OnHistoryHealthChanged;
+        var stop = await host.StopAsync(options.Persistence.DrainTimeout, cancellationToken).ConfigureAwait(false);
         if (!stop.Drained)
         {
             SockseekLog.Daemon.Error(
@@ -171,5 +202,8 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
         if (!IsStarted || host == null)
             throw new InvalidOperationException("Persistence maintenance is unavailable because persistence is disabled or not started.");
     }
+
+    private void OnHistoryHealthChanged()
+        => HistoryHealthChanged?.Invoke();
 
 }

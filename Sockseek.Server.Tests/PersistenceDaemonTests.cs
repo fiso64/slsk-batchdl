@@ -128,45 +128,54 @@ public sealed class PersistenceDaemonTests
                     DataDirectory = Path.GetDirectoryName(databasePath),
                 },
             };
-            await using var app = ServerHost.Build([], options, "http://127.0.0.1:0");
+            var app = ServerHost.Build([], options, "http://127.0.0.1:0");
+            try
+            {
+                await app.StartAsync();
+                var supervisor = app.Services.GetRequiredService<EngineSupervisor>();
+                var status = supervisor.GetStatus();
 
-            await app.StartAsync();
-            var supervisor = app.Services.GetRequiredService<EngineSupervisor>();
-            var status = supervisor.GetStatus();
+                Assert.IsNotNull(status.Persistence);
+                Assert.IsTrue(status.Persistence.Enabled);
+                Assert.IsTrue(status.Persistence.Initialized);
+                Assert.AreEqual("Healthy", status.Persistence.State);
+                Assert.IsNotNull(status.Persistence.RuntimeId);
+                Assert.IsNotNull(status.Persistence.RuntimeStartedAtUtc);
+                StringAssert.Contains(status.Persistence.SchemaVersion, "AddUploadTransferHistory");
+                Assert.AreEqual(0, status.Persistence.ReconciledUnfinishedRuntimeCount);
 
-            Assert.IsNotNull(status.Persistence);
-            Assert.IsTrue(status.Persistence.Enabled);
-            Assert.IsTrue(status.Persistence.Initialized);
-            Assert.AreEqual("Healthy", status.Persistence.State);
-            Assert.IsNotNull(status.Persistence.RuntimeId);
-            Assert.IsNotNull(status.Persistence.RuntimeStartedAtUtc);
-            StringAssert.Contains(status.Persistence.SchemaVersion, "AddTransferAttemptSourceIdentity");
-            Assert.AreEqual(0, status.Persistence.ReconciledUnfinishedRuntimeCount);
+                var coordinator = app.Services.GetRequiredService<PersistenceCoordinator>();
+                var integrity = await coordinator.CheckIntegrityAsync(CancellationToken.None);
+                Assert.IsTrue(integrity.IsHealthy);
+                var backup = await coordinator.BackupAsync(
+                    Path.Combine(directory, "backups", "daemon-test.db"),
+                    CancellationToken.None);
+                Assert.IsTrue(backup.IntegrityHealthy);
+                Assert.IsTrue(File.Exists(backup.BackupPath));
+                var checkpoint = await coordinator.CheckpointAsync(CancellationToken.None);
+                Assert.IsTrue(checkpoint.Busy is 0 or 1);
+                var retention = await coordinator.RunRetentionAsync(CancellationToken.None);
+                Assert.AreEqual(0, retention.PrunedJobs);
+                var statusAfterMaintenance = supervisor.GetStatus().Persistence!;
+                Assert.IsNotNull(statusAfterMaintenance.LastRetentionAtUtc);
+                Assert.AreEqual(0, statusAfterMaintenance.LastRetentionPrunedJobs);
 
-            var coordinator = app.Services.GetRequiredService<PersistenceCoordinator>();
-            var integrity = await coordinator.CheckIntegrityAsync(CancellationToken.None);
-            Assert.IsTrue(integrity.IsHealthy);
-            var backup = await coordinator.BackupAsync(
-                Path.Combine(directory, "backups", "daemon-test.db"),
-                CancellationToken.None);
-            Assert.IsTrue(backup.IntegrityHealthy);
-            Assert.IsTrue(File.Exists(backup.BackupPath));
-            var checkpoint = await coordinator.CheckpointAsync(CancellationToken.None);
-            Assert.IsTrue(checkpoint.Busy is 0 or 1);
-            var retention = await coordinator.RunRetentionAsync(CancellationToken.None);
-            Assert.AreEqual(0, retention.PrunedJobs);
-            var statusAfterMaintenance = supervisor.GetStatus().Persistence!;
-            Assert.IsNotNull(statusAfterMaintenance.LastRetentionAtUtc);
-            Assert.AreEqual(0, statusAfterMaintenance.LastRetentionPrunedJobs);
+                await app.StopAsync();
+                Assert.IsFalse(
+                    coordinator.IsStarted,
+                    "The hosted persistence runtime must release database ownership during host stop.");
 
-            await app.StopAsync();
-
-            var connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
-            await using var connection = new SqliteConnection(connectionString);
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT shutdown_kind FROM runtime_sessions ORDER BY started_at_utc DESC LIMIT 1;";
-            Assert.AreEqual("Clean", Convert.ToString(await command.ExecuteScalarAsync()));
+                var connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
+                await using var connection = new SqliteConnection(connectionString);
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT shutdown_kind FROM runtime_sessions ORDER BY started_at_utc DESC LIMIT 1;";
+                Assert.AreEqual("Clean", Convert.ToString(await command.ExecuteScalarAsync()));
+            }
+            finally
+            {
+                await app.DisposeAsync();
+            }
         }
         finally
         {

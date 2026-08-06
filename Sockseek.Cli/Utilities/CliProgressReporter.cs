@@ -260,7 +260,8 @@ public class CliProgressReporter
     {
         var jobsById = state.Jobs.ToDictionary(job => job.JobId);
         var transfersByJob = state.Transfers
-            .GroupBy(transfer => transfer.Identity.JobId)
+            .Where(transfer => transfer.Identity.JobId.HasValue)
+            .GroupBy(transfer => transfer.Identity.JobId!.Value)
             .ToDictionary(
                 group => group.Key,
                 group => group

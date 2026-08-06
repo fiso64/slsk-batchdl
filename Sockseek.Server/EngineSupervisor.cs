@@ -12,6 +12,8 @@ using Sockseek.Persistence.Read;
 using Soulseek;
 using Sockseek.Api;
 using Sockseek.Server.Persistence;
+using Sockseek.Core.Sharing;
+using Sockseek.Core.Transfers.Uploads;
 
 namespace Sockseek.Server;
 
@@ -34,6 +36,12 @@ public sealed class EngineSupervisor
 
     public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
     public EngineStateStore StateStore { get; }
+    public SharingRuntime? Sharing { get; private set; }
+    /// <summary>
+    /// Neutral daemon-session seam for future chat and remote-user services.
+    /// This is the same manager used by sharing and every download engine.
+    /// </summary>
+    public SoulseekClientManager? SoulseekSession { get; private set; }
 
     public EngineSupervisor(IOptions<ServerOptions> options, PersistenceCoordinator? persistence = null)
     {
@@ -44,6 +52,7 @@ public sealed class EngineSupervisor
         engineSettings.AutoReconnectAfterKickedFromServer = true;
         defaultDownloadSettings = SettingsCloner.Clone(this.options.DefaultDownload);
         var pathContext = new PathVariableContext(ConfigDir: this.options.ConfigDir);
+        SharingSettingsValidator.NormalizeAndValidate(engineSettings, pathContext);
         ServerJobSettingsResolver.NormalizeForServer(defaultDownloadSettings, pathContext);
         profileCatalog = this.options.Profiles ?? ProfileCatalog.Empty;
         jobSettingsResolver = new ServerJobSettingsResolver(defaultDownloadSettings, profileCatalog, this.options.LaunchDownloadSettings, pathContext);
@@ -53,60 +62,165 @@ public sealed class EngineSupervisor
 
     public async Task RunAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        string dataDirectory = SockseekDataPaths.ResolveDataDirectory(
+            options.Persistence.DataDirectory);
+        await using var sharing = new SharingRuntime(
+            engineSettings,
+            dataDirectory,
+            options.ClientFactory);
+        Sharing = sharing;
+        SoulseekSession = sharing.ClientManager;
+        void OnClientStateChanged(SoulseekClientStates state)
+            => StateStore.UpdateDaemonRuntime(
+                ToSoulseekClientStatusDto(state),
+                restartCount);
+        void OnSharingStateChanged(
+            SharingStateDto sharingState,
+            UploadRuntimeStateDto uploadState)
+            => StateStore.UpdateSharingRuntime(
+                sharingState,
+                WithHistoryHealth(uploadState));
+        void OnHistoryHealthChanged()
+            => StateStore.UpdateSharingRuntime(
+                sharing.GetSharingState(),
+                WithHistoryHealth(sharing.GetUploadRuntimeState()));
+        void OnUploadChanged(UploadTransferSnapshot transfer)
         {
-            var (engine, clientManager) = CreateEngine();
-            var runTask = engine.RunAsync(ct);
+            StateStore.UpdateUploadTransfer(transfer);
+            if (transfer.State is UploadTransferState.Completed
+                or UploadTransferState.Cancelled
+                or UploadTransferState.Failed
+                or UploadTransferState.Interrupted)
+            {
+                _ = RetireTerminalUploadAsync(transfer);
+            }
+        }
+        sharing.ClientManager.StateChanged += OnClientStateChanged;
+        sharing.StateChanged += OnSharingStateChanged;
+        sharing.Uploads.TransferChanged += OnUploadChanged;
+        persistence?.AttachUploads(sharing.Uploads);
+        if (persistence is not null)
+            persistence.HistoryHealthChanged += OnHistoryHealthChanged;
+        try
+        {
+            await sharing.StartAsync(ct);
+            while (!ct.IsCancellationRequested)
+            {
+                var engine = CreateEngine(sharing.ClientManager);
+                var runTask = engine.RunAsync(ct);
 
+                try
+                {
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var waitToReadTask = submissionChannel.Reader.WaitToReadAsync(ct).AsTask();
+                        var completedTask = await Task.WhenAny(runTask, waitToReadTask);
+
+                        if (completedTask == runTask)
+                        {
+                            await runTask;
+                            return;
+                        }
+
+                        if (!await waitToReadTask)
+                            continue;
+
+                        while (submissionChannel.Reader.TryRead(out var submission))
+                        {
+                            if (submission.IsResume)
+                                engine.Resume(submission.Job);
+                            else
+                                engine.Enqueue(submission.Job, submission.Settings!, submission.SourceJobId);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    Interlocked.Increment(ref restartCount);
+                    SockseekLog.Daemon.Error(ex, "Engine instance failed, restarting supervisor loop");
+                    StateStore.MarkActiveJobsInfrastructureFailed(
+                        SockseekLog.ExceptionSummary(ex),
+                        SockseekLog.ExceptionDetail(ex));
+                    continue;
+                }
+                finally
+                {
+                    StateStore.DetachEngine(engine);
+                    persistence?.DetachEngine(engine);
+                    lock (engineGate)
+                    {
+                        if (ReferenceEquals(currentEngine, engine))
+                            currentEngine = null;
+                    }
+                    await engine.DisposeAsync();
+                }
+            }
+        }
+        finally
+        {
+            sharing.ClientManager.StateChanged -= OnClientStateChanged;
+            sharing.StateChanged -= OnSharingStateChanged;
+            sharing.Uploads.TransferChanged -= OnUploadChanged;
+            if (persistence is not null)
+                persistence.HistoryHealthChanged -= OnHistoryHealthChanged;
+            persistence?.DetachUploads(sharing.Uploads);
+            Sharing = null;
+            SoulseekSession = null;
+        }
+
+        UploadRuntimeStateDto WithHistoryHealth(UploadRuntimeStateDto upload)
+        {
+            if (!upload.AcceptingUploads
+                || persistence?.IsEnabled != true
+                || persistence.HealthSnapshot?.State
+                    is null or Sockseek.Persistence.Write.PersistenceHealthState.Healthy)
+            {
+                return upload;
+            }
+            return upload with
+            {
+                State = SharingHealthState.Degraded,
+                Reason = "HistoryPersistenceDegraded",
+            };
+        }
+
+        async Task RetireTerminalUploadAsync(UploadTransferSnapshot transfer)
+        {
             try
             {
-                while (!ct.IsCancellationRequested)
+                // Guarantee at least one observable terminal live-state interval.
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+
+                if (persistence?.IsStarted == true
+                    && persistence.TransferHistory is { } history)
                 {
-                    var waitToReadTask = submissionChannel.Reader.WaitToReadAsync(ct).AsTask();
-                    var completedTask = await Task.WhenAny(runTask, waitToReadTask);
-
-                    if (completedTask == runTask)
+                    DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+                    while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
                     {
-                        await runTask;
-                        return;
-                    }
-
-                    if (!await waitToReadTask)
-                        continue;
-
-                    while (submissionChannel.Reader.TryRead(out var submission))
-                    {
-                        if (submission.IsResume)
-                            engine.Resume(submission.Job);
-                        else
-                            engine.Enqueue(submission.Job, submission.Settings!, submission.SourceJobId);
+                        var durable = await history.GetTransferAsync(
+                            transfer.TransferId,
+                            attemptLimit: 1,
+                            ct).ConfigureAwait(false);
+                        if (durable?.Transfer.Revision >= transfer.Revision
+                            && durable.Transfer.TerminalOutcome != "None")
+                        {
+                            break;
+                        }
+                        await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
                     }
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
-                return;
-            }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            {
-                Interlocked.Increment(ref restartCount);
-                SockseekLog.Daemon.Error(ex, "Engine instance failed, restarting supervisor loop");
-                StateStore.MarkActiveJobsInfrastructureFailed(
-                    SockseekLog.ExceptionSummary(ex),
-                    SockseekLog.ExceptionDetail(ex));
-                continue;
             }
             finally
             {
-                StateStore.DetachEngine(engine);
-                persistence?.DetachEngine(engine);
-                lock (engineGate)
-                {
-                    if (ReferenceEquals(currentEngine, engine))
-                        currentEngine = null;
-                }
-                await engine.DisposeAsync();
-                clientManager.Dispose();
+                StateStore.RemoveUploadTransfer(transfer.TransferId);
+                sharing.Uploads.Forget(transfer.TransferId);
             }
         }
     }
@@ -121,7 +235,9 @@ public sealed class EngineSupervisor
     {
         SoulseekClientStates clientState;
         lock (engineGate)
-            clientState = currentEngine?.ClientState ?? SoulseekClientStates.None;
+            clientState = SoulseekSession?.State
+                          ?? currentEngine?.ClientState
+                          ?? SoulseekClientStates.None;
 
         var stats = StateStore.GetStatistics();
         var persistenceStatus = GetPersistenceStatus();
@@ -948,11 +1064,8 @@ public sealed class EngineSupervisor
         return engine != null && await engine.SkipManualSelectionAsync(jobId);
     }
 
-    private (DownloadEngine Engine, SoulseekClientManager ClientManager) CreateEngine()
+    private DownloadEngine CreateEngine(SoulseekClientManager clientManager)
     {
-        var clientManager = new SoulseekClientManager(engineSettings, options.ClientFactory?.Invoke(engineSettings));
-        clientManager.StateChanged += state =>
-            StateStore.UpdateDaemonRuntime(ToSoulseekClientStatusDto(state), restartCount);
         var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
         persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
@@ -960,7 +1073,7 @@ public sealed class EngineSupervisor
             currentEngine = engine;
         StateStore.UpdateDaemonRuntime(ToSoulseekClientStatusDto(clientManager.State), restartCount);
         EngineCreated?.Invoke(engine);
-        return (engine, clientManager);
+        return engine;
     }
 
     private ConcurrentDictionary<string, int> GetCurrentEngineUserSuccessCounts()

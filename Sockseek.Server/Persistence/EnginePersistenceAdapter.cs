@@ -143,7 +143,14 @@ public sealed class EnginePersistenceAdapter
                 break;
 
             case TransferCancelledChange cancelled:
-                EnqueueTerminalTransfer(cancelled.Transfer, cancelled, "Cancelled", "Cancelled", cancelled.Reason.ToString(), null);
+                EnqueueTerminalTransfer(
+                    cancelled.Transfer,
+                    cancelled,
+                    "Cancelled",
+                    "Cancelled",
+                    cancelled.Reason.ToString(),
+                    null,
+                    cancelled.Reason.ToString());
                 break;
 
             case SearchResultsAddedChange results:
@@ -186,7 +193,8 @@ public sealed class EnginePersistenceAdapter
         string state,
         string outcome,
         string failureReason,
-        string? failureMessage)
+        string? failureMessage,
+        string cancellationSource = "None")
     {
         pendingTerminalAttempts.TryRemove(transfer.Id, out var finalAttempt);
         var transferMutation = TransferMutation(
@@ -196,7 +204,8 @@ public sealed class EnginePersistenceAdapter
             state,
             outcome,
             failureReason,
-            failureMessage);
+            failureMessage,
+            cancellationSource);
         sink.TryEnqueue(new TransferTerminalPersistenceMutation(transferMutation, finalAttempt, OwningJob: null));
     }
 
@@ -280,7 +289,8 @@ public sealed class EnginePersistenceAdapter
         string state,
         string terminalOutcome,
         string failureReason,
-        string? failureMessage)
+        string? failureMessage,
+        string cancellationSource = "None")
         => new(
             runtimeId,
             change.Sequence,
@@ -301,7 +311,8 @@ public sealed class EnginePersistenceAdapter
             transfer.BytesTransferred,
             transfer.AttemptCount,
             failureReason,
-            failureMessage);
+            failureMessage,
+            cancellationSource);
 
     private TransferAttemptPersistenceMutation AttemptMutation(
         TransferAttemptStartedChange attempt,

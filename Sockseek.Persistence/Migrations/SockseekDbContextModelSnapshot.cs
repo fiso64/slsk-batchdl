@@ -459,6 +459,12 @@ namespace Sockseek.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("attempt_count");
 
+                    b.Property<string>("CancellationSource")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cancellation_source");
+
                     b.Property<long?>("CompletedAtUtc")
                         .HasColumnType("INTEGER")
                         .HasColumnName("completed_at_utc");
@@ -562,6 +568,12 @@ namespace Sockseek.Persistence.Migrations
                     b.HasIndex("LastRuntimeId", "TerminalOutcome");
 
                     b.HasIndex("Direction", "State", "CreatedAtUtc");
+
+                    b.HasIndex("Direction", "StartedAtUtc", "Id");
+
+                    b.HasIndex("Direction", "TerminalOutcome", "CompletedAtUtc");
+
+                    b.HasIndex("Username", "Direction", "StartedAtUtc", "Id");
 
                     b.HasIndex("WorkflowId", "CreatedAtUtc", "Id");
 

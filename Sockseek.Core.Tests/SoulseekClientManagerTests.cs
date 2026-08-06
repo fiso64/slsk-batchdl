@@ -3,6 +3,7 @@ using Soulseek;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Tests.ClientTests;
+using System.Net;
 
 namespace Tests.Core;
 
@@ -41,6 +42,71 @@ public class SoulseekClientManagerTests
             token);
 
         Assert.AreEqual(token, options.StartingToken);
+    }
+
+    [TestMethod]
+    public void CreateClientOptions_WiresSharingCallbacksSlotsAndSpeed()
+    {
+        var settings = new EngineSettings
+        {
+            ListenPort = 49998,
+            Uploads = new UploadSettings
+            {
+                Slots = 7,
+                SpeedLimitKiBPerSecond = 123,
+            },
+        };
+        var router = new FakeInboundRouter();
+
+        SoulseekClientOptions options =
+            SoulseekClientManager.CreateClientOptions(settings, 1, router);
+
+        Assert.AreEqual(7, options.MaximumConcurrentUploads);
+        Assert.AreEqual(123 * 1_024, options.MaximumUploadSpeed);
+        Assert.AreEqual(
+            SoulseekClientManager.PeerConnectionInactivityTimeoutMilliseconds,
+            options.TransferConnectionOptions.InactivityTimeout);
+        Assert.IsNotNull(options.SearchResponseResolver);
+        Assert.IsNotNull(options.BrowseResponseResolver);
+        Assert.IsNotNull(options.DirectoryContentsResolver);
+        Assert.IsNotNull(options.EnqueueDownload);
+        Assert.IsNotNull(options.PlaceInQueueResolver);
+    }
+
+    [TestMethod]
+    public void ClientManager_ForwardsServerExcludedPhraseUpdates()
+    {
+        var client = new MockSoulseekClient([]);
+        var router = new FakeInboundRouter();
+        using var manager = new SoulseekClientManager(
+            new EngineSettings(),
+            client,
+            router);
+
+        client.RaiseExcludedSearchPhrases("forbidden", "blocked");
+
+        CollectionAssert.AreEqual(
+            new[] { "forbidden", "blocked" },
+            router.ExcludedPhrases.ToArray());
+    }
+
+    [TestMethod]
+    public void ClientManager_IsolatesStateObservers()
+    {
+        var client = new MockSoulseekClient([]);
+        using var manager = new SoulseekClientManager(
+            new EngineSettings(),
+            client);
+        SoulseekClientStates observed = SoulseekClientStates.None;
+        manager.StateChanged += _ => throw new InvalidOperationException("observer");
+        manager.StateChanged += state => observed = state;
+
+        client.RaiseStateChanged(
+            SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn);
+
+        Assert.AreEqual(
+            SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn,
+            observed);
     }
 
     [TestMethod]
@@ -163,5 +229,47 @@ public class SoulseekClientManagerTests
         {
             manager.Dispose();
         }
+    }
+
+    private sealed class FakeInboundRouter : ISoulseekInboundRequestRouter
+    {
+        public IReadOnlyCollection<string> ExcludedPhrases { get; private set; } = [];
+
+        public bool TryUpdateExcludedSearchPhrases(IReadOnlyCollection<string> phrases)
+        {
+            ExcludedPhrases = phrases.ToArray();
+            return true;
+        }
+
+        public Task<SearchResponse?> ResolveSearchAsync(
+            string username,
+            int token,
+            SearchQuery query) => Task.FromResult<SearchResponse?>(null);
+
+        public Task<BrowseResponse> ResolveBrowseAsync(
+            string username,
+            IPEndPoint endpoint) => Task.FromResult(new BrowseResponse());
+
+        public Task<IEnumerable<Soulseek.Directory>> ResolveDirectoryAsync(
+            string username,
+            IPEndPoint endpoint,
+            int token,
+            string remotePath)
+            => Task.FromResult<IEnumerable<Soulseek.Directory>>([]);
+
+        public Task<UserInfo> ResolveUserInfoAsync(
+            string username,
+            IPEndPoint endpoint)
+            => Task.FromResult(new UserInfo("", 0, 0, false));
+
+        public Task EnqueueUploadAsync(
+            string username,
+            IPEndPoint endpoint,
+            string remotePath) => Task.CompletedTask;
+
+        public Task<int?> ResolvePlaceInQueueAsync(
+            string username,
+            IPEndPoint endpoint,
+            string remotePath) => Task.FromResult<int?>(null);
     }
 }

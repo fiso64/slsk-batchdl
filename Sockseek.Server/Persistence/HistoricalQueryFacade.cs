@@ -129,6 +129,42 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             : new TransferHistoryDetailDto(ToTransfer(detail.Transfer), detail.Attempts.Select(ToAttempt).ToArray());
     }
 
+    public async Task<TransferDetailDto?> GetTransferDetailAsync(
+        Guid transferId,
+        int attemptLimit,
+        CancellationToken cancellationToken = default)
+    {
+        TransferStateDto? liveTransfer = live.GetLiveTransfer(transferId);
+        TransferHistoryDetailDto? historical = await GetTransferAsync(
+            transferId,
+            attemptLimit,
+            cancellationToken).ConfigureAwait(false);
+        if (liveTransfer is null && historical is null)
+            return null;
+
+        TransferQueueEstimateDto? estimate = null;
+        if (liveTransfer is not null
+            && liveTransfer.Status.State.Equals("Queued", StringComparison.OrdinalIgnoreCase)
+            && supervisor.Sharing is { } sharing)
+        {
+            var value = sharing.Uploads.GetQueueEstimate(transferId);
+            estimate = new TransferQueueEstimateDto(
+                value.AheadCount,
+                value.QueueRevision);
+        }
+
+        return new TransferDetailDto(
+            liveTransfer is not null && historical is not null
+                ? TransferDetailSource.Merged
+                : liveTransfer is not null
+                    ? TransferDetailSource.Live
+                    : TransferDetailSource.Historical,
+            liveTransfer,
+            estimate,
+            historical?.Transfer,
+            historical?.Attempts ?? []);
+    }
+
     public async Task<CombinedTransferAttemptPage?> GetTransferAttemptsAsync(
         Guid transferId,
         int afterAttemptNumber,
@@ -339,7 +375,14 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             transfer.Id, transfer.JobId, transfer.WorkflowId, transfer.Direction, transfer.Source, transfer.Username,
             transfer.RemotePath, transfer.LocalPath, transfer.State, transfer.TerminalOutcome, transfer.TotalBytes,
             transfer.TransferredBytes, transfer.AttemptCount, transfer.CreatedAtUtc, transfer.CompletedAtUtc,
-            transfer.FailureReason, transfer.FailureMessage, transfer.Revision);
+            transfer.FailureReason, transfer.FailureMessage,
+            Enum.TryParse(
+                transfer.CancellationSource,
+                ignoreCase: true,
+                out TransferCancellationSource cancellationSource)
+                ? cancellationSource
+                : TransferCancellationSource.None,
+            transfer.Revision);
 
     private static TransferAttemptHistoryDto ToAttempt(PersistedTransferAttempt attempt)
         => new(

@@ -14,6 +14,7 @@ public sealed class SqliteInitializer(
         "20260711200436_InitialPersistence",
         "20260712090000_AddHistoryQueryIndexes",
         "20260712170220_AddTransferAttemptSourceIdentity",
+        "20260729120000_AddUploadTransferHistory",
     };
 
     public async Task<SqliteInitializationResult> InitializeAsync(CancellationToken cancellationToken = default)

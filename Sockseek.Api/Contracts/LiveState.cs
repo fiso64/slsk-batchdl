@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Sockseek.Core;
+using Sockseek.Core.Sharing;
 
 namespace Sockseek.Api;
 
@@ -48,7 +49,66 @@ public sealed record DaemonStateDto(
     long Revision,
     SoulseekClientStatusDto SoulseekClient,
     int RestartCount,
-    DateTimeOffset? SearchRateLimitResetsAtUtc);
+    DateTimeOffset? SearchRateLimitResetsAtUtc,
+    SharingStateDto Sharing,
+    UploadRuntimeStateDto Uploads);
+
+[JsonConverter(typeof(JsonStringEnumConverter<SharingHealthState>))]
+public enum SharingHealthState
+{
+    Disabled,
+    Starting,
+    Ready,
+    Degraded,
+}
+
+public sealed record ShareCatalogStateDto(
+    Guid? GenerationId,
+    long DirectoryCount,
+    long FileCount,
+    long TotalBytes,
+    bool BrowseAvailable,
+    long? BrowseArtifactBytes,
+    DateTimeOffset? PublishedAtUtc);
+
+public sealed record ShareScanErrorSampleDto(
+    string Code,
+    string RelativePath,
+    string Message);
+
+public sealed record ShareScanStateDto(
+    Guid ScanId,
+    long Revision,
+    ShareScanPhase Phase,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    long DirectoriesDiscovered,
+    long FilesDiscovered,
+    long BytesDiscovered,
+    int ErrorCount,
+    IReadOnlyList<ShareScanErrorSampleDto> ErrorSamples,
+    IReadOnlyList<ResourceActionDto> AvailableActions);
+
+public sealed record SharingStateDto(
+    SharingHealthState State,
+    string? Reason,
+    IReadOnlyList<string> Aliases,
+    int BlockedUsernameCount,
+    int BlockedIpAddressCount,
+    ShareCatalogStateDto Catalog,
+    ShareScanStateDto? ActiveScan,
+    ShareScanStateDto? LastScan);
+
+public sealed record UploadRuntimeStateDto(
+    SharingHealthState State,
+    string? Reason,
+    bool AcceptingUploads,
+    int Slots,
+    int ActiveSlots,
+    int QueuedFiles,
+    long QueuedBytes,
+    long QueueRevision,
+    int? SpeedLimitKiBPerSecond);
 
 /// <summary>Fields that identify and label a job and normally remain stable.</summary>
 public sealed record JobDisplayFieldsDto(
@@ -182,25 +242,74 @@ public sealed record SearchStateDto(
 
 /// <summary>Stable source and ownership metadata for a transfer.</summary>
 public sealed record TransferIdentityFieldsDto(
-    Guid JobId,
-    Guid WorkflowId,
+    Guid? JobId,
+    Guid? WorkflowId,
     string Direction,
     string Source,
     string? Username,
     string? RemotePath,
     string? CandidateKey);
 
+[JsonConverter(typeof(JsonStringEnumConverter<TransferTerminalOutcome>))]
+public enum TransferTerminalOutcome
+{
+    None,
+    Succeeded,
+    Cancelled,
+    Failed,
+    Interrupted,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<TransferFailureReason>))]
+public enum TransferFailureReason
+{
+    None,
+    FileUnavailable,
+    FileNoLongerShared,
+    FileChanged,
+    InvalidOffset,
+    Denied,
+    PeerDisconnected,
+    ConnectionFailed,
+    TransferTimedOut,
+    Unknown,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<TransferCancellationSource>))]
+public enum TransferCancellationSource
+{
+    None,
+    User,
+    Peer,
+    DaemonShutdown,
+    CatalogInvalidation,
+}
+
 /// <summary>A cohesive replacement for the current transfer state.</summary>
 public sealed record TransferStatusFieldsDto(
     string State,
     string? LocalPath,
     int AttemptCount,
-    bool IsTerminal);
+    bool IsTerminal,
+    TransferTerminalOutcome TerminalOutcome = TransferTerminalOutcome.None,
+    TransferFailureReason FailureReason = TransferFailureReason.None,
+    TransferCancellationSource CancellationSource = TransferCancellationSource.None,
+    IReadOnlyList<ResourceActionDto>? AvailableActions = null)
+{
+    public IReadOnlyList<ResourceActionDto> AvailableActions { get; init; } =
+        AvailableActions ?? [];
+}
+
+public sealed record TransferSchedulingFieldsDto(
+    DateTimeOffset RequestedAtUtc,
+    DateTimeOffset? StartedAtUtc);
 
 /// <summary>A cohesive replacement for transfer byte progress.</summary>
 public sealed record TransferProgressFieldsDto(
     long BytesTransferred,
-    long TotalBytes);
+    long TotalBytes,
+    long? BytesPerSecond = null,
+    DateTimeOffset? LastProgressAtUtc = null);
 
 /// <summary>A complete active transfer row, always keyed by TransferId.</summary>
 public sealed record TransferStateDto(
@@ -208,7 +317,8 @@ public sealed record TransferStateDto(
     long Revision,
     TransferIdentityFieldsDto Identity,
     TransferStatusFieldsDto Status,
-    TransferProgressFieldsDto Progress);
+    TransferProgressFieldsDto Progress,
+    TransferSchedulingFieldsDto? Scheduling = null);
 
 /// <summary>
 /// A new transfer uses Added. Existing transfers replace only the supplied state and
@@ -219,7 +329,8 @@ public sealed record TransferDeltaDto(
     long Revision,
     TransferStateDto? Added = null,
     TransferStatusFieldsDto? Status = null,
-    TransferProgressFieldsDto? Progress = null);
+    TransferProgressFieldsDto? Progress = null,
+    TransferSchedulingFieldsDto? Scheduling = null);
 
 /// <summary>Typed compact state changes carried by one stream batch.</summary>
 public sealed record StateDeltaDto(

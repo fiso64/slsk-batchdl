@@ -14,6 +14,50 @@ either daemon-wide or workflow-scoped subscriptions per connection, handles
 snapshot hydration and recovery, and exposes current state through
 `DaemonClientStore`.
 
+Sharing and upload consumers use the same clients and transfer reducer. The
+HTTP client exposes share scan start/detail/cancel, live transfer paging,
+live-first transfer detail, transfer cancellation, durable transfer history,
+and attempt paging. Uploads do not have a separate client-side transfer model.
+
+## Sharing and upload resources
+
+The bounded sharing status and scan resources are:
+
+```text
+GET  /api/sharing
+POST /api/sharing/scans
+GET  /api/sharing/scans/{scanId}
+POST /api/sharing/scans/{scanId}/cancel
+```
+
+`GET /api/sharing` exposes the compact `Disabled`, `Starting`, `Ready`, or
+`Degraded` health summary, one optional reason, public aliases, aggregate catalog
+counts, scan state, and blocked-peer counts. It never returns local share roots
+or blacklist contents.
+
+Transfers use the generic resources:
+
+```text
+GET  /api/transfers?direction=upload&...
+GET  /api/transfers/live?direction=upload&state=queued&cursor=...&limit=...
+GET  /api/transfers/{transferId}
+POST /api/transfers/{transferId}/cancel
+GET  /api/transfers/{transferId}/attempts
+```
+
+`/api/transfers` is cursor-paged durable history. `/api/transfers/live` pages
+only the bounded runtime queue and is not merged with persistence. Its default
+best-effort keyset cursor remains usable during churn and reports the observed
+queue revision plus a `QueueChanged` hint. Cursors are bounded, validated query
+state rather than authorization tokens; malformed values return `400`. Transfer
+detail is live-first, with retained history and attempts as fallback.
+
+All command failures use `ApiErrorDto.Code` for control flow. Scan and transfer
+mutations carry the named `Sockseek.Operator` endpoint policy. The current
+daemon has no authentication, so that policy is a pass-through trust-domain
+seam—not access control. Anyone who can reach a non-loopback daemon can invoke
+these commands; see [daemon security and operation](daemon.md).
+
 ## OpenAPI
 
 OpenAPI spec is in `docs/openapi.json` (auto-generated during build). The same document is also served by a running daemon at `GET /api/openapi.json`.

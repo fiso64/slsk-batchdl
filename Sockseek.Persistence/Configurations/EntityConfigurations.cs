@@ -161,12 +161,16 @@ internal sealed class TransferConfiguration : IEntityTypeConfiguration<TransferE
         builder.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
         builder.Property(x => x.FailureReason).HasColumnName("failure_reason").HasMaxLength(64);
         builder.Property(x => x.FailureMessage).HasColumnName("failure_message").HasMaxLength(2048);
+        builder.Property(x => x.CancellationSource).HasColumnName("cancellation_source").HasMaxLength(32);
         builder.Property(x => x.Revision).HasColumnName("revision");
         builder.HasOne<JobEntity>().WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne<RuntimeSessionEntity>().WithMany().HasForeignKey(x => x.LastRuntimeId).OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => x.JobId);
         builder.HasIndex(x => new { x.WorkflowId, x.CreatedAtUtc, x.Id });
         builder.HasIndex(x => new { x.Direction, x.State, x.CreatedAtUtc });
+        builder.HasIndex(x => new { x.Direction, x.StartedAtUtc, x.Id });
+        builder.HasIndex(x => new { x.Username, x.Direction, x.StartedAtUtc, x.Id });
+        builder.HasIndex(x => new { x.Direction, x.TerminalOutcome, x.CompletedAtUtc });
         builder.HasIndex(x => new { x.LastRuntimeId, x.TerminalOutcome });
         builder.HasIndex(x => x.CompletedAtUtc);
     }
