@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Api;
+using Sockseek.Core.Sharing;
 using Sockseek.Server;
 
 namespace Tests.Server;
@@ -41,7 +42,10 @@ public class StateUpdateCoalescerTests
                     new TransferDeltaDto(
                         transferId,
                         2,
-                        Progress: new TransferProgressFieldsDto(80, 100)),
+                        Progress: new TransferProgressFieldsDto(80, 100),
+                        Scheduling: new TransferSchedulingFieldsDto(
+                            DateTimeOffset.UnixEpoch,
+                            DateTimeOffset.UnixEpoch.AddSeconds(1))),
                 ],
             }));
         coalescer.Flush();
@@ -53,6 +57,9 @@ public class StateUpdateCoalescerTests
         Assert.IsNotNull(added);
         Assert.AreEqual(2, added.Revision);
         Assert.AreEqual(80, added.Progress.BytesTransferred);
+        Assert.AreEqual(
+            DateTimeOffset.UnixEpoch.AddSeconds(1),
+            added.Scheduling?.StartedAtUtc);
     }
 
     [TestMethod]
@@ -125,6 +132,40 @@ public class StateUpdateCoalescerTests
             published.Single().Activity.Select(activity => activity.Type).ToArray());
     }
 
+    [TestMethod]
+    public void QueueSummaryBurst_PublishesOneLatestDaemonDelta()
+    {
+        const int mutations = 100_000;
+        var published = new List<StateUpdateBatchDto>();
+        using var coalescer = new StateUpdateCoalescer(
+            batches => published.AddRange(batches),
+            TimeSpan.FromHours(1));
+        var epoch = Guid.NewGuid();
+
+        for (int sequence = 1; sequence <= mutations; sequence++)
+        {
+            coalescer.Publish(new StateUpdateBatchDto(
+                StateStreamScopeDto.Daemon,
+                epoch,
+                sequence - 1,
+                sequence,
+                DateTimeOffset.UnixEpoch,
+                StateDeltaDto.Empty with
+                {
+                    Daemon = DaemonState(sequence),
+                },
+                []));
+        }
+        coalescer.Flush();
+
+        Assert.AreEqual(1, published.Count);
+        Assert.AreEqual(0, published[0].PreviousSequence);
+        Assert.AreEqual(mutations, published[0].Sequence);
+        Assert.AreEqual(
+            mutations,
+            published[0].State.Daemon?.Uploads.QueueRevision);
+    }
+
     private static StateUpdateBatchDto Batch(
         Guid epoch,
         long previous,
@@ -149,6 +190,39 @@ public class StateUpdateCoalescerTests
             null,
             null,
             new WorkflowMessageActivityDto("Information", null, type));
+
+    private static DaemonStateDto DaemonState(long revision)
+        => new(
+            revision,
+            new SoulseekClientStatusDto("Connected", ["Connected", "LoggedIn"], true),
+            0,
+            null,
+            new SharingStateDto(
+                SharingHealthState.Disabled,
+                "NotConfigured",
+                [],
+                0,
+                0,
+                new ShareCatalogStateDto(
+                    null,
+                    0,
+                    0,
+                    0,
+                    false,
+                    null,
+                    null),
+                null,
+                null),
+            new UploadRuntimeStateDto(
+                SharingHealthState.Disabled,
+                "NotConfigured",
+                false,
+                10,
+                0,
+                checked((int)Math.Min(revision, int.MaxValue)),
+                revision,
+                revision,
+                null));
 
     private static TransferStateDto Transfer(
         Guid transferId,

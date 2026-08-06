@@ -25,6 +25,12 @@ internal static partial class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         bool databaseMode = args.Length > 0
             && string.Equals(args[0], "database", StringComparison.OrdinalIgnoreCase);
+        bool daemonResourceCommand = args.Length > 0
+            && (string.Equals(args[0], "share", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(args[0], "transfers", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(args[0], "transfer", StringComparison.OrdinalIgnoreCase));
+        if (daemonResourceCommand)
+            return (int)await DaemonResourceCommandRunner.RunAsync(args);
         if (Help.PrintAndExitIfNeeded(args))
             return (int)CliExitCode.Success;
 

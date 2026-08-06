@@ -476,7 +476,14 @@
             }
           },
           "404": {
-            "description": "Not Found"
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           }
         }
       }
@@ -602,12 +609,266 @@
         }
       }
     },
+    "/api/sharing": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Gets bounded sharing and catalog status.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharingStateDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sharing/scans": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Starts a share scan or returns the currently active scan.",
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartShareScanResponseDto"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartShareScanResponseDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sharing/scans/{scanId}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Gets an active or recently completed share scan.",
+        "parameters": [
+          {
+            "name": "scanId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareScanStateDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sharing/scans/{scanId}/cancel": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Cancels an active share scan.",
+        "parameters": [
+          {
+            "name": "scanId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareScanStateDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transfers/live": {
+      "get": {
+        "tags": [
+          "Transfers"
+        ],
+        "summary": "Pages the bounded live transfer queue.",
+        "parameters": [
+          {
+            "name": "direction",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "username",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveTransferPageDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/transfers/{transferId}": {
       "get": {
         "tags": [
           "Transfers"
         ],
-        "summary": "Gets one durable transfer and its first attempt page.",
+        "summary": "Gets one transfer using a live-first overlay and retained history fallback.",
         "parameters": [
           {
             "name": "transferId",
@@ -637,7 +898,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TransferHistoryDetailDto"
+                  "$ref": "#/components/schemas/TransferDetailDto"
                 }
               }
             }
@@ -653,7 +914,75 @@
             }
           },
           "404": {
-            "description": "Not Found"
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/transfers/{transferId}/cancel": {
+      "post": {
+        "tags": [
+          "Transfers"
+        ],
+        "summary": "Cancels a queued or active upload transfer.",
+        "parameters": [
+          {
+            "name": "transferId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferStateDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           }
         }
       }
@@ -2218,6 +2547,12 @@
         "properties": {
           "error": {
             "type": "string"
+          },
+          "code": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -2374,7 +2709,9 @@
           "revision",
           "soulseekClient",
           "restartCount",
-          "searchRateLimitResetsAtUtc"
+          "searchRateLimitResetsAtUtc",
+          "sharing",
+          "uploads"
         ],
         "type": "object",
         "properties": {
@@ -2403,6 +2740,12 @@
               "string"
             ],
             "format": "date-time"
+          },
+          "sharing": {
+            "$ref": "#/components/schemas/SharingStateDto"
+          },
+          "uploads": {
+            "$ref": "#/components/schemas/UploadRuntimeStateDto"
           }
         }
       },
@@ -4523,6 +4866,40 @@
           }
         }
       },
+      "LiveTransferPageDto": {
+        "required": [
+          "items",
+          "nextCursor",
+          "observedQueueRevision",
+          "queueChanged"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TransferStateDto"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "observedQueueRevision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "queueChanged": {
+            "type": "boolean"
+          }
+        }
+      },
       "OutputSettingsPatchDto": {
         "type": "object",
         "properties": {
@@ -5989,6 +6366,269 @@
           "completed"
         ]
       },
+      "ShareCatalogStateDto": {
+        "required": [
+          "generationId",
+          "directoryCount",
+          "fileCount",
+          "totalBytes",
+          "browseAvailable",
+          "browseArtifactBytes",
+          "publishedAtUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "generationId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "directoryCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "fileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "totalBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "browseAvailable": {
+            "type": "boolean"
+          },
+          "browseArtifactBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "publishedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ShareScanErrorSampleDto": {
+        "required": [
+          "code",
+          "relativePath",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "relativePath": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ShareScanPhase": {
+        "enum": [
+          "Idle",
+          "Preparing",
+          "Enumerating",
+          "FinalizingIndex",
+          "BuildingBrowseArtifact",
+          "Validating",
+          "Publishing",
+          "Completed",
+          "Cancelling",
+          "Cancelled",
+          "Failed"
+        ]
+      },
+      "ShareScanStateDto": {
+        "required": [
+          "scanId",
+          "revision",
+          "phase",
+          "startedAtUtc",
+          "completedAtUtc",
+          "directoriesDiscovered",
+          "filesDiscovered",
+          "bytesDiscovered",
+          "errorCount",
+          "errorSamples",
+          "availableActions"
+        ],
+        "type": "object",
+        "properties": {
+          "scanId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ShareScanPhase"
+          },
+          "startedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "directoriesDiscovered": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "filesDiscovered": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "bytesDiscovered": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "errorCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "errorSamples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShareScanErrorSampleDto"
+            }
+          },
+          "availableActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceActionDto"
+            }
+          }
+        }
+      },
+      "SharingHealthState": {
+        "enum": [
+          "Disabled",
+          "Starting",
+          "Ready",
+          "Degraded"
+        ]
+      },
+      "SharingStateDto": {
+        "required": [
+          "state",
+          "reason",
+          "aliases",
+          "blockedUsernameCount",
+          "blockedIpAddressCount",
+          "catalog",
+          "activeScan",
+          "lastScan"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SharingHealthState"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blockedUsernameCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "blockedIpAddressCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "catalog": {
+            "$ref": "#/components/schemas/ShareCatalogStateDto"
+          },
+          "activeScan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShareScanStateDto"
+              }
+            ]
+          },
+          "lastScan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ShareScanStateDto"
+              }
+            ]
+          }
+        }
+      },
       "SkipMode": {
         "type": "integer"
       },
@@ -6462,6 +7102,27 @@
             ]
           }
         }
+      },
+      "StartShareScanResponseDto": {
+        "required": [
+          "result",
+          "scan"
+        ],
+        "type": "object",
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/StartShareScanResult"
+          },
+          "scan": {
+            "$ref": "#/components/schemas/ShareScanStateDto"
+          }
+        }
+      },
+      "StartShareScanResult": {
+        "enum": [
+          "Started",
+          "AlreadyRunning"
+        ]
       },
       "StateSnapshotDto": {
         "required": [
@@ -6966,15 +7627,58 @@
           }
         }
       },
-      "TransferHistoryDetailDto": {
+      "TransferCancellationSource": {
+        "enum": [
+          "None",
+          "User",
+          "Peer",
+          "DaemonShutdown",
+          "CatalogInvalidation"
+        ],
+        "default": "None"
+      },
+      "TransferDetailDto": {
         "required": [
-          "transfer",
+          "source",
+          "live",
+          "queueEstimate",
+          "history",
           "attempts"
         ],
         "type": "object",
         "properties": {
-          "transfer": {
-            "$ref": "#/components/schemas/TransferHistoryDto"
+          "source": {
+            "$ref": "#/components/schemas/TransferDetailSource"
+          },
+          "live": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransferStateDto"
+              }
+            ]
+          },
+          "queueEstimate": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransferQueueEstimateDto"
+              }
+            ]
+          },
+          "history": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransferHistoryDto"
+              }
+            ]
           },
           "attempts": {
             "type": "array",
@@ -6983,6 +7687,28 @@
             }
           }
         }
+      },
+      "TransferDetailSource": {
+        "enum": [
+          "Live",
+          "Historical",
+          "Merged"
+        ]
+      },
+      "TransferFailureReason": {
+        "enum": [
+          "None",
+          "FileUnavailable",
+          "FileNoLongerShared",
+          "FileChanged",
+          "InvalidOffset",
+          "Denied",
+          "PeerDisconnected",
+          "ConnectionFailed",
+          "TransferTimedOut",
+          "Unknown"
+        ],
+        "default": "None"
       },
       "TransferHistoryDto": {
         "required": [
@@ -7003,6 +7729,7 @@
           "completedAtUtc",
           "failureReason",
           "failureMessage",
+          "cancellationSource",
           "revision"
         ],
         "type": "object",
@@ -7100,6 +7827,9 @@
               "string"
             ]
           },
+          "cancellationSource": {
+            "$ref": "#/components/schemas/TransferCancellationSource"
+          },
           "revision": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
@@ -7123,11 +7853,17 @@
         "type": "object",
         "properties": {
           "jobId": {
-            "type": "string",
+            "type": [
+              "null",
+              "string"
+            ],
             "format": "uuid"
           },
           "workflowId": {
-            "type": "string",
+            "type": [
+              "null",
+              "string"
+            ],
             "format": "uuid"
           },
           "direction": {
@@ -7178,6 +7914,68 @@
               "string"
             ],
             "format": "int64"
+          },
+          "bytesPerSecond": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "lastProgressAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "TransferQueueEstimateDto": {
+        "required": [
+          "aheadCount",
+          "queueRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "aheadCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "queueRevision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "TransferSchedulingFieldsDto": {
+        "required": [
+          "requestedAtUtc",
+          "startedAtUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "requestedAtUtc": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -7249,6 +8047,16 @@
           },
           "progress": {
             "$ref": "#/components/schemas/TransferProgressFieldsDto"
+          },
+          "scheduling": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransferSchedulingFieldsDto"
+              }
+            ]
           }
         }
       },
@@ -7280,6 +8088,111 @@
           },
           "isTerminal": {
             "type": "boolean"
+          },
+          "terminalOutcome": {
+            "$ref": "#/components/schemas/TransferTerminalOutcome"
+          },
+          "failureReason": {
+            "$ref": "#/components/schemas/TransferFailureReason"
+          },
+          "cancellationSource": {
+            "$ref": "#/components/schemas/TransferCancellationSource"
+          },
+          "availableActions": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ResourceActionDto"
+            }
+          }
+        }
+      },
+      "TransferTerminalOutcome": {
+        "enum": [
+          "None",
+          "Succeeded",
+          "Cancelled",
+          "Failed",
+          "Interrupted"
+        ],
+        "default": "None"
+      },
+      "UploadRuntimeStateDto": {
+        "required": [
+          "state",
+          "reason",
+          "acceptingUploads",
+          "slots",
+          "activeSlots",
+          "queuedFiles",
+          "queuedBytes",
+          "queueRevision",
+          "speedLimitKiBPerSecond"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/SharingHealthState"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "acceptingUploads": {
+            "type": "boolean"
+          },
+          "slots": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeSlots": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "queuedFiles": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "queuedBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "queueRevision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "speedLimitKiBPerSecond": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -7475,6 +8388,9 @@
     },
     {
       "name": "Transfers"
+    },
+    {
+      "name": "Sharing"
     },
     {
       "name": "Follow-up Jobs"

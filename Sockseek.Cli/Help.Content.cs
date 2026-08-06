@@ -70,8 +70,6 @@ public static partial class Help
     --no-listen                     Disable the incoming connection listener
     --connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
     --user-description <desc>       Optional description text for your Soulseek account
-    --shared-files <int>            Number of files you share on Soulseek (default: 0)
-    --shared-folders <int>          Number of folders you share on Soulseek (default: 0)
 
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
@@ -246,6 +244,18 @@ public static partial class Help
     --monitor                       Monitor all active daemon workflows. Input is optional;
                                     an input submitted with this option appears alongside
                                     all other daemon work until the monitor is interrupted
+    --share <[alias]path|path>      Replace configured public share roots. Prefix a later value
+                                    with '+ ' to append instead.
+    --share-exclude <path>          Replace excluded share subtrees. Prefix with '+ ' to append.
+    --share-filter <regex>          Replace case-insensitive share filters. Prefix with '+ ' to
+                                    append. Matches on the remote relative path.
+    --share-scan-on-start <bool>    Scan configured shares when the daemon starts (default: true)
+    --share-rescan-interval <time>  Periodic rescan interval (for example 30m, 12h, or off;
+                                    default: off)
+    --upload-slots <num>            Maximum concurrent uploads (default: 10)
+    --upload-speed-limit-kib <n>    Aggregate upload limit in KiB/s (default: unlimited)
+    --peer-blocked-user <name>      Replace exact blocked peer usernames. Prefix with '+ ' to append.
+    --peer-blocked-ip <address>     Replace exact blocked IPv4/IPv6 addresses. Prefix with '+ ' to append.
     --data-dir <path>               Directory for daemon data, including sockseek.db
     --no-retention                  Disable scheduled history retention
     --successful-job-retention-days <days|forever>
@@ -757,26 +767,11 @@ Tips
 
     const string daemonHelp = @"
 Daemon / remote mode
-  Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API, remote CLI access, and
-  durable job, search, and transfer history.
-  Run sockseek daemon to start the HTTP/SignalR daemon. It uses the same config/profile system as
-  the CLI and listens on 127.0.0.1:5030 by default.
-  Once the daemon is running, use --remote <url> to run the CLI as a thin client against it:
-
-  sockseek daemon --server-ip 0.0.0.0 --server-port 5030
-  sockseek ""Artist - Title"" --remote http://127.0.0.1:5030
-
-  Add --monitor to follow every active workflow on the daemon in the normal live render UI. Input is
-  optional. When an input is supplied, its workflow is shown alongside all other daemon work. The
-  normal c, t, and i job shortcuts work daemon-wide by display ID; choosing “all” from the cancel
-  prompt cancels all currently active daemon jobs without stopping the daemon. Monitor mode remains
-  attached until interrupted:
-
-  sockseek --remote http://127.0.0.1:5030 --monitor
-  sockseek ""Artist - Title"" --remote http://127.0.0.1:5030 --monitor
-
-  For HTTP API, SignalR, and client integration notes, see docs/api.md. Daemon setup, history,
-  database, backup, and security are documented in docs/daemon.md.";
+  Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API, remote CLI access,
+  sharing, and durable history. Run sockseek daemon to start it; the default endpoint is
+  http://127.0.0.1:5030.
+  See daemon setup and remote commands for monitoring, sharing, transfer, history, backup, and
+  security guidance. For application integration, see the API guide.";
 
     const string databaseHelp = @"
 Sockseek Database

@@ -35,6 +35,34 @@ public class CliExitCodeTests
         Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.UsageError, exitCode);
     }
 
+    [DataTestMethod]
+    [DataRow("share", "status")]
+    [DataRow("transfers", null)]
+    [DataRow("transfer", "cancel")]
+    public async Task DaemonResourceCommands_RequireRemote(
+        string command,
+        string? action)
+    {
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        try
+        {
+            Console.SetError(stderr);
+            string[] args = action is null ? [command] : [command, action];
+
+            int exitCode = await Sockseek.Cli.Program.Main(args);
+
+            Assert.AreEqual(
+                (int)Sockseek.Cli.Program.CliExitCode.UsageError,
+                exitCode);
+            StringAssert.Contains(stderr.ToString(), "requires --remote");
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+    }
+
     [TestMethod]
     public void EnsureDaemonEndpointAvailable_PortCollision_ThrowsConciseException()
     {
@@ -143,7 +171,7 @@ public class CliExitCodeTests
             Console.SetOut(stdout);
             Console.SetError(stderr);
 
-            var exitCode = await Sockseek.Cli.Program.Main(["--not-a-real-flag"]);
+            var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "--not-a-real-flag"]);
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.UsageError, exitCode);
             Assert.AreEqual("", stdout.ToString());

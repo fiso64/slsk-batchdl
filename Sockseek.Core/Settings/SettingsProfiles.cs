@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Sharing;
 
 namespace Sockseek.Core.Settings;
 
@@ -226,6 +227,8 @@ public static class SettingsNormalizer
             engine.LogFilePath = Utils.GetFullPath(Utils.ExpandVariables(engine.LogFilePath, pathContext));
         if (engine.MockFilesDir != null)
             engine.MockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(engine.MockFilesDir, pathContext));
+
+        SharingSettingsValidator.NormalizeAndValidate(engine, pathContext);
     }
 }
 
@@ -350,10 +353,30 @@ public static class SettingsCloner
         ListenPort = source.ListenPort,
         ConnectTimeout = source.ConnectTimeout,
         AutoReconnectAfterKickedFromServer = source.AutoReconnectAfterKickedFromServer,
-        SharedFiles = source.SharedFiles,
-        SharedFolders = source.SharedFolders,
         UserDescription = source.UserDescription,
-        NoModifyShareCount = source.NoModifyShareCount,
+        Sharing = new SharingSettings
+        {
+            Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings
+            {
+                LocalPath = root.LocalPath,
+                Alias = root.Alias,
+                EffectiveAlias = root.EffectiveAlias,
+            })],
+            ExcludedDirectories = [.. source.Sharing.ExcludedDirectories],
+            Filters = [.. source.Sharing.Filters],
+            ScanOnStart = source.Sharing.ScanOnStart,
+            RescanInterval = source.Sharing.RescanInterval,
+        },
+        Uploads = new UploadSettings
+        {
+            Slots = source.Uploads.Slots,
+            SpeedLimitKiBPerSecond = source.Uploads.SpeedLimitKiBPerSecond,
+        },
+        PeerAccess = new PeerAccessSettings
+        {
+            BlockedUsernames = [.. source.PeerAccess.BlockedUsernames],
+            BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses],
+        },
         ConcurrentJobs = source.ConcurrentJobs,
         ConcurrentSearches = source.ConcurrentSearches,
         ConcurrentExtractors = source.ConcurrentExtractors,

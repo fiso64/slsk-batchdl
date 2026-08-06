@@ -104,9 +104,10 @@ public sealed class PersistenceRuntimeSession(
                 transfer.LastRuntimeId = runtime.RuntimeId;
                 transfer.LastSequence = 0;
                 transfer.State = "Interrupted";
-                transfer.TerminalOutcome = "Failed";
+                transfer.TerminalOutcome = "Interrupted";
                 transfer.FailureReason = "Interrupted";
                 transfer.FailureMessage = "Interrupted by an unclean daemon shutdown.";
+                transfer.CancellationSource = "DaemonShutdown";
                 transfer.CompletedAtUtc = now;
                 transfer.Revision = checked(transfer.Revision + 1);
             }

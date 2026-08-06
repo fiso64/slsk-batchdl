@@ -21,12 +21,17 @@ public sealed class SoulseekConnectionUnavailableException : InvalidOperationExc
     }
 }
 
-public class SoulseekClientManager : IDisposable
+public class SoulseekClientManager : IDisposable, IAsyncDisposable
 {
+    // Bounds peer writes that have already consumed a browse stream but have
+    // stalled in the library's connection writer. Per-download stale detection
+    // normally fires sooner.
+    internal const int PeerConnectionInactivityTimeoutMilliseconds = 300_000;
     private const string KickedFromServerMessage =
         "Soulseek server kicked this client, probably because the same account logged in elsewhere.";
 
     private readonly EngineSettings _initialSettings;
+    private readonly ISoulseekInboundRequestRouter? inboundRouter;
     private ISoulseekClient? _client;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
     private TaskCompletionSource _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -34,6 +39,7 @@ public class SoulseekClientManager : IDisposable
     private Exception? _fatalException;
     private CancellationTokenSource? _monitorCts;
     private Task? _monitorTask;
+    private int _disposeState;
 
     public event Action<SoulseekClientStates>? StateChanged;
 
@@ -68,9 +74,13 @@ public class SoulseekClientManager : IDisposable
         return _readyTcs.Task.WaitAsync(cancellationToken);
     }
 
-    public SoulseekClientManager(EngineSettings initialSettings, ISoulseekClient? client = null)
+    public SoulseekClientManager(
+        EngineSettings initialSettings,
+        ISoulseekClient? client = null,
+        ISoulseekInboundRequestRouter? inboundRouter = null)
     {
         _initialSettings = initialSettings ?? throw new ArgumentNullException(nameof(initialSettings));
+        this.inboundRouter = inboundRouter;
         if (client != null)
         {
             _client = client;
@@ -85,10 +95,45 @@ public class SoulseekClientManager : IDisposable
     {
         client.KickedFromServer += OnKickedFromServer;
         client.StateChanged += OnStateChanged;
+        client.ExcludedSearchPhrasesReceived += OnExcludedSearchPhrasesReceived;
+    }
+
+    private void OnExcludedSearchPhrasesReceived(
+        object? sender,
+        IReadOnlyCollection<string> phrases)
+    {
+        try
+        {
+            inboundRouter?.TryUpdateExcludedSearchPhrases(phrases);
+        }
+        catch (Exception ex)
+        {
+            // A malformed server resource may disable search serving, but must
+            // never escape the library event callback and destabilize session
+            // reconnect or unrelated transfers.
+            SockseekLog.Daemon.Warn(
+                $"Excluded search phrase update failed: {SockseekLog.ExceptionSummary(ex)}");
+        }
     }
 
     private void OnStateChanged(object? sender, SoulseekClientStateChangedEventArgs e)
-        => StateChanged?.Invoke(State);
+    {
+        Action<SoulseekClientStates>? handlers = StateChanged;
+        if (handlers is null)
+            return;
+        foreach (Action<SoulseekClientStates> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(State);
+            }
+            catch (Exception ex)
+            {
+                SockseekLog.Daemon.Warn(
+                    $"Soulseek state observer failed: {SockseekLog.ExceptionSummary(ex)}");
+            }
+        }
+    }
 
     private void OnKickedFromServer(object? sender, EventArgs e)
     {
@@ -297,14 +342,19 @@ public class SoulseekClientManager : IDisposable
             SockseekLog.Soulseek.Debug("Configuring Soulseek Client connection options.");
             int startingToken = CreateRandomStartingToken();
             SockseekLog.Soulseek.Debug($"Using Soulseek client starting token {startingToken}.");
-            return new SoulseekClient(SockseekSoulseekClientIdentity.MinorVersion, CreateClientOptions(settings, startingToken));
+            return new SoulseekClient(
+                SockseekSoulseekClientIdentity.MinorVersion,
+                CreateClientOptions(settings, startingToken, inboundRouter));
         }
     }
 
     internal static int CreateRandomStartingToken()
         => RandomNumberGenerator.GetInt32(1, int.MaxValue);
 
-    internal static SoulseekClientOptions CreateClientOptions(EngineSettings settings, int startingToken)
+    internal static SoulseekClientOptions CreateClientOptions(
+        EngineSettings settings,
+        int startingToken,
+        ISoulseekInboundRequestRouter? inboundRouter = null)
     {
         var serverConnectionOptions = new ConnectionOptions(
             connectTimeout: settings.ConnectTimeout,
@@ -317,7 +367,7 @@ public class SoulseekClientManager : IDisposable
             });
 
         var transferConnectionOptions = new ConnectionOptions(
-            inactivityTimeout: int.MaxValue, // this is handled by --max-stale-time
+            inactivityTimeout: PeerConnectionInactivityTimeoutMilliseconds,
             configureSocket: (socket) =>
             {
                 socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -333,12 +383,36 @@ public class SoulseekClientManager : IDisposable
             hasFreeUploadSlot: true
         ));
 
+        int maximumUploadSpeed = settings.Uploads.SpeedLimitKiBPerSecond is { } kib
+            ? checked(kib * 1_024)
+            : int.MaxValue;
+        Func<string, int, SearchQuery, Task<SearchResponse?>>? searchResolver =
+            inboundRouter is null ? null : inboundRouter.ResolveSearchAsync;
+        Func<string, System.Net.IPEndPoint, Task<BrowseResponse>>? browseResolver =
+            inboundRouter is null ? null : inboundRouter.ResolveBrowseAsync;
+        Func<string, System.Net.IPEndPoint, int, string, Task<IEnumerable<Soulseek.Directory>>>?
+            directoryResolver =
+                inboundRouter is null ? null : inboundRouter.ResolveDirectoryAsync;
+        Func<string, System.Net.IPEndPoint, Task<UserInfo>> resolvedUserInfo =
+            inboundRouter is null ? userInfoResolver : inboundRouter.ResolveUserInfoAsync;
+        Func<string, System.Net.IPEndPoint, string, Task>? enqueueUpload =
+            inboundRouter is null ? null : inboundRouter.EnqueueUploadAsync;
+        Func<string, System.Net.IPEndPoint, string, Task<int?>>? queueResolver =
+            inboundRouter is null ? null : inboundRouter.ResolvePlaceInQueueAsync;
+
         var clientOptionsBuilder = new SoulseekClientOptions(
             transferConnectionOptions: transferConnectionOptions,
             serverConnectionOptions: serverConnectionOptions,
             listenPort: settings.ListenPort ?? 49998,
             maximumConcurrentSearches: int.MaxValue, // this is limited later in the searcher code
-            userInfoResolver: userInfoResolver,
+            maximumConcurrentUploads: settings.Uploads.Slots,
+            maximumUploadSpeed: maximumUploadSpeed,
+            searchResponseResolver: searchResolver,
+            browseResponseResolver: browseResolver,
+            directoryContentsResolver: directoryResolver,
+            userInfoResolver: resolvedUserInfo,
+            enqueueDownload: enqueueUpload,
+            placeInQueueResolver: queueResolver,
             startingToken: startingToken
         );
 
@@ -350,7 +424,14 @@ public class SoulseekClientManager : IDisposable
                 serverConnectionOptions: serverConnectionOptions,
                 enableListener: false,
                 maximumConcurrentSearches: int.MaxValue,
-                userInfoResolver: userInfoResolver,
+                maximumConcurrentUploads: settings.Uploads.Slots,
+                maximumUploadSpeed: maximumUploadSpeed,
+                searchResponseResolver: searchResolver,
+                browseResponseResolver: browseResolver,
+                directoryContentsResolver: directoryResolver,
+                userInfoResolver: resolvedUserInfo,
+                enqueueDownload: enqueueUpload,
+                placeInQueueResolver: queueResolver,
                 startingToken: startingToken
             );
         }
@@ -379,22 +460,38 @@ public class SoulseekClientManager : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
         await client.ConnectAsync(user, pass);
-
-        if (!settings.NoModifyShareCount)
-        {
-            SockseekLog.Soulseek.Debug($"Setting share count for {displayUser}");
-            await client.SetSharedCountsAsync(settings.SharedFiles, settings.SharedFolders, cancellationToken);
-        }
         SockseekLog.Soulseek.Debug($"Logged in as {displayUser}");
     }
 
     public void Dispose()
+        => DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+    public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+            return;
         _monitorCts?.Cancel();
         if (_client != null)
         {
             _client.KickedFromServer -= OnKickedFromServer;
             _client.StateChanged -= OnStateChanged;
+            _client.ExcludedSearchPhrasesReceived -= OnExcludedSearchPhrasesReceived;
+        }
+        if (_monitorTask is not null)
+        {
+            try
+            {
+                await _monitorTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                SockseekLog.Daemon.Warn(
+                    $"Soulseek monitor stopped with an error during disposal: "
+                    + SockseekLog.ExceptionSummary(ex));
+            }
         }
         _client?.Dispose();
         _monitorCts?.Dispose();

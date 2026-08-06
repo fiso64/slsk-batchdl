@@ -26,6 +26,20 @@ public sealed class SockseekApiRequestException : InvalidOperationException
         : base(message)
     {
     }
+
+    public SockseekApiRequestException(
+        HttpStatusCode statusCode,
+        string? code,
+        string message)
+        : base(message)
+    {
+        StatusCode = statusCode;
+        Code = code;
+    }
+
+    public HttpStatusCode? StatusCode { get; }
+
+    public string? Code { get; }
 }
 
 /// <summary>
@@ -235,7 +249,7 @@ public sealed class SockseekApiClient
         return await GetCursorPageAsync<TransferHistoryDto>(url, ct);
     }
 
-    public async Task<TransferHistoryDetailDto?> GetTransferAsync(
+    public async Task<TransferDetailDto?> GetTransferAsync(
         Guid transferId,
         int attemptLimit = 200,
         CancellationToken ct = default)
@@ -244,7 +258,63 @@ public sealed class SockseekApiClient
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<TransferHistoryDetailDto>(response, ct);
+        return await ReadRequiredAsync<TransferDetailDto>(response, ct);
+    }
+
+    public async Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/sharing", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<SharingStateDto>(response, ct);
+    }
+
+    public async Task<StartShareScanResponseDto> StartShareScanAsync(
+        CancellationToken ct = default)
+        => await PostWithoutBodyAsync<StartShareScanResponseDto>(
+            "api/sharing/scans",
+            ct);
+
+    public async Task<ShareScanStateDto?> GetShareScanAsync(
+        Guid scanId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/sharing/scans/{scanId}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ShareScanStateDto>(response, ct);
+    }
+
+    public async Task<ShareScanStateDto> CancelShareScanAsync(
+        Guid scanId,
+        CancellationToken ct = default)
+        => await PostWithoutBodyAsync<ShareScanStateDto>(
+            $"api/sharing/scans/{scanId}/cancel",
+            ct);
+
+    public async Task<TransferStateDto> CancelTransferAsync(
+        Guid transferId,
+        CancellationToken ct = default)
+        => await PostWithoutBodyAsync<TransferStateDto>(
+            $"api/transfers/{transferId}/cancel",
+            ct);
+
+    public async Task<LiveTransferPageDto> LoadLiveTransferPageAsync(
+        LiveTransferFilter? filter = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        filter ??= new LiveTransferFilter();
+        string url = "api/transfers/live?limit="
+            + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + QueryPart("direction", filter.Direction)
+            + QueryPart("state", filter.State)
+            + QueryPart("username", filter.Username)
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<LiveTransferPageDto>(response, ct);
     }
 
     public async Task<AttemptPage<TransferAttemptHistoryDto>?> GetTransferAttemptsPageAsync(
@@ -514,15 +584,21 @@ public sealed class SockseekApiClient
             return;
 
         var body = await response.Content.ReadAsStringAsync(ct);
-        var detail = TryReadApiError(body) ?? body;
-        throw new SockseekApiRequestException($"Server request failed with {(int)response.StatusCode} {response.ReasonPhrase}: {detail}");
+        ApiErrorDto? error = TryReadApiError(body);
+        string detail = error?.Error ?? body;
+        throw new SockseekApiRequestException(
+            response.StatusCode,
+            error?.Code,
+            $"Server request failed with {(int)response.StatusCode} {response.ReasonPhrase}: {detail}");
     }
 
-    private static string? TryReadApiError(string body)
+    private static ApiErrorDto? TryReadApiError(string body)
     {
         try
         {
-            return JsonSerializer.Deserialize<ApiErrorDto>(body, SockseekApiJson.CreateSerializerOptions())?.Error;
+            return JsonSerializer.Deserialize<ApiErrorDto>(
+                body,
+                SockseekApiJson.CreateSerializerOptions());
         }
         catch (JsonException)
         {

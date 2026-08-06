@@ -98,7 +98,8 @@ public sealed record ProfileSummaryDto(
 /// Error response body for rejected API requests.
 /// </summary>
 public sealed record ApiErrorDto(
-    string Error);
+    string Error,
+    string? Code = null);
 
 /// <summary>
 /// Response body returned when cancelling a workflow.

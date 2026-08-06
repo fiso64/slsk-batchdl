@@ -79,6 +79,9 @@ public static class ServerHost
         builder.Services.AddSingleton<EngineSupervisor>();
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<HistoricalQueryFacade>();
+        builder.Services.AddSingleton<LiveTransferCursorCodec>();
+        builder.Services.AddSingleton<IOperatorMutationAuthorizer,
+            CurrentTrustDomainOperatorAuthorizer>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
@@ -241,7 +244,11 @@ public static class ServerHost
                 var page = await queryFacade.GetRawSearchResultsAsync(jobId, afterSequence, limit ?? 200, cancellationToken);
                 if (page?.NextSequence != null)
                     httpContext.Response.Headers["X-Next-Sequence"] = page.NextSequence.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                return page != null ? Results.Ok(page.Items) : Results.NotFound();
+                return page != null
+                    ? Results.Ok(page.Items)
+                    : Results.NotFound(new ApiErrorDto(
+                        "The transfer was not found.",
+                        "TransferNotFound"));
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
@@ -252,7 +259,7 @@ public static class ServerHost
             .WithSummary("Gets raw search responses for a search job.")
             .WithDescription("Use afterSequence to incrementally fetch raw responses after the last seen sequence.")
             .Produces<IReadOnlyList<SearchRawResultDto>>()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound);
 
         app.MapGet("/api/transfers", async (
             HistoricalQueryFacade queryFacade,
@@ -290,6 +297,169 @@ public static class ServerHost
             .Produces<IReadOnlyList<TransferHistoryDto>>()
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
+        app.MapGet("/api/sharing", (EngineSupervisor supervisor) =>
+        {
+            SharingRuntime? sharing = supervisor.Sharing;
+            return sharing is null
+                ? Results.Json(
+                    new ApiErrorDto("Sharing infrastructure is unavailable.", "SharingUnavailable"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable)
+                : Results.Ok(sharing.GetSharingState());
+        })
+            .WithTags("Sharing")
+            .WithSummary("Gets bounded sharing and catalog status.")
+            .Produces<SharingStateDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/sharing/scans", (EngineSupervisor supervisor) =>
+        {
+            SharingRuntime? sharing = supervisor.Sharing;
+            if (sharing is null)
+            {
+                return Results.Json(
+                    new ApiErrorDto("Sharing infrastructure is unavailable.", "SharingUnavailable"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            if (sharing.GetSharingState().State == SharingHealthState.Disabled)
+            {
+                return Results.Json(
+                    new ApiErrorDto("No share roots are configured.", "SharingNotConfigured"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var started = sharing.StartScan();
+            if (started is null)
+            {
+                return Results.Json(
+                    new ApiErrorDto("The scan could not be started.", "ScanUnavailable"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            var response = new StartShareScanResponseDto(
+                started.Value.Started
+                    ? StartShareScanResult.Started
+                    : StartShareScanResult.AlreadyRunning,
+                started.Value.Scan);
+            return started.Value.Started
+                ? Results.Json(response, statusCode: StatusCodes.Status202Accepted)
+                : Results.Ok(response);
+        })
+            .RequireOperatorMutation()
+            .WithTags("Sharing")
+            .WithSummary("Starts a share scan or returns the currently active scan.")
+            .Produces<StartShareScanResponseDto>(StatusCodes.Status202Accepted)
+            .Produces<StartShareScanResponseDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/sharing/scans/{scanId:guid}", (
+            Guid scanId,
+            EngineSupervisor supervisor) =>
+        {
+            ShareScanStateDto? scan = supervisor.Sharing?.GetScan(scanId);
+            return scan is null
+                ? Results.NotFound(new ApiErrorDto(
+                    "The scan was not found.",
+                    "ScanNotFound"))
+                : Results.Ok(scan);
+        })
+            .WithTags("Sharing")
+            .WithSummary("Gets an active or recently completed share scan.")
+            .Produces<ShareScanStateDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/sharing/scans/{scanId:guid}/cancel", (
+            Guid scanId,
+            EngineSupervisor supervisor) =>
+        {
+            SharingRuntime? sharing = supervisor.Sharing;
+            if (sharing is null)
+            {
+                return Results.Json(
+                    new ApiErrorDto("Sharing infrastructure is unavailable.", "SharingUnavailable"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            ShareScanStateDto? scan = sharing.GetScan(scanId);
+            if (scan is null)
+                return Results.NotFound(new ApiErrorDto("The scan was not found.", "ScanNotFound"));
+            if (!sharing.CancelScan(scanId))
+            {
+                return Results.Conflict(
+                    new ApiErrorDto("The scan is no longer cancellable.", "ScanNotCancellable"));
+            }
+            return Results.Ok(sharing.GetScan(scanId) ?? scan);
+        })
+            .RequireOperatorMutation()
+            .WithTags("Sharing")
+            .WithSummary("Cancels an active share scan.")
+            .Produces<ShareScanStateDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status409Conflict)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/transfers/live", (
+            EngineSupervisor supervisor,
+            EngineStateStore stateStore,
+            LiveTransferCursorCodec cursors,
+            string? direction,
+            string? state,
+            string? username,
+            string? cursor,
+            int? limit) =>
+        {
+            try
+            {
+                SharingRuntime? sharing = supervisor.Sharing;
+                if (sharing is null)
+                {
+                    return Results.Json(
+                        new ApiErrorDto("Upload runtime is unavailable.", "UploadsUnavailable"),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+
+                if (direction is not null
+                    && !direction.Equals("upload", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Only live upload queue rows are available.");
+                if (state is not null
+                    && !state.Equals("queued", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Only queued live transfer rows are pageable.");
+
+                LiveTransferCursor? decoded = cursor is null
+                    ? null
+                    : cursors.Decode(cursor);
+                var page = sharing.Uploads.GetQueuePage(
+                    decoded?.RequestedAtUtc,
+                    decoded?.TransferId,
+                    limit ?? 100,
+                    decoded?.ObservedQueueRevision,
+                    username);
+                string? next = page.NextRequestedAtUtc is { } nextTime
+                               && page.NextTransferId is { } nextId
+                    ? cursors.Encode(
+                        nextTime,
+                        nextId,
+                        page.ObservedQueueRevision)
+                    : null;
+                var items = page.Items
+                    .Select(item => stateStore.GetLiveTransfer(item.TransferId))
+                    .Where(item => item is not null)
+                    .Cast<TransferStateDto>()
+                    .ToArray();
+                return Results.Ok(new LiveTransferPageDto(
+                    items,
+                    next,
+                    page.ObservedQueueRevision,
+                    page.QueueChanged));
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Transfers")
+            .WithSummary("Pages the bounded live transfer queue.")
+            .Produces<LiveTransferPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
         app.MapGet("/api/transfers/{transferId:guid}", async (
             Guid transferId,
             int? attemptLimit,
@@ -298,8 +468,12 @@ public static class ServerHost
         {
             try
             {
-                var detail = await queryFacade.GetTransferAsync(transferId, attemptLimit ?? 200, cancellationToken);
-                return detail != null ? Results.Ok(detail) : Results.NotFound();
+                var detail = await queryFacade.GetTransferDetailAsync(transferId, attemptLimit ?? 200, cancellationToken);
+                return detail != null
+                    ? Results.Ok(detail)
+                    : Results.NotFound(new ApiErrorDto(
+                        "The transfer was not found.",
+                        "TransferNotFound"));
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
@@ -307,10 +481,53 @@ public static class ServerHost
             }
         })
             .WithTags("Transfers")
-            .WithSummary("Gets one durable transfer and its first attempt page.")
-            .Produces<TransferHistoryDetailDto>()
+            .WithSummary("Gets one transfer using a live-first overlay and retained history fallback.")
+            .Produces<TransferDetailDto>()
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound);
+
+        app.MapPost("/api/transfers/{transferId:guid}/cancel", async (
+            Guid transferId,
+            EngineSupervisor supervisor,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            SharingRuntime? sharing = supervisor.Sharing;
+            if (sharing is null)
+            {
+                return Results.Json(
+                    new ApiErrorDto("Upload runtime is unavailable.", "UploadsUnavailable"),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            var current = sharing.Uploads.GetTransfer(transferId);
+            if (current is null)
+            {
+                TransferDetailDto? retained = await queryFacade.GetTransferDetailAsync(
+                    transferId,
+                    attemptLimit: 1,
+                    cancellationToken);
+                return retained is null
+                    ? Results.NotFound(new ApiErrorDto(
+                        "The transfer was not found.",
+                        "TransferNotFound"))
+                    : Results.Conflict(new ApiErrorDto(
+                        "The retained transfer is no longer cancellable.",
+                        "TransferNotCancellable"));
+            }
+            if (!sharing.Uploads.Cancel(transferId))
+            {
+                return Results.Conflict(
+                    new ApiErrorDto("The transfer is no longer cancellable.", "TransferNotCancellable"));
+            }
+            return Results.Ok(supervisor.StateStore.GetLiveTransfer(transferId));
+        })
+            .RequireOperatorMutation()
+            .WithTags("Transfers")
+            .WithSummary("Cancels a queued or active upload transfer.")
+            .Produces<TransferStateDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status409Conflict)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
 
         app.MapGet("/api/transfers/{transferId:guid}/attempts", async (
             Guid transferId,
@@ -771,7 +988,7 @@ public static class ServerHost
     {
         TryCreateBadRequest(ex, out var error);
         Sockseek.Core.SockseekLog.Daemon.Warn($"Bad request: {error}");
-        return Results.BadRequest(new ApiErrorDto(error));
+        return Results.BadRequest(new ApiErrorDto(error, "InvalidRequest"));
     }
 
     private static bool TryCreateBadRequest(Exception ex, out string error)

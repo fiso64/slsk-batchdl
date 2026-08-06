@@ -158,6 +158,51 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         return page;
     }
 
+    public SharingStateDto? GetSharing()
+        => Store.GetSharing();
+
+    public UploadRuntimeStateDto? GetUploadRuntime()
+        => Store.GetUploadRuntime();
+
+    public IReadOnlyList<TransferStateDto> GetActiveTransfers()
+        => Store.GetActiveTransfers();
+
+    public Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
+        => api.GetSharingAsync(ct);
+
+    public Task<StartShareScanResponseDto> StartShareScanAsync(
+        CancellationToken ct = default)
+        => api.StartShareScanAsync(ct);
+
+    public Task<ShareScanStateDto?> GetShareScanAsync(
+        Guid scanId,
+        CancellationToken ct = default)
+        => api.GetShareScanAsync(scanId, ct);
+
+    public async Task CancelShareScanAsync(
+        Guid scanId,
+        CancellationToken ct = default)
+        => _ = await api.CancelShareScanAsync(scanId, ct);
+
+    public async Task CancelTransferAsync(
+        Guid transferId,
+        CancellationToken ct = default)
+        => _ = await api.CancelTransferAsync(transferId, ct);
+
+    public Task<LiveTransferPageDto> LoadLiveTransferPageAsync(
+        LiveTransferFilter? filter = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => api.LoadLiveTransferPageAsync(filter, cursor, limit, ct);
+
+    public Task<CursorPage<TransferHistoryDto>> LoadTransferHistoryPageAsync(
+        TransferHistoryFilter? filter = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+        => api.GetTransfersPageAsync(filter, cursor, limit, ct);
+
     private async Task EnsureConnectedAsync(CancellationToken ct)
     {
         if (!protocolChecked)

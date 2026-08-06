@@ -4,6 +4,7 @@ using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Snapshots;
 using Soulseek;
+using Sockseek.Core.Transfers.Uploads;
 
 namespace Sockseek.Server;
 
@@ -26,6 +27,7 @@ public sealed class EngineStateStore
     private readonly HashSet<Guid> executionCompletedJobs = [];
     private readonly Dictionary<Guid, string> songTransferStates = [];
     private readonly Dictionary<Guid, TransferStateDto> activeTransfers = [];
+    private readonly Dictionary<Guid, TransferStateDto> liveUploadTransfers = [];
     private readonly Dictionary<Guid, Guid> transferWorkflowIds = [];
     private readonly Dictionary<Guid, SearchStateDto> searchStates = [];
     private readonly Dictionary<Guid, JobStateDto> projectedJobs = [];
@@ -38,12 +40,112 @@ public sealed class EngineStateStore
         0,
         new SoulseekClientStatusDto("None", [], false),
         0,
-        null);
+        null,
+        new SharingStateDto(
+            SharingHealthState.Disabled,
+            "NotConfigured",
+            [],
+            0,
+            0,
+            new ShareCatalogStateDto(
+                null,
+                0,
+                0,
+                0,
+                false,
+                null,
+                null),
+            null,
+            null),
+        new UploadRuntimeStateDto(
+            SharingHealthState.Disabled,
+            "NotConfigured",
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            null));
 
     public event Action<JobSummaryDto>? JobUpserted;
     public event Action<WorkflowSummaryDto>? WorkflowUpserted;
     public event Action<SearchStateDto>? SearchUpdated;
     public event Action<StateUpdateBatchDto>? StateBatchPublished;
+
+    public TransferStateDto? GetLiveTransfer(Guid transferId)
+    {
+        lock (gate)
+            return activeTransfers.GetValueOrDefault(transferId)
+                   ?? liveUploadTransfers.GetValueOrDefault(transferId);
+    }
+
+    public void UpdateUploadTransfer(UploadTransferSnapshot upload)
+    {
+        IReadOnlyList<StateUpdateBatchDto> batches = [];
+        lock (gate)
+        {
+            TransferStateDto current = ToUploadTransferState(upload);
+            liveUploadTransfers[upload.TransferId] = current;
+
+            bool replicated = upload.State is not UploadTransferState.Queued
+                              && (upload.Attempt is not null
+                                  || activeTransfers.ContainsKey(upload.TransferId));
+            if (!replicated)
+                return;
+
+            TransferDeltaDto delta;
+            if (!activeTransfers.TryGetValue(upload.TransferId, out var previous))
+            {
+                activeTransfers[upload.TransferId] = current;
+                delta = new TransferDeltaDto(
+                    upload.TransferId,
+                    current.Revision,
+                    Added: current);
+            }
+            else
+            {
+                var status = previous.Status == current.Status ? null : current.Status;
+                var progress = previous.Progress == current.Progress ? null : current.Progress;
+                var scheduling = previous.Scheduling == current.Scheduling
+                    ? null
+                    : current.Scheduling;
+                activeTransfers[upload.TransferId] = current;
+                delta = new TransferDeltaDto(
+                    upload.TransferId,
+                    Math.Max(current.Revision, previous.Revision + 1),
+                    Status: status,
+                    Progress: progress,
+                    Scheduling: scheduling);
+            }
+
+            var daemonDelta = StateDeltaDto.Empty with
+            {
+                Transfers = [delta],
+            };
+            batches = CreateStateBatches(
+                daemonDelta,
+                new Dictionary<Guid, StateDeltaDto>(),
+                DateTimeOffset.UtcNow);
+        }
+        PublishStateBatches(batches);
+    }
+
+    public void RemoveUploadTransfer(Guid transferId)
+    {
+        IReadOnlyList<StateUpdateBatchDto> batches;
+        lock (gate)
+        {
+            liveUploadTransfers.Remove(transferId);
+            if (!activeTransfers.Remove(transferId))
+                return;
+            batches = CreateStateBatches(
+                StateDeltaDto.Empty with { RemovedTransferIds = [transferId] },
+                new Dictionary<Guid, StateDeltaDto>(),
+                DateTimeOffset.UtcNow);
+        }
+        PublishStateBatches(batches);
+    }
 
     public void AttachEngine(DownloadEngine engine)
     {
@@ -240,7 +342,9 @@ public sealed class EngineStateStore
                     .OrderBy(search => search.JobId)
                     .ToList(),
                 activeTransfers.Values
-                    .Where(transfer => workflowIds.Contains(transfer.Identity.WorkflowId))
+                    .Where(transfer =>
+                        transfer.Identity.WorkflowId is { } workflowId
+                        && workflowIds.Contains(workflowId))
                     .OrderBy(transfer => transfer.TransferId)
                     .ToList());
         }
@@ -293,7 +397,9 @@ public sealed class EngineStateStore
                 daemonState.Revision + 1,
                 soulseekClient,
                 restartCount,
-                searchRateLimitResetsAtUtc);
+                searchRateLimitResetsAtUtc,
+                daemonState.Sharing,
+                daemonState.Uploads);
             if (daemonState with { Revision = 0 } == next with { Revision = 0 })
                 return;
 
@@ -327,6 +433,30 @@ public sealed class EngineStateStore
             searchRateLimitResetsAtUtc = daemonState.SearchRateLimitResetsAtUtc;
 
         UpdateDaemonState(soulseekClient, restartCount, searchRateLimitResetsAtUtc);
+    }
+
+    public void UpdateSharingRuntime(
+        SharingStateDto sharing,
+        UploadRuntimeStateDto uploads)
+    {
+        IReadOnlyList<StateUpdateBatchDto> batches;
+        lock (gate)
+        {
+            var next = daemonState with
+            {
+                Revision = daemonState.Revision + 1,
+                Sharing = sharing,
+                Uploads = uploads,
+            };
+            if (daemonState with { Revision = 0 } == next with { Revision = 0 })
+                return;
+            daemonState = next;
+            batches = CreateStateBatches(
+                StateDeltaDto.Empty with { Daemon = daemonState },
+                new Dictionary<Guid, StateDeltaDto>(),
+                DateTimeOffset.UtcNow);
+        }
+        PublishStateBatches(batches);
     }
 
     /// <summary>
@@ -843,7 +973,9 @@ public sealed class EngineStateStore
             .Distinct()
             .ToList();
         var removedDaemonTransferIds = activeTransfers.Values
-            .Where(transfer => terminalWorkflowIds.Contains(transfer.Identity.WorkflowId))
+            .Where(transfer =>
+                transfer.Identity.WorkflowId is { } workflowId
+                && terminalWorkflowIds.Contains(workflowId))
             .Select(transfer => transfer.TransferId)
             .Concat(removedTransferIds.Where(id => terminalWorkflowIds.Contains(transferWorkflowIds.GetValueOrDefault(id))))
             .Distinct()
@@ -927,7 +1059,7 @@ public sealed class EngineStateStore
 
     private TransferDeltaDto UpsertTransfer(TransferSnapshot transfer, bool isTerminal)
     {
-        transferWorkflowIds[transfer.Id] = transfer.WorkflowId;
+        transferWorkflowIds[transfer.Id] = transfer.WorkflowId ?? Guid.Empty;
         var current = ToTransferState(transfer, isTerminal);
         if (!activeTransfers.TryGetValue(transfer.Id, out var previous))
         {
@@ -1152,6 +1284,74 @@ public sealed class EngineStateStore
             new TransferProgressFieldsDto(
                 transfer.BytesTransferred,
                 transfer.TotalBytes));
+
+    private static TransferStateDto ToUploadTransferState(
+        UploadTransferSnapshot transfer)
+    {
+        bool terminal = transfer.State is UploadTransferState.Completed
+            or UploadTransferState.Cancelled
+            or UploadTransferState.Failed
+            or UploadTransferState.Interrupted;
+        TransferTerminalOutcome terminalOutcome = transfer.State switch
+        {
+            UploadTransferState.Completed => TransferTerminalOutcome.Succeeded,
+            UploadTransferState.Cancelled => TransferTerminalOutcome.Cancelled,
+            UploadTransferState.Failed => TransferTerminalOutcome.Failed,
+            UploadTransferState.Interrupted => TransferTerminalOutcome.Interrupted,
+            _ => TransferTerminalOutcome.None,
+        };
+        return new TransferStateDto(
+            transfer.TransferId,
+            transfer.Revision,
+            new TransferIdentityFieldsDto(
+                null,
+                null,
+                "Upload",
+                "SoulseekPeer",
+                transfer.Username,
+                transfer.RemotePath,
+                null),
+            new TransferStatusFieldsDto(
+                transfer.State.ToString(),
+                null,
+                transfer.Attempt is null ? 0 : 1,
+                terminal,
+                terminalOutcome,
+                transfer.FailureReason switch
+                {
+                    UploadFailureReason.NotShared => Sockseek.Api.TransferFailureReason.FileNoLongerShared,
+                    UploadFailureReason.Unavailable => Sockseek.Api.TransferFailureReason.FileUnavailable,
+                    UploadFailureReason.InvalidOffset => Sockseek.Api.TransferFailureReason.InvalidOffset,
+                    UploadFailureReason.Denied => Sockseek.Api.TransferFailureReason.Denied,
+                    UploadFailureReason.InternalFailure => Sockseek.Api.TransferFailureReason.Unknown,
+                    _ => Sockseek.Api.TransferFailureReason.None,
+                },
+                transfer.CancellationSource switch
+                {
+                    UploadCancellationSource.User => TransferCancellationSource.User,
+                    UploadCancellationSource.Peer => TransferCancellationSource.Peer,
+                    UploadCancellationSource.DaemonShutdown => TransferCancellationSource.DaemonShutdown,
+                    UploadCancellationSource.CatalogInvalidation => TransferCancellationSource.CatalogInvalidation,
+                    _ => TransferCancellationSource.None,
+                },
+                terminal
+                    ? []
+                    :
+                    [
+                        new ResourceActionDto(
+                            ServerResourceActionKind.Cancel,
+                            "POST",
+                            $"/api/transfers/{transfer.TransferId:D}/cancel"),
+                    ]),
+            new TransferProgressFieldsDto(
+                transfer.BytesTransferred,
+                transfer.SizeBytes,
+                checked((long)Math.Max(0, transfer.BytesPerSecond)),
+                transfer.LastProgressAtUtc),
+            new TransferSchedulingFieldsDto(
+                transfer.RequestedAtUtc,
+                transfer.Attempt?.StartedAtUtc));
+    }
 
     private static bool JobDisplayEquals(JobDisplayFieldsDto left, JobDisplayFieldsDto right)
         => left.DisplayId == right.DisplayId

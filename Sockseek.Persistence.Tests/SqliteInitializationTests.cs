@@ -35,7 +35,7 @@ public sealed class SqliteInitializationTests
 
         Assert.AreEqual("wal", result.JournalMode.ToLowerInvariant());
         Assert.AreEqual("2", result.SynchronousMode);
-        StringAssert.Contains(result.SchemaVersion, "AddTransferAttemptSourceIdentity");
+        StringAssert.Contains(result.SchemaVersion, "AddUploadTransferHistory");
 
         await using var context = await database.Factory.CreateDbContextAsync();
         await context.Database.OpenConnectionAsync();

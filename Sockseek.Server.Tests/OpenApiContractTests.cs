@@ -65,6 +65,10 @@ public class OpenApiContractTests
             StringAssert.Contains(json, nameof(WorkflowTreeDto));
             StringAssert.Contains(json, nameof(StateSnapshotDto));
             StringAssert.Contains(json, nameof(ApiErrorDto));
+            StringAssert.Contains(json, nameof(SharingStateDto));
+            StringAssert.Contains(json, nameof(UploadRuntimeStateDto));
+            StringAssert.Contains(json, nameof(LiveTransferPageDto));
+            StringAssert.Contains(json, nameof(TransferDetailDto));
             StringAssert.Contains(json, "lifecycleState");
             StringAssert.Contains(json, "activityPhase");
             StringAssert.Contains(json, "terminalOutcome");
@@ -79,6 +83,18 @@ public class OpenApiContractTests
             Assert.IsTrue(document.RootElement
                 .GetProperty("paths")
                 .TryGetProperty("/api/jobs/cancel-all", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/sharing", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/sharing/scans", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/transfers/live", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/transfers/{transferId}/cancel", out _));
             Assert.IsFalse(json.Contains("ServerEventEnvelopeDto", StringComparison.Ordinal));
 
             var jobListParameterNames = document.RootElement

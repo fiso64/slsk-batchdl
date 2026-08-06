@@ -1,0 +1,355 @@
+using System.Globalization;
+using System.Text.Json;
+using Sockseek.Api;
+
+namespace Sockseek.Cli;
+
+/// <summary>Thin daemon client for sharing and generic transfer resources.</summary>
+internal static class DaemonResourceCommandRunner
+{
+    public static async Task<Program.CliExitCode> RunAsync(
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken = default)
+    {
+        if (args.Any(arg => arg is "-h" or "--help"))
+        {
+            PrintHelp();
+            return Program.CliExitCode.Success;
+        }
+
+        string? remote = Option(args, "--remote");
+        if (string.IsNullOrWhiteSpace(remote))
+        {
+            Console.Error.WriteLine(
+                "Input error: This command requires --remote <url>; it does not start a temporary daemon.");
+            return Program.CliExitCode.UsageError;
+        }
+
+        try
+        {
+            ValidateArguments(args);
+            using HttpClient http = SockseekApiClient.CreateHttpClient(remote);
+            var api = new SockseekApiClient(http);
+            if (Equals(args[0], "share"))
+                return await RunShareAsync(api, args, cancellationToken).ConfigureAwait(false);
+            if (Equals(args[0], "transfers"))
+                return await RunTransfersAsync(api, args, cancellationToken).ConfigureAwait(false);
+            return await RunTransferAsync(api, args, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return Program.CliExitCode.Cancelled;
+        }
+        catch (SockseekApiRequestException ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return Program.CliExitCode.WorkFailed;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine(
+                ex.Message.StartsWith("Input error:", StringComparison.Ordinal)
+                    ? ex.Message
+                    : $"Input error: {ex.Message}");
+            return Program.CliExitCode.UsageError;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Daemon command failed: {ex.Message}");
+            return Program.CliExitCode.WorkFailed;
+        }
+    }
+
+    private static async Task<Program.CliExitCode> RunShareAsync(
+        SockseekApiClient api,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        string action = Positional(args, 1) ?? "status";
+        if (Equals(action, "status"))
+        {
+            StateSnapshotDto snapshot = await api
+                .GetDaemonSnapshotAsync(cancellationToken)
+                .ConfigureAwait(false);
+            DaemonStateDto daemon = snapshot.Daemon
+                ?? throw new InvalidDataException(
+                    "Daemon snapshot did not contain daemon state.");
+            WriteSharing(daemon.Sharing, daemon.Uploads, JsonRequested(args));
+            return Program.CliExitCode.Success;
+        }
+        if (!Equals(action, "scan"))
+            return Usage("Expected 'share status' or 'share scan'.");
+
+        if (args.Contains("--cancel", StringComparer.OrdinalIgnoreCase))
+        {
+            SharingStateDto sharing = await api.GetSharingAsync(cancellationToken).ConfigureAwait(false);
+            if (sharing.ActiveScan is null)
+                return Usage("There is no active share scan to cancel.");
+            ShareScanStateDto scan = await api.CancelShareScanAsync(
+                sharing.ActiveScan.ScanId,
+                cancellationToken).ConfigureAwait(false);
+            Write(scan, JsonRequested(args));
+            return Program.CliExitCode.Success;
+        }
+
+        StartShareScanResponseDto started = await api.StartShareScanAsync(
+            cancellationToken).ConfigureAwait(false);
+        Write(started, JsonRequested(args));
+        return Program.CliExitCode.Success;
+    }
+
+    private static async Task<Program.CliExitCode> RunTransfersAsync(
+        SockseekApiClient api,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        int limit = ParseLimit(Option(args, "--limit"), 100);
+        var filter = new TransferHistoryFilter(
+            Direction: Option(args, "--direction"),
+            State: Option(args, "--state"),
+            TerminalOutcome: Option(args, "--outcome"),
+            Username: Option(args, "--username"));
+        CursorPage<TransferHistoryDto> page = await api.GetTransfersPageAsync(
+            filter,
+            Option(args, "--cursor"),
+            limit,
+            cancellationToken).ConfigureAwait(false);
+
+        if (JsonRequested(args))
+        {
+            Write(new { page.Items, page.NextCursor }, json: true);
+            return Program.CliExitCode.Success;
+        }
+
+        foreach (TransferHistoryDto transfer in page.Items)
+        {
+            Console.WriteLine(
+                $"{transfer.TransferId:D}  {transfer.Direction,-8} "
+                + $"{transfer.State,-12} {transfer.Username ?? "-"}  "
+                + $"{transfer.RemotePath ?? "-"}");
+        }
+        if (page.Items.Count == 0)
+            Console.WriteLine("No retained transfers matched.");
+        if (page.NextCursor is not null)
+            Console.WriteLine($"Next cursor: {page.NextCursor}");
+        return Program.CliExitCode.Success;
+    }
+
+    private static async Task<Program.CliExitCode> RunTransferAsync(
+        SockseekApiClient api,
+        IReadOnlyList<string> args,
+        CancellationToken cancellationToken)
+    {
+        string? action = Positional(args, 1);
+        string? idValue = Positional(args, 2);
+        if (!Equals(action, "cancel")
+            || !Guid.TryParse(idValue, out Guid transferId))
+        {
+            return Usage("Expected 'transfer cancel <transfer-id>'.");
+        }
+
+        TransferStateDto transfer = await api.CancelTransferAsync(
+            transferId,
+            cancellationToken).ConfigureAwait(false);
+        Write(transfer, JsonRequested(args));
+        return Program.CliExitCode.Success;
+    }
+
+    private static void WriteSharing(
+        SharingStateDto state,
+        UploadRuntimeStateDto? uploads,
+        bool json)
+    {
+        if (json)
+        {
+            Write(new { Sharing = state, Uploads = uploads }, json: true);
+            return;
+        }
+
+        Console.WriteLine(
+            $"Sharing: {state.State}"
+            + (state.Reason is null ? "" : $" ({state.Reason})"));
+        Console.WriteLine($"Aliases: {(state.Aliases.Count == 0 ? "-" : string.Join(", ", state.Aliases))}");
+        Console.WriteLine(
+            $"Catalog: generation "
+            + $"{state.Catalog.GenerationId?.ToString("D") ?? "-"}; "
+            + $"{state.Catalog.DirectoryCount:N0} directories, "
+            + $"{state.Catalog.FileCount:N0} files, "
+            + $"{state.Catalog.TotalBytes:N0} bytes");
+        Console.WriteLine(
+            $"Blocked peers: {state.BlockedUsernameCount:N0} usernames, "
+            + $"{state.BlockedIpAddressCount:N0} IP addresses");
+        if (uploads is not null)
+        {
+            Console.WriteLine(
+                $"Uploads: {uploads.State}"
+                + (uploads.Reason is null ? "" : $" ({uploads.Reason})")
+                + $"; {uploads.ActiveSlots:N0}/{uploads.Slots:N0} active; "
+                + $"{uploads.QueuedFiles:N0} queued files, "
+                + $"{uploads.QueuedBytes:N0} queued bytes; "
+                + (uploads.AcceptingUploads ? "accepting" : "not accepting"));
+            Console.WriteLine(
+                $"Upload speed cap: "
+                + (uploads.SpeedLimitKiBPerSecond is { } speed
+                    ? $"{speed:N0} KiB/s"
+                    : "unlimited"));
+        }
+        if (state.ActiveScan is not null)
+            Console.WriteLine($"Active scan: {state.ActiveScan.ScanId:D} {state.ActiveScan.Phase}");
+        if (state.LastScan is not null)
+            Console.WriteLine($"Last scan: {state.LastScan.ScanId:D} {state.LastScan.Phase}");
+    }
+
+    private static void Write(object value, bool json)
+    {
+        if (!json)
+        {
+            Console.WriteLine(value);
+            return;
+        }
+        JsonSerializerOptions options = SockseekApiJson.CreateSerializerOptions();
+        options.WriteIndented = true;
+        Console.WriteLine(JsonSerializer.Serialize(value, value.GetType(), options));
+    }
+
+    private static string? Positional(IReadOnlyList<string> args, int index)
+    {
+        int found = -1;
+        for (int i = 0; i < args.Count; i++)
+        {
+            if (args[i].StartsWith('-'))
+            {
+                if (ConsumesValue(args[i]))
+                {
+                    i++;
+                }
+                continue;
+            }
+            found++;
+            if (found == index)
+                return args[i];
+        }
+        return null;
+    }
+
+    private static bool ConsumesValue(string argument)
+        => argument.Equals("--remote", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--direction", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--state", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--outcome", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--username", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--cursor", StringComparison.OrdinalIgnoreCase)
+           || argument.Equals("--limit", StringComparison.OrdinalIgnoreCase);
+
+    private static void ValidateArguments(IReadOnlyList<string> args)
+    {
+        bool share = Equals(args[0], "share");
+        bool transfers = Equals(args[0], "transfers");
+        var allowed = share
+            ? new HashSet<string>(
+                ["--remote", "--json", "--cancel"],
+                StringComparer.OrdinalIgnoreCase)
+            : transfers
+                ? new HashSet<string>(
+                    [
+                        "--remote",
+                        "--json",
+                        "--direction",
+                        "--state",
+                        "--outcome",
+                        "--username",
+                        "--cursor",
+                        "--limit",
+                    ],
+                    StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(
+                    ["--remote", "--json"],
+                    StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var positional = new List<string>();
+
+        for (int i = 0; i < args.Count; i++)
+        {
+            string argument = args[i];
+            if (!argument.StartsWith('-'))
+            {
+                positional.Add(argument);
+                continue;
+            }
+            if (!allowed.Contains(argument))
+                throw new ArgumentException($"Input error: Unknown option '{argument}'.");
+            if (!seen.Add(argument))
+                throw new ArgumentException($"Input error: Option '{argument}' was supplied more than once.");
+            if (!ConsumesValue(argument))
+                continue;
+            if (++i >= args.Count || args[i].StartsWith('-'))
+                throw new ArgumentException($"Input error: Option '{argument}' requires a value.");
+        }
+
+        bool validPositionals = share
+            ? positional.Count is 1 or 2
+            : transfers
+                ? positional.Count == 1
+                : positional.Count == 3;
+        if (!validPositionals)
+        {
+            throw new ArgumentException(
+                share
+                    ? "Input error: Expected 'share status' or 'share scan'."
+                    : transfers
+                        ? "Input error: 'transfers' does not accept positional arguments."
+                        : "Input error: Expected 'transfer cancel <transfer-id>'.");
+        }
+        if (share
+            && seen.Contains("--cancel")
+            && (positional.Count != 2 || !Equals(positional[1], "scan")))
+        {
+            throw new ArgumentException(
+                "Input error: --cancel is valid only with 'share scan'.");
+        }
+    }
+
+    private static string? Option(IReadOnlyList<string> args, string name)
+    {
+        for (int i = 0; i < args.Count - 1; i++)
+        {
+            if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return null;
+    }
+
+    private static int ParseLimit(string? value, int fallback)
+        => value is null
+            ? fallback
+            : int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int parsed)
+              && parsed is >= 1 and <= 200
+                ? parsed
+                : throw new ArgumentException("Input error: --limit must be between 1 and 200.");
+
+    private static bool JsonRequested(IReadOnlyList<string> args)
+        => args.Contains("--json", StringComparer.OrdinalIgnoreCase);
+
+    private static bool Equals(string? left, string right)
+        => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    private static Program.CliExitCode Usage(string message)
+    {
+        Console.Error.WriteLine($"Input error: {message}");
+        return Program.CliExitCode.UsageError;
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine(
+            """
+            Daemon sharing and transfer commands:
+              sockseek share status --remote <url> [--json]
+              sockseek share scan --remote <url> [--json]
+              sockseek share scan --cancel --remote <url> [--json]
+              sockseek transfers --remote <url> [--direction upload|download] [--state <state>]
+                                 [--username <name>] [--limit 1..200] [--cursor <cursor>] [--json]
+              sockseek transfer cancel <id> --remote <url> [--json]
+            """);
+    }
+}

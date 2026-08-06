@@ -78,8 +78,8 @@ public class JsonStreamProgressReporter
                 bool first;
                 lock (_lock)
                     first = _seenTransfers.Add(transfer.TransferId);
-                if (first)
-                    ReportDownloadStart(backend.ClientStore.GetJob(transfer.Identity.JobId), transfer);
+                if (first && transfer.Identity.JobId is { } jobId)
+                    ReportDownloadStart(backend.ClientStore.GetJob(jobId), transfer);
                 ReportDownloadProgress(transfer);
             }
         };

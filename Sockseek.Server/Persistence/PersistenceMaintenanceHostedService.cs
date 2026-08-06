@@ -16,22 +16,30 @@ public sealed class PersistenceMaintenanceHostedService(
             throw new InvalidOperationException("Persistence retention interval must be positive.");
 
         using var timer = new PeriodicTimer(options.RetentionInterval);
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        try
         {
-            try
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
-                var result = await coordinator.RunRetentionAsync(stoppingToken).ConfigureAwait(false);
-                SockseekLog.Daemon.Info(
-                    $"Persistence retention pruned {result.PrunedJobs} jobs and {result.PrunedSearchResults} raw search results in {result.DurationMilliseconds} ms.");
+                try
+                {
+                    var result = await coordinator.RunRetentionAsync(stoppingToken).ConfigureAwait(false);
+                    SockseekLog.Daemon.Info(
+                        $"Persistence retention pruned {result.PrunedJobs} jobs and {result.PrunedSearchResults} raw search results in {result.DurationMilliseconds} ms.");
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    SockseekLog.Daemon.Error(ex, "Scheduled persistence retention failed");
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                SockseekLog.Daemon.Error(ex, "Scheduled persistence retention failed");
-            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // PeriodicTimer cancellation is the expected hosted-service stop
+            // path, not a background-service failure.
         }
     }
 }

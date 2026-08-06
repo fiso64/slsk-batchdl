@@ -221,13 +221,20 @@ public sealed class PersistenceWriter(
         entity.TotalBytes = mutation.TotalBytes < 0 ? long.MaxValue : mutation.TotalBytes;
         entity.TransferredBytes = Math.Max(0, mutation.TransferredBytes);
         entity.AttemptCount = mutation.AttemptCount;
-        entity.StartedAtUtc ??= occurredAt;
+        // Admission alone is not an attempt. A queued transfer may terminalize
+        // without ever starting (for example, user or daemon cancellation), in
+        // which case started_at must remain null.
+        if (entity.StartedAtUtc == null && mutation.AttemptCount > 0)
+        {
+            entity.StartedAtUtc = occurredAt;
+        }
         if (mutation.Priority == PersistenceMutationPriority.Progress)
             entity.LastProgressAtUtc = Math.Max(entity.LastProgressAtUtc ?? 0, occurredAt);
         if (mutation.TerminalOutcome != "None")
             entity.CompletedAtUtc ??= occurredAt;
         entity.FailureReason = mutation.FailureReason;
         entity.FailureMessage = Limit(mutation.FailureMessage);
+        entity.CancellationSource = mutation.CancellationSource;
         entity.Revision = mutation.Revision;
         return 1;
     }

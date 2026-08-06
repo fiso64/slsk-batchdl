@@ -97,6 +97,7 @@ internal sealed class TransferEntity
     public long? CompletedAtUtc { get; set; }
     public string FailureReason { get; set; } = "";
     public string? FailureMessage { get; set; }
+    public string CancellationSource { get; set; } = "None";
     public long Revision { get; set; }
 }
 
