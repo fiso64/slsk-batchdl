@@ -3,8 +3,9 @@
 ### v4.0
 
 - Implement soulseek client features (Look how slskd does it for a start):
-    - Sharing / Uploads
-    - Chats (private DMs & public chatrooms, notification API)
+    - [x] Sharing / Uploads
+    - [x] Chats (private DMs & public chatrooms, notification API;
+      independent-client release qualification remains tracked in the design)
     - User browsing (user description, profile picture, shares)
 
 - Create a webui using the v4 live-state client
@@ -18,6 +19,8 @@
 
 - Rethink README presentation when daemon mode becomes the primary feature, reorganize.
     - Acknowledgements section: Soulseek.NET, architecture inspiration from slskd
+
+- Every instance of `TODO [V4]`
 
 - Test performance again for song and album searches (CPU and allocations, include the raw search collection phase + projection) on big queries (e.g. `love`)
 

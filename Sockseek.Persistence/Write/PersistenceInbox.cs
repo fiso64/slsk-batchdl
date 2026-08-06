@@ -11,6 +11,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 {
     private readonly Channel<PersistenceMutation> critical;
     private readonly Channel<PersistenceMutation> ordinary;
+    private readonly Channel<AwaitablePersistenceCommand> commands;
     private readonly Dictionary<Guid, TransferPersistenceMutation> progress = [];
     private readonly Dictionary<string, PersistenceMutation> degraded = [];
     private readonly Dictionary<Guid, List<SearchResultsPersistenceMutation>> searchBuffers = [];
@@ -33,10 +34,18 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         this.health = health;
         critical = CreateChannel(options.CriticalQueueCapacity);
         ordinary = CreateChannel(options.OrdinaryQueueCapacity);
+        commands = Channel.CreateBounded<AwaitablePersistenceCommand>(
+            new BoundedChannelOptions(options.CriticalQueueCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+                AllowSynchronousContinuations = false,
+            });
     }
 
     public PersistenceWriterOptions Options { get; }
-    public int CriticalDepth => Volatile.Read(ref criticalDepth);
+    public int CriticalDepth => Volatile.Read(ref criticalDepth) + CommandDepth;
     public int OrdinaryDepth => Volatile.Read(ref ordinaryDepth);
     public int ProgressCount { get { lock (progressGate) return progress.Count; } }
     public int DegradedCount { get { lock (degradedGate) return degraded.Count; } }
@@ -76,6 +85,35 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 
         return false;
     }
+
+    internal async Task EnqueueCommandAsync(
+        AwaitablePersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        if (IsCompleted)
+            throw new InvalidOperationException("Persistence is stopping.");
+        try
+        {
+            await commands.Writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
+            Signal();
+        }
+        catch (ChannelClosedException ex)
+        {
+            throw new InvalidOperationException("Persistence is stopping.", ex);
+        }
+    }
+
+    internal bool TryDequeueCommand(out AwaitablePersistenceCommand? command)
+    {
+        if (!commands.Reader.TryRead(out command))
+            return false;
+        if (CommandDepth > 0)
+            Signal();
+        return true;
+    }
+
+    internal int CommandDepth => commands.Reader.CanCount ? commands.Reader.Count : 0;
 
     internal async Task WaitForWorkAsync(CancellationToken cancellationToken)
         => await signal.WaitAsync(Options.SearchResultFlushInterval, cancellationToken).ConfigureAwait(false);
@@ -155,7 +193,16 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     public void Complete()
     {
         Interlocked.Exchange(ref completed, 1);
+        commands.Writer.TryComplete();
         Signal();
+    }
+
+    internal void FailPendingCommands(Exception exception)
+    {
+        while (commands.Reader.TryRead(out var command))
+        {
+            command.Fail(exception);
+        }
     }
 
     private bool TryEnqueueCritical(PersistenceMutation mutation)

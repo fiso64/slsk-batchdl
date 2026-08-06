@@ -10,8 +10,8 @@ using Soulseek;
 namespace Sockseek.Server;
 
 /// <summary>
-/// Daemon-lifetime owner of the Soulseek session, public catalog, scanner, and
-/// upload runtime. Download-engine restarts do not tear these resources down.
+/// Daemon-lifetime owner of the public catalog, scanner, and upload runtime.
+/// The neutral daemon Soulseek runtime owns the shared network session.
 /// </summary>
 public sealed class SharingRuntime : IAsyncDisposable
 {
@@ -32,25 +32,28 @@ public sealed class SharingRuntime : IAsyncDisposable
     private ShareScanStateDto? activeScan;
     private ShareScanStateDto? lastScan;
     private Task? manuallyStartedScan;
+    private readonly DaemonSoulseekRuntime soulseek;
+    private readonly IDisposable inboundRegistration;
 
     public SharingRuntime(
         EngineSettings settings,
         string dataDirectory,
-        Func<EngineSettings, ISoulseekClient>? clientFactory = null)
+        DaemonSoulseekRuntime soulseek)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        this.soulseek = soulseek ?? throw new ArgumentNullException(nameof(soulseek));
         string catalogDirectory = Path.Combine(
             Path.GetFullPath(dataDirectory),
             "sharing");
         catalogs = new ShareCatalogManager(catalogDirectory);
         scans = new ShareScanCoordinator(catalogs);
 
-        SoulseekClientManager? manager = null;
-        AccessPolicy = new PeerAccessPolicy(settings.PeerAccess);
+        SoulseekClientManager manager = soulseek.ClientManager;
+        AccessPolicy = soulseek.AccessPolicy;
         Scheduler = new UploadScheduler(settings.Uploads);
         Uploads = new UploadCoordinator(
             catalogs,
-            () => manager?.Client,
+            () => manager.Client,
             AccessPolicy,
             Scheduler);
         Adapter = new SoulseekSharingAdapter(
@@ -58,14 +61,11 @@ public sealed class SharingRuntime : IAsyncDisposable
             Uploads,
             AccessPolicy,
             settings.Uploads,
-            () => manager?.Client,
+            () => manager.Client,
             settings.UserDescription,
             uploadServingEnabled: settings.ListenPort is not null);
-        manager = new SoulseekClientManager(
-            settings,
-            clientFactory?.Invoke(settings),
-            Adapter);
         ClientManager = manager;
+        inboundRegistration = soulseek.InboundRequests.Attach(Adapter);
         ClientManager.StateChanged += OnClientStateChanged;
         scans.StateChanged += OnScanStateChanged;
         Uploads.QueueChanged += OnUploadQueueChanged;
@@ -110,9 +110,7 @@ public sealed class SharingRuntime : IAsyncDisposable
     {
         try
         {
-            await ClientManager.EnsureConnectedAndLoggedInAsync(
-                settings,
-                cancellationToken).ConfigureAwait(false);
+            await soulseek.EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
             await RequestCountPublication().ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -318,36 +316,36 @@ public sealed class SharingRuntime : IAsyncDisposable
         bool configured = settings.Sharing.Roots.Count > 0;
         bool catalogReady = metadata is not null;
         bool catalogStale = catalogReady && last?.Phase == ShareScanPhase.Failed;
-        SharingHealthState state;
+        DaemonFeatureState state;
         string? reason;
         if (!configured)
         {
-            state = SharingHealthState.Disabled;
+            state = DaemonFeatureState.Disabled;
             reason = "NotConfigured";
         }
         else if (!catalogReady)
         {
-            state = SharingHealthState.Starting;
+            state = DaemonFeatureState.Starting;
             reason = "CatalogUnavailable";
         }
         else if (catalogStale)
         {
-            state = SharingHealthState.Degraded;
+            state = DaemonFeatureState.Degraded;
             reason = "LastScanFailed";
         }
         else if (metadata!.BrowseStatus != ShareBrowseStatus.Ready)
         {
-            state = SharingHealthState.Degraded;
+            state = DaemonFeatureState.Degraded;
             reason = "BrowseUnavailable";
         }
         else if (!ClientManager.IsConnectedAndLoggedIn)
         {
-            state = SharingHealthState.Degraded;
+            state = DaemonFeatureState.Degraded;
             reason = "SessionUnavailable";
         }
         else
         {
-            state = SharingHealthState.Ready;
+            state = DaemonFeatureState.Ready;
             reason = null;
         }
         return new SharingStateDto(
@@ -382,13 +380,13 @@ public sealed class SharingRuntime : IAsyncDisposable
                          && listenerReady
                          && catalogReady
                          && queue.AcceptingUploads;
-        SharingHealthState state = !configured
-            ? SharingHealthState.Disabled
+        DaemonFeatureState state = !configured
+            ? DaemonFeatureState.Disabled
             : !catalogReady || !ClientManager.IsConnectedAndLoggedIn
-                ? SharingHealthState.Starting
+                ? DaemonFeatureState.Starting
                 : accepting
-                    ? SharingHealthState.Ready
-                    : SharingHealthState.Degraded;
+                    ? DaemonFeatureState.Ready
+                    : DaemonFeatureState.Degraded;
         string? reason = accepting
             ? null
             : !configured
@@ -557,7 +555,7 @@ public sealed class SharingRuntime : IAsyncDisposable
         if (countTask is not null)
             await countTask.ConfigureAwait(false);
         await Uploads.DisposeAsync().ConfigureAwait(false);
-        await ClientManager.DisposeAsync().ConfigureAwait(false);
+        inboundRegistration.Dispose();
         Adapter.Dispose();
         await catalogs.DisposeAsync().ConfigureAwait(false);
         lifetime.Dispose();

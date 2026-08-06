@@ -799,6 +799,62 @@ public sealed class PersistenceWriterTests
         await runtimeSession.StopAsync();
     }
 
+    [TestMethod]
+    public async Task Writer_DrainsAwaitableCommandsBeyondFairnessBurstOnShutdown()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var options = new PersistenceWriterOptions();
+        var health = new PersistenceHealth();
+        var inbox = new PersistenceInbox(options, health);
+        AwaitablePersistenceCommand<int>[] commands = Enumerable.Range(1, 40)
+            .Select(value => new AwaitablePersistenceCommand<int>(
+                (_, _) => Task.FromResult(value)))
+            .ToArray();
+        foreach (AwaitablePersistenceCommand<int> command in commands)
+            await inbox.EnqueueCommandAsync(command, CancellationToken.None);
+        inbox.Complete();
+
+        await new PersistenceWriter(database.Factory, inbox, health, options)
+            .RunAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        CollectionAssert.AreEqual(
+            Enumerable.Range(1, 40).ToArray(),
+            await Task.WhenAll(commands.Select(command => command.Task)));
+        Assert.AreEqual(0, inbox.CommandDepth);
+    }
+
+    [TestMethod]
+    public async Task Writer_CancellationCompletesInFlightCommandWaiter()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var options = new PersistenceWriterOptions();
+        var health = new PersistenceHealth();
+        var inbox = new PersistenceInbox(options, health);
+        var started = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var command = new AwaitablePersistenceCommand<int>(async (_, cancellationToken) =>
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 1;
+        });
+        await inbox.EnqueueCommandAsync(command, CancellationToken.None);
+        using var stop = new CancellationTokenSource();
+        Task writer = new PersistenceWriter(database.Factory, inbox, health, options)
+            .RunAsync(stop.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        stop.Cancel();
+
+        await Assert.ThrowsExceptionAsync<TaskCanceledException>(
+            () => writer.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Assert.ThrowsExceptionAsync<TaskCanceledException>(
+            () => command.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     private static JobPersistenceMutation Job(
         Guid runtimeId,
         Guid jobId,

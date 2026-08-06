@@ -3,6 +3,7 @@ using Sockseek.Core;
 using Sockseek.Persistence.Read;
 using Sockseek.Persistence.Sqlite;
 using Sockseek.Persistence.Write;
+using Sockseek.Persistence.Chat;
 
 namespace Sockseek.Persistence.Runtime;
 
@@ -74,6 +75,7 @@ public sealed class PersistenceRuntimeHost
     public IJobHistoryReader? JobHistory { get; private set; }
     public ISearchHistoryReader? SearchHistory { get; private set; }
     public ITransferHistoryReader? TransferHistory { get; private set; }
+    public ChatPersistenceStore? Chat { get; private set; }
     public long? DatabaseSizeBytes => FileSize(sqliteOptions.DatabasePath);
     public long? WalSizeBytes => FileSize(sqliteOptions.DatabasePath + "-wal");
     public PersistenceQueueSnapshot Queue => SnapshotQueue();
@@ -111,12 +113,25 @@ public sealed class PersistenceRuntimeHost
             writer = new PersistenceWriter(contextFactory, inbox, Health, writerOptions);
             writerStop = new CancellationTokenSource();
             writerTask = writer.RunAsync(writerStop.Token);
+            Chat = new ChatPersistenceStore(contextFactory, inbox);
+            await Chat.ReconcilePendingMessagesAsync(cancellationToken).ConfigureAwait(false);
             IsStarted = true;
 
             return new PersistenceRuntimeStartup(Initialization, reconciliation, maximumDisplayId);
         }
         catch (Exception ex)
         {
+            inbox?.Complete();
+            writerStop?.Cancel();
+            if (writerTask is not null)
+            {
+                try { await writerTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+                catch { }
+            }
+            writerStop?.Dispose();
+            writerStop = null;
+            Chat = null;
             ReleaseOwnership();
             throw PersistenceDatabaseErrors.Classify(ex, sqliteOptions.GetFullDatabasePath());
         }

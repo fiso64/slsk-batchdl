@@ -39,6 +39,8 @@ public sealed class ServerPersistenceOptions
     public int? MaximumRetainedJobs { get; set; } = 100_000;
     public TimeSpan? SearchResultAge { get; set; } = TimeSpan.FromDays(30);
     public TimeSpan? TransferHistoryAge { get; set; } = TimeSpan.FromDays(90);
+    public TimeSpan? PrivateMessageHistoryAge { get; set; }
+    public TimeSpan? RoomMessageHistoryAge { get; set; } = TimeSpan.FromDays(30);
     public int RetentionBatchSize { get; set; } = 500;
     public TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(15);
 }

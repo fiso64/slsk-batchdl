@@ -14,6 +14,7 @@ using Sockseek.Api;
 using Sockseek.Server.Persistence;
 using Sockseek.Core.Sharing;
 using Sockseek.Core.Transfers.Uploads;
+using Sockseek.Core.Chat;
 
 namespace Sockseek.Server;
 
@@ -37,6 +38,8 @@ public sealed class EngineSupervisor
     public DateTimeOffset StartedAtUtc { get; } = DateTimeOffset.UtcNow;
     public EngineStateStore StateStore { get; }
     public SharingRuntime? Sharing { get; private set; }
+    public ChatRuntime? Chat { get; private set; }
+    public DaemonSoulseekRuntime? SoulseekRuntime { get; private set; }
     /// <summary>
     /// Neutral daemon-session seam for future chat and remote-user services.
     /// This is the same manager used by sharing and every download engine.
@@ -53,6 +56,7 @@ public sealed class EngineSupervisor
         defaultDownloadSettings = SettingsCloner.Clone(this.options.DefaultDownload);
         var pathContext = new PathVariableContext(ConfigDir: this.options.ConfigDir);
         SharingSettingsValidator.NormalizeAndValidate(engineSettings, pathContext);
+        ChatSettingsValidator.NormalizeAndValidate(engineSettings);
         ServerJobSettingsResolver.NormalizeForServer(defaultDownloadSettings, pathContext);
         profileCatalog = this.options.Profiles ?? ProfileCatalog.Empty;
         jobSettingsResolver = new ServerJobSettingsResolver(defaultDownloadSettings, profileCatalog, this.options.LaunchDownloadSettings, pathContext);
@@ -64,12 +68,23 @@ public sealed class EngineSupervisor
     {
         string dataDirectory = SockseekDataPaths.ResolveDataDirectory(
             options.Persistence.DataDirectory);
+        await using var soulseek = new DaemonSoulseekRuntime(
+            engineSettings,
+            options.ClientFactory);
         await using var sharing = new SharingRuntime(
             engineSettings,
             dataDirectory,
-            options.ClientFactory);
+            soulseek);
+        await using ChatRuntime? chat = persistence?.Chat is { } chatStore
+            ? new ChatRuntime(engineSettings, soulseek, chatStore)
+            : null;
+        await using DisabledChatIngress? disabledChat = chat is null
+            ? new DisabledChatIngress(soulseek)
+            : null;
         Sharing = sharing;
-        SoulseekSession = sharing.ClientManager;
+        Chat = chat;
+        SoulseekRuntime = soulseek;
+        SoulseekSession = soulseek.ClientManager;
         void OnClientStateChanged(SoulseekClientStates state)
             => StateStore.UpdateDaemonRuntime(
                 ToSoulseekClientStatusDto(state),
@@ -84,6 +99,18 @@ public sealed class EngineSupervisor
             => StateStore.UpdateSharingRuntime(
                 sharing.GetSharingState(),
                 WithHistoryHealth(sharing.GetUploadRuntimeState()));
+        void OnChatStateChanged(
+            ChatRuntimeStateDto chatState,
+            NotificationSummaryDto notifications)
+            => StateStore.UpdateChatRuntime(chatState, notifications);
+        void OnNotificationCommitted(Sockseek.Core.Chat.UserNotificationRecord notification)
+            => StateStore.PublishNotification(notification);
+        void OnChatTargetChanged(ChatTargetDeltaDto delta)
+            => StateStore.PublishChatTarget(delta);
+        Task OnChatRetentionCompleted(
+            Sockseek.Persistence.Chat.ChatRetentionResult result,
+            CancellationToken cancellationToken)
+            => chat?.PublishRetentionAsync(result, cancellationToken) ?? Task.CompletedTask;
         void OnUploadChanged(UploadTransferSnapshot transfer)
         {
             StateStore.UpdateUploadTransfer(transfer);
@@ -97,12 +124,25 @@ public sealed class EngineSupervisor
         }
         sharing.ClientManager.StateChanged += OnClientStateChanged;
         sharing.StateChanged += OnSharingStateChanged;
+        if (chat is not null)
+        {
+            chat.StateChanged += OnChatStateChanged;
+            chat.NotificationCommitted += OnNotificationCommitted;
+            chat.TargetChanged += OnChatTargetChanged;
+        }
         sharing.Uploads.TransferChanged += OnUploadChanged;
         persistence?.AttachUploads(sharing.Uploads);
         if (persistence is not null)
+        {
             persistence.HistoryHealthChanged += OnHistoryHealthChanged;
+            persistence.ChatRetentionCompleted += OnChatRetentionCompleted;
+        }
         try
         {
+            if (chat is not null)
+                await chat.StartAsync(ct);
+            // Chat attaches protocol callbacks before any sharing-triggered
+            // login can release queued private messages from the server.
             await sharing.StartAsync(ct);
             while (!ct.IsCancellationRequested)
             {
@@ -164,11 +204,22 @@ public sealed class EngineSupervisor
         {
             sharing.ClientManager.StateChanged -= OnClientStateChanged;
             sharing.StateChanged -= OnSharingStateChanged;
+            if (chat is not null)
+            {
+                chat.StateChanged -= OnChatStateChanged;
+                chat.NotificationCommitted -= OnNotificationCommitted;
+                chat.TargetChanged -= OnChatTargetChanged;
+            }
             sharing.Uploads.TransferChanged -= OnUploadChanged;
             if (persistence is not null)
+            {
                 persistence.HistoryHealthChanged -= OnHistoryHealthChanged;
+                persistence.ChatRetentionCompleted -= OnChatRetentionCompleted;
+            }
             persistence?.DetachUploads(sharing.Uploads);
             Sharing = null;
+            Chat = null;
+            SoulseekRuntime = null;
             SoulseekSession = null;
         }
 
@@ -183,7 +234,7 @@ public sealed class EngineSupervisor
             }
             return upload with
             {
-                State = SharingHealthState.Degraded,
+                State = DaemonFeatureState.Degraded,
                 Reason = "HistoryPersistenceDegraded",
             };
         }

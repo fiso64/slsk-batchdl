@@ -71,6 +71,8 @@ public class SoulseekClientManagerTests
         Assert.IsNotNull(options.DirectoryContentsResolver);
         Assert.IsNotNull(options.EnqueueDownload);
         Assert.IsNotNull(options.PlaceInQueueResolver);
+        Assert.IsFalse(options.AutoAcknowledgePrivateMessages);
+        Assert.IsTrue(options.AcceptPrivateRoomInvitations);
     }
 
     [TestMethod]
@@ -186,6 +188,28 @@ public class SoulseekClientManagerTests
         {
             manager.Dispose();
         }
+    }
+
+    [TestMethod]
+    public async Task LoginAccountIsVisibleBeforeProtocolConnectCallbacks()
+    {
+        var settings = new EngineSettings
+        {
+            Username = "chat-account",
+            Password = "pass",
+        };
+        var mockClient = new MockSoulseekClient(
+            [],
+            initialState: SoulseekClientStates.None);
+        using var manager = new SoulseekClientManager(settings, mockClient);
+        string? accountObservedDuringConnect = null;
+        mockClient.Connecting = () =>
+            accountObservedDuringConnect = manager.LoggedInUsername;
+
+        await manager.EnsureConnectedAndLoggedInAsync(settings);
+
+        Assert.AreEqual("chat-account", accountObservedDuringConnect);
+        Assert.AreEqual("chat-account", manager.LoggedInUsername);
     }
 
     [TestMethod]

@@ -38,9 +38,9 @@ This project was formerly named `sldl` (and `slsk-batchdl` before that). See [he
 If a download is wrong or missing, see [When downloads are wrong or missing](#when-downloads-are-wrong-or-missing).
 
 > [!NOTE]
-> Sockseek does not share your music folders yet. To keep the Soulseek network healthy, please also share your collection with a regular client like [Nicotine+](https://github.com/nicotine-plus/nicotine-plus) or [slskd](https://github.com/slskd/slskd).
->
-> [Daemon mode](#daemon--remote-mode) is the path toward longer-running client features, but sharing is not implemented yet.
+> Sharing, uploads, private messages, chatrooms, and notifications are available
+> through [daemon mode](#daemon--remote-mode). A normal one-shot download command
+> does not stay online to serve shares or receive chat messages.
 
 ## Common workflows
 
@@ -302,11 +302,11 @@ songs shared by only one user will be ignored.
 <!-- sockseek-help:start(daemon) -->
 ## Daemon / remote mode
 Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API,
-remote CLI access, sharing, and durable history. Run `sockseek daemon` to start
+remote CLI access, sharing, chat, notifications, and durable history. Run `sockseek daemon` to start
 it; the default endpoint is `http://127.0.0.1:5030`.
 
 See [daemon setup and remote commands](docs/daemon.md) for monitoring, sharing,
-transfer, history, backup, and security guidance. For application integration,
+chat, notifications, history, backup, and security guidance. For application integration,
 see [the API guide](docs/api.md).
 <!-- sockseek-help:end -->
 
@@ -989,6 +989,7 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
 --upload-speed-limit-kib <n>    Aggregate upload limit in KiB/s (default: unlimited)
 --peer-blocked-user <name>      Replace exact blocked peer usernames. Prefix with '+ ' to append.
 --peer-blocked-ip <address>     Replace exact blocked IPv4/IPv6 addresses. Prefix with '+ ' to append.
+--chat-room <name>              Replace rooms joined by the daemon. Prefix with '+ ' to append.
 --data-dir <path>               Directory for daemon data, including sockseek.db
 --no-retention                  Disable scheduled history retention
 --successful-job-retention-days <days|forever>
@@ -999,7 +1000,12 @@ sockseek daemon                 Start the HTTP/SignalR daemon instead of running
                                 Transfer history retention (default: 90)
 --search-result-retention-days <days|forever>
                                 Raw search-result retention (default: 30)
+--private-message-retention-days <days|forever>
+                                Private-message retention (default: forever)
+--room-message-retention-days <days|forever>
+                                Room-message retention (default: 30)
 ```
+<!-- TODO [V4]: missing CLI documentation for sockseek chat, sockseek room, and others -->
 <!-- sockseek-help-topic:start(database) -->
 #### Sockseek Database
 ```

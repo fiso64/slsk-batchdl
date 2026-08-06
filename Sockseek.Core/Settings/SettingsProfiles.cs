@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Sharing;
+using Sockseek.Core.Chat;
 
 namespace Sockseek.Core.Settings;
 
@@ -229,6 +230,7 @@ public static class SettingsNormalizer
             engine.MockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(engine.MockFilesDir, pathContext));
 
         SharingSettingsValidator.NormalizeAndValidate(engine, pathContext);
+        ChatSettingsValidator.NormalizeAndValidate(engine);
     }
 }
 
@@ -376,6 +378,10 @@ public static class SettingsCloner
         {
             BlockedUsernames = [.. source.PeerAccess.BlockedUsernames],
             BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses],
+        },
+        Chat = new ChatSettings
+        {
+            AutoJoinRooms = [.. source.Chat.AutoJoinRooms],
         },
         ConcurrentJobs = source.ConcurrentJobs,
         ConcurrentSearches = source.ConcurrentSearches,

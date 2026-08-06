@@ -36,6 +36,10 @@ public class EngineSettings
 
     public PeerAccessSettings PeerAccess { get; set; } = new();
 
+    // ── Chats ────────────────────────────────────────────────────────────────
+
+    public ChatSettings Chat { get; set; } = new();
+
     // ── Concurrency ───────────────────────────────────────────────────────────
 
     /// Global limit for concurrent leaf work. Counts direct song jobs, album jobs,

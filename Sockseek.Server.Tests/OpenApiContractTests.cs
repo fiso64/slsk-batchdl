@@ -69,6 +69,10 @@ public class OpenApiContractTests
             StringAssert.Contains(json, nameof(UploadRuntimeStateDto));
             StringAssert.Contains(json, nameof(LiveTransferPageDto));
             StringAssert.Contains(json, nameof(TransferDetailDto));
+            StringAssert.Contains(json, nameof(ChatMessageDto));
+            StringAssert.Contains(json, nameof(ConversationPageDto));
+            StringAssert.Contains(json, nameof(ChatRoomDetailDto));
+            StringAssert.Contains(json, nameof(NotificationPageDto));
             StringAssert.Contains(json, "lifecycleState");
             StringAssert.Contains(json, "activityPhase");
             StringAssert.Contains(json, "terminalOutcome");
@@ -95,6 +99,34 @@ public class OpenApiContractTests
             Assert.IsTrue(document.RootElement
                 .GetProperty("paths")
                 .TryGetProperty("/api/transfers/{transferId}/cancel", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/chat/conversations", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/chat/private-messages", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/chat/rooms/{roomId}/members", out _));
+            Assert.IsTrue(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty("/api/notifications/read", out _));
+            foreach (JsonProperty path in document.RootElement.GetProperty("paths").EnumerateObject()
+                         .Where(item => item.Name.StartsWith("/api/chat", StringComparison.Ordinal)
+                                        || item.Name.StartsWith("/api/notifications", StringComparison.Ordinal)))
+            {
+                foreach (JsonProperty operation in path.Value.EnumerateObject()
+                             .Where(item => item.Name is "get" or "post" or "delete" or "put" or "patch"))
+                {
+                    string[] responses = operation.Value.GetProperty("responses")
+                        .EnumerateObject().Select(item => item.Name).ToArray();
+                    Assert.IsTrue(
+                        responses.Any(code => code.StartsWith('2')),
+                        $"{operation.Name.ToUpperInvariant()} {path.Name} has no documented success response.");
+                    foreach (string code in new[] { "400", "403", "404", "409", "429", "503" })
+                        CollectionAssert.Contains(responses, code, $"{operation.Name.ToUpperInvariant()} {path.Name}");
+                }
+            }
             Assert.IsFalse(json.Contains("ServerEventEnvelopeDto", StringComparison.Ordinal));
 
             var jobListParameterNames = document.RootElement

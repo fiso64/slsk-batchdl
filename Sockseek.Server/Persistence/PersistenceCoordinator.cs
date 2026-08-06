@@ -8,6 +8,7 @@ using Sockseek.Persistence.Write;
 using System.Diagnostics;
 using Sockseek.Api;
 using Sockseek.Core.Transfers.Uploads;
+using Sockseek.Persistence.Chat;
 
 namespace Sockseek.Server.Persistence;
 
@@ -32,11 +33,13 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
     public IJobHistoryReader? JobHistory => host?.JobHistory;
     public ISearchHistoryReader? SearchHistory => host?.SearchHistory;
     public ITransferHistoryReader? TransferHistory => host?.TransferHistory;
+    public ChatPersistenceStore? Chat => host?.Chat;
     public long? DatabaseSizeBytes => host?.DatabaseSizeBytes;
     public long? WalSizeBytes => host?.WalSizeBytes;
     public DateTimeOffset? LastRetentionAtUtc { get; private set; }
     public RetentionResult? LastRetentionResult { get; private set; }
     public event Action? HistoryHealthChanged;
+    public event Func<ChatRetentionResult, CancellationToken, Task>? ChatRetentionCompleted;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -56,6 +59,10 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
             BatchSize = options.Persistence.RetentionBatchSize,
         };
         retentionOptions.Validate();
+        if (options.Persistence.PrivateMessageHistoryAge <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.Persistence.PrivateMessageHistoryAge));
+        if (options.Persistence.RoomMessageHistoryAge <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(options.Persistence.RoomMessageHistoryAge));
         if (options.Persistence.RetentionEnabled && options.Persistence.RetentionInterval <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(options.Persistence.RetentionInterval));
 
@@ -128,11 +135,40 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
         EnsureHostAvailable();
         var stopwatch = Stopwatch.StartNew();
         var result = await host!.RunRetentionAsync(cancellationToken).ConfigureAwait(false);
+        ChatRetentionResult chatResult = new(0, []);
+        if (host.Chat is not null)
+        {
+            chatResult = await host.Chat.ApplyRetentionAsync(
+                options.Persistence.PrivateMessageHistoryAge,
+                options.Persistence.RoomMessageHistoryAge,
+                options.Persistence.RetentionBatchSize,
+                cancellationToken).ConfigureAwait(false);
+            await NotifyChatRetentionCompletedAsync(
+                chatResult, CancellationToken.None).ConfigureAwait(false);
+        }
         LastRetentionAtUtc = DateTimeOffset.UtcNow;
         LastRetentionResult = result;
         return new PersistenceRetentionResultDto(
             result.PrunedJobs, result.PrunedSearchResults, result.SearchesMarkedPruned,
-            stopwatch.ElapsedMilliseconds, result.PrunedTransfers, result.PrunedTransferAttempts);
+            stopwatch.ElapsedMilliseconds, result.PrunedTransfers, result.PrunedTransferAttempts,
+            chatResult.PrunedMessages);
+    }
+
+    private async Task NotifyChatRetentionCompletedAsync(
+        ChatRetentionResult result,
+        CancellationToken cancellationToken)
+    {
+        if (result.PrunedMessages == 0 || ChatRetentionCompleted is not { } handlers)
+            return;
+        foreach (Func<ChatRetentionResult, CancellationToken, Task> handler in handlers.GetInvocationList())
+        {
+            try { await handler(result, cancellationToken).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                SockseekLog.Daemon.Warn(
+                    $"Chat retention projection failed: {SockseekLog.ExceptionSummary(ex)}");
+            }
+        }
     }
 
     public void AttachEngine(DownloadEngine engine)

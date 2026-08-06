@@ -4,15 +4,19 @@ using Sockseek.Api;
 namespace Sockseek.Server;
 
 /// <summary>
-/// SignalR hub for typed live state batches. A connection operates either in daemon
-/// mode or workflow mode so one change is never delivered twice to that connection.
+/// SignalR hub for typed live state batches. Daemon and chat scopes may share a
+/// connection; workflow mode remains exclusive so one change is never delivered
+/// twice to that connection.
 /// </summary>
-public sealed class ServerEventHub : Hub
+public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorizer) : Hub
 {
     private const string AllEventsGroupName = "events:all";
     private const string ModeKey = "sockseek:stream-mode";
     private const string DaemonMode = "daemon";
     private const string WorkflowMode = "workflow";
+    private const string ChatMode = "chat";
+    private const string DaemonChatMode = "daemonChat";
+    private const string ChatScopesKey = "sockseek:chat-scopes";
 
     public override async Task OnConnectedAsync()
     {
@@ -31,13 +35,14 @@ public sealed class ServerEventHub : Hub
     /// Subscribes this connection to the daemon-scoped stream containing every live
     /// workflow change and daemon-global activity edge.
     /// </summary>
-    public Task SubscribeAll()
+    public async Task SubscribeAll()
     {
         if (Context.Items.TryGetValue(ModeKey, out var mode) && Equals(mode, WorkflowMode))
             throw new HubException("Cannot mix daemon and workflow subscriptions on one connection.");
 
-        Context.Items[ModeKey] = DaemonMode;
-        return Groups.AddToGroupAsync(Context.ConnectionId, AllEventsGroupName);
+        await RequireOperatorAsync();
+        Context.Items[ModeKey] = Equals(mode, ChatMode) ? DaemonChatMode : DaemonMode;
+        await Groups.AddToGroupAsync(Context.ConnectionId, AllEventsGroupName);
     }
 
     /// <summary>
@@ -46,7 +51,14 @@ public sealed class ServerEventHub : Hub
     public async Task UnsubscribeAll()
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, AllEventsGroupName);
-        Context.Items.Remove(ModeKey);
+        var scopes = ChatScopes();
+        bool hasChat;
+        lock (scopes)
+            hasChat = scopes.Count > 0;
+        if (hasChat)
+            Context.Items[ModeKey] = ChatMode;
+        else
+            Context.Items.Remove(ModeKey);
     }
 
     /// <summary>
@@ -55,8 +67,9 @@ public sealed class ServerEventHub : Hub
     /// </summary>
     public Task SubscribeWorkflow(Guid workflowId)
     {
-        if (Context.Items.TryGetValue(ModeKey, out var mode) && Equals(mode, DaemonMode))
-            throw new HubException("Cannot mix daemon and workflow subscriptions on one connection.");
+        if (Context.Items.TryGetValue(ModeKey, out var mode)
+            && !Equals(mode, WorkflowMode))
+            throw new HubException("Cannot mix workflow and daemon/chat subscriptions on one connection.");
 
         Context.Items[ModeKey] = WorkflowMode;
         return Groups.AddToGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
@@ -68,8 +81,81 @@ public sealed class ServerEventHub : Hub
     public Task UnsubscribeWorkflow(Guid workflowId)
         => Groups.RemoveFromGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
 
+    /// <summary>Subscribes to one stable-id conversation or room stream.</summary>
+    public async Task SubscribeChat(StateStreamScopeDto scope)
+    {
+        scope.Validate();
+        if (scope.Kind is not (StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
+            throw new HubException("A chat subscription requires a conversation or room scope.");
+        if (Context.Items.TryGetValue(ModeKey, out var mode) && Equals(mode, WorkflowMode))
+            throw new HubException("Cannot mix chat and workflow subscriptions on one connection.");
+        await RequireOperatorAsync();
+        Context.Items[ModeKey] = Equals(mode, DaemonMode) || Equals(mode, DaemonChatMode)
+            ? DaemonChatMode
+            : ChatMode;
+        await Groups.AddToGroupAsync(Context.ConnectionId, ChatGroupName(scope));
+        var scopes = ChatScopes();
+        lock (scopes)
+            scopes.Add(scope);
+    }
+
+    public async Task UnsubscribeChat(StateStreamScopeDto scope)
+    {
+        scope.Validate();
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, ChatGroupName(scope));
+        var scopes = ChatScopes();
+        bool hasChat;
+        lock (scopes)
+        {
+            scopes.Remove(scope);
+            hasChat = scopes.Count > 0;
+        }
+        if (!hasChat)
+        {
+            if (Context.Items.TryGetValue(ModeKey, out object? mode)
+                && Equals(mode, DaemonChatMode))
+            {
+                Context.Items[ModeKey] = DaemonMode;
+            }
+            else if (Equals(mode, ChatMode))
+            {
+                Context.Items.Remove(ModeKey);
+            }
+        }
+    }
+
+    private async Task RequireOperatorAsync()
+    {
+        HttpContext context = Context.GetHttpContext()
+            ?? throw new HubException("The live subscription has no HTTP context.");
+        IResult? rejection = await operatorAuthorizer.GetRejectionAsync(
+            context, Context.ConnectionAborted);
+        if (rejection is not null)
+            throw new HubException("Operator authorization is required for this live subscription.");
+    }
+
+    private HashSet<StateStreamScopeDto> ChatScopes()
+    {
+        if (Context.Items.TryGetValue(ChatScopesKey, out object? value)
+            && value is HashSet<StateStreamScopeDto> scopes)
+        {
+            return scopes;
+        }
+        var created = new HashSet<StateStreamScopeDto>();
+        Context.Items[ChatScopesKey] = created;
+        return created;
+    }
+
     internal static string WorkflowGroupName(Guid workflowId)
         => $"workflow:{workflowId:N}";
+
+    internal static string ChatGroupName(StateStreamScopeDto scope)
+        => scope.Kind switch
+        {
+            StateStreamScopeKind.ChatConversation => $"chat:conversation:{scope.ChatTargetId!.Value:N}",
+            StateStreamScopeKind.ChatRoom => $"chat:room:{scope.ChatTargetId!.Value:N}",
+            _ => throw new ArgumentException("The scope is not a chat scope.", nameof(scope)),
+        };
 
     internal static string AllEventsGroup => AllEventsGroupName;
 }

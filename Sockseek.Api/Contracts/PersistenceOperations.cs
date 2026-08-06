@@ -14,4 +14,5 @@ public sealed record PersistenceRetentionResultDto(
     int SearchesMarkedPruned,
     long DurationMilliseconds,
     int PrunedTransfers = 0,
-    int PrunedTransferAttempts = 0);
+    int PrunedTransferAttempts = 0,
+    int PrunedChatMessages = 0);

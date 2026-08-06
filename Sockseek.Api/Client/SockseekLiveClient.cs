@@ -10,6 +10,8 @@ public enum LiveSubscriptionMode
     None,
     Daemon,
     Workflow,
+    Chat,
+    DaemonAndChat,
 }
 
 /// <summary>
@@ -74,11 +76,13 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             ThrowIfDisposed();
             if (Mode == LiveSubscriptionMode.Workflow)
                 throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions on one live client.");
-            if (Mode == LiveSubscriptionMode.Daemon)
+            if (Mode is LiveSubscriptionMode.Daemon or LiveSubscriptionMode.DaemonAndChat)
                 return;
 
             await EnsureConnectedAsync(ct);
-            Mode = LiveSubscriptionMode.Daemon;
+            Mode = Mode == LiveSubscriptionMode.Chat
+                ? LiveSubscriptionMode.DaemonAndChat
+                : LiveSubscriptionMode.Daemon;
             var scope = StateStreamScopeDto.Daemon;
             var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
             bool subscribed = false;
@@ -107,8 +111,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (Mode == LiveSubscriptionMode.Daemon)
-                throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions on one live client.");
+            if (Mode is not (LiveSubscriptionMode.None or LiveSubscriptionMode.Workflow))
+                throw new InvalidOperationException("Cannot mix workflow and daemon/chat subscriptions on one live client.");
 
             await EnsureConnectedAsync(ct);
             Mode = LiveSubscriptionMode.Workflow;
@@ -130,6 +134,79 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                 await RollBackInitialSubscriptionAsync(scope, session, subscribed);
                 throw;
             }
+        }
+        finally
+        {
+            lifecycleGate.Release();
+        }
+    }
+
+    public Task StartConversationAsync(Guid conversationId, CancellationToken ct = default)
+        => StartChatAsync(StateStreamScopeDto.ChatConversation(conversationId), ct);
+
+    public Task StartRoomAsync(Guid roomId, CancellationToken ct = default)
+        => StartChatAsync(StateStreamScopeDto.ChatRoom(roomId), ct);
+
+    private async Task StartChatAsync(StateStreamScopeDto scope, CancellationToken ct)
+    {
+        await lifecycleGate.WaitAsync(ct);
+        try
+        {
+            ThrowIfDisposed();
+            if (Mode == LiveSubscriptionMode.Workflow)
+                throw new InvalidOperationException("Cannot mix chat and workflow subscriptions on one live client.");
+            await EnsureConnectedAsync(ct);
+            Mode = Mode == LiveSubscriptionMode.Daemon
+                ? LiveSubscriptionMode.DaemonAndChat
+                : Mode == LiveSubscriptionMode.None
+                    ? LiveSubscriptionMode.Chat
+                    : Mode;
+            if (sessions.ContainsKey(scope))
+                return;
+            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
+            bool subscribed = false;
+            try
+            {
+                session.BeginBuffering();
+                await connection.InvokeAsync("SubscribeChat", scope, ct);
+                subscribed = true;
+                await RecoverScopeAsync(scope, ct);
+            }
+            catch
+            {
+                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
+                throw;
+            }
+        }
+        finally
+        {
+            lifecycleGate.Release();
+        }
+    }
+
+    public async Task StopChatAsync(StateStreamScopeDto scope, CancellationToken ct = default)
+    {
+        if (scope.Kind is not (StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
+            throw new ArgumentException("A chat scope is required.", nameof(scope));
+        await lifecycleGate.WaitAsync(ct);
+        try
+        {
+            if (sessions.TryRemove(scope, out var session))
+            {
+                if (connection.State == HubConnectionState.Connected)
+                    await connection.InvokeAsync("UnsubscribeChat", scope, ct);
+                session.Dispose();
+                Store.RemoveChatTarget(scope);
+            }
+            bool hasDaemon = sessions.ContainsKey(StateStreamScopeDto.Daemon);
+            bool hasChat = sessions.Keys.Any(item => item.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom);
+            Mode = (hasDaemon, hasChat) switch
+            {
+                (true, true) => LiveSubscriptionMode.DaemonAndChat,
+                (true, false) => LiveSubscriptionMode.Daemon,
+                (false, true) => LiveSubscriptionMode.Chat,
+                _ => LiveSubscriptionMode.None,
+            };
         }
         finally
         {
@@ -228,6 +305,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
 
         if (session.TryBuffer(batch))
             return;
+        if (session.IsDisposed)
+            return;
 
         var update = Store.Apply(batch);
         Publish(update);
@@ -242,14 +321,20 @@ public sealed class SockseekLiveClient : IAsyncDisposable
     {
         var scopes = sessions.Keys.ToList();
         foreach (var scope in scopes)
-            sessions[scope].BeginBuffering();
+            if (sessions.TryGetValue(scope, out ScopeSession? session))
+                session.BeginBuffering();
 
-        if (Mode == LiveSubscriptionMode.Daemon)
+        if (Mode is LiveSubscriptionMode.Daemon or LiveSubscriptionMode.DaemonAndChat)
             await connection.InvokeAsync("SubscribeAll");
-        else
+        if (Mode == LiveSubscriptionMode.Workflow)
         {
             foreach (var scope in scopes.Where(scope => scope.Kind == StateStreamScopeKind.Workflow))
                 await connection.InvokeAsync("SubscribeWorkflow", scope.WorkflowId!.Value);
+        }
+        if (Mode is LiveSubscriptionMode.Chat or LiveSubscriptionMode.DaemonAndChat)
+        {
+            foreach (var scope in scopes.Where(scope => scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
+                await connection.InvokeAsync("SubscribeChat", scope);
         }
 
         await Task.WhenAll(scopes.Select(RecoverScopeSafelyAsync));
@@ -257,7 +342,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
 
     private void ScheduleRecovery(StateStreamScopeDto scope)
     {
-        var session = sessions[scope];
+        if (!sessions.TryGetValue(scope, out ScopeSession? session))
+            return;
         if (!session.TryScheduleRecovery())
             return;
         _ = RecoverScopeSafelyAsync(scope);
@@ -265,18 +351,20 @@ public sealed class SockseekLiveClient : IAsyncDisposable
 
     private async Task RecoverScopeSafelyAsync(StateStreamScopeDto scope)
     {
-        var session = sessions[scope];
+        if (!sessions.TryGetValue(scope, out ScopeSession? session))
+            return;
         try
         {
             int attempt = 0;
-            while (!lifetime.IsCancellationRequested)
+            while (!lifetime.IsCancellationRequested && !session.IsDisposed)
             {
                 try
                 {
                     await RecoverScopeAsync(scope, lifetime.Token);
                     return;
                 }
-                catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+                catch (OperationCanceledException) when (
+                    lifetime.IsCancellationRequested || session.IsDisposed)
                 {
                     return;
                 }
@@ -288,7 +376,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                     {
                         await Task.Delay(delayMs, lifetime.Token);
                     }
-                    catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+                    catch (OperationCanceledException) when (
+                        lifetime.IsCancellationRequested || session.IsDisposed)
                     {
                         return;
                     }
@@ -303,15 +392,24 @@ public sealed class SockseekLiveClient : IAsyncDisposable
 
     private async Task RecoverScopeAsync(StateStreamScopeDto scope, CancellationToken ct)
     {
-        var session = sessions[scope];
-        await session.RecoveryGate.WaitAsync(ct);
+        if (!sessions.TryGetValue(scope, out ScopeSession? session))
+            return;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            ct, session.CancellationToken);
+        CancellationToken recoveryToken = linked.Token;
+        await session.RecoveryGate.WaitAsync(recoveryToken);
         try
         {
             while (true)
             {
-                var snapshot = scope.Kind == StateStreamScopeKind.Daemon
-                    ? await api.GetDaemonSnapshotAsync(ct)
-                    : await api.GetWorkflowSnapshotAsync(scope.WorkflowId!.Value, ct);
+                var snapshot = scope.Kind switch
+                {
+                    StateStreamScopeKind.Daemon => await api.GetDaemonSnapshotAsync(recoveryToken),
+                    StateStreamScopeKind.Workflow => await api.GetWorkflowSnapshotAsync(scope.WorkflowId!.Value, recoveryToken),
+                    StateStreamScopeKind.ChatConversation => await api.GetConversationSnapshotAsync(scope.ChatTargetId!.Value, recoveryToken),
+                    StateStreamScopeKind.ChatRoom => await api.GetRoomSnapshotAsync(scope.ChatTargetId!.Value, recoveryToken),
+                    _ => throw new ArgumentOutOfRangeException(),
+                };
 
                 var snapshotUpdate = Store.ApplySnapshot(snapshot);
                 SnapshotApplied?.Invoke(snapshot);
@@ -320,15 +418,20 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                 bool restartRecovery = false;
                 while (true)
                 {
-                    var buffered = session.Drain();
-                    if (buffered.Count == 0)
+                    BufferedDrain drain = session.Drain();
+                    if (drain.Overflowed)
+                    {
+                        restartRecovery = true;
+                        break;
+                    }
+                    if (drain.Batches.Count == 0)
                     {
                         if (session.EndBufferingIfEmpty())
                             return;
                         continue;
                     }
 
-                    foreach (var batch in buffered
+                    foreach (var batch in drain.Batches
                         .OrderBy(batch => batch.Sequence)
                         .ThenBy(batch => batch.PreviousSequence))
                     {
@@ -363,8 +466,10 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             {
                 if (scope.Kind == StateStreamScopeKind.Daemon)
                     await connection.InvokeAsync("UnsubscribeAll");
-                else
+                else if (scope.Kind == StateStreamScopeKind.Workflow)
                     await connection.InvokeAsync("UnsubscribeWorkflow", scope.WorkflowId!.Value);
+                else
+                    await connection.InvokeAsync("UnsubscribeChat", scope);
             }
             catch
             {
@@ -376,11 +481,13 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             removed.Dispose();
         else
             session.Dispose();
+        if (scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom)
+            Store.RemoveChatTarget(scope);
 
+        RecomputeMode();
         if (!sessions.IsEmpty)
             return;
 
-        Mode = LiveSubscriptionMode.None;
         if (connection.State != HubConnectionState.Disconnected)
         {
             try
@@ -399,6 +506,22 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         Updated?.Invoke(update);
         foreach (var activity in update.Activity)
             ActivityReceived?.Invoke(activity);
+    }
+
+    private void RecomputeMode()
+    {
+        bool hasDaemon = sessions.ContainsKey(StateStreamScopeDto.Daemon);
+        bool hasWorkflow = sessions.Keys.Any(item => item.Kind == StateStreamScopeKind.Workflow);
+        bool hasChat = sessions.Keys.Any(item => item.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom);
+        Mode = hasWorkflow
+            ? LiveSubscriptionMode.Workflow
+            : (hasDaemon, hasChat) switch
+            {
+                (true, true) => LiveSubscriptionMode.DaemonAndChat,
+                (true, false) => LiveSubscriptionMode.Daemon,
+                (false, true) => LiveSubscriptionMode.Chat,
+                _ => LiveSubscriptionMode.None,
+            };
     }
 
     private void ThrowIfDisposed()
@@ -423,12 +546,18 @@ public sealed class SockseekLiveClient : IAsyncDisposable
 
     private sealed class ScopeSession : IDisposable
     {
+        private const int MaximumBufferedBatches = 2_048;
         private readonly object gate = new();
         private readonly List<StateUpdateBatchDto> buffered = [];
+        private readonly CancellationTokenSource lifetime = new();
         private bool buffering = true;
         private bool recoveryScheduled;
+        private bool overflowed;
 
         public SemaphoreSlim RecoveryGate { get; } = new(1, 1);
+        public CancellationToken CancellationToken => lifetime.Token;
+        public bool IsDisposed => Volatile.Read(ref disposed) != 0;
+        private int disposed;
 
         public void BeginBuffering(StateUpdateBatchDto? first = null)
         {
@@ -436,7 +565,7 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             {
                 buffering = true;
                 if (first != null)
-                    buffered.Add(first);
+                    AddBounded(first);
             }
         }
 
@@ -444,20 +573,24 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         {
             lock (gate)
             {
+                if (IsDisposed)
+                    return false;
                 if (!buffering)
                     return false;
-                buffered.Add(batch);
+                AddBounded(batch);
                 return true;
             }
         }
 
-        public IReadOnlyList<StateUpdateBatchDto> Drain()
+        public BufferedDrain Drain()
         {
             lock (gate)
             {
                 var result = buffered.ToList();
                 buffered.Clear();
-                return result;
+                bool hadOverflow = overflowed;
+                overflowed = false;
+                return new BufferedDrain(result, hadOverflow);
             }
         }
 
@@ -490,6 +623,23 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         }
 
         public void Dispose()
-            => RecoveryGate.Dispose();
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+                lifetime.Cancel();
+        }
+
+        private void AddBounded(StateUpdateBatchDto batch)
+        {
+            if (buffered.Count == MaximumBufferedBatches)
+            {
+                buffered.Clear();
+                overflowed = true;
+            }
+            buffered.Add(batch);
+        }
     }
+
+    private sealed record BufferedDrain(
+        IReadOnlyList<StateUpdateBatchDto> Batches,
+        bool Overflowed);
 }

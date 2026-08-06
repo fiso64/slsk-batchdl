@@ -171,6 +171,92 @@ where shared media is mounted.
 For application integration, see [API and client integration](api.md) and the
 generated [OpenAPI document](openapi.json).
 
+## Chatrooms, private messages, and notifications
+
+Chat is a daemon feature because it needs one long-running Soulseek connection
+and durable SQLite storage. It is available whenever daemon persistence is
+enabled and started. A temporary foreground download process does not receive
+messages or join rooms.
+
+Configure rooms to join after login or reconnect with the normal list syntax:
+
+```ini
+chat-room = indie
+chat-room = + electronic
+private-message-retention-days = forever
+room-message-retention-days = 30
+```
+
+An unprefixed `chat-room` replaces earlier configured values; `+ ` appends.
+Rooms joined through the API are remembered separately unless `--no-remember`
+is used. Leaving a configured room lasts for the current connection; the daemon
+will request it again after its next login. Private messages are retained
+forever by default; room messages default to 30 days. Each policy can be set to
+a positive day count or `forever` independently.
+
+The remote CLI is intentionally scriptable rather than a second interactive
+chat UI:
+
+```bash
+sockseek chat status --remote http://127.0.0.1:5030
+sockseek chat conversations --unread --remote http://127.0.0.1:5030
+sockseek chat messages alice --remote http://127.0.0.1:5030
+sockseek chat send alice "hello" --remote http://127.0.0.1:5030
+sockseek chat read alice --remote http://127.0.0.1:5030
+sockseek chat archive alice --remote http://127.0.0.1:5030
+
+sockseek room available --remote http://127.0.0.1:5030
+sockseek room joined --remote http://127.0.0.1:5030
+sockseek room join indie --remote http://127.0.0.1:5030
+sockseek room messages indie --remote http://127.0.0.1:5030
+sockseek room send indie "hello room" --remote http://127.0.0.1:5030
+sockseek room members indie --remote http://127.0.0.1:5030
+sockseek room member add secret-room friend --remote http://127.0.0.1:5030
+sockseek room leave indie --remote http://127.0.0.1:5030
+
+sockseek notifications --unread --remote http://127.0.0.1:5030
+sockseek notification read all --remote http://127.0.0.1:5030
+```
+
+Add `--json` for typed JSON and `--limit 1..200` for bounded list commands.
+Private-room membership and moderation reported by Soulseek are reflected in
+room metadata, including `Owned` and `Moderated` on joined-room summaries.
+Sockseek accepts private-room invitations, can join accessible private rooms,
+and exposes `room member add`; it does not expose private-room
+creation, member removal, moderator changes, ownership transfer, or membership
+drop.
+
+Available-room responses include `Truncated` when the bounded server directory
+could not retain every reported room. Joined-room summaries expose
+`RosterComplete`, and member pages expose `Complete`; a GUI should show an
+incomplete-state hint instead of treating a deliberately bounded or interrupted
+roster as authoritative.
+
+Incoming private messages are committed before Sockseek acknowledges them to
+the Soulseek server. A replay is deduplicated. Protocol acknowledgement is not
+the same as the local read watermark: clients explicitly mark visible messages
+or notifications read. Room mentions match the current username as a whole
+token. Blocked usernames apply to private and room chat; an IP-only block cannot
+be evaluated for server-delivered chat events because those events contain no
+peer IP address.
+
+Messages are plain text and are never interpreted as HTML or Markdown by the
+daemon. Message bodies, conversation lists, and room rosters are absent from
+the compact daemon snapshot. New notification records and unread summaries are
+published on the daemon live stream, while open conversations and rooms use
+their own recoverable live scopes. This lets a GUI show a notification bubble
+immediately without broadcasting every busy-room message to every client. A
+notification carries actor/target metadata and a bounded one-line plain-text
+preview, not a second copy of the full message body. History deletion and
+retention replace an open target's bounded live tail so a GUI does not retain
+messages that are no longer durable.
+
+Live publication is bounded independently per daemon, conversation, and room
+scope. If a busy room outpaces SignalR delivery, Sockseek keeps recent state and
+creates a sequence gap; supported clients automatically recover that room from
+an HTTP snapshot. Other rooms and the notification badge are not held behind
+the stalled scope.
+
 ## Network security
 
 The daemon API does not currently provide authentication.
@@ -244,6 +330,7 @@ The database and its backups may contain:
 - remote and local file paths;
 - job and transfer outcomes;
 - error messages.
+- private and room messages, read state, room subscriptions, and notifications.
 
 Treat these files as private download history. On Windows, custom paths inherit
 their folder permissions. On Unix, Sockseek restricts newly created database and
@@ -262,6 +349,8 @@ The defaults are:
 | Failed, cancelled, or interrupted jobs | 180 days |
 | Search results | 30 days |
 | Transfers | 90 days |
+| Private messages | Forever |
+| Chatroom messages | 30 days |
 
 The daemon also keeps at most 100,000 completed jobs by default. Active work is
 never removed.
@@ -273,6 +362,8 @@ successful-job-retention-days = 90
 unsuccessful-job-retention-days = 180
 transfer-retention-days = 90
 search-result-retention-days = 30
+private-message-retention-days = forever
+room-message-retention-days = 30
 ```
 
 Use `--no-retention` to disable automatic cleanup. Retention periods also accept
@@ -286,6 +377,16 @@ Setting either job retention period to `forever` also removes the default
 100,000-job limit.
 
 Retention does not delete backup files.
+
+Private messages are retained forever by default because they are durable user
+conversations. Higher-volume chatroom messages default to 30 days. The two
+settings are independent and each accepts a positive day count or `forever`.
+They are age thresholds, not message-count ceilings. Scheduled or manual
+maintenance deletes the oldest eligible messages in bounded batches.
+Notifications whose source messages expire are deleted with them; conversation
+and room resources remain, their unread and last-message state is repaired, and
+connected clients receive replacement live tails. The maintenance API reports
+the combined number removed as `PrunedChatMessages`.
 
 ## Backup and restore
 

@@ -101,6 +101,23 @@ public sealed class SockseekApiClient
         return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
     }
 
+    public async Task<StateSnapshotDto> GetConversationSnapshotAsync(
+        Guid conversationId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync(
+            $"api/chat/conversations/{conversationId}/snapshot", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
+    }
+
+    public async Task<StateSnapshotDto> GetRoomSnapshotAsync(
+        Guid roomId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/chat/rooms/{roomId}/snapshot", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
+    }
+
     public async Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/extract", request, ct);
 
@@ -507,6 +524,191 @@ public sealed class SockseekApiClient
         return result.Cancelled;
     }
 
+    public async Task<ChatRuntimeStateDto> GetChatStatusAsync(CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/chat", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ChatRuntimeStateDto>(response, ct);
+    }
+
+    public async Task<ConversationPageDto> GetConversationsAsync(
+        bool? unread = null,
+        bool? archived = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = "api/chat/conversations?limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + QueryPart("unread", unread?.ToString().ToLowerInvariant())
+            + QueryPart("archived", archived?.ToString().ToLowerInvariant())
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ConversationPageDto>(response, ct);
+    }
+
+    public async Task<ConversationSummaryDto?> GetConversationAsync(
+        Guid conversationId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/chat/conversations/{conversationId}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ConversationSummaryDto>(response, ct);
+    }
+
+    public Task<ChatMessageDto> SendPrivateMessageAsync(
+        SendPrivateMessageRequestDto request, CancellationToken ct = default)
+        => PostRequiredAsync<ChatMessageDto, SendPrivateMessageRequestDto>(
+            "api/chat/private-messages", request, ct);
+
+    public Task<ChatMessageDto> SendConversationMessageAsync(
+        Guid conversationId, SendChatMessageRequestDto request, CancellationToken ct = default)
+        => PostRequiredAsync<ChatMessageDto, SendChatMessageRequestDto>(
+            $"api/chat/conversations/{conversationId}/messages", request, ct);
+
+    public async Task<ChatMessagePageDto> GetConversationMessagesAsync(
+        Guid conversationId, string? cursor = null, int limit = 100, CancellationToken ct = default)
+        => await GetChatMessagePageAsync(
+            $"api/chat/conversations/{conversationId}/messages?limit={limit}"
+            + QueryPart("cursor", cursor), ct);
+
+    public Task<ConversationSummaryDto> MarkConversationReadAsync(
+        Guid conversationId, Guid throughMessageId, CancellationToken ct = default)
+        => PostRequiredAsync<ConversationSummaryDto, MarkChatReadRequestDto>(
+            $"api/chat/conversations/{conversationId}/read",
+            new MarkChatReadRequestDto(throughMessageId), ct);
+
+    public Task<ConversationSummaryDto> ArchiveConversationAsync(
+        Guid conversationId, bool archived = true, CancellationToken ct = default)
+        => PostRequiredAsync<ConversationSummaryDto, ArchiveConversationRequestDto>(
+            $"api/chat/conversations/{conversationId}/archive",
+            new ArchiveConversationRequestDto(archived), ct);
+
+    public Task DeleteConversationHistoryAsync(Guid conversationId, CancellationToken ct = default)
+        => DeleteRequiredAsync($"api/chat/conversations/{conversationId}/history", ct);
+
+    public async Task<AvailableRoomPageDto> GetAvailableRoomsAsync(
+        Sockseek.Core.Chat.ChatRoomKind? kind = null,
+        string? cursor = null,
+        int limit = 100,
+        bool refresh = false,
+        CancellationToken ct = default)
+    {
+        string url = $"api/chat/rooms/available?limit={limit}&refresh={refresh.ToString().ToLowerInvariant()}"
+            + QueryPart("kind", kind?.ToString())
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<AvailableRoomPageDto>(response, ct);
+    }
+
+    public async Task<ChatRoomPageDto> GetRoomsAsync(
+        string? state = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/chat/rooms?limit={limit}"
+            + QueryPart("state", state)
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ChatRoomPageDto>(response, ct);
+    }
+
+    public Task<ChatRoomSummaryDto> JoinRoomAsync(
+        string roomName, bool remember = true, CancellationToken ct = default)
+        => PostRequiredAsync<ChatRoomSummaryDto, JoinRoomRequestDto>(
+            "api/chat/rooms", new JoinRoomRequestDto(roomName, remember), ct);
+
+    public async Task<ChatRoomDetailDto?> GetRoomAsync(Guid roomId, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/chat/rooms/{roomId}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ChatRoomDetailDto>(response, ct);
+    }
+
+    public async Task<ChatRoomSummaryDto> LeaveRoomAsync(Guid roomId, CancellationToken ct = default)
+    {
+        using var response = await http.DeleteAsync($"api/chat/rooms/{roomId}", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ChatRoomSummaryDto>(response, ct);
+    }
+
+    public async Task<ChatMessagePageDto> GetRoomMessagesAsync(
+        Guid roomId, string? cursor = null, int limit = 100, CancellationToken ct = default)
+        => await GetChatMessagePageAsync(
+            $"api/chat/rooms/{roomId}/messages?limit={limit}" + QueryPart("cursor", cursor), ct);
+
+    public Task<ChatMessageDto> SendRoomMessageAsync(
+        Guid roomId, SendChatMessageRequestDto request, CancellationToken ct = default)
+        => PostRequiredAsync<ChatMessageDto, SendChatMessageRequestDto>(
+            $"api/chat/rooms/{roomId}/messages", request, ct);
+
+    public Task<ChatRoomSummaryDto> MarkRoomReadAsync(
+        Guid roomId, Guid throughMessageId, CancellationToken ct = default)
+        => PostRequiredAsync<ChatRoomSummaryDto, MarkChatReadRequestDto>(
+            $"api/chat/rooms/{roomId}/read", new MarkChatReadRequestDto(throughMessageId), ct);
+
+    public async Task<RoomMemberPageDto> GetRoomMembersAsync(
+        Guid roomId,
+        string? cursor = null,
+        int limit = 100,
+        long? revision = null,
+        CancellationToken ct = default)
+    {
+        string url = $"api/chat/rooms/{roomId}/members?limit={limit}"
+            + QueryPart("cursor", cursor)
+            + QueryPart("revision", revision?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<RoomMemberPageDto>(response, ct);
+    }
+
+    public Task<ChatRoomDetailDto> AddPrivateRoomMemberAsync(
+        Guid roomId, string username, CancellationToken ct = default)
+        => PostRequiredAsync<ChatRoomDetailDto, AddRoomMemberRequestDto>(
+            $"api/chat/rooms/{roomId}/members", new AddRoomMemberRequestDto(username), ct);
+
+    public Task DeleteRoomHistoryAsync(Guid roomId, CancellationToken ct = default)
+        => DeleteRequiredAsync($"api/chat/rooms/{roomId}/history", ct);
+
+    public async Task<NotificationPageDto> GetNotificationsAsync(
+        bool? unread = null,
+        Sockseek.Core.Chat.UserNotificationKind? kind = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/notifications?limit={limit}"
+            + QueryPart("unread", unread?.ToString().ToLowerInvariant())
+            + QueryPart("kind", kind?.ToString())
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<NotificationPageDto>(response, ct);
+    }
+
+    public async Task<UserNotificationDto?> GetNotificationAsync(Guid id, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/notifications/{id}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<UserNotificationDto>(response, ct);
+    }
+
+    public Task<UserNotificationDto> MarkNotificationReadAsync(Guid id, CancellationToken ct = default)
+        => PostWithoutBodyAsync<UserNotificationDto>($"api/notifications/{id}/read", ct);
+
+    public Task<NotificationSummaryDto> MarkNotificationsReadAsync(
+        MarkNotificationsReadRequestDto request, CancellationToken ct = default)
+        => PostRequiredAsync<NotificationSummaryDto, MarkNotificationsReadRequestDto>(
+            "api/notifications/read", request, ct);
+
     public async Task<bool> TryNextCandidateAsync(Guid jobId, CancellationToken ct = default)
     {
         using var response = await http.PostAsync($"api/jobs/{jobId}/next-candidate", null, ct);
@@ -563,6 +765,19 @@ public sealed class SockseekApiClient
         using var response = await http.PostAsync(url, content: null, ct);
         await EnsureSuccessAsync(response, ct);
         return await ReadRequiredAsync<TResponse>(response, ct);
+    }
+
+    private async Task<ChatMessagePageDto> GetChatMessagePageAsync(string url, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<ChatMessagePageDto>(response, ct);
+    }
+
+    private async Task DeleteRequiredAsync(string url, CancellationToken ct)
+    {
+        using var response = await http.DeleteAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
     }
 
     private async Task<CursorPage<T>> GetCursorPageAsync<T>(string url, CancellationToken ct)

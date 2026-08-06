@@ -17,6 +17,274 @@ namespace Sockseek.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
+            modelBuilder.Entity("Sockseek.Persistence.Entities.ChatConversationEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("conversation_id");
+
+                    b.Property<long?>("ArchivedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("archived_at_utc");
+
+                    b.Property<long>("CreatedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DisplayUsername")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("display_username");
+
+                    b.Property<long>("LastMessageSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_message_sequence");
+
+                    b.Property<long>("LastReadSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_read_sequence");
+
+                    b.Property<string>("LocalAccountKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("local_account_key");
+
+                    b.Property<string>("PeerKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("peer_key");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<long>("UpdatedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocalAccountKey", "PeerKey")
+                        .IsUnique();
+
+                    b.HasIndex("LocalAccountKey", "LastMessageSequence", "Id");
+
+                    b.ToTable("chat_conversations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_chat_conversations_revision", "revision >= 0");
+
+                            t.HasCheckConstraint("ck_chat_conversations_sequences", "last_read_sequence >= 0 AND last_message_sequence >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Sockseek.Persistence.Entities.ChatMessageEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("message_id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("body");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("direction");
+
+                    b.Property<string>("DisplaySender")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("display_sender");
+
+                    b.Property<string>("DisplayTarget")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("display_target");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("LocalAccountKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("local_account_key");
+
+                    b.Property<long>("OccurredAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<int?>("ProtocolMessageId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("protocol_message_id");
+
+                    b.Property<long?>("ProtocolTimestamp")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("protocol_timestamp");
+
+                    b.Property<long>("RecordedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("SendState")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("send_state");
+
+                    b.Property<string>("SenderKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("sender_key");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequence");
+
+                    b.Property<Guid>("TargetId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_id");
+
+                    b.Property<string>("TargetKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_key");
+
+                    b.Property<string>("TargetKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_kind");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Sequence")
+                        .IsUnique();
+
+                    b.HasIndex("LocalAccountKey", "SendState");
+
+                    b.HasIndex("LocalAccountKey", "TargetId", "Sequence", "Id");
+
+                    b.HasIndex("LocalAccountKey", "TargetKind", "TargetKey", "ProtocolMessageId", "ProtocolTimestamp")
+                        .IsUnique()
+                        .HasFilter("protocol_message_id IS NOT NULL");
+
+                    b.ToTable("chat_messages", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_chat_messages_sequence", "sequence > 0");
+                        });
+                });
+
+            modelBuilder.Entity("Sockseek.Persistence.Entities.ChatRoomSubscriptionEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("room_id");
+
+                    b.Property<long>("CreatedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("display_name");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("room_kind");
+
+                    b.Property<long>("LastMessageSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_message_sequence");
+
+                    b.Property<long>("LastReadSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_read_sequence");
+
+                    b.Property<string>("LocalAccountKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("local_account_key");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("RoomKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("room_key");
+
+                    b.Property<bool>("RuntimeDesired")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("runtime_desired");
+
+                    b.Property<long>("UpdatedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocalAccountKey", "RoomKey")
+                        .IsUnique();
+
+                    b.HasIndex("LocalAccountKey", "RuntimeDesired");
+
+                    b.HasIndex("LocalAccountKey", "LastMessageSequence", "Id");
+
+                    b.ToTable("chat_room_subscriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_chat_room_subscriptions_revision", "revision >= 0");
+
+                            t.HasCheckConstraint("ck_chat_room_subscriptions_sequences", "last_read_sequence >= 0 AND last_message_sequence >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Sockseek.Persistence.Entities.ChatSequenceEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequence_id");
+
+                    b.Property<long>("LastMessageSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_message_sequence");
+
+                    b.Property<long>("LastNotificationSequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_notification_sequence");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("chat_sequences", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_chat_sequences_singleton", "sequence_id = 1");
+
+                            t.HasCheckConstraint("ck_chat_sequences_values", "last_message_sequence >= 0 AND last_notification_sequence >= 0");
+                        });
+                });
+
             modelBuilder.Entity("Sockseek.Persistence.Entities.JobEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -173,6 +441,59 @@ namespace Sockseek.Persistence.Migrations
                             t.HasCheckConstraint("ck_jobs_revision", "revision >= 0");
 
                             t.HasCheckConstraint("ck_jobs_terminal_time", "(lifecycle_state = 'Terminal' AND completed_at_utc IS NOT NULL) OR (lifecycle_state <> 'Terminal' AND completed_at_utc IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Sockseek.Persistence.Entities.NotificationEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("notification_id");
+
+                    b.Property<long>("CreatedAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LocalAccountKey")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("local_account_key");
+
+                    b.Property<long?>("ReadAtUtc")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("read_at_utc");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequence");
+
+                    b.Property<Guid>("SourceMessageId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_message_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Sequence")
+                        .IsUnique();
+
+                    b.HasIndex("SourceMessageId");
+
+                    b.HasIndex("LocalAccountKey", "SourceMessageId", "Kind")
+                        .IsUnique();
+
+                    b.HasIndex("LocalAccountKey", "ReadAtUtc", "Sequence", "Id");
+
+                    b.ToTable("notifications", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_notifications_sequence", "sequence > 0");
                         });
                 });
 
@@ -567,15 +888,15 @@ namespace Sockseek.Persistence.Migrations
 
                     b.HasIndex("LastRuntimeId", "TerminalOutcome");
 
-                    b.HasIndex("Direction", "State", "CreatedAtUtc");
-
                     b.HasIndex("Direction", "StartedAtUtc", "Id");
+
+                    b.HasIndex("Direction", "State", "CreatedAtUtc");
 
                     b.HasIndex("Direction", "TerminalOutcome", "CompletedAtUtc");
 
-                    b.HasIndex("Username", "Direction", "StartedAtUtc", "Id");
-
                     b.HasIndex("WorkflowId", "CreatedAtUtc", "Id");
+
+                    b.HasIndex("Username", "Direction", "StartedAtUtc", "Id");
 
                     b.ToTable("transfers", null, t =>
                         {
@@ -611,6 +932,15 @@ namespace Sockseek.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("SourceJobId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("Sockseek.Persistence.Entities.NotificationEntity", b =>
+                {
+                    b.HasOne("Sockseek.Persistence.Entities.ChatMessageEntity", null)
+                        .WithMany()
+                        .HasForeignKey("SourceMessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Sockseek.Persistence.Entities.SearchJobEntity", b =>
