@@ -35,7 +35,7 @@ public sealed class SqliteInitializationTests
 
         Assert.AreEqual("wal", result.JournalMode.ToLowerInvariant());
         Assert.AreEqual("2", result.SynchronousMode);
-        StringAssert.Contains(result.SchemaVersion, "AddUploadTransferHistory");
+        StringAssert.Contains(result.SchemaVersion, "AddChatSequenceAllocator");
 
         await using var context = await database.Factory.CreateDbContextAsync();
         await context.Database.OpenConnectionAsync();
@@ -45,7 +45,11 @@ public sealed class SqliteInitializationTests
         var tables = QueryStrings(context,
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;");
         CollectionAssert.IsSubsetOf(
-            new[] { "runtime_sessions", "jobs", "search_jobs", "search_results", "transfers", "transfer_attempts" },
+            new[]
+            {
+                "runtime_sessions", "jobs", "search_jobs", "search_results", "transfers", "transfer_attempts",
+                "chat_conversations", "chat_room_subscriptions", "chat_messages", "notifications", "chat_sequences",
+            },
             tables.ToArray());
     }
 

@@ -10,11 +10,15 @@ public static class OperatorMutationPolicy
 {
     public const string Name = "Sockseek.Operator";
 
-    public static RouteHandlerBuilder RequireOperatorMutation(
+    public static RouteHandlerBuilder RequireOperator(
         this RouteHandlerBuilder builder)
         => builder
             .WithMetadata(new OperatorMutationMetadata(Name))
             .AddEndpointFilter<OperatorMutationFilter>();
+
+    public static RouteHandlerBuilder RequireOperatorMutation(
+        this RouteHandlerBuilder builder)
+        => builder.RequireOperator();
 }
 
 public sealed record OperatorMutationMetadata(string PolicyName);

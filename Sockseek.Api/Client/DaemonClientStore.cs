@@ -63,6 +63,8 @@ public sealed class DaemonClientStore
     private readonly Dictionary<Guid, TransferStateDto> liveTransfers = [];
     private readonly Dictionary<Guid, WorkflowSummaryDto> historyWorkflows = [];
     private readonly Dictionary<Guid, JobSummaryDto> historyJobs = [];
+    private readonly Dictionary<Guid, UserNotificationDto> liveNotifications = [];
+    private readonly Dictionary<StateStreamScopeDto, ChatTargetSnapshotDto> liveChatTargets = [];
     private readonly Dictionary<StateStreamScopeDto, StateStreamPositionDto> positions = [];
     private readonly HashSet<StateStreamScopeDto> staleScopes = [];
     private DaemonStateDto? daemon;
@@ -166,6 +168,33 @@ public sealed class DaemonClientStore
     {
         lock (gate)
             return daemon?.Uploads;
+    }
+
+    /// <summary>Returns the bounded notification tail received on the daemon live stream.</summary>
+    public IReadOnlyList<UserNotificationDto> GetLiveNotifications()
+    {
+        lock (gate)
+            return liveNotifications.Values.OrderByDescending(item => item.Sequence).ToList();
+    }
+
+    public ChatTargetSnapshotDto? GetChatTarget(StateStreamScopeDto scope)
+    {
+        scope.Validate();
+        lock (gate)
+            return liveChatTargets.GetValueOrDefault(scope);
+    }
+
+    public void RemoveChatTarget(StateStreamScopeDto scope)
+    {
+        scope.Validate();
+        if (scope.Kind is not (StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
+            throw new ArgumentException("A chat scope is required.", nameof(scope));
+        lock (gate)
+        {
+            liveChatTargets.Remove(scope);
+            positions.Remove(scope);
+            staleScopes.Remove(scope);
+        }
     }
 
     public IReadOnlyList<TransferStateDto> GetActiveTransfers()
@@ -344,15 +373,25 @@ public sealed class DaemonClientStore
             liveJobs.Clear();
             liveSearches.Clear();
             liveTransfers.Clear();
+            // Notification rows are an opportunistic live tail, not part of
+            // the daemon snapshot. Clear them across recovery so retained or
+            // read rows are rehydrated authoritatively through the paged API.
+            liveNotifications.Clear();
             daemon = snapshot.Daemon;
         }
-        else
+        else if (snapshot.Scope.Kind == StateStreamScopeKind.Workflow)
         {
             var workflowId = snapshot.Scope.WorkflowId!.Value;
             liveWorkflows.Remove(workflowId);
             RemoveWhere(liveJobs, pair => pair.Value.Display.WorkflowId == workflowId);
             RemoveWhere(liveSearches, pair => pair.Value.WorkflowId == workflowId);
             RemoveWhere(liveTransfers, pair => pair.Value.Identity.WorkflowId == workflowId);
+        }
+        else
+        {
+            if (snapshot.ChatTarget is null)
+                throw new ArgumentException("A chat snapshot requires chat target state.");
+            liveChatTargets[snapshot.Scope] = snapshot.ChatTarget;
         }
 
         foreach (var workflow in snapshot.Workflows)
@@ -392,6 +431,21 @@ public sealed class DaemonClientStore
         }
         foreach (var delta in state.Transfers)
             ApplyTransfer(delta);
+        foreach (var notification in state.Notifications ?? [])
+            liveNotifications[notification.NotificationId] = notification;
+        if (liveNotifications.Count > 200)
+        {
+            foreach (Guid id in liveNotifications.Values
+                         .OrderByDescending(item => item.Sequence)
+                         .Skip(200)
+                         .Select(item => item.NotificationId)
+                         .ToArray())
+            {
+                liveNotifications.Remove(id);
+            }
+        }
+        foreach (ChatTargetDeltaDto delta in state.ChatTargets ?? [])
+            ApplyChatTarget(delta);
 
         var changedWorkflows = state.Workflows
             .Select(workflow => liveWorkflows.GetValueOrDefault(workflow.Summary.WorkflowId)?.Summary)
@@ -480,6 +534,34 @@ public sealed class DaemonClientStore
         };
     }
 
+    private void ApplyChatTarget(ChatTargetDeltaDto delta)
+    {
+        StateStreamScopeDto scope = delta.Kind == Sockseek.Core.Chat.ChatTargetKind.Direct
+            ? StateStreamScopeDto.ChatConversation(delta.TargetId)
+            : StateStreamScopeDto.ChatRoom(delta.TargetId);
+        if (!liveChatTargets.TryGetValue(scope, out ChatTargetSnapshotDto? current))
+            return;
+        var messages = delta.ReplaceMessages
+            ? new Dictionary<Guid, ChatMessageDto>()
+            : current.Messages.ToDictionary(message => message.MessageId);
+        foreach (ChatMessageDto message in delta.Messages ?? [])
+            messages[message.MessageId] = message;
+        bool truncated = messages.Count > Sockseek.Core.Chat.ChatLimits.LiveMessageTailSize;
+        var tail = messages.Values
+            .OrderByDescending(message => message.Sequence)
+            .Take(Sockseek.Core.Chat.ChatLimits.LiveMessageTailSize)
+            .OrderBy(message => message.Sequence)
+            .ToArray();
+        liveChatTargets[scope] = current with
+        {
+            Conversation = delta.Conversation ?? current.Conversation,
+            Room = delta.Room ?? current.Room,
+            Messages = tail,
+            HasEarlierMessages = delta.HasEarlierMessages
+                ?? (delta.ReplaceMessages ? truncated : current.HasEarlierMessages || truncated),
+        };
+    }
+
     private IEnumerable<WorkflowSummaryDto> CombinedWorkflows()
         => historyWorkflows.Values
             .Where(workflow => !liveWorkflows.ContainsKey(workflow.WorkflowId))
@@ -504,17 +586,53 @@ public sealed class DaemonClientStore
         if (snapshot.Position.Sequence < 0)
             throw new ArgumentOutOfRangeException(nameof(snapshot), "Snapshot sequence cannot be negative.");
 
-        if (snapshot.Scope.Kind != StateStreamScopeKind.Workflow)
-            return;
-
-        var workflowId = snapshot.Scope.WorkflowId!.Value;
-        if (snapshot.Daemon != null
-            || snapshot.Workflows.Any(workflow => workflow.Summary.WorkflowId != workflowId)
-            || snapshot.Jobs.Any(job => job.Display.WorkflowId != workflowId)
-            || snapshot.Searches.Any(search => search.WorkflowId != workflowId)
-            || snapshot.Transfers.Any(transfer => transfer.Identity.WorkflowId != workflowId))
+        if (snapshot.Scope.Kind == StateStreamScopeKind.Workflow)
         {
-            throw new ArgumentException("A workflow snapshot may contain only its requested workflow and no daemon row.");
+            var workflowId = snapshot.Scope.WorkflowId!.Value;
+            if (snapshot.Daemon != null
+                || snapshot.ChatTarget != null
+                || snapshot.Workflows.Any(workflow => workflow.Summary.WorkflowId != workflowId)
+                || snapshot.Jobs.Any(job => job.Display.WorkflowId != workflowId)
+                || snapshot.Searches.Any(search => search.WorkflowId != workflowId)
+                || snapshot.Transfers.Any(transfer => transfer.Identity.WorkflowId != workflowId))
+            {
+                throw new ArgumentException("A workflow snapshot may contain only its requested workflow and no daemon row.");
+            }
+            return;
+        }
+
+        if (snapshot.Scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom)
+        {
+            var expectedKind = snapshot.Scope.Kind == StateStreamScopeKind.ChatConversation
+                ? Sockseek.Core.Chat.ChatTargetKind.Direct
+                : Sockseek.Core.Chat.ChatTargetKind.Room;
+            if (snapshot.Daemon != null
+                || snapshot.Workflows.Count != 0
+                || snapshot.Jobs.Count != 0
+                || snapshot.Searches.Count != 0
+                || snapshot.Transfers.Count != 0
+                || snapshot.ChatTarget is not { } target
+                || target.TargetId != snapshot.Scope.ChatTargetId
+                || target.Kind != expectedKind
+                || expectedKind == Sockseek.Core.Chat.ChatTargetKind.Direct
+                    && (target.Conversation is null || target.Room is not null)
+                || expectedKind == Sockseek.Core.Chat.ChatTargetKind.Room
+                    && (target.Room is null || target.Conversation is not null)
+                || target.Conversation is { } conversation
+                    && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Direct
+                        || conversation.ConversationId != target.TargetId)
+                || target.Room is { } room
+                    && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Room
+                        || room.RoomId != target.TargetId)
+                || target.Messages.Any(message =>
+                    message.TargetId != target.TargetId || message.TargetKind != expectedKind))
+            {
+                throw new ArgumentException("A chat snapshot may contain only its requested chat target.");
+            }
+        }
+        else if (snapshot.ChatTarget != null)
+        {
+            throw new ArgumentException("A daemon snapshot cannot contain a chat target.");
         }
     }
 
@@ -524,6 +642,48 @@ public sealed class DaemonClientStore
             throw new ArgumentException("A stream batch must advance beyond a non-negative previous sequence.");
         if (batch.Activity.Any(item => item.Sequence <= batch.PreviousSequence || item.Sequence > batch.Sequence))
             throw new ArgumentException("Activity item sequences must fall within the batch position range.");
+        bool chatScope = batch.Scope.Kind is
+            StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom;
+        if (chatScope)
+        {
+            var expectedKind = batch.Scope.Kind == StateStreamScopeKind.ChatConversation
+                ? Sockseek.Core.Chat.ChatTargetKind.Direct
+                : Sockseek.Core.Chat.ChatTargetKind.Room;
+            if ((batch.State.ChatTargets ?? []).Any(target =>
+                    target.TargetId != batch.Scope.ChatTargetId
+                    || target.Kind != expectedKind
+                    || target.Conversation is { } conversation
+                        && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Direct
+                            || conversation.ConversationId != target.TargetId)
+                    || target.Room is { } room
+                        && (expectedKind != Sockseek.Core.Chat.ChatTargetKind.Room
+                            || room.RoomId != target.TargetId)
+                    || (target.Messages ?? []).Any(message =>
+                        message.TargetId != target.TargetId || message.TargetKind != expectedKind)))
+                throw new ArgumentException("A chat batch may contain only its requested target.");
+            if (batch.State.Daemon != null
+                || batch.State.Workflows.Count != 0
+                || batch.State.Jobs.Count != 0
+                || batch.State.Searches.Count != 0
+                || batch.State.Transfers.Count != 0
+                || batch.State.RemovedWorkflowIds.Count != 0
+                || batch.State.RemovedJobIds.Count != 0
+                || batch.State.RemovedSearchJobIds.Count != 0
+                || batch.State.RemovedTransferIds.Count != 0
+                || batch.State.Notifications is { Count: > 0 })
+            {
+                throw new ArgumentException("A chat batch cannot contain daemon or workflow state.");
+            }
+        }
+        else if (batch.State.ChatTargets is { Count: > 0 })
+        {
+            throw new ArgumentException("A daemon or workflow batch cannot contain chat-target state.");
+        }
+        if (batch.Scope.Kind != StateStreamScopeKind.Daemon
+            && batch.State.Notifications is { Count: > 0 })
+        {
+            throw new ArgumentException("Notifications may be delivered only on the daemon stream.");
+        }
     }
 
     private sealed record AppliedState(

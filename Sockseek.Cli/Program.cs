@@ -29,6 +29,13 @@ internal static partial class Program
             && (string.Equals(args[0], "share", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(args[0], "transfers", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(args[0], "transfer", StringComparison.OrdinalIgnoreCase));
+        bool chatResourceCommand = args.Length > 0
+            && (string.Equals(args[0], "chat", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(args[0], "room", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(args[0], "notifications", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(args[0], "notification", StringComparison.OrdinalIgnoreCase));
+        if (chatResourceCommand)
+            return (int)await ChatCommandRunner.RunAsync(args);
         if (daemonResourceCommand)
             return (int)await DaemonResourceCommandRunner.RunAsync(args);
         if (Help.PrintAndExitIfNeeded(args))
@@ -1492,6 +1499,8 @@ internal static partial class Program
                 UnsuccessfulJobHistoryAge = daemonSettings.UnsuccessfulJobRetention,
                 SearchResultAge = daemonSettings.SearchResultRetention,
                 TransferHistoryAge = daemonSettings.TransferRetention,
+                PrivateMessageHistoryAge = daemonSettings.PrivateMessageRetention,
+                RoomMessageHistoryAge = daemonSettings.RoomMessageRetention,
                 MaximumRetainedJobs = daemonSettings.MaximumRetainedJobs,
             },
         };

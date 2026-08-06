@@ -119,3 +119,71 @@ internal sealed class TransferAttemptEntity
     public string? FailureMessage { get; set; }
     public long Revision { get; set; }
 }
+
+internal sealed class ChatConversationEntity
+{
+    public Guid Id { get; set; }
+    public string LocalAccountKey { get; set; } = "";
+    public string PeerKey { get; set; } = "";
+    public string DisplayUsername { get; set; } = "";
+    public long? ArchivedAtUtc { get; set; }
+    public long LastReadSequence { get; set; }
+    public long LastMessageSequence { get; set; }
+    public long Revision { get; set; }
+    public long CreatedAtUtc { get; set; }
+    public long UpdatedAtUtc { get; set; }
+}
+
+internal sealed class ChatSequenceEntity
+{
+    public int Id { get; set; }
+    public long LastMessageSequence { get; set; }
+    public long LastNotificationSequence { get; set; }
+}
+
+internal sealed class ChatRoomSubscriptionEntity
+{
+    public Guid Id { get; set; }
+    public string LocalAccountKey { get; set; } = "";
+    public string RoomKey { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public bool RuntimeDesired { get; set; }
+    public string Kind { get; set; } = "Unknown";
+    public long LastReadSequence { get; set; }
+    public long LastMessageSequence { get; set; }
+    public long Revision { get; set; }
+    public long CreatedAtUtc { get; set; }
+    public long UpdatedAtUtc { get; set; }
+}
+
+internal sealed class ChatMessageEntity
+{
+    public Guid Id { get; set; }
+    public long Sequence { get; set; }
+    public string LocalAccountKey { get; set; } = "";
+    public string TargetKind { get; set; } = "";
+    public Guid TargetId { get; set; }
+    public string TargetKey { get; set; } = "";
+    public string DisplayTarget { get; set; } = "";
+    public string SenderKey { get; set; } = "";
+    public string DisplaySender { get; set; } = "";
+    public string Direction { get; set; } = "";
+    public string Body { get; set; } = "";
+    public long OccurredAtUtc { get; set; }
+    public long RecordedAtUtc { get; set; }
+    public string SendState { get; set; } = "";
+    public string? FailureReason { get; set; }
+    public int? ProtocolMessageId { get; set; }
+    public long? ProtocolTimestamp { get; set; }
+}
+
+internal sealed class NotificationEntity
+{
+    public Guid Id { get; set; }
+    public long Sequence { get; set; }
+    public string LocalAccountKey { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public Guid SourceMessageId { get; set; }
+    public long CreatedAtUtc { get; set; }
+    public long? ReadAtUtc { get; set; }
+}

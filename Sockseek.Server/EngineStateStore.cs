@@ -5,6 +5,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Snapshots;
 using Soulseek;
 using Sockseek.Core.Transfers.Uploads;
+using Sockseek.Core.Chat;
 
 namespace Sockseek.Server;
 
@@ -33,6 +34,7 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, JobStateDto> projectedJobs = [];
     private readonly Dictionary<Guid, WorkflowStateDto> projectedWorkflows = [];
     private readonly Dictionary<Guid, long> workflowStreamSequences = [];
+    private readonly Dictionary<StateStreamScopeDto, long> chatStreamSequences = [];
     private readonly HashSet<Guid> daemonLiveWorkflowIds = [];
     private readonly Guid streamEpoch = Guid.NewGuid();
     private long daemonStreamSequence;
@@ -42,7 +44,7 @@ public sealed class EngineStateStore
         0,
         null,
         new SharingStateDto(
-            SharingHealthState.Disabled,
+            DaemonFeatureState.Disabled,
             "NotConfigured",
             [],
             0,
@@ -58,7 +60,7 @@ public sealed class EngineStateStore
             null,
             null),
         new UploadRuntimeStateDto(
-            SharingHealthState.Disabled,
+            DaemonFeatureState.Disabled,
             "NotConfigured",
             false,
             0,
@@ -66,7 +68,16 @@ public sealed class EngineStateStore
             0,
             0,
             0,
-            null));
+            null),
+        new ChatRuntimeStateDto(
+            DaemonFeatureState.Disabled,
+            "PersistenceUnavailable",
+            0,
+            0,
+            0,
+            0,
+            0),
+        new NotificationSummaryDto(0, 0));
 
     public event Action<JobSummaryDto>? JobUpserted;
     public event Action<WorkflowSummaryDto>? WorkflowUpserted;
@@ -399,7 +410,9 @@ public sealed class EngineStateStore
                 restartCount,
                 searchRateLimitResetsAtUtc,
                 daemonState.Sharing,
-                daemonState.Uploads);
+                daemonState.Uploads,
+                daemonState.Chat,
+                daemonState.Notifications);
             if (daemonState with { Revision = 0 } == next with { Revision = 0 })
                 return;
 
@@ -455,6 +468,81 @@ public sealed class EngineStateStore
                 StateDeltaDto.Empty with { Daemon = daemonState },
                 new Dictionary<Guid, StateDeltaDto>(),
                 DateTimeOffset.UtcNow);
+        }
+        PublishStateBatches(batches);
+    }
+
+    public void UpdateChatRuntime(
+        ChatRuntimeStateDto chat,
+        NotificationSummaryDto notifications)
+    {
+        IReadOnlyList<StateUpdateBatchDto> batches;
+        lock (gate)
+        {
+            var next = daemonState with
+            {
+                Revision = daemonState.Revision + 1,
+                Chat = chat,
+                Notifications = notifications,
+            };
+            if (daemonState with { Revision = 0 } == next with { Revision = 0 })
+                return;
+            daemonState = next;
+            batches = CreateStateBatches(
+                StateDeltaDto.Empty with { Daemon = daemonState },
+                new Dictionary<Guid, StateDeltaDto>(),
+                DateTimeOffset.UtcNow);
+        }
+        PublishStateBatches(batches);
+    }
+
+    public void PublishNotification(UserNotificationRecord notification)
+    {
+        IReadOnlyList<StateUpdateBatchDto> batches;
+        lock (gate)
+        {
+            batches = CreateStateBatches(
+                StateDeltaDto.Empty with
+                {
+                    Notifications = [ChatDtoMapper.ToDto(notification)],
+                },
+                new Dictionary<Guid, StateDeltaDto>(),
+                notification.CreatedAtUtc);
+        }
+        PublishStateBatches(batches);
+    }
+
+    public StateStreamPositionDto GetChatPosition(StateStreamScopeDto scope)
+    {
+        scope.Validate();
+        if (scope.Kind is not (StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
+            throw new ArgumentException("A chat position requires a chat scope.", nameof(scope));
+        lock (gate)
+            return new StateStreamPositionDto(streamEpoch, chatStreamSequences.GetValueOrDefault(scope));
+    }
+
+    public void PublishChatTarget(ChatTargetDeltaDto delta)
+    {
+        StateStreamScopeDto scope = delta.Kind == ChatTargetKind.Direct
+            ? StateStreamScopeDto.ChatConversation(delta.TargetId)
+            : StateStreamScopeDto.ChatRoom(delta.TargetId);
+        IReadOnlyList<StateUpdateBatchDto> batches;
+        lock (gate)
+        {
+            long previous = chatStreamSequences.GetValueOrDefault(scope);
+            long sequence = previous + 1;
+            chatStreamSequences[scope] = sequence;
+            batches =
+            [
+                new StateUpdateBatchDto(
+                    scope,
+                    streamEpoch,
+                    previous,
+                    sequence,
+                    DateTimeOffset.UtcNow,
+                    StateDeltaDto.Empty with { ChatTargets = [delta] },
+                    [])
+            ];
         }
         PublishStateBatches(batches);
     }

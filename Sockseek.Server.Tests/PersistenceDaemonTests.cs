@@ -141,7 +141,7 @@ public sealed class PersistenceDaemonTests
                 Assert.AreEqual("Healthy", status.Persistence.State);
                 Assert.IsNotNull(status.Persistence.RuntimeId);
                 Assert.IsNotNull(status.Persistence.RuntimeStartedAtUtc);
-                StringAssert.Contains(status.Persistence.SchemaVersion, "AddUploadTransferHistory");
+                StringAssert.Contains(status.Persistence.SchemaVersion, "AddChatSequenceAllocator");
                 Assert.AreEqual(0, status.Persistence.ReconciledUnfinishedRuntimeCount);
 
                 var coordinator = app.Services.GetRequiredService<PersistenceCoordinator>();

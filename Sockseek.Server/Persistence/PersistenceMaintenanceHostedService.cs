@@ -24,7 +24,7 @@ public sealed class PersistenceMaintenanceHostedService(
                 {
                     var result = await coordinator.RunRetentionAsync(stoppingToken).ConfigureAwait(false);
                     SockseekLog.Daemon.Info(
-                        $"Persistence retention pruned {result.PrunedJobs} jobs and {result.PrunedSearchResults} raw search results in {result.DurationMilliseconds} ms.");
+                        $"Persistence retention pruned {result.PrunedJobs} jobs, {result.PrunedSearchResults} raw search results, and {result.PrunedChatMessages} chat messages in {result.DurationMilliseconds} ms.");
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {

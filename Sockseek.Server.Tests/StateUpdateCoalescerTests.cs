@@ -198,7 +198,7 @@ public class StateUpdateCoalescerTests
             0,
             null,
             new SharingStateDto(
-                SharingHealthState.Disabled,
+                DaemonFeatureState.Disabled,
                 "NotConfigured",
                 [],
                 0,
@@ -214,7 +214,7 @@ public class StateUpdateCoalescerTests
                 null,
                 null),
             new UploadRuntimeStateDto(
-                SharingHealthState.Disabled,
+                DaemonFeatureState.Disabled,
                 "NotConfigured",
                 false,
                 10,
@@ -222,7 +222,16 @@ public class StateUpdateCoalescerTests
                 checked((int)Math.Min(revision, int.MaxValue)),
                 revision,
                 revision,
-                null));
+                null),
+            new ChatRuntimeStateDto(
+                DaemonFeatureState.Disabled,
+                "NotConfigured",
+                0,
+                0,
+                0,
+                0,
+                revision),
+            new NotificationSummaryDto(0, revision));
 
     private static TransferStateDto Transfer(
         Guid transferId,

@@ -1,13 +1,14 @@
 using System.Text.Json.Serialization;
 using Sockseek.Core;
 using Sockseek.Core.Sharing;
+using Sockseek.Core.Chat;
 
 namespace Sockseek.Api;
 
 /// <summary>The live replication protocol implemented by this API.</summary>
 public static class LiveProtocol
 {
-    public const int Version = 4;
+    public const int Version = 5;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<StateStreamScopeKind>))]
@@ -17,24 +18,41 @@ public enum StateStreamScopeKind
     Daemon,
     [JsonStringEnumMemberName("workflow")]
     Workflow,
+    [JsonStringEnumMemberName("chatConversation")]
+    ChatConversation,
+    [JsonStringEnumMemberName("chatRoom")]
+    ChatRoom,
 }
 
-/// <summary>A recoverable live stream. WorkflowId is set only for workflow streams.</summary>
+/// <summary>A recoverable live stream with exactly one kind-specific target id.</summary>
 public sealed record StateStreamScopeDto(
     StateStreamScopeKind Kind,
-    Guid? WorkflowId = null)
+    Guid? WorkflowId = null,
+    Guid? ChatTargetId = null)
 {
     public static StateStreamScopeDto Daemon { get; } = new(StateStreamScopeKind.Daemon);
 
     public static StateStreamScopeDto Workflow(Guid workflowId)
         => new(StateStreamScopeKind.Workflow, workflowId);
 
+    public static StateStreamScopeDto ChatConversation(Guid conversationId)
+        => new(StateStreamScopeKind.ChatConversation, ChatTargetId: conversationId);
+
+    public static StateStreamScopeDto ChatRoom(Guid roomId)
+        => new(StateStreamScopeKind.ChatRoom, ChatTargetId: roomId);
+
     public void Validate()
     {
-        if (Kind == StateStreamScopeKind.Daemon && WorkflowId != null)
-            throw new ArgumentException("A daemon stream scope cannot contain a workflow id.");
-        if (Kind == StateStreamScopeKind.Workflow && WorkflowId == null)
-            throw new ArgumentException("A workflow stream scope requires a workflow id.");
+        if (!Enum.IsDefined(Kind))
+            throw new ArgumentException("The stream scope kind is invalid.");
+        if (Kind == StateStreamScopeKind.Daemon && (WorkflowId != null || ChatTargetId != null))
+            throw new ArgumentException("A daemon stream scope cannot contain a target id.");
+        if (Kind == StateStreamScopeKind.Workflow
+            && (WorkflowId is null || WorkflowId == Guid.Empty || ChatTargetId != null))
+            throw new ArgumentException("A workflow stream scope requires only a workflow id.");
+        if (Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom
+            && (ChatTargetId is null || ChatTargetId == Guid.Empty || WorkflowId != null))
+            throw new ArgumentException("A chat stream scope requires only a chat target id.");
     }
 }
 
@@ -51,10 +69,12 @@ public sealed record DaemonStateDto(
     int RestartCount,
     DateTimeOffset? SearchRateLimitResetsAtUtc,
     SharingStateDto Sharing,
-    UploadRuntimeStateDto Uploads);
+    UploadRuntimeStateDto Uploads,
+    ChatRuntimeStateDto Chat,
+    NotificationSummaryDto Notifications);
 
-[JsonConverter(typeof(JsonStringEnumConverter<SharingHealthState>))]
-public enum SharingHealthState
+[JsonConverter(typeof(JsonStringEnumConverter<DaemonFeatureState>))]
+public enum DaemonFeatureState
 {
     Disabled,
     Starting,
@@ -90,7 +110,7 @@ public sealed record ShareScanStateDto(
     IReadOnlyList<ResourceActionDto> AvailableActions);
 
 public sealed record SharingStateDto(
-    SharingHealthState State,
+    DaemonFeatureState State,
     string? Reason,
     IReadOnlyList<string> Aliases,
     int BlockedUsernameCount,
@@ -100,7 +120,7 @@ public sealed record SharingStateDto(
     ShareScanStateDto? LastScan);
 
 public sealed record UploadRuntimeStateDto(
-    SharingHealthState State,
+    DaemonFeatureState State,
     string? Reason,
     bool AcceptingUploads,
     int Slots,
@@ -109,6 +129,19 @@ public sealed record UploadRuntimeStateDto(
     long QueuedBytes,
     long QueueRevision,
     int? SpeedLimitKiBPerSecond);
+
+public sealed record ChatRuntimeStateDto(
+    DaemonFeatureState State,
+    string? Reason,
+    int DesiredRoomCount,
+    int JoinedRoomCount,
+    int UnreadPrivateMessageCount,
+    int UnreadRoomMessageCount,
+    long Revision);
+
+public sealed record NotificationSummaryDto(
+    int UnreadCount,
+    long Revision);
 
 /// <summary>Fields that identify and label a job and normally remain stable.</summary>
 public sealed record JobDisplayFieldsDto(
@@ -342,7 +375,9 @@ public sealed record StateDeltaDto(
     IReadOnlyList<Guid> RemovedWorkflowIds,
     IReadOnlyList<Guid> RemovedJobIds,
     IReadOnlyList<Guid> RemovedSearchJobIds,
-    IReadOnlyList<Guid> RemovedTransferIds)
+    IReadOnlyList<Guid> RemovedTransferIds,
+    IReadOnlyList<UserNotificationDto>? Notifications = null,
+    IReadOnlyList<ChatTargetDeltaDto>? ChatTargets = null)
 {
     public static StateDeltaDto Empty { get; } = new(null, [], [], [], [], [], [], [], []);
 
@@ -356,8 +391,27 @@ public sealed record StateDeltaDto(
         && RemovedWorkflowIds.Count == 0
         && RemovedJobIds.Count == 0
         && RemovedSearchJobIds.Count == 0
-        && RemovedTransferIds.Count == 0;
+        && RemovedTransferIds.Count == 0
+        && Notifications is null or { Count: 0 }
+        && ChatTargets is null or { Count: 0 };
 }
+
+public sealed record ChatTargetDeltaDto(
+    ChatTargetKind Kind,
+    Guid TargetId,
+    ConversationSummaryDto? Conversation = null,
+    ChatRoomSummaryDto? Room = null,
+    IReadOnlyList<ChatMessageDto>? Messages = null,
+    bool ReplaceMessages = false,
+    bool? HasEarlierMessages = null);
+
+public sealed record ChatTargetSnapshotDto(
+    ChatTargetKind Kind,
+    Guid TargetId,
+    ConversationSummaryDto? Conversation,
+    ChatRoomSummaryDto? Room,
+    IReadOnlyList<ChatMessageDto> Messages,
+    bool HasEarlierMessages);
 
 /// <summary>
 /// A complete bounded replication snapshot. Daemon snapshots contain active workflows
@@ -371,7 +425,8 @@ public sealed record StateSnapshotDto(
     IReadOnlyList<WorkflowStateDto> Workflows,
     IReadOnlyList<JobStateDto> Jobs,
     IReadOnlyList<SearchStateDto> Searches,
-    IReadOnlyList<TransferStateDto> Transfers);
+    IReadOnlyList<TransferStateDto> Transfers,
+    ChatTargetSnapshotDto? ChatTarget = null);
 
 /// <summary>
 /// An ordered stream batch. State is applied before Activity. PreviousSequence permits

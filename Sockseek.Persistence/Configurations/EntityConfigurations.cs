@@ -209,3 +209,136 @@ internal sealed class TransferAttemptConfiguration : IEntityTypeConfiguration<Tr
         builder.HasIndex(x => new { x.LastRuntimeId, x.CompletedAtUtc });
     }
 }
+
+internal sealed class ChatConversationConfiguration : IEntityTypeConfiguration<ChatConversationEntity>
+{
+    public void Configure(EntityTypeBuilder<ChatConversationEntity> builder)
+    {
+        builder.ToTable("chat_conversations", table =>
+        {
+            table.HasCheckConstraint("ck_chat_conversations_revision", "revision >= 0");
+            table.HasCheckConstraint("ck_chat_conversations_sequences", "last_read_sequence >= 0 AND last_message_sequence >= 0");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("conversation_id");
+        builder.Property(x => x.LocalAccountKey).HasColumnName("local_account_key").HasMaxLength(1024);
+        builder.Property(x => x.PeerKey).HasColumnName("peer_key").HasMaxLength(1024);
+        builder.Property(x => x.DisplayUsername).HasColumnName("display_username").HasMaxLength(1024);
+        builder.Property(x => x.ArchivedAtUtc).HasColumnName("archived_at_utc");
+        builder.Property(x => x.LastReadSequence).HasColumnName("last_read_sequence");
+        builder.Property(x => x.LastMessageSequence).HasColumnName("last_message_sequence");
+        builder.Property(x => x.Revision).HasColumnName("revision");
+        builder.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc");
+        builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        builder.HasIndex(x => new { x.LocalAccountKey, x.PeerKey }).IsUnique();
+        builder.HasIndex(x => new { x.LocalAccountKey, x.LastMessageSequence, x.Id });
+    }
+}
+
+internal sealed class ChatSequenceConfiguration : IEntityTypeConfiguration<ChatSequenceEntity>
+{
+    public void Configure(EntityTypeBuilder<ChatSequenceEntity> builder)
+    {
+        builder.ToTable("chat_sequences", table =>
+        {
+            table.HasCheckConstraint("ck_chat_sequences_singleton", "sequence_id = 1");
+            table.HasCheckConstraint(
+                "ck_chat_sequences_values",
+                "last_message_sequence >= 0 AND last_notification_sequence >= 0");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("sequence_id").ValueGeneratedNever();
+        builder.Property(x => x.LastMessageSequence).HasColumnName("last_message_sequence");
+        builder.Property(x => x.LastNotificationSequence).HasColumnName("last_notification_sequence");
+    }
+}
+
+internal sealed class ChatRoomSubscriptionConfiguration : IEntityTypeConfiguration<ChatRoomSubscriptionEntity>
+{
+    public void Configure(EntityTypeBuilder<ChatRoomSubscriptionEntity> builder)
+    {
+        builder.ToTable("chat_room_subscriptions", table =>
+        {
+            table.HasCheckConstraint("ck_chat_room_subscriptions_revision", "revision >= 0");
+            table.HasCheckConstraint("ck_chat_room_subscriptions_sequences", "last_read_sequence >= 0 AND last_message_sequence >= 0");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("room_id");
+        builder.Property(x => x.LocalAccountKey).HasColumnName("local_account_key").HasMaxLength(1024);
+        builder.Property(x => x.RoomKey).HasColumnName("room_key").HasMaxLength(1024);
+        builder.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(1024);
+        builder.Property(x => x.RuntimeDesired).HasColumnName("runtime_desired");
+        builder.Property(x => x.Kind).HasColumnName("room_kind").HasMaxLength(16);
+        builder.Property(x => x.LastReadSequence).HasColumnName("last_read_sequence");
+        builder.Property(x => x.LastMessageSequence).HasColumnName("last_message_sequence");
+        builder.Property(x => x.Revision).HasColumnName("revision");
+        builder.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc");
+        builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        builder.HasIndex(x => new { x.LocalAccountKey, x.RoomKey }).IsUnique();
+        builder.HasIndex(x => new { x.LocalAccountKey, x.LastMessageSequence, x.Id });
+        builder.HasIndex(x => new { x.LocalAccountKey, x.RuntimeDesired });
+    }
+}
+
+internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMessageEntity>
+{
+    public void Configure(EntityTypeBuilder<ChatMessageEntity> builder)
+    {
+        builder.ToTable("chat_messages", table =>
+        {
+            table.HasCheckConstraint("ck_chat_messages_sequence", "sequence > 0");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("message_id");
+        builder.Property(x => x.Sequence).HasColumnName("sequence");
+        builder.Property(x => x.LocalAccountKey).HasColumnName("local_account_key").HasMaxLength(1024);
+        builder.Property(x => x.TargetKind).HasColumnName("target_kind").HasMaxLength(16);
+        builder.Property(x => x.TargetId).HasColumnName("target_id");
+        builder.Property(x => x.TargetKey).HasColumnName("target_key").HasMaxLength(1024);
+        builder.Property(x => x.DisplayTarget).HasColumnName("display_target").HasMaxLength(1024);
+        builder.Property(x => x.SenderKey).HasColumnName("sender_key").HasMaxLength(1024);
+        builder.Property(x => x.DisplaySender).HasColumnName("display_sender").HasMaxLength(1024);
+        builder.Property(x => x.Direction).HasColumnName("direction").HasMaxLength(16);
+        builder.Property(x => x.Body).HasColumnName("body");
+        builder.Property(x => x.OccurredAtUtc).HasColumnName("occurred_at_utc");
+        builder.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc");
+        builder.Property(x => x.SendState).HasColumnName("send_state").HasMaxLength(16);
+        builder.Property(x => x.FailureReason).HasColumnName("failure_reason").HasMaxLength(2048);
+        builder.Property(x => x.ProtocolMessageId).HasColumnName("protocol_message_id");
+        builder.Property(x => x.ProtocolTimestamp).HasColumnName("protocol_timestamp");
+        builder.HasIndex(x => x.Sequence).IsUnique();
+        builder.HasIndex(x => new { x.LocalAccountKey, x.TargetId, x.Sequence, x.Id });
+        builder.HasIndex(x => new
+        {
+            x.LocalAccountKey,
+            x.TargetKind,
+            x.TargetKey,
+            x.ProtocolMessageId,
+            x.ProtocolTimestamp,
+        }).IsUnique().HasFilter("protocol_message_id IS NOT NULL");
+        builder.HasIndex(x => new { x.LocalAccountKey, x.SendState });
+    }
+}
+
+internal sealed class NotificationConfiguration : IEntityTypeConfiguration<NotificationEntity>
+{
+    public void Configure(EntityTypeBuilder<NotificationEntity> builder)
+    {
+        builder.ToTable("notifications", table =>
+        {
+            table.HasCheckConstraint("ck_notifications_sequence", "sequence > 0");
+        });
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("notification_id");
+        builder.Property(x => x.Sequence).HasColumnName("sequence");
+        builder.Property(x => x.LocalAccountKey).HasColumnName("local_account_key").HasMaxLength(1024);
+        builder.Property(x => x.Kind).HasColumnName("kind").HasMaxLength(32);
+        builder.Property(x => x.SourceMessageId).HasColumnName("source_message_id");
+        builder.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc");
+        builder.Property(x => x.ReadAtUtc).HasColumnName("read_at_utc");
+        builder.HasOne<ChatMessageEntity>().WithMany().HasForeignKey(x => x.SourceMessageId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => x.Sequence).IsUnique();
+        builder.HasIndex(x => new { x.LocalAccountKey, x.SourceMessageId, x.Kind }).IsUnique();
+        builder.HasIndex(x => new { x.LocalAccountKey, x.ReadAtUtc, x.Sequence, x.Id });
+    }
+}

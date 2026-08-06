@@ -40,10 +40,22 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     private CancellationTokenSource? _monitorCts;
     private Task? _monitorTask;
     private int _disposeState;
+    private string? loggedInUsername;
 
     public event Action<SoulseekClientStates>? StateChanged;
+    public event Action<ISoulseekClient>? ClientCreated;
 
     public ISoulseekClient? Client => _client;
+
+    /// <summary>The concrete account name used by the active login, including random logins.</summary>
+    public string? LoggedInUsername
+    {
+        get
+        {
+            lock (stateLock)
+                return loggedInUsername;
+        }
+    }
 
     public SoulseekClientStates State => _client?.State ?? SoulseekClientStates.None;
 
@@ -178,18 +190,27 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     /// <exception cref="OperationCanceledException">Thrown if cancelled.</exception>
     public async Task EnsureConnectedAndLoggedInAsync(EngineSettings loginSettings, CancellationToken cancellationToken = default)
     {
-        if (IsConnectedAndLoggedIn) return;
+        if (IsConnectedAndLoggedIn)
+        {
+            CaptureExistingLogin(loginSettings);
+            return;
+        }
 
         await _initializationSemaphore.WaitAsync(cancellationToken);
         try
         {
-            if (IsConnectedAndLoggedIn) return;
+            if (IsConnectedAndLoggedIn)
+            {
+                CaptureExistingLogin(loginSettings);
+                return;
+            }
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_client == null)
             {
                 _client = CreateClientInstance(_initialSettings);
                 AttachClientEvents(_client);
+                PublishClientCreated(_client);
             }
 
             if (!IsConnectedAndLoggedIn)
@@ -225,12 +246,41 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         }
     }
 
+    private void CaptureExistingLogin(EngineSettings settings)
+    {
+        if (_client is null)
+            return;
+        string? username = _client.Username;
+        if (string.IsNullOrWhiteSpace(username) && !settings.UseRandomLogin)
+            username = settings.Username;
+        if (string.IsNullOrWhiteSpace(username))
+            return;
+        lock (stateLock)
+            loggedInUsername ??= username;
+    }
+
     private static SoulseekConnectionUnavailableException CreateConnectionFailure(Exception ex)
         => new(
             IsKickedFromServer(ex)
                 ? KickedFromServerMessage
                 : $"Soulseek login failed: {SockseekLog.ExceptionSummary(ex)}",
             ex);
+
+    private void PublishClientCreated(ISoulseekClient client)
+    {
+        Action<ISoulseekClient>? handlers = ClientCreated;
+        if (handlers is null)
+            return;
+        foreach (Action<ISoulseekClient> handler in handlers.GetInvocationList())
+        {
+            try { handler(client); }
+            catch (Exception ex)
+            {
+                SockseekLog.Daemon.Warn(
+                    $"Soulseek client-created observer failed: {SockseekLog.ExceptionSummary(ex)}");
+            }
+        }
+    }
 
     private bool IsTransient(Exception? e)
     {
@@ -413,6 +463,8 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             userInfoResolver: resolvedUserInfo,
             enqueueDownload: enqueueUpload,
             placeInQueueResolver: queueResolver,
+            autoAcknowledgePrivateMessages: false,
+            acceptPrivateRoomInvitations: true,
             startingToken: startingToken
         );
 
@@ -432,6 +484,8 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 userInfoResolver: resolvedUserInfo,
                 enqueueDownload: enqueueUpload,
                 placeInQueueResolver: queueResolver,
+                autoAcknowledgePrivateMessages: false,
+                acceptPrivateRoomInvitations: true,
                 startingToken: startingToken
             );
         }
@@ -459,7 +513,28 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         SockseekLog.Soulseek.Info($"Logging in as {displayUser}..");
 
         cancellationToken.ThrowIfCancellationRequested();
-        await client.ConnectAsync(user, pass);
+        string? previousUser;
+        lock (stateLock)
+        {
+            previousUser = loggedInUsername;
+            loggedInUsername = user;
+        }
+        try
+        {
+            // Protocol events can be raised as ConnectAsync completes. Publish
+            // the account first so those callbacks are partitioned correctly,
+            // including random-login reconnects.
+            await client.ConnectAsync(user, pass);
+        }
+        catch
+        {
+            lock (stateLock)
+            {
+                if (string.Equals(loggedInUsername, user, StringComparison.Ordinal))
+                    loggedInUsername = previousUser;
+            }
+            throw;
+        }
         SockseekLog.Soulseek.Debug($"Logged in as {displayUser}");
     }
 

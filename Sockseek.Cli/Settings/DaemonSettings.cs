@@ -14,5 +14,7 @@ public class DaemonSettings
     public TimeSpan? UnsuccessfulJobRetention { get; set; } = TimeSpan.FromDays(180);
     public TimeSpan? SearchResultRetention { get; set; } = TimeSpan.FromDays(30);
     public TimeSpan? TransferRetention { get; set; } = TimeSpan.FromDays(90);
+    public TimeSpan? PrivateMessageRetention { get; set; }
+    public TimeSpan? RoomMessageRetention { get; set; } = TimeSpan.FromDays(30);
     public int? MaximumRetainedJobs { get; set; } = 100_000;
 }

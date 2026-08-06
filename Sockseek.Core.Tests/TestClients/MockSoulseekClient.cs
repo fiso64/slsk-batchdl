@@ -38,6 +38,7 @@ namespace Tests.ClientTests
         public bool BrowseReturnsBasenames { get; set; }
         public bool IsDisposed { get; private set; }
         public Exception? ConnectException { get; set; }
+        public Action? Connecting { get; set; }
 
         public void FailNextDownloadWithDisconnect(string username)
             => disconnectingUsers.Add(username);
@@ -161,6 +162,7 @@ namespace Tests.ClientTests
         public Task ConnectAsync(string address, int port, string username, string password, CancellationToken? cancellationToken = null)
         {
             Interlocked.Increment(ref ConnectCallCount);
+            Connecting?.Invoke();
 
             if (ConnectException != null)
             {

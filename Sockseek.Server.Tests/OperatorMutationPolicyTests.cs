@@ -7,7 +7,7 @@ namespace Sockseek.Server.Tests;
 public sealed class OperatorMutationPolicyTests
 {
     [TestMethod]
-    public async Task SharingAndTransferMutationsCarryOneNamedOperatorPolicy()
+    public async Task OperatorOnlyResourcesCarryOneNamedPolicy()
     {
         await using var app = ServerHost.Build(
             [],
@@ -36,6 +36,23 @@ public sealed class OperatorMutationPolicyTests
                 endpoint.Metadata.GetMetadata<OperatorMutationMetadata>();
 
             Assert.IsNotNull(metadata, $"Missing operator policy on {pattern}.");
+            Assert.AreEqual(OperatorMutationPolicy.Name, metadata.PolicyName);
+        }
+
+        var chatEndpoints = endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint =>
+                endpoint.RoutePattern.RawText?.StartsWith("/api/chat", StringComparison.Ordinal) == true
+                || endpoint.RoutePattern.RawText?.StartsWith("/api/notifications", StringComparison.Ordinal) == true)
+            .ToArray();
+        Assert.IsTrue(chatEndpoints.Length > 0);
+        foreach (RouteEndpoint endpoint in chatEndpoints)
+        {
+            OperatorMutationMetadata? metadata =
+                endpoint.Metadata.GetMetadata<OperatorMutationMetadata>();
+            Assert.IsNotNull(
+                metadata,
+                $"Missing operator policy on {endpoint.RoutePattern.RawText}.");
             Assert.AreEqual(OperatorMutationPolicy.Name, metadata.PolicyName);
         }
     }

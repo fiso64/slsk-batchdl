@@ -635,6 +635,17 @@ public static partial class ConfigManager
                     });
                     break;
                 }
+            case "--chat-room":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Chat.AutoJoinRooms.Clear();
+                        e.Chat.AutoJoinRooms.Add(operation.Item);
+                    });
+                    break;
+                }
             case "--mock-files-dir":
                 Engine(e => e.MockFilesDir = value); break;
             case "--mock-files-no-read-tags":
@@ -685,6 +696,10 @@ public static partial class ConfigManager
                 Daemon(d => d.TransferRetention = RetentionDays()); break;
             case "--search-result-retention-days":
                 Daemon(d => d.SearchResultRetention = RetentionDays()); break;
+            case "--private-message-retention-days":
+                Daemon(d => d.PrivateMessageRetention = RetentionDays()); break;
+            case "--room-message-retention-days":
+                Daemon(d => d.RoomMessageRetention = RetentionDays()); break;
             case "--remote": case "--server-url":
                 Remote(r => r.ServerUrl = value); break;
 

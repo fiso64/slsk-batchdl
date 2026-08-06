@@ -256,6 +256,7 @@ public static partial class Help
     --upload-speed-limit-kib <n>    Aggregate upload limit in KiB/s (default: unlimited)
     --peer-blocked-user <name>      Replace exact blocked peer usernames. Prefix with '+ ' to append.
     --peer-blocked-ip <address>     Replace exact blocked IPv4/IPv6 addresses. Prefix with '+ ' to append.
+    --chat-room <name>              Replace rooms joined by the daemon. Prefix with '+ ' to append.
     --data-dir <path>               Directory for daemon data, including sockseek.db
     --no-retention                  Disable scheduled history retention
     --successful-job-retention-days <days|forever>
@@ -266,6 +267,10 @@ public static partial class Help
                                     Transfer history retention (default: 90)
     --search-result-retention-days <days|forever>
                                     Raw search-result retention (default: 30)
+    --private-message-retention-days <days|forever>
+                                    Private-message retention (default: forever)
+    --room-message-retention-days <days|forever>
+                                    Room-message retention (default: 30)
 
   Sockseek Database
 
@@ -768,10 +773,10 @@ Tips
     const string daemonHelp = @"
 Daemon / remote mode
   Daemon mode runs Sockseek as a long-lived service with an HTTP/SignalR API, remote CLI access,
-  sharing, and durable history. Run sockseek daemon to start it; the default endpoint is
-  http://127.0.0.1:5030.
-  See daemon setup and remote commands for monitoring, sharing, transfer, history, backup, and
-  security guidance. For application integration, see the API guide.";
+  sharing, chat, notifications, and durable history. Run sockseek daemon to start it; the default
+  endpoint is http://127.0.0.1:5030.
+  See daemon setup and remote commands for monitoring, sharing, chat, notifications, history,
+  backup, and security guidance. For application integration, see the API guide.";
 
     const string databaseHelp = @"
 Sockseek Database

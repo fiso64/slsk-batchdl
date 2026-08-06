@@ -50,6 +50,7 @@ public sealed class StateUpdateCoalescer : IDisposable
         var batches = pending.Values
             .OrderBy(batch => batch.Scope.Kind)
             .ThenBy(batch => batch.Scope.WorkflowId)
+            .ThenBy(batch => batch.Scope.ChatTargetId)
             .Select(batch => batch.ToDto())
             .ToList();
         pending.Clear();
@@ -57,7 +58,9 @@ public sealed class StateUpdateCoalescer : IDisposable
     }
 
     private static bool RequiresPromptFlush(StateDeltaDto state)
-        => state.RemovedWorkflowIds.Count > 0
+        => state.Notifications is { Count: > 0 }
+            || state.ChatTargets?.Any(target => target.Messages is { Count: > 0 }) == true
+            || state.RemovedWorkflowIds.Count > 0
             || state.RemovedJobIds.Count > 0
             || state.RemovedTransferIds.Count > 0
             || state.Workflows.Any(workflow => workflow.Summary.State != ServerWorkflowState.Active)
@@ -167,7 +170,47 @@ public sealed class StateUpdateCoalescer : IDisposable
             Union(first.RemovedWorkflowIds, second.RemovedWorkflowIds),
             Union(first.RemovedJobIds, second.RemovedJobIds),
             Union(first.RemovedSearchJobIds, second.RemovedSearchJobIds),
-            Union(first.RemovedTransferIds, second.RemovedTransferIds));
+            Union(first.RemovedTransferIds, second.RemovedTransferIds),
+            (first.Notifications ?? [])
+                .Concat(second.Notifications ?? [])
+                .GroupBy(notification => notification.NotificationId)
+                .Select(group => group.OrderByDescending(notification => notification.Sequence).First())
+                .OrderBy(notification => notification.Sequence)
+                .ToList(),
+            MergeChatTargets(first.ChatTargets ?? [], second.ChatTargets ?? []));
+    }
+
+    private static IReadOnlyList<ChatTargetDeltaDto> MergeChatTargets(
+        IReadOnlyList<ChatTargetDeltaDto> first,
+        IReadOnlyList<ChatTargetDeltaDto> second)
+    {
+        var merged = first.ToDictionary(item => (item.Kind, item.TargetId));
+        foreach (ChatTargetDeltaDto next in second)
+        {
+            var key = (next.Kind, next.TargetId);
+            if (!merged.TryGetValue(key, out ChatTargetDeltaDto? current))
+            {
+                merged[key] = next;
+                continue;
+            }
+            IEnumerable<ChatMessageDto> messageSource = next.ReplaceMessages
+                ? next.Messages ?? []
+                : (current.Messages ?? []).Concat(next.Messages ?? []);
+            var messages = messageSource
+                .GroupBy(message => message.MessageId)
+                .Select(group => group.Last())
+                .OrderBy(message => message.Sequence)
+                .ToList();
+            merged[key] = new ChatTargetDeltaDto(
+                next.Kind,
+                next.TargetId,
+                next.Conversation ?? current.Conversation,
+                next.Room ?? current.Room,
+                messages,
+                current.ReplaceMessages || next.ReplaceMessages,
+                next.HasEarlierMessages ?? current.HasEarlierMessages);
+        }
+        return merged.Values.OrderBy(item => item.Kind).ThenBy(item => item.TargetId).ToList();
     }
 
     private static JobDeltaDto MergeJob(JobDeltaDto first, JobDeltaDto second)

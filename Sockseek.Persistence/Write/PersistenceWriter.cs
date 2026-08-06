@@ -12,57 +12,77 @@ public sealed class PersistenceWriter(
     PersistenceWriterOptions options,
     TimeProvider? timeProvider = null)
 {
+    private const int MaximumConsecutiveCommands = 16;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        DateTimeOffset nextProgressFlush = clock.GetUtcNow() + options.TransferProgressFlushInterval;
-        int consecutiveRecoveryAttempts = 0;
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            await inbox.WaitForWorkAsync(cancellationToken).ConfigureAwait(false);
-            DateTimeOffset now = clock.GetUtcNow();
-            bool flushProgress = inbox.IsCompleted || now >= nextProgressFlush;
-            var batch = inbox.DrainBatch(flushProgress);
-            if (flushProgress)
-                nextProgressFlush = now + options.TransferProgressFlushInterval;
-            if (batch.Count == 0)
+            DateTimeOffset nextProgressFlush = clock.GetUtcNow() + options.TransferProgressFlushInterval;
+            int consecutiveRecoveryAttempts = 0;
+            int consecutiveCommands = 0;
+            while (!cancellationToken.IsCancellationRequested)
             {
-                if (inbox.IsCompleted)
-                    return;
-                continue;
-            }
-
-            var result = await TryWriteBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-            if (result == WriteBatchResult.RecoverableFailure)
-            {
-                consecutiveRecoveryAttempts++;
-                if (consecutiveRecoveryAttempts >= options.MaximumRecoveryAttempts)
+                await inbox.WaitForWorkAsync(cancellationToken).ConfigureAwait(false);
+                if (consecutiveCommands < MaximumConsecutiveCommands
+                    && inbox.TryDequeueCommand(out var command))
                 {
-                    health.RecordOperationalFailure(clock.GetUtcNow(), new InvalidOperationException(
-                        $"Persistence recovery exhausted {options.MaximumRecoveryAttempts} attempts; dropping {batch.Count} retained mutations."));
+                    await WriteCommandAsync(command!, cancellationToken).ConfigureAwait(false);
+                    consecutiveCommands++;
+                    if (IsDrained())
+                        return;
+                    continue;
+                }
+
+                consecutiveCommands = 0;
+                DateTimeOffset now = clock.GetUtcNow();
+                bool flushProgress = inbox.IsCompleted || now >= nextProgressFlush;
+                var batch = inbox.DrainBatch(flushProgress);
+                if (flushProgress)
+                    nextProgressFlush = now + options.TransferProgressFlushInterval;
+                if (batch.Count == 0)
+                {
+                    if (IsDrained())
+                        return;
+                    continue;
+                }
+
+                var result = await TryWriteBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+                if (result == WriteBatchResult.RecoverableFailure)
+                {
+                    consecutiveRecoveryAttempts++;
+                    if (consecutiveRecoveryAttempts >= options.MaximumRecoveryAttempts)
+                    {
+                        health.RecordOperationalFailure(clock.GetUtcNow(), new InvalidOperationException(
+                            $"Persistence recovery exhausted {options.MaximumRecoveryAttempts} attempts; dropping {batch.Count} retained mutations."));
+                        health.RecordPermanentlyFailedMutations(batch.Count);
+                        if (IsDrained())
+                            return;
+                        continue;
+                    }
+                    inbox.RequeueAfterFailure(batch);
+                    await Task.Delay(options.FailureRetryDelay, clock, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                if (result == WriteBatchResult.PermanentFailure)
+                {
+                    consecutiveRecoveryAttempts = 0;
                     health.RecordPermanentlyFailedMutations(batch.Count);
                     if (IsDrained())
                         return;
                     continue;
                 }
-                inbox.RequeueAfterFailure(batch);
-                await Task.Delay(options.FailureRetryDelay, clock, cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-            if (result == WriteBatchResult.PermanentFailure)
-            {
+
                 consecutiveRecoveryAttempts = 0;
-                health.RecordPermanentlyFailedMutations(batch.Count);
+
                 if (IsDrained())
                     return;
-                continue;
             }
-
-            consecutiveRecoveryAttempts = 0;
-
-            if (IsDrained())
-                return;
+        }
+        finally
+        {
+            inbox.FailPendingCommands(new OperationCanceledException("Persistence writer stopped."));
         }
     }
 
@@ -73,6 +93,71 @@ public sealed class PersistenceWriter(
             && inbox.ProgressCount == 0
             && inbox.DegradedCount == 0
             && inbox.BufferedSearchResultCount == 0;
+
+    private async Task WriteCommandAsync(
+        AwaitablePersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            Exception? lastFailure = null;
+            for (int recoveryAttempt = 0; recoveryAttempt < options.MaximumRecoveryAttempts; recoveryAttempt++)
+            {
+                var (result, exception) = await TryWriteCommandAsync(command, cancellationToken).ConfigureAwait(false);
+                if (result == WriteBatchResult.Success)
+                    return;
+                lastFailure = exception;
+                if (result == WriteBatchResult.PermanentFailure)
+                    break;
+                await Task.Delay(options.FailureRetryDelay, clock, cancellationToken).ConfigureAwait(false);
+            }
+
+            var failure = lastFailure ?? new InvalidOperationException("Persistence command failed.");
+            health.RecordPermanentlyFailedMutations(1);
+            command.Fail(failure);
+        }
+        catch (Exception ex)
+        {
+            // The command has already left the inbox, so the writer's final
+            // pending-command sweep cannot see it.
+            command.Fail(ex);
+            throw;
+        }
+    }
+
+    private async Task<(WriteBatchResult Result, Exception? Exception)> TryWriteCommandAsync(
+        AwaitablePersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var stopwatch = Stopwatch.StartNew();
+                await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+                await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+                await command.ApplyAsync(context, cancellationToken).ConfigureAwait(false);
+                int rows = await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                health.RecordCommit(clock.GetUtcNow(), rows, stopwatch.Elapsed, 1,
+                    reconciliationComplete: inbox.DegradedCount == 0);
+                command.Complete();
+                return (WriteBatchResult.Success, null);
+            }
+            catch (Exception ex) when (IsBusy(ex) && attempt < options.BusyRetryCount)
+            {
+                health.RecordBusyRetry();
+                health.RecordFailure(clock.GetUtcNow(), ex, transient: true);
+                await Task.Delay(options.BusyRetryDelay, clock, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                bool recoverable = IsRecoverable(ex);
+                health.RecordFailure(clock.GetUtcNow(), ex, transient: recoverable);
+                return (recoverable ? WriteBatchResult.RecoverableFailure : WriteBatchResult.PermanentFailure, ex);
+            }
+        }
+    }
 
     private async Task<WriteBatchResult> TryWriteBatchAsync(
         IReadOnlyList<PersistenceMutation> batch,
