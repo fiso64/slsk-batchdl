@@ -26,6 +26,10 @@
   let { value, onchange, onsubmit }: Props = $props();
   let suppressAutoSplit = $state(false);
   let settingsOpen = $state(false);
+  let searchEngaged = $state(false);
+  let searchRoot: HTMLDivElement;
+  let searchControlsRow: HTMLDivElement;
+  let conditionOverlayHeight = $state(0);
   let formatView = $state<'buttons' | 'custom'>('buttons');
   let customFormats = $state('FLAC');
   let requiredTrackTitle = $state('');
@@ -50,6 +54,11 @@
 
   function toggleResultMode(): void {
     onchange({ ...value, resultMode: value.resultMode === 'album' ? 'track' : 'album' });
+  }
+
+  function toggleSettings(): void {
+    searchEngaged = true;
+    settingsOpen = !settingsOpen;
   }
 
   function handleSimpleInput(event: Event): void {
@@ -132,8 +141,9 @@
     const target = event.target as HTMLElement | null;
     const editing = target?.matches('input, textarea, select, [contenteditable="true"]');
 
-    if (event.key === 'Escape' && settingsOpen) {
-      settingsOpen = false;
+    if (event.key === 'Escape' && searchEngaged && searchControlsRow?.contains(document.activeElement)) {
+      event.preventDefault();
+      dismissFocusedSearch();
       return;
     }
 
@@ -200,13 +210,60 @@
   function removeRequiredTrackTitle(title: string): void {
     conditions.album.requiredTrackTitles = conditions.album.requiredTrackTitles.filter((item) => item !== title);
   }
+
+
+  let hasAppliedConditions = $derived.by(() => Boolean(
+    conditions.common.formats.length
+      || conditions.common.minBitrate
+      || conditions.common.maxBitrate
+      || conditions.common.sampleRate
+      || conditions.common.bitDepth
+      || conditions.common.strictArtist
+      || conditions.common.rejectUnknownMetadata
+      || conditions.common.allowedUsers.trim()
+      || conditions.common.bannedUsers.trim()
+      || (value.resultMode === 'track'
+        ? conditions.track.strictTitle || conditions.track.expectedLength
+        : conditions.album.strictAlbum
+          || conditions.album.minTrackCount
+          || conditions.album.maxTrackCount
+          || conditions.album.requiredTrackTitles.length
+          || conditions.album.strictAlbumQuality),
+  ));
+
+  let conditionOverlayVisible = $derived((searchEngaged || settingsOpen) && hasAppliedConditions);
+
+  function handleSearchFocusIn(): void {
+    searchEngaged = true;
+  }
+
+  function handleWindowPointerDown(event: PointerEvent): void {
+    if (!searchEngaged && !settingsOpen) return;
+
+    const target = event.target as Element | null;
+    if (!target) return;
+
+    if (target.closest('.search-focus-backdrop')) {
+      dismissFocusedSearch();
+      return;
+    }
+
+    if (searchRoot?.contains(target)) return;
+    dismissFocusedSearch();
+  }
+
+  function dismissFocusedSearch(): void {
+    searchEngaged = false;
+    settingsOpen = false;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  }
 </script>
 
-<svelte:window onkeydown={focusSearch} />
+<svelte:window onkeydown={focusSearch} onpointerdown={handleWindowPointerDown} />
 
-<div class="global-search" aria-label="Global Sockseek search">
-  <div class="search-controls-row">
-    <div class="search-entry">
+<div class="global-search" aria-label="Global Sockseek search" bind:this={searchRoot}>
+  <div class="search-controls-row" bind:this={searchControlsRow}>
+    <div class="search-entry" onfocusin={handleSearchFocusIn}>
       {#if value.mode === 'simple'}
         <div class="search-bar simple">
           <span class="search-glyph" aria-hidden="true">⌕</span>
@@ -259,6 +316,74 @@
           <button type="button" class="search-mode-button" onclick={merge}>merge</button>
         </div>
       {/if}
+
+      {#if conditionOverlayVisible}
+        <section
+          class="search-focus-overlay"
+          aria-label="Applied search conditions"
+          bind:clientHeight={conditionOverlayHeight}
+        >
+            <div class="search-condition-pills">
+              {#each conditions.common.formats as format}
+                <span class="search-condition-pill">format: {format}<button type="button" aria-label={`Remove ${format} format`} onclick={() => removeFormat(format)}>×</button></span>
+              {/each}
+
+              {#if conditions.common.minBitrate}
+                <span class="search-condition-pill">bitrate ≥ {conditions.common.minBitrate} kbps<button type="button" onclick={() => (conditions.common.minBitrate = '')}>×</button></span>
+              {/if}
+              {#if conditions.common.maxBitrate}
+                <span class="search-condition-pill">bitrate ≤ {conditions.common.maxBitrate} kbps<button type="button" onclick={() => (conditions.common.maxBitrate = '')}>×</button></span>
+              {/if}
+              {#if conditions.common.sampleRate}
+                <span class="search-condition-pill">sample rate: {sampleRateLabel(conditions.common.sampleRate)}<button type="button" onclick={() => (conditions.common.sampleRate = '')}>×</button></span>
+              {/if}
+              {#if conditions.common.bitDepth}
+                <span class="search-condition-pill">bit depth: {conditions.common.bitDepth}-bit<button type="button" onclick={() => (conditions.common.bitDepth = '')}>×</button></span>
+              {/if}
+              {#if conditions.common.strictArtist}
+                <span class="search-condition-pill">strict artist<button type="button" onclick={() => (conditions.common.strictArtist = false)}>×</button></span>
+              {/if}
+              {#if conditions.common.rejectUnknownMetadata}
+                <span class="search-condition-pill">reject unknown metadata<button type="button" onclick={() => (conditions.common.rejectUnknownMetadata = false)}>×</button></span>
+              {/if}
+
+              {#if value.resultMode === 'track'}
+                {#if conditions.track.strictTitle}
+                  <span class="search-condition-pill">strict title<button type="button" onclick={() => (conditions.track.strictTitle = false)}>×</button></span>
+                {/if}
+                {#if conditions.track.expectedLength}
+                  <span class="search-condition-pill">length {conditions.track.expectedLength}s ±{conditions.track.lengthTolerance || '0'}s<button type="button" onclick={() => (conditions.track.expectedLength = '')}>×</button></span>
+                {/if}
+              {:else}
+                {#if conditions.album.strictAlbum}
+                  <span class="search-condition-pill">strict album<button type="button" onclick={() => (conditions.album.strictAlbum = false)}>×</button></span>
+                {/if}
+                {#if conditions.album.minTrackCount}
+                  <span class="search-condition-pill">tracks ≥ {conditions.album.minTrackCount}<button type="button" onclick={() => (conditions.album.minTrackCount = '')}>×</button></span>
+                {/if}
+                {#if conditions.album.maxTrackCount}
+                  <span class="search-condition-pill">tracks ≤ {conditions.album.maxTrackCount}<button type="button" onclick={() => (conditions.album.maxTrackCount = '')}>×</button></span>
+                {/if}
+                {#each conditions.album.requiredTrackTitles as title}
+                  <span class="search-condition-pill">contains: {title}<button type="button" onclick={() => removeRequiredTrackTitle(title)}>×</button></span>
+                {/each}
+                {#if conditions.album.strictAlbumQuality}
+                  <span class="search-condition-pill">all tracks meet quality<button type="button" onclick={() => (conditions.album.strictAlbumQuality = false)}>×</button></span>
+                {/if}
+              {/if}
+
+              {#if conditions.common.allowedUsers.trim()}
+                <span class="search-condition-pill">allow: {conditions.common.allowedUsers.trim()}<button type="button" onclick={() => (conditions.common.allowedUsers = '')}>×</button></span>
+              {/if}
+              {#if conditions.common.bannedUsers.trim()}
+                <span class="search-condition-pill">ban: {conditions.common.bannedUsers.trim()}<button type="button" onclick={() => (conditions.common.bannedUsers = '')}>×</button></span>
+              {/if}
+            </div>
+
+          <!-- Future online metadata suggestions (for example MusicBrainz album/track matches)
+               will render here beneath the condition pills when that backend capability exists. -->
+        </section>
+      {/if}
     </div>
 
     <button
@@ -276,73 +401,29 @@
       class="search-settings-button"
       aria-label="Search configuration"
       aria-expanded={settingsOpen}
-      onclick={() => (settingsOpen = !settingsOpen)}
+      onclick={toggleSettings}
     >•••</button>
   </div>
 
-  <div class="search-condition-pills" aria-label="Applied search conditions">
-    {#each conditions.common.formats as format}
-      <span class="search-condition-pill">format: {format}<button type="button" aria-label={`Remove ${format} format`} onclick={() => removeFormat(format)}>×</button></span>
-    {/each}
-
-    {#if conditions.common.minBitrate}
-      <span class="search-condition-pill">bitrate ≥ {conditions.common.minBitrate} kbps<button type="button" onclick={() => (conditions.common.minBitrate = '')}>×</button></span>
-    {/if}
-    {#if conditions.common.maxBitrate}
-      <span class="search-condition-pill">bitrate ≤ {conditions.common.maxBitrate} kbps<button type="button" onclick={() => (conditions.common.maxBitrate = '')}>×</button></span>
-    {/if}
-    {#if conditions.common.sampleRate}
-      <span class="search-condition-pill">sample rate: {sampleRateLabel(conditions.common.sampleRate)}<button type="button" onclick={() => (conditions.common.sampleRate = '')}>×</button></span>
-    {/if}
-    {#if conditions.common.bitDepth}
-      <span class="search-condition-pill">bit depth: {conditions.common.bitDepth}-bit<button type="button" onclick={() => (conditions.common.bitDepth = '')}>×</button></span>
-    {/if}
-    {#if conditions.common.strictArtist}
-      <span class="search-condition-pill">strict artist<button type="button" onclick={() => (conditions.common.strictArtist = false)}>×</button></span>
-    {/if}
-    {#if conditions.common.rejectUnknownMetadata}
-      <span class="search-condition-pill">reject unknown metadata<button type="button" onclick={() => (conditions.common.rejectUnknownMetadata = false)}>×</button></span>
-    {/if}
-
-    {#if value.resultMode === 'track'}
-      {#if conditions.track.strictTitle}
-        <span class="search-condition-pill">strict title<button type="button" onclick={() => (conditions.track.strictTitle = false)}>×</button></span>
-      {/if}
-      {#if conditions.track.expectedLength}
-        <span class="search-condition-pill">length {conditions.track.expectedLength}s ±{conditions.track.lengthTolerance || '0'}s<button type="button" onclick={() => (conditions.track.expectedLength = '')}>×</button></span>
-      {/if}
-    {:else}
-      {#if conditions.album.strictAlbum}
-        <span class="search-condition-pill">strict album<button type="button" onclick={() => (conditions.album.strictAlbum = false)}>×</button></span>
-      {/if}
-      {#if conditions.album.minTrackCount}
-        <span class="search-condition-pill">tracks ≥ {conditions.album.minTrackCount}<button type="button" onclick={() => (conditions.album.minTrackCount = '')}>×</button></span>
-      {/if}
-      {#if conditions.album.maxTrackCount}
-        <span class="search-condition-pill">tracks ≤ {conditions.album.maxTrackCount}<button type="button" onclick={() => (conditions.album.maxTrackCount = '')}>×</button></span>
-      {/if}
-      {#each conditions.album.requiredTrackTitles as title}
-        <span class="search-condition-pill">contains: {title}<button type="button" onclick={() => removeRequiredTrackTitle(title)}>×</button></span>
-      {/each}
-      {#if conditions.album.strictAlbumQuality}
-        <span class="search-condition-pill">all tracks meet quality<button type="button" onclick={() => (conditions.album.strictAlbumQuality = false)}>×</button></span>
-      {/if}
-    {/if}
-
-    {#if conditions.common.allowedUsers.trim()}
-      <span class="search-condition-pill">allow: {conditions.common.allowedUsers.trim()}<button type="button" onclick={() => (conditions.common.allowedUsers = '')}>×</button></span>
-    {/if}
-    {#if conditions.common.bannedUsers.trim()}
-      <span class="search-condition-pill">ban: {conditions.common.bannedUsers.trim()}<button type="button" onclick={() => (conditions.common.bannedUsers = '')}>×</button></span>
-    {/if}
-  </div>
+  {#if conditionOverlayVisible || settingsOpen}
+    <button
+      class="search-focus-backdrop"
+      type="button"
+      tabindex="-1"
+      aria-label="Close focused search"
+      onclick={dismissFocusedSearch}
+    ></button>
+  {/if}
 
   {#if settingsOpen}
-    <section class="search-config-popover" aria-label="Search configuration">
+    <section
+      class="search-config-popover"
+      aria-label="Search configuration"
+      style={`top: ${54 + 8 + (conditionOverlayVisible ? conditionOverlayHeight + 8 : 0)}px`}
+    >
       <header class="search-config-header">
         <div>
           <strong>Search configuration</strong>
-          <span>Required conditions</span>
         </div>
         <button type="button" aria-label="Close search configuration" onclick={() => (settingsOpen = false)}>×</button>
       </header>

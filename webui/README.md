@@ -43,7 +43,9 @@ npm run build
 
 ## Current design direction
 
-The prototype currently uses a cool neutral palette with a muted violet accent. The accent is reserved mainly for focus, selection, progress, and unread state. Light and dark variants follow the system theme.
+The prototype currently uses a **Carbon + Blue** palette: nearly neutral black/gray surfaces in dark mode, neutral gray surfaces in light mode, and a restrained blue accent. The accent is reserved mainly for focus, selection, progress, and unread state. Light and dark variants follow the system theme.
+
+The current scale pass favors roughly 14 px primary row text, 12 px secondary metadata and form labels, 32–34 px form controls, and 24–26 px condition pills. The global search remains intentionally larger at 54 px.
 
 The shell currently has five destinations:
 
@@ -55,7 +57,7 @@ The shell currently has five destinations:
 
 There is intentionally no separate Shares or History page. Transfer history lives in Downloads/Uploads, and other historical information should generally remain close to the feature that produced it.
 
-A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A fixed-width **Album / Track** button switches result mode, while `•••` opens advanced search conditions. Applied conditions appear as removable pills below the bar.
+A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A fixed-width **Album / Track** button switches result mode, while `•••` opens advanced search conditions. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
 
 ### Morphing search
 
@@ -138,3 +140,14 @@ src/
 - treating the current Search, Transfers, or Chat layouts as final.
 
 The next iterations should continue to optimize for **learning what Sockseek should feel like**, not for preserving prototype code.
+
+Applied search conditions appear in a focused overlay aligned to the query bar. Once engaged, the overlay remains open while interacting with the query controls, result-mode toggle, settings button, or settings panel; it closes on an outside click or Escape from the search controls. A source comment marks where future online metadata suggestions (for example MusicBrainz results) can be inserted beneath the pills once that workflow is supported.
+
+## Dashboard exploration
+
+The prototype now opens on a Dashboard tab. Its history range control is intentionally dashboard-wide rather than chart-only: switching between 24h, 7d, 30d, and 90d updates the transfer activity chart, the Peers/Content/Errors ranking data, and the Transfer summary figures together. Current-rate cards, Recent activity, and Daemon health remain live/current-state views.
+
+The lower dashboard uses independent vertical columns so panels size to their own content. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space.
+
+- Dashboard activity curves use bounded Bezier smoothing so sample values stay exact without angular joins.
+- The workspace itself owns vertical scrolling; page width is capped inside it so the scrollbar stays at the browser edge on every tab.

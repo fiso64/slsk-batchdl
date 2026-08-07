@@ -92,10 +92,6 @@
       <div class="user-badge" aria-label="Prototype user">fi</div>
     </header>
 
-    <div class="scenario-strip">
-      <strong>{scenario.label}</strong>
-      <span>{scenario.description}</span>
-    </div>
 
     <main class:chat-content={activePage === 'chat'} class="page-content">
       {@render children()}

@@ -8,6 +8,7 @@
   }
 
   let { value, onchange }: Props = $props();
+  let selectedScenario = $derived(scenarios.find((scenario) => scenario.id === value) ?? scenarios[0]);
 </script>
 
 <label class="scenario-picker">
@@ -17,4 +18,5 @@
       <option value={scenario.id}>{scenario.label}</option>
     {/each}
   </select>
+  <small class="scenario-picker-description">{selectedScenario.description}</small>
 </label>

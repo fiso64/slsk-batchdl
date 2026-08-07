@@ -1,4 +1,5 @@
 export const navigationItems = [
+  { id: 'dashboard', label: 'Dashboard', icon: '▦', placement: 'primary' },
   { id: 'search', label: 'Search', icon: '⌕', placement: 'primary' },
   { id: 'downloads', label: 'Downloads', icon: '↓', placement: 'primary' },
   { id: 'uploads', label: 'Uploads', icon: '↑', placement: 'primary' },

@@ -3,13 +3,14 @@
   import { getScenario } from './mock/scenarios';
   import type { ScenarioId } from './mock/types';
   import Chat from './pages/Chat.svelte';
+  import Dashboard from './pages/Dashboard.svelte';
   import Search from './pages/Search.svelte';
   import Settings from './pages/Settings.svelte';
   import TransferPage from './pages/TransferPage.svelte';
   import type { PageId } from './prototype/navigation';
   import { emptySearchDraft, type SearchDraft } from './prototype/search';
 
-  let activePage = $state<PageId>('search');
+  let activePage = $state<PageId>('dashboard');
   let scenarioId = $state<ScenarioId>('normal');
   let scenario = $derived(getScenario(scenarioId));
   let search = $state<SearchDraft>({ ...emptySearchDraft });
@@ -34,7 +35,9 @@
   onsearchchange={useSearch}
   onsearchsubmit={submitSearch}
 >
-  {#if activePage === 'search'}
+  {#if activePage === 'dashboard'}
+    <Dashboard {scenario} />
+  {:else if activePage === 'search'}
     <Search {search} onusequery={useSearch} />
   {:else if activePage === 'downloads'}
     <TransferPage {scenario} direction="download" />
