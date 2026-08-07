@@ -9,6 +9,7 @@ internal static class DaemonResourceCommandRunner
 {
     public static async Task<Program.CliExitCode> RunAsync(
         IReadOnlyList<string> args,
+        string? remote,
         CancellationToken cancellationToken = default)
     {
         if (args.Any(arg => arg is "-h" or "--help"))
@@ -17,11 +18,11 @@ internal static class DaemonResourceCommandRunner
             return Program.CliExitCode.Success;
         }
 
-        string? remote = Option(args, "--remote");
         if (string.IsNullOrWhiteSpace(remote))
         {
             Console.Error.WriteLine(
-                "Input error: This command requires --remote <url>; it does not start a temporary daemon.");
+                "Input error: This command requires a configured remote URL "
+                + "(remote = <url> or --remote <url>); it does not start a temporary daemon.");
             return Program.CliExitCode.UsageError;
         }
 
@@ -233,8 +234,7 @@ internal static class DaemonResourceCommandRunner
     }
 
     private static bool ConsumesValue(string argument)
-        => argument.Equals("--remote", StringComparison.OrdinalIgnoreCase)
-           || argument.Equals("--direction", StringComparison.OrdinalIgnoreCase)
+        => argument.Equals("--direction", StringComparison.OrdinalIgnoreCase)
            || argument.Equals("--state", StringComparison.OrdinalIgnoreCase)
            || argument.Equals("--outcome", StringComparison.OrdinalIgnoreCase)
            || argument.Equals("--username", StringComparison.OrdinalIgnoreCase)
@@ -247,12 +247,11 @@ internal static class DaemonResourceCommandRunner
         bool transfers = Equals(args[0], "transfers");
         var allowed = share
             ? new HashSet<string>(
-                ["--remote", "--json", "--cancel"],
+                ["--json", "--cancel"],
                 StringComparer.OrdinalIgnoreCase)
             : transfers
                 ? new HashSet<string>(
                     [
-                        "--remote",
                         "--json",
                         "--direction",
                         "--state",
@@ -263,7 +262,7 @@ internal static class DaemonResourceCommandRunner
                     ],
                     StringComparer.OrdinalIgnoreCase)
                 : new HashSet<string>(
-                    ["--remote", "--json"],
+                    ["--json"],
                     StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var positional = new List<string>();
@@ -344,12 +343,14 @@ internal static class DaemonResourceCommandRunner
         Console.WriteLine(
             """
             Daemon sharing and transfer commands:
-              sockseek share status --remote <url> [--json]
-              sockseek share scan --remote <url> [--json]
-              sockseek share scan --cancel --remote <url> [--json]
-              sockseek transfers --remote <url> [--direction upload|download] [--state <state>]
-                                 [--username <name>] [--limit 1..200] [--cursor <cursor>] [--json]
-              sockseek transfer cancel <id> --remote <url> [--json]
+              sockseek share status [--remote <url>] [--json]
+              sockseek share scan [--remote <url>] [--json]
+              sockseek share scan --cancel [--remote <url>] [--json]
+              sockseek transfers [--remote <url>] [--direction upload|download] [--state <state>]
+                                     [--username <name>] [--limit 1..200] [--cursor <cursor>] [--json]
+              sockseek transfer cancel <id> [--remote <url>] [--json]
+
+            The remote URL can be set as `remote = <url>` in config; --remote overrides it.
             """);
     }
 }

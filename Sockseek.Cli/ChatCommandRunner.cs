@@ -9,6 +9,7 @@ internal static class ChatCommandRunner
 {
     public static async Task<Program.CliExitCode> RunAsync(
         IReadOnlyList<string> args,
+        string? remote,
         CancellationToken cancellationToken = default)
     {
         if (args.Any(arg => arg is "-h" or "--help"))
@@ -16,9 +17,8 @@ internal static class ChatCommandRunner
             PrintHelp();
             return Program.CliExitCode.Success;
         }
-        string? remote = Option(args, "--remote");
         if (string.IsNullOrWhiteSpace(remote))
-            return Usage("This command requires --remote <url>.");
+            return Usage("This command requires a configured remote URL (remote = <url> or --remote <url>).");
         try
         {
             using HttpClient http = SockseekApiClient.CreateHttpClient(remote);
@@ -279,7 +279,7 @@ internal static class ChatCommandRunner
         {
             if (args[i].StartsWith('-'))
             {
-                if (args[i] is "--remote" or "--limit" or "--through") i++;
+                if (args[i] is "--limit" or "--through") i++;
                 continue;
             }
             words.Add(args[i]);
@@ -325,18 +325,20 @@ internal static class ChatCommandRunner
     private static void PrintHelp() => Console.WriteLine(
         """
         Remote chat commands:
-          sockseek chat status --remote <url> [--json]
-          sockseek chat conversations [--unread] --remote <url> [--json]
-          sockseek chat messages <username> [--limit N] --remote <url> [--json]
-          sockseek chat send <username> <message> --remote <url> [--json]
-          sockseek chat read <username> [--through <message-id>] --remote <url>
-          sockseek chat archive <username> --remote <url>
-          sockseek room available|joined --remote <url> [--json]
-          sockseek room join <name> [--no-remember] --remote <url>
-          sockseek room leave|messages|members <name> --remote <url> [--json]
-          sockseek room send <name> <message> --remote <url>
-          sockseek room member add <name> <username> --remote <url>
-          sockseek notifications [--unread] --remote <url> [--json]
-          sockseek notification read <id|all> --remote <url> [--json]
+          sockseek chat status [--remote <url>] [--json]
+          sockseek chat conversations [--unread] [--remote <url>] [--json]
+          sockseek chat messages <username> [--limit N] [--remote <url>] [--json]
+          sockseek chat send <username> <message> [--remote <url>] [--json]
+          sockseek chat read <username> [--through <message-id>] [--remote <url>]
+          sockseek chat archive <username> [--remote <url>]
+          sockseek room available|joined [--remote <url>] [--json]
+          sockseek room join <name> [--no-remember] [--remote <url>]
+          sockseek room leave|messages|members <name> [--remote <url>] [--json]
+          sockseek room send <name> <message> [--remote <url>]
+          sockseek room member add <name> <username> [--remote <url>]
+          sockseek notifications [--unread] [--remote <url>] [--json]
+          sockseek notification read <id|all> [--remote <url>] [--json]
+
+        The remote URL can be set as `remote = <url>` in config; --remote overrides it.
         """);
 }

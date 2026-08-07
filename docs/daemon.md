@@ -49,7 +49,15 @@ sockseek --help
 
 ## Submit work remotely
 
-Use `--remote` to send a normal Sockseek command to a running daemon:
+Set the daemon URL once in the default configuration:
+
+```ini
+remote = http://127.0.0.1:5030
+```
+
+Normal downloads and the dedicated sharing, transfer, chat, room, and
+notification commands then use that daemon automatically. `--remote` overrides
+the configured URL for one invocation:
 
 ```bash
 sockseek "Artist - Title" --remote http://127.0.0.1:5030
@@ -83,7 +91,8 @@ all from the cancel prompt cancels active jobs without stopping the daemon.
 ## Sharing and transfer commands
 
 Sharing, scans, and uploads belong to the running daemon. These commands require
-`--remote`; they never start a temporary local daemon:
+a remote URL from configuration or `--remote`; they never start a temporary
+local daemon:
 
 ```bash
 sockseek share status --remote http://127.0.0.1:5030
@@ -195,7 +204,8 @@ forever by default; room messages default to 30 days. Each policy can be set to
 a positive day count or `forever` independently.
 
 The remote CLI is intentionally scriptable rather than a second interactive
-chat UI:
+chat UI. The examples show explicit `--remote`, but it may be omitted when
+`remote` is configured:
 
 ```bash
 sockseek chat status --remote http://127.0.0.1:5030
@@ -444,7 +454,7 @@ Common problems:
 - **The database is already in use:** stop the other daemon or maintenance
   command that owns the same database.
 - **Remote commands cannot connect:** confirm the daemon address, port, firewall,
-  and `--remote` URL.
+  and configured or `--remote` URL.
 - **History reports a database error:** active downloads can continue, but new
   history may not be saved. Check the daemon log and run an integrity check after
   stopping the daemon.

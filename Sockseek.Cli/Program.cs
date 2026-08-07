@@ -23,31 +23,18 @@ internal static partial class Program
     {
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
-        bool databaseMode = args.Length > 0
-            && string.Equals(args[0], "database", StringComparison.OrdinalIgnoreCase);
-        bool daemonResourceCommand = args.Length > 0
-            && (string.Equals(args[0], "share", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(args[0], "transfers", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(args[0], "transfer", StringComparison.OrdinalIgnoreCase));
-        bool chatResourceCommand = args.Length > 0
-            && (string.Equals(args[0], "chat", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(args[0], "room", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(args[0], "notifications", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(args[0], "notification", StringComparison.OrdinalIgnoreCase));
-        if (chatResourceCommand)
-            return (int)await ChatCommandRunner.RunAsync(args);
-        if (daemonResourceCommand)
-            return (int)await DaemonResourceCommandRunner.RunAsync(args);
-        if (Help.PrintAndExitIfNeeded(args))
-            return (int)CliExitCode.Success;
 
         SockseekLog.SetupExceptionHandling();
         using var output = CliOutputController.Install(args);
 
         try
         {
-            if (databaseMode)
-                return (int)await DatabaseCommandRunner.RunAsync(args.Skip(1).ToArray());
+            CliExitCode? configuredCommand = await ConfiguredCommandDispatcher.TryRunAsync(args)
+                .ConfigureAwait(false);
+            if (configuredCommand is not null)
+                return (int)configuredCommand.Value;
+            if (Help.PrintAndExitIfNeeded(args))
+                return (int)CliExitCode.Success;
             return (int)await MainCore(args, output);
         }
         catch (Exception ex)
@@ -82,7 +69,6 @@ internal static partial class Program
         bool daemonMode = args.Length > 0 && string.Equals(args[0], "daemon", StringComparison.OrdinalIgnoreCase);
         var bindArgs = daemonMode ? args.Skip(1).ToArray() : args;
 
-        string configPath;
         ConfigFile configFile;
         EngineSettings engineSettings;
         DownloadSettings rootSettings;
@@ -96,9 +82,8 @@ internal static partial class Program
         // validation currently encode that policy in several catch/log branches.
         try
         {
-            configPath = ConfigManager.ExtractConfigPath(bindArgs);
-            configFile = ConfigManager.Load(configPath);
-            (engineSettings, rootSettings, cliSettings, daemonSettings, remoteSettings) = ConfigManager.BindAll(configFile, bindArgs);
+            (configFile, engineSettings, rootSettings, cliSettings, daemonSettings, remoteSettings) =
+                ConfigManager.LoadAndBindAll(bindArgs);
             ConfigManager.ApplyAutoProfileCliSettings(configFile, rootSettings, cliSettings);
             ApplyMockFilesDefaults(engineSettings, rootSettings);
         }
@@ -190,7 +175,9 @@ internal static partial class Program
         {
             if (!remoteSettings.IsEnabled)
             {
-                SockseekLog.Error("Monitor mode requires --remote <url>.");
+                SockseekLog.Error(
+                    "Monitor mode requires a configured remote URL "
+                    + "(remote = <url> or --remote <url>).");
                 return CliExitCode.UsageError;
             }
 

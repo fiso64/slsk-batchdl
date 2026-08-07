@@ -931,8 +931,9 @@ sockseek notifications [--unread] [--json]
 sockseek notification read <id|all>
 ```
 
-Mutating and network chat commands require daemon mode/`--remote`; a temporary
-foreground download engine never receives private messages or joins rooms.
+Mutating and network chat commands require a configured remote daemon URL or a
+`--remote` override; a temporary foreground download engine never receives
+private messages or joins rooms.
 CLI send commands generate a fresh outgoing `MessageId` per invocation. Typed
 clients accept a caller-supplied ID so an application can preserve it across an
 HTTP retry.
@@ -1306,7 +1307,8 @@ boxes.
 - [x] **CLIENT-01** Shared HTTP/live clients and `DaemonClientStore` implement one
   reducer/recovery model for CLI and future Web UI.
 - [x] **CLI-01** Scriptable remote chat/room/notification commands, JSON output,
-  config parsing, help, daemon docs, API docs, and README remain in sync.
+  standard configured-remote resolution with CLI override, help, daemon docs,
+  API docs, and README remain in sync.
 - [x] **SEC-01** Bodies are plain text, bounded, absent from normal logs/metrics,
   and never rendered as remote HTML/Markdown.
 - [x] **SEC-02** Exact username blocks apply to chat without claiming IP-only
@@ -1405,6 +1407,10 @@ response; reconnect tests also prove that remembered rooms rejoin once and an
 explicit leave removes that runtime desire. Retention policies are separate so
 private messages default to durable storage while higher-volume room history
 has an operator-overridable 30-day default.
+Top-level chat, sharing/transfer, and offline database commands now pass through
+the same config/profile/CLI precedence entry point before command-specific
+parsing; a source-level architecture test rejects direct runner dispatch or a
+parallel configuration-loading path.
 
 The repeatable 10,000-event mixed direct/room fixture completed in 9.230 s with
 653 bounded writer commits, a peak ingress depth of 250/1,024, zero ingress
@@ -1427,11 +1433,11 @@ newest batch with an observable recovery gap.
 interoperability with an independent client and a suitable test account; mocks
 and source review cannot satisfy it. No completed qualification record is linked
 yet; section 16.3 defines the required seven-case record. The fast default
-`dotnet test sockseek.sln --no-build --no-restore` lane passes 1,075 regression
-tests (662 Core, 52 persistence, 112 server, and 249 CLI); the latest Release
-run on the qualification workstation completed in 13.1 seconds. The separate
+`dotnet test sockseek.sln --no-build --no-restore` lane passes 1,079 regression
+tests (663 Core, 52 persistence, 112 server, and 252 CLI); the latest Release
+run on the qualification workstation completed in 14.0 seconds. The separate
 `--filter TestCategory=Load` lane passes seven load qualifications (one Core,
-five persistence, and one server) in 13.3 seconds wall-clock, so all 1,082 tests
+five persistence, and one server) in 13.8 seconds wall-clock, so all 1,086 tests
 remain in CI. This includes bounded critical-command shutdown and in-flight
 cancellation.
 

@@ -10,24 +10,14 @@ internal static class DatabaseCommandRunner
         "Usage: sockseek database <migrate|integrity|backup|restore> " +
         "[--data-dir <path>] [--backup <path>] [--config <path>|--no-config]";
 
-    public static async Task<Program.CliExitCode> RunAsync(string[] args)
+    public static async Task<Program.CliExitCode> RunAsync(
+        string[] args,
+        ConfigFile configFile,
+        DaemonSettings daemonSettings)
     {
         try
         {
             var commandOptions = ParseOptions(args);
-            string configPath = commandOptions.NoConfig
-                ? "none"
-                : ConfigManager.ExtractConfigPath(
-                    commandOptions.ConfigPath == null
-                        ? []
-                        : ["--config", commandOptions.ConfigPath]);
-            var configFile = ConfigManager.Load(configPath);
-            string[] dataDirectoryOverride = commandOptions.DataDirectory == null
-                ? []
-                : ["--data-dir", commandOptions.DataDirectory];
-            var (_, _, _, daemonSettings, _) = ConfigManager.BindAll(
-                configFile,
-                dataDirectoryOverride);
             string databasePath = SockseekDataPaths.ResolveDatabasePath(daemonSettings.DataDirectory);
 
             SockseekLog.Info($"Using Sockseek database {databasePath}.");
@@ -90,10 +80,7 @@ internal static class DatabaseCommandRunner
         if (command is not ("migrate" or "integrity" or "backup" or "restore"))
             throw new ArgumentException($"Unknown database command '{args[0]}'.\n{Usage}");
 
-        string? dataDirectory = null;
         string? backupPath = null;
-        string? configPath = null;
-        bool noConfig = false;
 
         for (int i = 1; i < args.Count; i++)
         {
@@ -120,21 +107,8 @@ internal static class DatabaseCommandRunner
 
             switch (option.ToLowerInvariant())
             {
-                case "--data-dir":
-                    dataDirectory = Value();
-                    break;
                 case "--backup":
                     backupPath = Value();
-                    break;
-                case "-c":
-                case "--config":
-                    configPath = Value();
-                    break;
-                case "--nc":
-                case "--no-config":
-                    if (attachedValue != null)
-                        throw new ArgumentException($"{option} does not accept a value.");
-                    noConfig = true;
                     break;
                 default:
                     throw new ArgumentException($"Unknown database option '{option}'.\n{Usage}");
@@ -151,12 +125,7 @@ internal static class DatabaseCommandRunner
             throw new ArgumentException($"Option --backup is not valid for database {command}.");
         }
 
-        return new DatabaseCommandOptions(
-            command,
-            dataDirectory,
-            backupPath,
-            configPath,
-            noConfig);
+        return new DatabaseCommandOptions(command, backupPath);
     }
 
     private static string ResolveCommandPath(string path, ConfigFile configFile)
@@ -165,8 +134,5 @@ internal static class DatabaseCommandRunner
 
     private sealed record DatabaseCommandOptions(
         string Command,
-        string? DataDirectory,
-        string? BackupPath,
-        string? ConfigPath,
-        bool NoConfig);
+        string? BackupPath);
 }

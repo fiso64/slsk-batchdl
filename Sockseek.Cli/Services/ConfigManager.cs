@@ -95,6 +95,23 @@ public static partial class ConfigManager
         return (engine, dl, cli, daemon, remote);
     }
 
+    /// Loads the selected/default config file and applies config, named profile,
+    /// and CLI precedence through the one canonical startup path.
+    public static (
+        ConfigFile File,
+        EngineSettings Engine,
+        DownloadSettings Download,
+        CliSettings Cli,
+        DaemonSettings Daemon,
+        RemoteSettings Remote)
+        LoadAndBindAll(IReadOnlyList<string> cliArgs)
+    {
+        string configPath = ExtractConfigPath(cliArgs);
+        ConfigFile file = Load(configPath);
+        var (engine, download, cli, daemon, remote) = BindAll(file, cliArgs);
+        return (file, engine, download, cli, daemon, remote);
+    }
+
     public static IJobSettingsResolver CreateJobSettingsResolver(
         ConfigFile file,
         IReadOnlyList<string> cliArgs,

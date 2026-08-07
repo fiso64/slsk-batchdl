@@ -161,6 +161,59 @@ public class ArchitectureTests
     }
 
     [TestMethod]
+    public void TopLevelCommands_UseConfiguredDispatcherAndCanonicalBinding()
+    {
+        string cliRoot = Path.Combine(FindRepositoryRoot(), "Sockseek.Cli");
+        string dispatcherPath = Path.Combine(
+            cliRoot, "Services", "ConfiguredCommandDispatcher.cs");
+        string configManagerPath = Path.Combine(
+            cliRoot, "Services", "ConfigManager.cs");
+        Assert.IsTrue(File.Exists(dispatcherPath),
+            "Top-level commands need the configured dispatcher before command-specific parsing.");
+
+        foreach (string path in Directory.EnumerateFiles(cliRoot, "*.cs", SearchOption.AllDirectories)
+                     .Where(path => !path.Contains(
+                         $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
+                         StringComparison.OrdinalIgnoreCase)
+                         && !path.Contains(
+                             $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                             StringComparison.OrdinalIgnoreCase)))
+        {
+            SyntaxNode root = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot();
+            foreach (InvocationExpressionSyntax invocation in root.DescendantNodes()
+                         .OfType<InvocationExpressionSyntax>())
+            {
+                if (invocation.Expression is not MemberAccessExpressionSyntax member)
+                    continue;
+
+                var line = invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                if (member.Name.Identifier.ValueText == "RunAsync"
+                    && member.Expression.ToString().EndsWith("CommandRunner", StringComparison.Ordinal))
+                {
+                    if (!Path.GetFullPath(path).Equals(
+                            Path.GetFullPath(dispatcherPath), StringComparison.OrdinalIgnoreCase))
+                    {
+                        Assert.Fail(
+                            $"{Path.GetRelativePath(FindRepositoryRoot(), path)}:{line} dispatches a "
+                            + "top-level command without ConfiguredCommandDispatcher; this bypasses "
+                            + "config/profile resolution.");
+                    }
+                }
+
+                if (!Path.GetFullPath(path).Equals(
+                        Path.GetFullPath(configManagerPath), StringComparison.OrdinalIgnoreCase)
+                    && member.Expression.ToString() == "ConfigManager"
+                    && member.Name.Identifier.ValueText is "Load" or "BindAll" or "ExtractConfigPath")
+                {
+                    Assert.Fail(
+                        $"{Path.GetRelativePath(FindRepositoryRoot(), path)}:{line} assembles a "
+                        + "parallel configuration path; use ConfigManager.LoadAndBindAll.");
+                }
+            }
+        }
+    }
+
+    [TestMethod]
     public void DownloadSessionState_UsesPurposeBuiltCollaborators()
     {
         var coreRoot = Path.Combine(FindRepositoryRoot(), "Sockseek.Core");

@@ -48,18 +48,123 @@ public class CliExitCodeTests
         try
         {
             Console.SetError(stderr);
-            string[] args = action is null ? [command] : [command, action];
+            string[] args = action is null
+                ? [command, "--no-config"]
+                : [command, action, "--no-config"];
 
             int exitCode = await Sockseek.Cli.Program.Main(args);
 
             Assert.AreEqual(
                 (int)Sockseek.Cli.Program.CliExitCode.UsageError,
                 exitCode);
-            StringAssert.Contains(stderr.ToString(), "requires --remote");
+            StringAssert.Contains(stderr.ToString(), "requires a configured remote URL");
         }
         finally
         {
             Console.SetError(originalError);
+        }
+    }
+
+    [DataTestMethod]
+    [DataRow("chat", "status")]
+    [DataRow("share", "status")]
+    public async Task ConfiguredResourceCommands_UseRemoteFromConfig(
+        string command,
+        string action)
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), "sockseek-configured-command-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string configPath = Path.Combine(root, "sockseek.conf");
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        Task responder = RespondWithServiceUnavailableAsync(listener);
+        await File.WriteAllTextAsync(
+            configPath, $"remote = http://127.0.0.1:{port}\n");
+
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        try
+        {
+            Console.SetError(stderr);
+
+            int exitCode = await Sockseek.Cli.Program.Main(
+                [command, action, "--config", configPath]);
+
+            Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
+            Assert.IsFalse(
+                stderr.ToString().Contains("requires a configured remote URL", StringComparison.Ordinal),
+                "The command ignored the configured remote URL.");
+            await responder.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            listener.Stop();
+            Console.SetError(originalError);
+            SockseekLog.RemoveNonFileOutputs();
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static async Task RespondWithServiceUnavailableAsync(
+        System.Net.Sockets.TcpListener listener)
+    {
+        using System.Net.Sockets.TcpClient client = await listener.AcceptTcpClientAsync();
+        await using System.Net.Sockets.NetworkStream stream = client.GetStream();
+        var request = new byte[4096];
+        _ = await stream.ReadAsync(request);
+        const string body = "{\"error\":\"test unavailable\"}";
+        byte[] response = System.Text.Encoding.ASCII.GetBytes(
+            "HTTP/1.1 503 Service Unavailable\r\n"
+            + "Content-Type: application/json\r\n"
+            + $"Content-Length: {body.Length}\r\n"
+            + "Connection: close\r\n\r\n"
+            + body);
+        await stream.WriteAsync(response);
+    }
+
+    [TestMethod]
+    public void ConfiguredCommand_CliRemoteOverridesConfigAndGlobalOptionsAreStripped()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), "sockseek-command-precedence-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string configPath = Path.Combine(root, "sockseek.conf");
+        File.WriteAllText(
+            configPath,
+            "remote = http://127.0.0.1:5001\n"
+            + "[alternate]\n"
+            + "remote = http://127.0.0.1:5003\n");
+
+        try
+        {
+            ConfiguredCommandInvocation invocation = ConfiguredCommandInvocation.Create(
+                [
+                    "chat", "status",
+                    "--config", configPath,
+                    "--remote", "http://127.0.0.1:5002",
+                ],
+                ConfiguredCommandOptions.Remote);
+
+            Assert.AreEqual("http://127.0.0.1:5002", invocation.Remote.ServerUrl);
+            CollectionAssert.AreEqual(
+                new[] { "chat", "status" }, invocation.CommandArguments);
+
+            ConfiguredCommandInvocation profileInvocation = ConfiguredCommandInvocation.Create(
+                ["chat", "status", "--config", configPath, "--profile", "alternate"],
+                ConfiguredCommandOptions.Remote);
+            Assert.AreEqual("http://127.0.0.1:5003", profileInvocation.Remote.ServerUrl);
+            CollectionAssert.AreEqual(
+                new[] { "chat", "status" }, profileInvocation.CommandArguments);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
