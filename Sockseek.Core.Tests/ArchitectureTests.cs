@@ -15,6 +15,14 @@ namespace Tests;
 [TestClass]
 public class ArchitectureTests
 {
+    private static readonly Lazy<string> RepositoryRoot = new(
+        FindRepositoryRootCore,
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static readonly Lazy<IReadOnlyList<CoreSource>> CoreSources = new(
+        LoadCoreSourcesCore,
+        LazyThreadSafetyMode.ExecutionAndPublication);
+
     // Temporary source-level tripwires for the JobOutcome refactor. Once job snapshots
     // are immutable and lifecycle changes go through a reducer/state-store boundary,
     // the compiler should enforce these invariants and these tests can go away.
@@ -343,7 +351,10 @@ public class ArchitectureTests
     private static string RelativePath(string path)
         => Path.GetRelativePath(FindRepositoryRoot(), path);
 
-    private static List<CoreSource> LoadCoreSources()
+    private static IReadOnlyList<CoreSource> LoadCoreSources()
+        => CoreSources.Value;
+
+    private static IReadOnlyList<CoreSource> LoadCoreSourcesCore()
     {
         var root = FindRepositoryRoot();
         var coreRoot = Path.Combine(root, "Sockseek.Core");
@@ -362,6 +373,9 @@ public class ArchitectureTests
     }
 
     private static string FindRepositoryRoot()
+        => RepositoryRoot.Value;
+
+    private static string FindRepositoryRootCore()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !Directory.EnumerateFiles(dir.FullName, "*.sln")

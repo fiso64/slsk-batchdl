@@ -11,6 +11,7 @@ public static class Printing
 {
     public static readonly object ConsoleLock = new();
     internal static Action<string, ConsoleColor>? LiveWriteLine { get; set; }
+    private static readonly AsyncLocal<TextWriter?> ScopedOutput = new();
 
     private static bool _isBuffering;
     private static readonly List<(string value, ConsoleColor color, bool isNewLine)> _buffer = new();
@@ -268,12 +269,21 @@ public static class Printing
 
     public static void PrintComplete(int successes, int fails, int skipped)
     {
-        if (successes + fails + skipped > 1 || fails > 0 || skipped > 0)
-        {
-            WriteLine();
-            var skippedPart = skipped > 0 ? $", {skipped} skipped" : "";
-            SockseekLog.Info($"Completed: {successes} succeeded{skippedPart}, {fails} failed.");
-        }
+        string? message = FormatComplete(successes, fails, skipped);
+        if (message is null)
+            return;
+
+        WriteLine();
+        SockseekLog.Info(message);
+    }
+
+    internal static string? FormatComplete(int successes, int fails, int skipped)
+    {
+        if (successes + fails + skipped <= 1 && fails == 0 && skipped == 0)
+            return null;
+
+        var skippedPart = skipped > 0 ? $", {skipped} skipped" : "";
+        return $"Completed: {successes} succeeded{skippedPart}, {fails} failed.";
     }
 
     public static bool IsSuccessfulCompletion(Job job)
@@ -516,6 +526,12 @@ public static class Printing
 
     public static void WriteLine(string value = "", ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
+        if (ScopedOutput.Value is { } output)
+        {
+            output.WriteLine(value);
+            return;
+        }
+
         if (!force)
         {
             lock (ConsoleLock)
@@ -544,6 +560,12 @@ public static class Printing
 
     public static void Write(string value, ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
+        if (ScopedOutput.Value is { } output)
+        {
+            output.Write(value);
+            return;
+        }
+
         if (!force)
         {
             lock (ConsoleLock)
@@ -561,6 +583,25 @@ public static class Printing
             Console.ForegroundColor = color;
             Console.Write(value);
             Console.ResetColor();
+        }
+    }
+
+    internal static IDisposable RedirectOutput(TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        TextWriter? previous = ScopedOutput.Value;
+        ScopedOutput.Value = output;
+        return new OutputScope(previous);
+    }
+
+    private sealed class OutputScope(TextWriter? previous) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+                ScopedOutput.Value = previous;
         }
     }
 }

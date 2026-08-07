@@ -15,6 +15,7 @@ namespace Sockseek.Persistence.Tests;
 public sealed class PersistenceWriterTests
 {
     [TestMethod]
+    [TestCategory("Load")]
     public async Task OneHundredThousandProgressCallbacks_ProduceOneLatestValueWrite()
     {
         await using var database = new WriterDatabase();
@@ -198,6 +199,7 @@ public sealed class PersistenceWriterTests
     }
 
     [TestMethod]
+    [TestCategory("Load")]
     public async Task LargeSearchCompletion_BatchesTenThousandRowsIntoOneTerminalTransaction()
     {
         await using var database = new WriterDatabase();

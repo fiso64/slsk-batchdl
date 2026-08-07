@@ -984,7 +984,8 @@ internal static partial class Program
     internal static async Task PrintRemoteCompleteAsync(
         ICliBackend backend,
         Guid workflowId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TextWriter? output = null)
     {
         var workflow = await backend.GetWorkflowAsync(workflowId, ct);
         if (workflow == null)
@@ -1006,7 +1007,18 @@ internal static partial class Program
         foreach (var summary in summaries)
             CountRemoteUserFacingCompletion(summary, jobsById, supersededSourceJobIds, ref successes, ref fails, ref skipped);
 
-        Printing.PrintComplete(successes, fails, skipped);
+        if (output is null)
+        {
+            Printing.PrintComplete(successes, fails, skipped);
+            return;
+        }
+
+        string? message = Printing.FormatComplete(successes, fails, skipped);
+        if (message is not null)
+        {
+            output.WriteLine();
+            output.WriteLine(message);
+        }
     }
 
     private static void CountRemoteUserFacingCompletion(
@@ -1073,9 +1085,11 @@ internal static partial class Program
         ICliBackend backend,
         Guid workflowId,
         DownloadSettings settings,
-        CancellationToken ct)
+        CancellationToken ct,
+        TextWriter? output = null)
     {
         var queue = await BuildRemotePrintQueueAsync(backend, workflowId, settings, ct);
+        using var outputScope = output is null ? null : Printing.RedirectOutput(output);
         PrintOutputRenderer.PrintRequestedOutput(queue);
     }
 

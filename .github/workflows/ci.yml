@@ -59,6 +59,9 @@ jobs:
     - name: Test Project
       run: dotnet test --no-build --configuration Release --verbosity normal
 
+    - name: Run Load Qualifications
+      run: dotnet test --no-build --configuration Release --filter TestCategory=Load --verbosity normal
+
   format-check:
     if: false  # disabled: dotnet format has platform-sensitive indentation behavior
     runs-on: ubuntu-latest

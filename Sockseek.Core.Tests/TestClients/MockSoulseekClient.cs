@@ -166,11 +166,11 @@ namespace Tests.ClientTests
 
             if (ConnectException != null)
             {
-                State = SoulseekClientStates.None;
+                RaiseStateChanged(SoulseekClientStates.None);
                 return Task.FromException(ConnectException);
             }
 
-            State = SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn;
+            RaiseStateChanged(SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn);
             return Task.CompletedTask;
         }
 
@@ -234,7 +234,7 @@ namespace Tests.ClientTests
 
                 if (Interlocked.CompareExchange(ref disconnectingSearches, current - 1, current) == current)
                 {
-                    State = SoulseekClientStates.None;
+                    RaiseStateChanged(SoulseekClientStates.None);
                     throw new SoulseekClientException("Simulated disconnect during search");
                 }
             }
@@ -367,7 +367,7 @@ namespace Tests.ClientTests
 
             if (disconnectingUsers.Remove(username))
             {
-                State = SoulseekClientStates.None;
+                RaiseStateChanged(SoulseekClientStates.None);
                 throw new SoulseekClientException($"Simulated disconnect during download for user {username}");
             }
 

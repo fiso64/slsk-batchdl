@@ -32,8 +32,10 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
     private readonly EngineSettings _initialSettings;
     private readonly ISoulseekInboundRequestRouter? inboundRouter;
+    private readonly Func<TimeSpan, CancellationToken, Task> monitorDelay;
     private ISoulseekClient? _client;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
+    private readonly SemaphoreSlim connectionStateChanged = new(0, 1);
     private TaskCompletionSource _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object stateLock = new();
     private Exception? _fatalException;
@@ -90,8 +92,18 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         EngineSettings initialSettings,
         ISoulseekClient? client = null,
         ISoulseekInboundRequestRouter? inboundRouter = null)
+        : this(initialSettings, client, inboundRouter, Task.Delay)
+    {
+    }
+
+    internal SoulseekClientManager(
+        EngineSettings initialSettings,
+        ISoulseekClient? client,
+        ISoulseekInboundRequestRouter? inboundRouter,
+        Func<TimeSpan, CancellationToken, Task> monitorDelay)
     {
         _initialSettings = initialSettings ?? throw new ArgumentNullException(nameof(initialSettings));
+        this.monitorDelay = monitorDelay ?? throw new ArgumentNullException(nameof(monitorDelay));
         this.inboundRouter = inboundRouter;
         if (client != null)
         {
@@ -130,6 +142,32 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
     private void OnStateChanged(object? sender, SoulseekClientStateChangedEventArgs e)
     {
+        if (!IsConnectedAndLoggedIn)
+        {
+            lock (stateLock)
+            {
+                if (_fatalException is null && _readyTcs.Task.IsCompleted)
+                    _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        // Reconnection is driven by the client's state event. The bounded signal
+        // coalesces bursts without queuing one monitor wake-up per transition.
+        if (Volatile.Read(ref _disposeState) == 0)
+        {
+            try
+            {
+                connectionStateChanged.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+                // Disposal can race an in-flight library event callback.
+            }
+        }
+
         Action<SoulseekClientStates>? handlers = StateChanged;
         if (handlers is null)
             return;
@@ -335,27 +373,25 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         {
             try
             {
-                if (!IsConnectedAndLoggedIn)
-                {
-                    if (HasFatalError)
-                        break;
-
-                    if (_readyTcs.Task.IsCompleted)
-                    {
-                        _readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    }
-
-                    SockseekLog.Soulseek.Warn($"Connection lost. Retrying in {retryDelay}s...");
-                    await Task.Delay(retryDelay * 1000, ct);
-                    
-                    await EnsureConnectedAndLoggedInAsync(_initialSettings, ct);
-                    retryDelay = 1; // Reset on success
-                    SockseekLog.Soulseek.Info("Reconnected successfully.");
-                }
-                else
+                if (IsConnectedAndLoggedIn)
                 {
                     retryDelay = 1;
+                    // StateChanged is the normal wake-up path. The timeout is a
+                    // low-frequency safety net for an implementation that mutates
+                    // State without raising the interface event.
+                    await connectionStateChanged.WaitAsync(TimeSpan.FromSeconds(30), ct);
+                    continue;
                 }
+
+                if (HasFatalError)
+                    break;
+
+                SockseekLog.Soulseek.Warn($"Connection lost. Retrying in {retryDelay}s...");
+                await monitorDelay(TimeSpan.FromSeconds(retryDelay), ct);
+
+                await EnsureConnectedAndLoggedInAsync(_initialSettings, ct);
+                retryDelay = 1;
+                SockseekLog.Soulseek.Info("Reconnected successfully.");
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -370,8 +406,6 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 SockseekLog.Soulseek.Debug(SockseekLog.FormatException("Reconnection attempt failed", ex));
                 retryDelay = Math.Min(retryDelay * 2, 8);
             }
-
-            await Task.Delay(1000, ct);
         }
     }
 
@@ -570,6 +604,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         }
         _client?.Dispose();
         _monitorCts?.Dispose();
+        connectionStateChanged.Dispose();
         _initializationSemaphore.Dispose();
         GC.SuppressFinalize(this);
     }

@@ -457,6 +457,7 @@ public sealed class ChatRuntimeTests
         stopwatch.Stop();
 
         ChatStoreSummary summary = await database.Host.Chat!.GetSummaryAsync("local");
+        long writerCommits = database.Host.HealthSnapshot?.SuccessfulCommitCount ?? -1;
         long databaseBytes = FileSize(database.DatabasePath)
                              + FileSize(database.DatabasePath + "-wal");
         long managedGrowth = Math.Max(0, peakMemory - baselineMemory);
@@ -464,6 +465,7 @@ public sealed class ChatRuntimeTests
             $"chat-load events={eventCount} elapsed_ms={stopwatch.ElapsedMilliseconds} "
             + $"managed_growth_bytes={managedGrowth} database_bytes={databaseBytes} "
             + $"peak_ingress_depth={chat.PeakIngressDepth} drops=0 "
+            + $"commits={writerCommits} "
             + $"acks={fake.AcknowledgeCount} notifications={notifications} target_changes={targetChanges}");
 
         Assert.AreEqual(eventCount / 2, fake.AcknowledgeCount);
@@ -473,7 +475,9 @@ public sealed class ChatRuntimeTests
         Assert.AreEqual(eventCount, notifications);
         Assert.IsTrue(targetChanges >= eventCount);
         Assert.IsTrue(chat.PeakIngressDepth is > 0 and <= ChatLimits.IngressCapacity);
-        Assert.IsTrue(stopwatch.Elapsed < TimeSpan.FromMinutes(2),
+        Assert.IsTrue(writerCommits is > 0 and <= eventCount / 8 + 50,
+            $"The 10,000-event fixture used {writerCommits:N0} writer commits.");
+        Assert.IsTrue(stopwatch.Elapsed < TimeSpan.FromSeconds(30),
             $"The 10,000-event fixture took {stopwatch.Elapsed}.");
         Assert.IsTrue(managedGrowth < 256L * 1024 * 1024,
             $"Managed memory grew by {managedGrowth:N0} bytes.");
@@ -488,7 +492,12 @@ public sealed class ChatRuntimeTests
         var fake = SoulseekClientProxy.Create();
         var settings = Settings();
         await using var session = new DaemonSoulseekRuntime(settings, _ => fake.Client);
-        await using var chat = new ChatRuntime(settings, session, database.Host.Chat!);
+        const int ingressCapacity = 16;
+        await using var chat = new ChatRuntime(
+            settings,
+            session,
+            database.Host.Chat!,
+            ingressCapacity);
         await chat.StartAsync(CancellationToken.None);
         var connectionString = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
         {
@@ -502,9 +511,11 @@ public sealed class ChatRuntimeTests
 
         fake.RaisePrivateMessage(new PrivateMessageReceivedEventArgs(
             17, DateTime.UtcNow, "Alice", "held until durable", replayed: false));
-        await Task.Delay(300);
+        await WaitUntilAsync(
+            () => database.Host.HealthSnapshot?.BusyRetryCount > 0,
+            TimeSpan.FromSeconds(2));
         Assert.AreEqual(0, fake.AcknowledgeCount, "The protocol message was acknowledged while SQLite was busy.");
-        for (int index = 0; index < ChatLimits.IngressCapacity + 100; index++)
+        for (int index = 0; index < ingressCapacity + 1; index++)
         {
             fake.RaiseRoomMessage(new RoomMessageReceivedEventArgs(
                 "pressure-room", "Alice", $"pressure-{index}"));
@@ -575,8 +586,15 @@ public sealed class ChatRuntimeTests
                 Path.GetTempPath(), "sockseek-chat-runtime-tests", Guid.NewGuid().ToString("N"));
             System.IO.Directory.CreateDirectory(directory);
             var host = new PersistenceRuntimeHost(
-                new SockseekSqliteOptions(Path.Combine(directory, "sockseek.db")),
-                new PersistenceWriterOptions(),
+                new SockseekSqliteOptions(
+                    Path.Combine(directory, "sockseek.db"),
+                    DefaultTimeoutSeconds: 1,
+                    BusyTimeoutMilliseconds: 20),
+                new PersistenceWriterOptions
+                {
+                    BusyRetryDelay = TimeSpan.FromMilliseconds(1),
+                    FailureRetryDelay = TimeSpan.FromMilliseconds(10),
+                },
                 new PersistenceRetentionOptions(),
                 "test");
             await host.StartAsync();

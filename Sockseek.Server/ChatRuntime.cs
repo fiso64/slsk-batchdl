@@ -21,6 +21,9 @@ public sealed class ChatRuntime : IAsyncDisposable
     private static readonly TimeSpan RoomListLifetime = TimeSpan.FromSeconds(30);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private const int MaximumAvailableRooms = 20_000;
+    // Amortize SQLite commits while bounding transaction and private-message
+    // acknowledgement latency on modest homeserver storage.
+    private const int MaximumIngressPersistenceBatchSize = 16;
 
     private readonly EngineSettings settings;
     private readonly DaemonSoulseekRuntime soulseek;
@@ -53,14 +56,24 @@ public sealed class ChatRuntime : IAsyncDisposable
         EngineSettings settings,
         DaemonSoulseekRuntime soulseek,
         ChatPersistenceStore store)
+        : this(settings, soulseek, store, ChatLimits.IngressCapacity)
+    {
+    }
+
+    internal ChatRuntime(
+        EngineSettings settings,
+        DaemonSoulseekRuntime soulseek,
+        ChatPersistenceStore store,
+        int ingressCapacity)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.soulseek = soulseek ?? throw new ArgumentNullException(nameof(soulseek));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ingressCapacity);
         configuredRooms = settings.Chat.AutoJoinRooms
             .Select(ChatIdentity.NormalizeRoom)
             .ToHashSet(StringComparer.Ordinal);
-        ingress = Channel.CreateBounded<IngressItem>(new BoundedChannelOptions(ChatLimits.IngressCapacity)
+        ingress = Channel.CreateBounded<IngressItem>(new BoundedChannelOptions(ingressCapacity)
         {
             SingleReader = true,
             SingleWriter = false,
@@ -796,13 +809,36 @@ public sealed class ChatRuntime : IAsyncDisposable
     {
         try
         {
-            await foreach (IngressItem item in ingress.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            while (await ingress.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
+                if (!ingress.Reader.TryRead(out IngressItem? item))
+                    continue;
+
+                var messageBatch = new List<IngressItem>(MaximumIngressPersistenceBatchSize);
+                if (item is PrivateMessage or RoomMessage)
+                {
+                    messageBatch.Add(item);
+                    while (messageBatch.Count < MaximumIngressPersistenceBatchSize
+                        && ingress.Reader.TryPeek(out IngressItem? next)
+                        && next is PrivateMessage or RoomMessage
+                        && ingress.Reader.TryRead(out next))
+                    {
+                        messageBatch.Add(next);
+                    }
+                }
+
                 if (ingress.Reader.CanCount)
                     ChatTelemetry.SetIngressDepth(ingress.Reader.Count);
                 try
                 {
-                    await ProcessIngressAsync(item, cancellationToken).ConfigureAwait(false);
+                    if (messageBatch.Count > 0)
+                    {
+                        await ProcessMessageBatchAsync(messageBatch, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await ProcessIngressAsync(item, cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
                 catch (Exception ex)
@@ -833,108 +869,9 @@ public sealed class ChatRuntime : IAsyncDisposable
                 await ack.Client.AcknowledgePrivateMessageAsync(ack.ProtocolId, cancellationToken).ConfigureAwait(false);
                 ChatTelemetry.RecordAcknowledged("discarded");
                 break;
-            case PrivateMessage direct:
-            {
-                IncomingChatCommitResult result;
-                bool currentAccount;
-                await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    try
-                    {
-                        result = await store.AcceptPrivateMessageAsync(
-                            direct.LocalAccount,
-                            direct.Username,
-                            direct.Text,
-                            direct.ProtocolId,
-                            new DateTimeOffset(DateTime.SpecifyKind(direct.Timestamp, DateTimeKind.Utc)),
-                            cancellationToken).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        ChatTelemetry.RecordPersistenceFailure("private_ingress");
-                        throw;
-                    }
-                    ChatTelemetry.RecordPersisted("private", duplicate: !result.Inserted);
-                    ChatTelemetry.RecordInboundResult("private", result.Inserted ? "accepted" : "duplicate");
-                    currentAccount = IsCurrentAccount(direct.LocalAccount);
-                    if (result.Inserted && currentAccount)
-                    {
-                        NotifyMessageCommitted(result.Message);
-                        if (result.Notification is { } notification)
-                            NotifyNotificationCommitted(notification);
-                        PublishTarget(new ChatTargetDeltaDto(
-                            ChatTargetKind.Direct,
-                            result.Message.TargetId,
-                            result.Conversation is null ? null : ChatDtoMapper.ToDto(result.Conversation),
-                            null,
-                            [ChatDtoMapper.ToDto(result.Message)]));
-                        ApplySummaryDelta(privateMessages: 1, notifications: 1);
-                    }
-                }
-                finally
-                {
-                    summaryMutationGate.Release();
-                }
-                if (currentAccount)
-                {
-                    await direct.Client.AcknowledgePrivateMessageAsync(
-                        direct.ProtocolId, cancellationToken).ConfigureAwait(false);
-                    ChatTelemetry.RecordAcknowledged("stored");
-                }
+            case PrivateMessage or RoomMessage:
+                await ProcessMessageBatchAsync([item], cancellationToken).ConfigureAwait(false);
                 break;
-            }
-            case RoomMessage roomMessage:
-            {
-                if (ChatIdentity.NormalizeUsername(roomMessage.Username)
-                    == ChatIdentity.NormalizeAccount(roomMessage.LocalAccount))
-                    break;
-                bool mention = MentionDetector.ContainsWholeUsername(
-                    roomMessage.Text, roomMessage.LocalAccount);
-                IncomingChatCommitResult result;
-                await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    try
-                    {
-                        result = await store.AcceptRoomMessageAsync(
-                            roomMessage.LocalAccount,
-                            roomMessage.RoomName,
-                            roomMessage.Username,
-                            roomMessage.Text,
-                            mention,
-                            cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        ChatTelemetry.RecordPersistenceFailure("room_ingress");
-                        throw;
-                    }
-                    ChatTelemetry.RecordPersisted("room");
-                    ChatTelemetry.RecordInboundResult("room", "accepted");
-                    if (IsCurrentAccount(roomMessage.LocalAccount))
-                    {
-                        NotifyMessageCommitted(result.Message);
-                        if (result.Notification is { } notification)
-                            NotifyNotificationCommitted(notification);
-                        PublishTarget(new ChatTargetDeltaDto(
-                            ChatTargetKind.Room,
-                            result.Message.TargetId,
-                            null,
-                            result.Room is null ? null : MapRoom(result.Room),
-                            [ChatDtoMapper.ToDto(result.Message)]));
-                        ApplySummaryDelta(
-                            roomMessages: 1,
-                            notifications: result.Notification is null ? 0 : 1);
-                    }
-                }
-                finally
-                {
-                    summaryMutationGate.Release();
-                }
-                break;
-            }
             case RosterJoined joined:
                 ApplyRosterJoin(joined.RoomName, joined.Member);
                 await PublishRoomByNameAsync(joined.RoomName, cancellationToken).ConfigureAwait(false);
@@ -961,6 +898,142 @@ public sealed class ChatRuntime : IAsyncDisposable
                 await ReconcileDesiredRoomsAsync(cancellationToken).ConfigureAwait(false);
                 await RefreshSummaryAsync(null, cancellationToken).ConfigureAwait(false);
                 break;
+        }
+    }
+
+    private async Task ProcessMessageBatchAsync(
+        IReadOnlyList<IngressItem> items,
+        CancellationToken cancellationToken)
+    {
+        var pending = new List<(IngressItem Item, ChatInboundMessage Message)>(items.Count);
+        foreach (IngressItem item in items)
+        {
+            if (item is PrivateMessage direct)
+            {
+                pending.Add((item, new PrivateChatInboundMessage(
+                    direct.LocalAccount,
+                    direct.Username,
+                    direct.Text,
+                    direct.ProtocolId,
+                    new DateTimeOffset(DateTime.SpecifyKind(direct.Timestamp, DateTimeKind.Utc)))));
+                continue;
+            }
+
+            var roomMessage = (RoomMessage)item;
+            if (ChatIdentity.NormalizeUsername(roomMessage.Username)
+                == ChatIdentity.NormalizeAccount(roomMessage.LocalAccount))
+            {
+                continue;
+            }
+            pending.Add((item, new RoomChatInboundMessage(
+                roomMessage.LocalAccount,
+                roomMessage.RoomName,
+                roomMessage.Username,
+                roomMessage.Text,
+                MentionDetector.ContainsWholeUsername(roomMessage.Text, roomMessage.LocalAccount))));
+        }
+
+        if (pending.Count == 0)
+            return;
+
+        IReadOnlyList<IncomingChatCommitResult> results;
+
+        try
+        {
+            results = await store.AcceptIncomingMessagesAsync(
+                pending.Select(item => item.Message).ToArray(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            foreach ((IngressItem item, _) in pending)
+            {
+                ChatTelemetry.RecordPersistenceFailure(
+                    item is PrivateMessage ? "private_ingress" : "room_ingress");
+            }
+            SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
+            SockseekLog.Daemon.Error(ex, "Chat ingress batch failed");
+            return;
+        }
+
+        var acknowledgements = new List<(PrivateMessage Message, ISoulseekClient Client)>();
+        await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            for (int index = 0; index < pending.Count; index++)
+            {
+                IngressItem item = pending[index].Item;
+                IncomingChatCommitResult result = results[index];
+
+                if (item is PrivateMessage direct)
+                {
+                    ChatTelemetry.RecordPersisted("private", duplicate: !result.Inserted);
+                    ChatTelemetry.RecordInboundResult("private", result.Inserted ? "accepted" : "duplicate");
+                    bool currentAccount = IsCurrentAccount(direct.LocalAccount);
+                    if (result.Inserted && currentAccount)
+                    {
+                        NotifyMessageCommitted(result.Message);
+                        if (result.Notification is { } notification)
+                            NotifyNotificationCommitted(notification);
+                        PublishTarget(new ChatTargetDeltaDto(
+                            ChatTargetKind.Direct,
+                            result.Message.TargetId,
+                            result.Conversation is null ? null : ChatDtoMapper.ToDto(result.Conversation),
+                            null,
+                            [ChatDtoMapper.ToDto(result.Message)]));
+                        ApplySummaryDelta(privateMessages: 1, notifications: 1);
+                    }
+                    if (currentAccount)
+                        acknowledgements.Add((direct, direct.Client));
+                    continue;
+                }
+
+                var roomMessage = (RoomMessage)item;
+                ChatTelemetry.RecordPersisted("room");
+                ChatTelemetry.RecordInboundResult("room", "accepted");
+                if (IsCurrentAccount(roomMessage.LocalAccount))
+                {
+                    NotifyMessageCommitted(result.Message);
+                    if (result.Notification is { } notification)
+                        NotifyNotificationCommitted(notification);
+                    PublishTarget(new ChatTargetDeltaDto(
+                        ChatTargetKind.Room,
+                        result.Message.TargetId,
+                        null,
+                        result.Room is null ? null : MapRoom(result.Room),
+                        [ChatDtoMapper.ToDto(result.Message)]));
+                    ApplySummaryDelta(
+                        roomMessages: 1,
+                        notifications: result.Notification is null ? 0 : 1);
+                }
+            }
+        }
+        finally
+        {
+            summaryMutationGate.Release();
+        }
+
+        foreach (var (message, client) in acknowledgements)
+        {
+            try
+            {
+                await client.AcknowledgePrivateMessageAsync(
+                    message.ProtocolId, cancellationToken).ConfigureAwait(false);
+                ChatTelemetry.RecordAcknowledged("stored");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
+                SockseekLog.Daemon.Error(ex, "Chat ingress item failed");
+            }
         }
     }
 

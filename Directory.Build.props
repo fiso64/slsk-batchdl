@@ -4,6 +4,10 @@
     <VersionSuffix></VersionSuffix>
 
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!-- Keep expensive qualification fixtures out of the fast default loop.
+         An explicit command-line test filter replaces this default. -->
+    <VSTestTestCaseFilter Condition="'$(VSTestTestCaseFilter)' == ''">TestCategory!=Load</VSTestTestCaseFilter>
   </PropertyGroup>
 
   <!-- Redirect the lock file to the ignored 'obj' folder during manual publishes -->

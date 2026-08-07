@@ -18,6 +18,24 @@ public sealed record ChatRetentionResult(
     int PrunedMessages,
     IReadOnlyList<ChatRetentionTarget> AffectedTargets);
 
+public abstract record ChatInboundMessage(string LocalAccount, string Body);
+
+public sealed record PrivateChatInboundMessage(
+    string LocalAccount,
+    string Username,
+    string Body,
+    int ProtocolMessageId,
+    DateTimeOffset ProtocolTimestamp)
+    : ChatInboundMessage(LocalAccount, Body);
+
+public sealed record RoomChatInboundMessage(
+    string LocalAccount,
+    string RoomName,
+    string Username,
+    string Body,
+    bool CreateNotification)
+    : ChatInboundMessage(LocalAccount, Body);
+
 public sealed class ChatPersistenceStore(
     IDbContextFactory<SockseekDbContext> contextFactory,
     PersistenceInbox inbox,
@@ -43,85 +61,10 @@ public sealed class ChatPersistenceStore(
         int protocolMessageId,
         DateTimeOffset protocolTimestamp,
         CancellationToken cancellationToken = default)
-    {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
-        string peerKey = ChatIdentity.NormalizeUsername(username);
-        body = ChatIdentity.ValidateMessage(body);
-        var commandResult = await ExecuteAsync(async (context, ct) =>
-        {
-            var existing = await context.ChatMessages.FirstOrDefaultAsync(message =>
-                    message.LocalAccountKey == accountKey
-                    && message.TargetKind == nameof(ChatTargetKind.Direct)
-                    && message.TargetKey == peerKey
-                    && message.ProtocolMessageId == protocolMessageId
-                    && message.ProtocolTimestamp == ToUnixMilliseconds(protocolTimestamp), ct)
-                .ConfigureAwait(false);
-            if (existing is not null)
-                return new IncomingCommandResult(false, existing.Id, null);
-
-            long now = ToUnixMilliseconds(clock.GetUtcNow());
-            var conversation = await context.ChatConversations.FirstOrDefaultAsync(
-                    item => item.LocalAccountKey == accountKey && item.PeerKey == peerKey, ct)
-                .ConfigureAwait(false);
-            if (conversation is null)
-            {
-                conversation = new ChatConversationEntity
-                {
-                    Id = Guid.NewGuid(),
-                    LocalAccountKey = accountKey,
-                    PeerKey = peerKey,
-                    DisplayUsername = username.Trim(),
-                    CreatedAtUtc = now,
-                    UpdatedAtUtc = now,
-                };
-                context.ChatConversations.Add(conversation);
-            }
-
-            long sequence = await NextMessageSequenceAsync(context, ct).ConfigureAwait(false);
-            var message = new ChatMessageEntity
-            {
-                Id = Guid.NewGuid(),
-                Sequence = sequence,
-                LocalAccountKey = accountKey,
-                TargetKind = nameof(ChatTargetKind.Direct),
-                TargetId = conversation.Id,
-                TargetKey = peerKey,
-                DisplayTarget = username.Trim(),
-                SenderKey = peerKey,
-                DisplaySender = username.Trim(),
-                Direction = nameof(ChatMessageDirection.Incoming),
-                Body = body,
-                OccurredAtUtc = ToUnixMilliseconds(protocolTimestamp),
-                RecordedAtUtc = now,
-                SendState = nameof(ChatMessageState.Received),
-                ProtocolMessageId = protocolMessageId,
-                ProtocolTimestamp = ToUnixMilliseconds(protocolTimestamp),
-            };
-            context.ChatMessages.Add(message);
-            conversation.DisplayUsername = username.Trim();
-            conversation.ArchivedAtUtc = null;
-            conversation.LastMessageSequence = sequence;
-            conversation.UpdatedAtUtc = now;
-            conversation.Revision++;
-
-            var notification = new NotificationEntity
-            {
-                Id = Guid.NewGuid(),
-                Sequence = await NextNotificationSequenceAsync(context, ct).ConfigureAwait(false),
-                LocalAccountKey = accountKey,
-                Kind = nameof(UserNotificationKind.PrivateMessage),
-                SourceMessageId = message.Id,
-                CreatedAtUtc = now,
-            };
-            context.Notifications.Add(notification);
-            return new IncomingCommandResult(true, message.Id, notification.Id);
-        }, cancellationToken).ConfigureAwait(false);
-
-        return await HydrateIncomingResultAsync(
-            commandResult,
-            ChatTargetKind.Direct,
-            cancellationToken).ConfigureAwait(false);
-    }
+        => (await AcceptIncomingMessagesAsync(
+            [new PrivateChatInboundMessage(
+                localAccount, username, body, protocolMessageId, protocolTimestamp)],
+            cancellationToken).ConfigureAwait(false))[0];
 
     public async Task<IncomingChatCommitResult> AcceptRoomMessageAsync(
         string localAccount,
@@ -130,61 +73,205 @@ public sealed class ChatPersistenceStore(
         string body,
         bool createNotification,
         CancellationToken cancellationToken = default)
-    {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
-        string roomKey = ChatIdentity.NormalizeRoom(roomName);
-        string senderKey = ChatIdentity.NormalizeUsername(username);
-        body = ChatIdentity.ValidateMessage(body);
-        var commandResult = await ExecuteAsync(async (context, ct) =>
-        {
-            long now = ToUnixMilliseconds(clock.GetUtcNow());
-            var room = await GetOrCreateRoomEntityAsync(
-                context, accountKey, roomKey, roomName.Trim(), now, ct).ConfigureAwait(false);
-            long sequence = await NextMessageSequenceAsync(context, ct).ConfigureAwait(false);
-            var message = new ChatMessageEntity
-            {
-                Id = Guid.NewGuid(),
-                Sequence = sequence,
-                LocalAccountKey = accountKey,
-                TargetKind = nameof(ChatTargetKind.Room),
-                TargetId = room.Id,
-                TargetKey = roomKey,
-                DisplayTarget = roomName.Trim(),
-                SenderKey = senderKey,
-                DisplaySender = username.Trim(),
-                Direction = nameof(ChatMessageDirection.Incoming),
-                Body = body,
-                OccurredAtUtc = now,
-                RecordedAtUtc = now,
-                SendState = nameof(ChatMessageState.Received),
-            };
-            context.ChatMessages.Add(message);
-            room.LastMessageSequence = sequence;
-            room.UpdatedAtUtc = now;
-            room.Revision++;
+        => (await AcceptIncomingMessagesAsync(
+            [new RoomChatInboundMessage(
+                localAccount, roomName, username, body, createNotification)],
+            cancellationToken).ConfigureAwait(false))[0];
 
-            Guid? notificationId = null;
-            if (createNotification)
+    public async Task<IReadOnlyList<IncomingChatCommitResult>> AcceptIncomingMessagesAsync(
+        IReadOnlyList<ChatInboundMessage> messages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        if (messages.Count == 0)
+            return [];
+
+        NormalizedInboundMessage[] normalized = messages.Select(NormalizeInboundMessage).ToArray();
+        return await ExecuteAsync(async (context, ct) =>
+        {
+            ChatSequenceEntity sequence = await GetSequenceAsync(context, ct).ConfigureAwait(false);
+            var results = new List<IncomingChatCommitResult>(normalized.Length);
+            var unreadCounts = new Dictionary<Guid, int>();
+
+            async Task<int> GetUnreadCountAsync(
+                string accountKey,
+                Guid targetId,
+                bool excludeLocalSender)
             {
-                var notification = new NotificationEntity
+                if (unreadCounts.TryGetValue(targetId, out int count))
+                    return count;
+
+                var query = context.ChatMessages.Where(item =>
+                    item.LocalAccountKey == accountKey
+                    && item.TargetId == targetId
+                    && item.Direction == nameof(ChatMessageDirection.Incoming));
+                if (excludeLocalSender)
+                    query = query.Where(item => item.SenderKey != accountKey);
+                count = await query.CountAsync(ct).ConfigureAwait(false);
+                unreadCounts.Add(targetId, count);
+                return count;
+            }
+
+            foreach (NormalizedInboundMessage inbound in normalized)
+            {
+                long now = ToUnixMilliseconds(clock.GetUtcNow());
+                if (inbound is NormalizedPrivateMessage direct)
+                {
+                    var conversation = context.ChatConversations.Local.FirstOrDefault(
+                            item => item.LocalAccountKey == direct.AccountKey && item.PeerKey == direct.PeerKey)
+                        ?? await context.ChatConversations.FirstOrDefaultAsync(
+                            item => item.LocalAccountKey == direct.AccountKey && item.PeerKey == direct.PeerKey, ct)
+                            .ConfigureAwait(false);
+                    if (conversation is null)
+                    {
+                        conversation = new ChatConversationEntity
+                        {
+                            Id = Guid.NewGuid(),
+                            LocalAccountKey = direct.AccountKey,
+                            PeerKey = direct.PeerKey,
+                            DisplayUsername = direct.DisplayUsername,
+                            CreatedAtUtc = now,
+                            UpdatedAtUtc = now,
+                        };
+                        context.ChatConversations.Add(conversation);
+                    }
+
+                    await GetUnreadCountAsync(direct.AccountKey, conversation.Id, excludeLocalSender: false)
+                        .ConfigureAwait(false);
+                    var existing = context.ChatMessages.Local.FirstOrDefault(message =>
+                            message.LocalAccountKey == direct.AccountKey
+                            && message.TargetKind == nameof(ChatTargetKind.Direct)
+                            && message.TargetKey == direct.PeerKey
+                            && message.ProtocolMessageId == direct.ProtocolMessageId
+                            && message.ProtocolTimestamp == direct.ProtocolTimestamp)
+                        ?? await context.ChatMessages.FirstOrDefaultAsync(message =>
+                            message.LocalAccountKey == direct.AccountKey
+                            && message.TargetKind == nameof(ChatTargetKind.Direct)
+                            && message.TargetKey == direct.PeerKey
+                            && message.ProtocolMessageId == direct.ProtocolMessageId
+                            && message.ProtocolTimestamp == direct.ProtocolTimestamp, ct)
+                            .ConfigureAwait(false);
+                    if (existing is not null)
+                    {
+                        ChatMessageEntity? lastMessage = context.ChatMessages.Local.FirstOrDefault(
+                            item => item.Sequence == conversation.LastMessageSequence);
+                        lastMessage ??= await context.ChatMessages.AsNoTracking().SingleOrDefaultAsync(
+                            item => item.Sequence == conversation.LastMessageSequence, ct).ConfigureAwait(false);
+                        results.Add(new IncomingChatCommitResult(
+                            false,
+                            MapMessage(existing),
+                            MapConversation(conversation, unreadCounts[conversation.Id], lastMessage),
+                            null,
+                            null));
+                        continue;
+                    }
+
+                    long messageSequence = checked(++sequence.LastMessageSequence);
+                    var message = new ChatMessageEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        Sequence = messageSequence,
+                        LocalAccountKey = direct.AccountKey,
+                        TargetKind = nameof(ChatTargetKind.Direct),
+                        TargetId = conversation.Id,
+                        TargetKey = direct.PeerKey,
+                        DisplayTarget = direct.DisplayUsername,
+                        SenderKey = direct.PeerKey,
+                        DisplaySender = direct.DisplayUsername,
+                        Direction = nameof(ChatMessageDirection.Incoming),
+                        Body = direct.Body,
+                        OccurredAtUtc = direct.ProtocolTimestamp,
+                        RecordedAtUtc = now,
+                        SendState = nameof(ChatMessageState.Received),
+                        ProtocolMessageId = direct.ProtocolMessageId,
+                        ProtocolTimestamp = direct.ProtocolTimestamp,
+                    };
+                    context.ChatMessages.Add(message);
+                    conversation.DisplayUsername = direct.DisplayUsername;
+                    conversation.ArchivedAtUtc = null;
+                    conversation.LastMessageSequence = messageSequence;
+                    conversation.UpdatedAtUtc = now;
+                    conversation.Revision++;
+                    unreadCounts[conversation.Id]++;
+
+                    var notification = new NotificationEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        Sequence = checked(++sequence.LastNotificationSequence),
+                        LocalAccountKey = direct.AccountKey,
+                        Kind = nameof(UserNotificationKind.PrivateMessage),
+                        SourceMessageId = message.Id,
+                        CreatedAtUtc = now,
+                    };
+                    context.Notifications.Add(notification);
+                    results.Add(new IncomingChatCommitResult(
+                        true,
+                        MapMessage(message),
+                        MapConversation(conversation, unreadCounts[conversation.Id], message),
+                        null,
+                        MapNotification(notification, message)));
+                    continue;
+                }
+
+                var roomMessage = (NormalizedRoomMessage)inbound;
+                var room = await GetOrCreateRoomEntityAsync(
+                    context,
+                    roomMessage.AccountKey,
+                    roomMessage.RoomKey,
+                    roomMessage.DisplayRoomName,
+                    now,
+                    ct).ConfigureAwait(false);
+                await GetUnreadCountAsync(roomMessage.AccountKey, room.Id, excludeLocalSender: true)
+                    .ConfigureAwait(false);
+                long roomMessageSequence = checked(++sequence.LastMessageSequence);
+                var roomEntity = new ChatMessageEntity
                 {
                     Id = Guid.NewGuid(),
-                    Sequence = await NextNotificationSequenceAsync(context, ct).ConfigureAwait(false),
-                    LocalAccountKey = accountKey,
-                    Kind = nameof(UserNotificationKind.RoomMention),
-                    SourceMessageId = message.Id,
-                    CreatedAtUtc = now,
+                    Sequence = roomMessageSequence,
+                    LocalAccountKey = roomMessage.AccountKey,
+                    TargetKind = nameof(ChatTargetKind.Room),
+                    TargetId = room.Id,
+                    TargetKey = roomMessage.RoomKey,
+                    DisplayTarget = roomMessage.DisplayRoomName,
+                    SenderKey = roomMessage.SenderKey,
+                    DisplaySender = roomMessage.DisplayUsername,
+                    Direction = nameof(ChatMessageDirection.Incoming),
+                    Body = roomMessage.Body,
+                    OccurredAtUtc = now,
+                    RecordedAtUtc = now,
+                    SendState = nameof(ChatMessageState.Received),
                 };
-                context.Notifications.Add(notification);
-                notificationId = notification.Id;
-            }
-            return new IncomingCommandResult(true, message.Id, notificationId);
-        }, cancellationToken).ConfigureAwait(false);
+                context.ChatMessages.Add(roomEntity);
+                room.LastMessageSequence = roomMessageSequence;
+                room.UpdatedAtUtc = now;
+                room.Revision++;
+                if (roomMessage.SenderKey != roomMessage.AccountKey)
+                    unreadCounts[room.Id]++;
 
-        return await HydrateIncomingResultAsync(
-            commandResult,
-            ChatTargetKind.Room,
-            cancellationToken).ConfigureAwait(false);
+                NotificationEntity? roomNotification = null;
+                if (roomMessage.CreateNotification)
+                {
+                    roomNotification = new NotificationEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        Sequence = checked(++sequence.LastNotificationSequence),
+                        LocalAccountKey = roomMessage.AccountKey,
+                        Kind = nameof(UserNotificationKind.RoomMention),
+                        SourceMessageId = roomEntity.Id,
+                        CreatedAtUtc = now,
+                    };
+                    context.Notifications.Add(roomNotification);
+                }
+                results.Add(new IncomingChatCommitResult(
+                    true,
+                    MapMessage(roomEntity),
+                    null,
+                    MapRoom(room, unreadCounts[room.Id], roomEntity),
+                    roomNotification is null ? null : MapNotification(roomNotification, roomEntity)));
+            }
+
+            return results.ToArray();
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<OutgoingChatPreparationResult> PrepareOutgoingPrivateMessageAsync(
@@ -850,33 +937,6 @@ public sealed class ChatPersistenceStore(
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<IncomingChatCommitResult> HydrateIncomingResultAsync(
-        IncomingCommandResult result,
-        ChatTargetKind kind,
-        CancellationToken cancellationToken)
-    {
-        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var messageEntity = await context.ChatMessages.AsNoTracking().SingleAsync(
-            item => item.Id == result.MessageId, cancellationToken).ConfigureAwait(false);
-        ChatMessageRecord message = MapMessage(messageEntity);
-        ConversationRecord? conversation = kind == ChatTargetKind.Direct
-            ? await MapConversationAsync(context,
-                await context.ChatConversations.AsNoTracking().SingleAsync(item => item.Id == message.TargetId, cancellationToken),
-                cancellationToken).ConfigureAwait(false)
-            : null;
-        RoomSubscriptionRecord? room = kind == ChatTargetKind.Room
-            ? await MapRoomAsync(context,
-                await context.ChatRoomSubscriptions.AsNoTracking().SingleAsync(item => item.Id == message.TargetId, cancellationToken),
-                cancellationToken).ConfigureAwait(false)
-            : null;
-        UserNotificationRecord? notification = result.NotificationId is { } notificationId
-            ? await MapNotificationAsync(context,
-                await context.Notifications.AsNoTracking().SingleAsync(item => item.Id == notificationId, cancellationToken),
-                cancellationToken).ConfigureAwait(false)
-            : null;
-        return new IncomingChatCommitResult(result.Inserted, message, conversation, room, notification);
-    }
-
     private async Task<ChatMessageRecord?> GetMessageAsync(
         string accountKey,
         Guid messageId,
@@ -896,8 +956,11 @@ public sealed class ChatPersistenceStore(
         long now,
         CancellationToken cancellationToken)
     {
-        var room = await context.ChatRoomSubscriptions.FirstOrDefaultAsync(
-            item => item.LocalAccountKey == accountKey && item.RoomKey == roomKey, cancellationToken).ConfigureAwait(false);
+        var room = context.ChatRoomSubscriptions.Local.FirstOrDefault(
+                item => item.LocalAccountKey == accountKey && item.RoomKey == roomKey)
+            ?? await context.ChatRoomSubscriptions.FirstOrDefaultAsync(
+                item => item.LocalAccountKey == accountKey && item.RoomKey == roomKey, cancellationToken)
+                .ConfigureAwait(false);
         if (room is not null)
             return room;
         room = new ChatRoomSubscriptionEntity
@@ -989,13 +1052,19 @@ public sealed class ChatPersistenceStore(
             && item.TargetId == entity.Id
             && item.Direction == nameof(ChatMessageDirection.Incoming)
             && item.Sequence > entity.LastReadSequence, cancellationToken).ConfigureAwait(false);
-        return new ConversationRecord(
+        return MapConversation(entity, unread, last);
+    }
+
+    private static ConversationRecord MapConversation(
+        ChatConversationEntity entity,
+        int unread,
+        ChatMessageEntity? last)
+        => new(
             entity.Id, entity.LocalAccountKey, entity.PeerKey, entity.DisplayUsername,
             entity.ArchivedAtUtc is { } archived ? FromUnixMilliseconds(archived) : null,
             entity.LastReadSequence, entity.LastMessageSequence, entity.Revision,
             FromUnixMilliseconds(entity.CreatedAtUtc), FromUnixMilliseconds(entity.UpdatedAtUtc),
             unread, last is null ? null : MapMessage(last));
-    }
 
     private static async Task<RoomSubscriptionRecord> MapRoomAsync(
         SockseekDbContext context,
@@ -1012,13 +1081,19 @@ public sealed class ChatPersistenceStore(
             && item.Direction == nameof(ChatMessageDirection.Incoming)
             && item.SenderKey != entity.LocalAccountKey
             && item.Sequence > entity.LastReadSequence, cancellationToken).ConfigureAwait(false);
-        return new RoomSubscriptionRecord(
+        return MapRoom(entity, unread, last);
+    }
+
+    private static RoomSubscriptionRecord MapRoom(
+        ChatRoomSubscriptionEntity entity,
+        int unread,
+        ChatMessageEntity? last)
+        => new(
             entity.Id, entity.LocalAccountKey, entity.RoomKey, entity.DisplayName,
             entity.RuntimeDesired, Enum.Parse<ChatRoomKind>(entity.Kind),
             entity.LastReadSequence, entity.LastMessageSequence, entity.Revision,
             FromUnixMilliseconds(entity.CreatedAtUtc), FromUnixMilliseconds(entity.UpdatedAtUtc),
             unread, last is null ? null : MapMessage(last));
-    }
 
     private static async Task<UserNotificationRecord> MapNotificationAsync(
         SockseekDbContext context,
@@ -1027,13 +1102,18 @@ public sealed class ChatPersistenceStore(
     {
         var message = await context.ChatMessages.AsNoTracking().SingleAsync(
             item => item.Id == entity.SourceMessageId, cancellationToken).ConfigureAwait(false);
-        return new UserNotificationRecord(
+        return MapNotification(entity, message);
+    }
+
+    private static UserNotificationRecord MapNotification(
+        NotificationEntity entity,
+        ChatMessageEntity message)
+        => new(
             entity.Id, entity.Sequence, entity.LocalAccountKey,
             Enum.Parse<UserNotificationKind>(entity.Kind), entity.SourceMessageId,
             FromUnixMilliseconds(entity.CreatedAtUtc),
             entity.ReadAtUtc is { } read ? FromUnixMilliseconds(read) : null,
             MapMessage(message));
-    }
 
     private static async Task<int> CountUnreadAsync(
         SockseekDbContext context,
@@ -1122,6 +1202,49 @@ public sealed class ChatPersistenceStore(
     private static DateTimeOffset FromUnixMilliseconds(long value)
         => DateTimeOffset.FromUnixTimeMilliseconds(value);
 
-    private sealed record IncomingCommandResult(bool Inserted, Guid MessageId, Guid? NotificationId);
+    private static NormalizedInboundMessage NormalizeInboundMessage(ChatInboundMessage message)
+        => message switch
+        {
+            PrivateChatInboundMessage direct => new NormalizedPrivateMessage(
+                ChatIdentity.NormalizeAccount(direct.LocalAccount),
+                ChatIdentity.NormalizeUsername(direct.Username),
+                direct.Username.Trim(),
+                ChatIdentity.ValidateMessage(direct.Body),
+                direct.ProtocolMessageId,
+                ToUnixMilliseconds(direct.ProtocolTimestamp)),
+            RoomChatInboundMessage room => new NormalizedRoomMessage(
+                ChatIdentity.NormalizeAccount(room.LocalAccount),
+                ChatIdentity.NormalizeRoom(room.RoomName),
+                room.RoomName.Trim(),
+                ChatIdentity.NormalizeUsername(room.Username),
+                room.Username.Trim(),
+                ChatIdentity.ValidateMessage(room.Body),
+                room.CreateNotification),
+            null => throw new ArgumentException("Inbound message lists cannot contain null items.", nameof(message)),
+            _ => throw new ArgumentException(
+                $"Unsupported inbound chat message type '{message.GetType().Name}'.", nameof(message)),
+        };
+
+    private abstract record NormalizedInboundMessage(string AccountKey, string Body);
+
+    private sealed record NormalizedPrivateMessage(
+        string AccountKey,
+        string PeerKey,
+        string DisplayUsername,
+        string Body,
+        int ProtocolMessageId,
+        long ProtocolTimestamp)
+        : NormalizedInboundMessage(AccountKey, Body);
+
+    private sealed record NormalizedRoomMessage(
+        string AccountKey,
+        string RoomKey,
+        string DisplayRoomName,
+        string SenderKey,
+        string DisplayUsername,
+        string Body,
+        bool CreateNotification)
+        : NormalizedInboundMessage(AccountKey, Body);
+
     private sealed record OutgoingCommandResult(OutgoingChatPreparationStatus Status, Guid MessageId);
 }

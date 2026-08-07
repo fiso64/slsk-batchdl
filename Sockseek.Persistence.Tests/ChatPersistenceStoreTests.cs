@@ -32,6 +32,48 @@ public sealed class ChatPersistenceStoreTests
     }
 
     [TestMethod]
+    public async Task MixedInboundBatchCommitsOnceAndPreservesOrderAndSnapshots()
+    {
+        await using var database = await ChatDatabase.CreateAsync();
+        DateTimeOffset sentAt = DateTimeOffset.Parse("2026-08-06T20:00:00Z");
+
+        IReadOnlyList<IncomingChatCommitResult> results =
+            await database.Store.AcceptIncomingMessagesAsync(
+            [
+                new PrivateChatInboundMessage("local", "Alice", "direct-1", 1, sentAt),
+                new RoomChatInboundMessage("local", "lobby", "Alice", "room-1", true),
+                new PrivateChatInboundMessage("local", "Alice", "direct-1", 1, sentAt),
+                new PrivateChatInboundMessage("local", "Alice", "direct-2", 2, sentAt.AddSeconds(1)),
+                new RoomChatInboundMessage("local", "lobby", "Alice", "room-2", false),
+            ]);
+
+        Assert.AreEqual(5, results.Count);
+        CollectionAssert.AreEqual(
+            new[] { "direct-1", "room-1", "direct-1", "direct-2", "room-2" },
+            results.Select(result => result.Message.Body).ToArray());
+        Assert.IsFalse(results[2].Inserted);
+        Assert.AreEqual(results[0].Message.MessageId, results[2].Message.MessageId);
+        Assert.IsNull(results[2].Notification);
+        Assert.IsTrue(results[0].Message.Sequence < results[1].Message.Sequence);
+        Assert.IsTrue(results[1].Message.Sequence < results[3].Message.Sequence);
+        Assert.IsTrue(results[3].Message.Sequence < results[4].Message.Sequence);
+        CollectionAssert.AreEqual(
+            new[] { 1, 1, 2 },
+            results.Where(result => result.Conversation is not null)
+                .Select(result => result.Conversation!.UnreadCount).ToArray());
+        CollectionAssert.AreEqual(
+            new[] { 1, 2 },
+            results.Where(result => result.Room is not null)
+                .Select(result => result.Room!.UnreadCount).ToArray());
+        Assert.AreEqual(1L, database.HealthSnapshot.SuccessfulCommitCount);
+
+        ChatStoreSummary summary = await database.Store.GetSummaryAsync("local");
+        Assert.AreEqual(2, summary.UnreadPrivateMessages);
+        Assert.AreEqual(2, summary.UnreadRoomMessages);
+        Assert.AreEqual(3, summary.UnreadNotifications);
+    }
+
+    [TestMethod]
     public async Task OutgoingMessageIdIsIdempotentAndConflictingReuseIsReported()
     {
         await using var database = await ChatDatabase.CreateAsync();
@@ -298,6 +340,7 @@ public sealed class ChatPersistenceStoreTests
         private readonly string directory;
         private readonly SqliteDatabaseOwner owner;
         private readonly PersistenceInbox inbox;
+        private readonly PersistenceHealth health;
         private readonly CancellationTokenSource stop = new();
         private readonly Task writerTask;
 
@@ -310,13 +353,14 @@ public sealed class ChatPersistenceStoreTests
             this.directory = directory;
             this.owner = owner;
             var options = new PersistenceWriterOptions();
-            var health = new PersistenceHealth();
+            health = new PersistenceHealth();
             inbox = new PersistenceInbox(options, health);
             writerTask = new PersistenceWriter(factory, inbox, health, options).RunAsync(stop.Token);
             Store = new ChatPersistenceStore(factory, inbox, timeProvider);
         }
 
         public ChatPersistenceStore Store { get; }
+        public PersistenceHealthSnapshot HealthSnapshot => health.Snapshot(inbox);
 
         public static async Task<ChatDatabase> CreateAsync(TimeProvider? timeProvider = null)
         {

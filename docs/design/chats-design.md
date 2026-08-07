@@ -613,6 +613,12 @@ The lane:
 
 Ordinary job/transfer projections retain their current behavior. Chat must not
 introduce a second concurrent SQLite writer or bypass transaction ordering.
+The ingress worker may group up to 16 consecutive direct/room messages into one
+ordered transaction. This amortizes SQLite commit and hydration costs without
+creating an unbounded transaction or a long private-message ACK delay. Result
+records retain input order and reflect each message's point-in-batch target
+snapshot; publication and private-message ACKs start only after the whole batch
+commits.
 
 ### 8.3 Commit and publication order
 
@@ -1400,12 +1406,13 @@ explicit leave removes that runtime desire. Retention policies are separate so
 private messages default to durable storage while higher-volume room history
 has an operator-overridable 30-day default.
 
-The repeatable 10,000-event mixed direct/room fixture completed in 37.069 s with
-a peak ingress depth of 249/1,024, zero ingress drops, 9,924,304 bytes of peak
-managed-heap growth, and 11,943,896 bytes of SQLite plus WAL growth. All 5,000
-direct messages were acknowledged after commit, all 10,000 messages and
-notifications were observed, and all target changes drained. The regression
-limits are two minutes, 256 MiB managed growth, and 256 MiB database growth.
+The repeatable 10,000-event mixed direct/room fixture completed in 9.230 s with
+653 bounded writer commits, a peak ingress depth of 250/1,024, zero ingress
+drops, 9,710,496 bytes of peak managed-heap growth, and 12,318,744 bytes of
+SQLite plus WAL growth. All 5,000 direct messages were acknowledged after
+commit, all 10,000 messages and notifications were observed, and all target
+changes drained. The regression limits are 30 seconds, at most 1,300 writer
+commits, 256 MiB managed growth, and 256 MiB database growth.
 
 Additional qualification holds an exclusive SQLite lock while a direct message
 and more than one ingress queue of room traffic arrive: the direct ACK remains
@@ -1419,10 +1426,14 @@ newest batch with an observable recovery gap.
 `TEST-03` remains the only open release-evidence gate. It requires real Soulseek
 interoperability with an independent client and a suitable test account; mocks
 and source review cannot satisfy it. No completed qualification record is linked
-yet; section 16.3 defines the required seven-case record. `dotnet test
-sockseek.sln --no-restore`
-passes all 1,081 tests (663 Core, 56 persistence, 113 server, and 249 CLI),
-including bounded critical-command shutdown and in-flight cancellation.
+yet; section 16.3 defines the required seven-case record. The fast default
+`dotnet test sockseek.sln --no-build --no-restore` lane passes 1,075 regression
+tests (662 Core, 52 persistence, 112 server, and 249 CLI); the latest Release
+run on the qualification workstation completed in 13.1 seconds. The separate
+`--filter TestCategory=Load` lane passes seven load qualifications (one Core,
+five persistence, and one server) in 13.3 seconds wall-clock, so all 1,082 tests
+remain in CI. This includes bounded critical-command shutdown and in-flight
+cancellation.
 
 ---
 

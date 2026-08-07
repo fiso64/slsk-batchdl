@@ -47,7 +47,7 @@ namespace Tests.ConfigTests
         [TestInitialize]
         public void Setup()
         {
-            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf.conf");
+            testConfigPath = Path.Join(Path.GetTempPath(), $"sockseek-profile-{Guid.NewGuid():N}.conf");
         }
 
         [TestCleanup]
@@ -245,7 +245,7 @@ namespace Tests.ConfigTests
         [TestInitialize]
         public void Setup()
         {
-            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf_priority.conf");
+            testConfigPath = Path.Join(Path.GetTempPath(), $"sockseek-profile-priority-{Guid.NewGuid():N}.conf");
         }
 
         [TestCleanup]
@@ -382,7 +382,7 @@ namespace Tests.ConfigTests
         [TestInitialize]
         public void Setup()
         {
-            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf_variation.conf");
+            testConfigPath = Path.Join(Path.GetTempPath(), $"sockseek-profile-variation-{Guid.NewGuid():N}.conf");
         }
 
         [TestCleanup]
@@ -461,7 +461,7 @@ namespace Tests.ConfigTests
         [TestInitialize]
         public void Setup()
         {
-            testConfigPath = Path.Join(Directory.GetCurrentDirectory(), "test_conf_edge.conf");
+            testConfigPath = Path.Join(Path.GetTempPath(), $"sockseek-profile-edge-{Guid.NewGuid():N}.conf");
         }
 
         [TestCleanup]

@@ -6,6 +6,7 @@ using Sockseek.Server;
 namespace Tests.Server;
 
 [TestClass]
+[DoNotParallelize]
 public class CoreLoggerBridgeTests
 {
     [TestCleanup]

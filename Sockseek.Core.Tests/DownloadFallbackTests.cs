@@ -224,7 +224,12 @@ namespace Tests.Core
                 dl.Extraction.RequestedMode = ExtractionMode.Song;
                 dl.Output.ParentDir = outputDir;
 
-                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                var clientManager = new SoulseekClientManager(
+                    eng,
+                    testClient,
+                    inboundRouter: null,
+                    monitorDelay: static (_, _) => Task.CompletedTask);
+                var app = new DownloadEngine(eng, clientManager);
                 var attemptsStarted = new List<TransferAttemptStartedChange>();
                 var attemptsFailed = new List<TransferAttemptFailedChange>();
                 var attemptsCompleted = new List<TransferAttemptCompletedChange>();

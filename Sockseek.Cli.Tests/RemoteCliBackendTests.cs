@@ -1,4 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Sockseek.Api;
 using Sockseek.Cli;
 using Sockseek.Core;
@@ -13,6 +16,8 @@ namespace Tests.Cli;
 [TestClass]
 public class RemoteCliBackendTests
 {
+    private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
+
     [TestCleanup]
     public void Cleanup()
     {
@@ -56,8 +61,7 @@ public class RemoteCliBackendTests
     [TestMethod]
     public async Task SockseekLiveClient_InitialSnapshotFailureCanBeRetried()
     {
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings(),
@@ -66,6 +70,7 @@ public class RemoteCliBackendTests
         }, url);
 
         await app.StartAsync();
+        url = GetBoundUrl(app);
         try
         {
             using var http = new HttpClient(new FailFirstDaemonSnapshotHandler())
@@ -141,8 +146,7 @@ public class RemoteCliBackendTests
         Directory.CreateDirectory(outputDir);
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -164,6 +168,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             var seenUpdates = new ConcurrentBag<DaemonClientUpdate>();
             backend.StateUpdated += update => seenUpdates.Add(update);
@@ -226,8 +231,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
         File.WriteAllText(Path.Combine(albumDir, "02. Artist - Track Two.mp3"), "b");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -253,6 +257,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -299,7 +304,6 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    [DoNotParallelize]
     public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsDelta()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-album-test-" + Guid.NewGuid());
@@ -310,8 +314,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
         File.WriteAllText(Path.Combine(albumDir, "02. Track Two.mp3"), "b");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -330,10 +333,10 @@ public class RemoteCliBackendTests
             Profiles = ProfileCatalog.Empty,
         }, url);
 
-        TextWriter originalOut = Console.Out;
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -361,10 +364,11 @@ public class RemoteCliBackendTests
             CollectionAssert.AreEqual(new[] { "01. Track One.mp3", "02. Track Two.mp3" }, downloaded);
 
             using var output = new StringWriter();
-            Console.SetOut(output);
-            SockseekLog.AddConsole(writer: (message, _) => Console.WriteLine(message));
-            SockseekLog.SetConsoleLogLevel(LogLevel.Information);
-            await Sockseek.Cli.Program.PrintRemoteCompleteAsync(backend, summary.WorkflowId, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteCompleteAsync(
+                backend,
+                summary.WorkflowId,
+                CancellationToken.None,
+                output);
             Assert.AreEqual(
                 string.Empty,
                 output.ToString(),
@@ -372,8 +376,6 @@ public class RemoteCliBackendTests
         }
         finally
         {
-            SockseekLog.RemoveNonFileOutputs();
-            Console.SetOut(originalOut);
             await app.StopAsync();
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
@@ -398,8 +400,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumTwoDir, "01. Artist Two - Track Two.mp3"), "b");
         File.WriteAllLines(inputPath, ["a:\"Artist One - Album One\"", "a:\"Artist Two - Album Two\""]);
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -435,6 +436,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -523,8 +525,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "01. file1.mp3"), "a");
         File.WriteAllLines(inputPath, ["a:\"Album Name\"                 strict-album=true;format=flac"]);
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -550,6 +551,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -618,8 +620,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(discoveryDir, "02. ELO - Confusion.mp3"), "d");
         File.WriteAllText(Path.Combine(discoveryDir, "03. ELO - Last Train to London.mp3"), "e");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -646,6 +647,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -709,7 +711,6 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintCompleteCountsCancelledAlbumAsUserFacingFailure()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-cancel-music-" + Guid.NewGuid());
@@ -721,8 +722,7 @@ public class RemoteCliBackendTests
         for (int i = 1; i <= 12; i++)
             File.WriteAllBytes(Path.Combine(albumDir, $"{i:00}. Artist - Track {i:00}.mp3"), new byte[1024]);
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -746,10 +746,10 @@ public class RemoteCliBackendTests
             Profiles = ProfileCatalog.Empty,
         }, url);
 
-        TextWriter originalOut = Console.Out;
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -780,10 +780,11 @@ public class RemoteCliBackendTests
             await WaitForJobStateAsync(backend, downloadSummary.JobId, ExpectedJobStatus.Failed);
 
             using var output = new StringWriter();
-            Console.SetOut(output);
-            SockseekLog.AddConsole(writer: (message, _) => Console.WriteLine(message));
-            SockseekLog.SetConsoleLogLevel(LogLevel.Information);
-            await Sockseek.Cli.Program.PrintRemoteCompleteAsync(backend, downloadSummary.WorkflowId, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteCompleteAsync(
+                backend,
+                downloadSummary.WorkflowId,
+                CancellationToken.None,
+                output);
 
             string rendered = output.ToString();
             StringAssert.Contains(
@@ -793,8 +794,6 @@ public class RemoteCliBackendTests
         }
         finally
         {
-            SockseekLog.RemoveNonFileOutputs();
-            Console.SetOut(originalOut);
             await app.StopAsync();
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
@@ -820,8 +819,7 @@ public class RemoteCliBackendTests
             File.WriteAllBytes(Path.Combine(albumTwoDir, $"{i:00}. Artist Two - Track {i:00}.mp3"), new byte[1024]);
         }
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -848,6 +846,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -878,7 +877,8 @@ public class RemoteCliBackendTests
                 secondState,
                 "Cancelling the first workflow by display id must not fail the second workflow's job.");
 
-            await backend.CancelWorkflowAsync(secondDownload.WorkflowId);
+            Assert.IsTrue(await backend.CancelWorkflowAsync(secondDownload.WorkflowId) > 0);
+            await WaitForJobStateAsync(backend, secondDownload.JobId, ExpectedJobStatus.Failed);
         }
         finally
         {
@@ -891,7 +891,6 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintResults_RendersCompletedSearchPayloadWithoutDownloading()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-test-" + Guid.NewGuid());
@@ -901,8 +900,7 @@ public class RemoteCliBackendTests
         Directory.CreateDirectory(outputDir);
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -921,10 +919,10 @@ public class RemoteCliBackendTests
             Profiles = ProfileCatalog.Empty,
         }, url);
 
-        TextWriter originalOut = Console.Out;
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -949,8 +947,12 @@ public class RemoteCliBackendTests
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             using var output = new StringWriter();
-            Console.SetOut(output);
-            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(
+                backend,
+                summary.WorkflowId,
+                printSettings,
+                CancellationToken.None,
+                output);
 
             string rendered = output.ToString();
             StringAssert.Contains(rendered, "Results for Artist - Track One");
@@ -960,7 +962,6 @@ public class RemoteCliBackendTests
         }
         finally
         {
-            Console.SetOut(originalOut);
             await app.StopAsync();
             if (Directory.Exists(musicRoot))
                 Directory.Delete(musicRoot, true);
@@ -970,7 +971,6 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    [DoNotParallelize]
     public async Task RemoteCliBackend_PrintJobs_RendersInputJobsFromWorkflowSnapshot()
     {
         string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-" + Guid.NewGuid() + ".txt");
@@ -982,8 +982,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(existingAlbumDir, "01. Artist Two - Album Track.mp3"), "already here");
         File.WriteAllLines(inputPath, ["s:\"Artist One - Track One\"", "a:\"Artist Two - Album Two\""]);
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings(),
@@ -1002,10 +1001,10 @@ public class RemoteCliBackendTests
             Profiles = ProfileCatalog.Empty,
         }, url);
 
-        TextWriter originalOut = Console.Out;
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -1030,8 +1029,12 @@ public class RemoteCliBackendTests
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
             using var output = new StringWriter();
-            Console.SetOut(output);
-            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(backend, summary.WorkflowId, printSettings, CancellationToken.None);
+            await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(
+                backend,
+                summary.WorkflowId,
+                printSettings,
+                CancellationToken.None,
+                output);
 
             string rendered = output.ToString();
             StringAssert.Contains(rendered, "2 jobs:");
@@ -1043,7 +1046,6 @@ public class RemoteCliBackendTests
         }
         finally
         {
-            Console.SetOut(originalOut);
             await app.StopAsync();
             if (File.Exists(inputPath))
                 File.Delete(inputPath);
@@ -1061,8 +1063,7 @@ public class RemoteCliBackendTests
         Directory.CreateDirectory(albumDir);
         File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -1077,6 +1078,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var monitor = new RemoteCliBackend(url);
             var scopes = new ConcurrentBag<StateStreamScopeDto>();
             monitor.StateUpdated += update => scopes.Add(update.Scope);
@@ -1115,8 +1117,7 @@ public class RemoteCliBackendTests
     [TestMethod]
     public async Task RemoteCliBackend_DaemonAndWorkflowSubscriptionsCannotMix()
     {
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings(),
@@ -1125,6 +1126,7 @@ public class RemoteCliBackendTests
         }, url);
 
         await app.StartAsync();
+        url = GetBoundUrl(app);
         try
         {
             await using var backend = new RemoteCliBackend(url);
@@ -1463,6 +1465,17 @@ public class RemoteCliBackendTests
         }
     }
 
+    private static string GetBoundUrl(Microsoft.AspNetCore.Builder.WebApplication app)
+    {
+        var addresses = app.Services
+            .GetRequiredService<IServer>()
+            .Features
+            .Get<IServerAddressesFeature>()?
+            .Addresses;
+        return addresses?.SingleOrDefault(address => address.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The test server did not publish its bound HTTP address.");
+    }
+
     [TestMethod]
     public async Task RemoteCliBackend_SubmitJobList_SerializesTypedChildItems()
     {
@@ -1473,8 +1486,7 @@ public class RemoteCliBackendTests
         Directory.CreateDirectory(outputDir);
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
+        string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
             Engine = new EngineSettings
@@ -1496,6 +1508,7 @@ public class RemoteCliBackendTests
         try
         {
             await app.StartAsync();
+            url = GetBoundUrl(app);
             await using var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
