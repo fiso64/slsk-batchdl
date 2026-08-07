@@ -2,20 +2,29 @@
 
 This directory is an intentionally lightweight UI/UX prototype for the upcoming Sockseek v4 daemon WebUI.
 
-The immediate goal is to explore **how Sockseek data and workflows should be presented**, not to commit to the production frontend architecture. The prototype may be partially or completely rewritten later (for example in Blazor) once the daemon and production requirements have settled.
+Its purpose is to explore **navigation, information hierarchy, density, and interaction design** before committing to the production frontend technology. The prototype may later be partly or completely rewritten (for example in Blazor).
 
 ## Technology
 
-- **Svelte 5** for declarative, reactive UI components.
-- **TypeScript** for frontend and mock-data type safety.
-- **Vite** for the development server and build.
-- **npm** as the package manager for now. There is no architectural dependency on npm; switching to pnpm or Bun later should be straightforward.
-- **openapi-typescript** to generate TypeScript types from Sockseek's checked-in `docs/openapi.json`.
-- No SvelteKit, frontend state framework, real daemon connection, or SignalR integration yet.
+- **Svelte 5** for declarative, reactive components.
+- **TypeScript** for UI and mock-data type safety.
+- **Vite** for development and production builds.
+- **npm** for now; switching to pnpm or Bun later should be straightforward.
+- **openapi-typescript** to generate types from Sockseek's checked-in `docs/openapi.json`.
+- No SvelteKit, frontend state library, real daemon connection, or SignalR integration yet.
 
 ## Setup
 
-From this directory:
+The prototype expects to live at `webui/` in the Sockseek repository, next to `docs/`:
+
+```text
+sockseek/
+  docs/
+    openapi.json
+  webui/
+```
+
+From `webui/`:
 
 ```bash
 npm install
@@ -30,46 +39,102 @@ npm run check
 npm run build
 ```
 
-`npm run api:generate` reads `../docs/openapi.json` and writes `src/api/generated.ts`. The generated file should be treated as generated code rather than edited manually.
+`npm run api:generate` writes `src/api/generated.ts`. Treat it as generated code rather than editing it manually.
 
-## Why use OpenAPI in a disposable prototype?
+## Current design direction
 
-The prototype does not need a live daemon, but the checked-in OpenAPI document gives it the real backend vocabulary and shapes. This helps in several ways:
+The prototype currently uses a cool neutral palette with a muted violet accent. The accent is reserved mainly for focus, selection, progress, and unread state. Light and dark variants follow the system theme.
 
-- mock data can be checked against the actual daemon DTOs;
-- UI work can reveal information that the backend does not expose yet;
-- backend contract changes become visible to the prototype after regeneration;
-- none of this requires the prototype to implement every endpoint or use the eventual production transport/client architecture.
+The shell currently has five destinations:
 
-The starter `App.svelte` deliberately imports generated types and creates a small typed `StateSnapshotDto` probe. This is only a smoke test that Svelte and generated API types are wired together.
+- **Search**
+- **Downloads**
+- **Uploads**
+- **Chat**
+- **Settings**
 
-## Prototype direction
+There is intentionally no separate Shares or History page. Transfer history lives in Downloads/Uploads, and other historical information should generally remain close to the feature that produced it.
 
-Keep the prototype optimized for fast UI iteration. Mock **user-facing situations**, rather than faithfully emulating the entire daemon protocol. Later examples might include normal, busy, offline, large-search, failed-transfer, and long-filename scenarios.
+A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A fixed-width **Album / Track** button switches result mode, while `•••` opens advanced search conditions. Applied conditions appear as removable pills below the bar.
 
-A likely structure as the prototype grows is:
+### Morphing search
+
+Search supports both the raw Soulseek model and a structured Sockseek model:
+
+- start with one raw query field;
+- type `Artist - Album` or `Artist — Track` to split automatically;
+- use **split** manually when desired;
+- structured mode exposes separate artist and album/track values for Sockseek heuristics;
+- the split fields use a subdued vertical divider rather than a textual dash;
+- **merge** returns to a single raw query;
+- after merging, ordinary edits do not immediately split the query again;
+- removing the delimiter rearms automatic splitting;
+- Backspace in an empty album/track field moves focus to artist;
+- Backspace in an empty artist field merges back to the single field.
+
+
+### Advanced conditions
+
+The advanced-search popover is still prototype-only, but it follows the current required-condition API rather than inventing unrelated filters. Preferred (`pref-`) conditions are intentionally ignored for now.
+
+Common controls currently include formats, free min/max bitrate, exact sample rate, exact bit depth, metadata handling, strict artist matching, and peer allow/ban lists. Format shortcuts cover FLAC, MP3, OGG, OPUS, M4A, and WAV; a custom mode accepts comma-separated arbitrary formats.
+
+Track mode exposes title and duration-related controls. Album mode instead exposes album matching, album track-count limits, required track titles, and strict album quality. The prototype keeps mode-specific values when switching modes, but only conditions relevant to the active mode are shown as applied.
+
+The UI treats sample rate and bit depth as exact values. A small adapter in `src/prototype/search-config.ts` demonstrates how those choices map to both the generated API's min and max fields.
+
+## Mock data and OpenAPI
+
+The prototype does not need a live daemon, but its transfer fixtures satisfy the generated `TransferStateDto` contract. Scenarios compose these fixtures into situations that are useful for design:
+
+- normal;
+- busy;
+- empty;
+- offline;
+- stress.
+
+The scenario switcher remains deliberately visible as a prototype tool. It lets us inspect the same screens under different data pressure without building a fake daemon.
+
+Generated API types are an **input**, not the UI architecture. UI-specific models can be introduced whenever the wire shape becomes inconvenient.
+
+## Current project shape
 
 ```text
 src/
   api/
-    generated.ts      # generated from docs/openapi.json
+    generated.ts
   components/
-  pages/
+    AppShell.svelte
+    GlobalSearch.svelte
+    PrototypeScenarioPicker.svelte
+    Sidebar.svelte
   mock/
     fixtures/
+      transfers.ts
     scenarios/
+      index.ts
+    types.ts
+  pages/
+    Search.svelte
+    TransferPage.svelte
+    Chat.svelte
+    Settings.svelte
+  prototype/
+    navigation.ts
+    search.ts
+    search-config.ts
+    transfers.ts
   App.svelte
 ```
 
-Generated API DTOs are useful inputs, but they should not dictate the visual/component model. UI-specific view models or adapters can be introduced when that makes a screen easier to design.
-
-## Deliberately out of scope for now
+## Deliberately out of scope
 
 - choosing the final production WebUI technology;
-- reimplementing `SockseekLiveClient` semantics in TypeScript;
-- real HTTP/SignalR integration;
+- real HTTP or SignalR integration;
 - authentication;
-- production packaging/hosting;
-- comprehensive application architecture.
+- production hosting/packaging;
+- a comprehensive routing or state-management system;
+- a reusable design system before the UX is understood;
+- treating the current Search, Transfers, or Chat layouts as final.
 
-The prototype is successful if it helps answer questions about navigation, information hierarchy, density, grouping, live activity, transfers, search results, chat, sharing, and other user-facing behavior before production implementation starts.
+The next iterations should continue to optimize for **learning what Sockseek should feel like**, not for preserving prototype code.

@@ -1,27 +1,48 @@
 <script lang="ts">
-  import type { components } from './api/generated';
+  import AppShell from './components/AppShell.svelte';
+  import { getScenario } from './mock/scenarios';
+  import type { ScenarioId } from './mock/types';
+  import Chat from './pages/Chat.svelte';
+  import Search from './pages/Search.svelte';
+  import Settings from './pages/Settings.svelte';
+  import TransferPage from './pages/TransferPage.svelte';
+  import type { PageId } from './prototype/navigation';
+  import { emptySearchDraft, type SearchDraft } from './prototype/search';
 
-  type ApiSchemaName = keyof components['schemas'];
-  type StateSnapshotDto = components['schemas']['StateSnapshotDto'];
+  let activePage = $state<PageId>('search');
+  let scenarioId = $state<ScenarioId>('normal');
+  let scenario = $derived(getScenario(scenarioId));
+  let search = $state<SearchDraft>({ ...emptySearchDraft });
 
-  const generatedSchemaProbe: ApiSchemaName = 'StateSnapshotDto';
-  const snapshotProbe: Pick<StateSnapshotDto, 'capturedAtUtc' | 'transfers'> = {
-    capturedAtUtc: new Date(0).toISOString(),
-    transfers: [],
-  };
+  function useSearch(next: SearchDraft): void {
+    search = { ...next };
+  }
+
+  function submitSearch(next: SearchDraft): void {
+    useSearch(next);
+    activePage = 'search';
+  }
 </script>
 
-<main>
-  <h1>Sockseek WebUI prototype</h1>
-  <p>Svelte is mounted and the generated Sockseek OpenAPI types are accessible.</p>
-  <dl>
-    <div>
-      <dt>Generated schema probe</dt>
-      <dd><code>{generatedSchemaProbe}</code></dd>
-    </div>
-    <div>
-      <dt>Snapshot transfer count</dt>
-      <dd>{snapshotProbe.transfers.length}</dd>
-    </div>
-  </dl>
-</main>
+<AppShell
+  {activePage}
+  {scenarioId}
+  {scenario}
+  {search}
+  onnavigate={(page) => (activePage = page)}
+  onscenariochange={(nextScenario) => (scenarioId = nextScenario)}
+  onsearchchange={useSearch}
+  onsearchsubmit={submitSearch}
+>
+  {#if activePage === 'search'}
+    <Search {search} onusequery={useSearch} />
+  {:else if activePage === 'downloads'}
+    <TransferPage {scenario} direction="download" />
+  {:else if activePage === 'uploads'}
+    <TransferPage {scenario} direction="upload" />
+  {:else if activePage === 'chat'}
+    <Chat {scenario} />
+  {:else}
+    <Settings />
+  {/if}
+</AppShell>
