@@ -7,7 +7,7 @@
 
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'peers' | 'content' | 'errors'>('peers');
-  let data = $derived(dashboardData[range]); 
+  let data = $derived(dashboardData[range]);
 
   let activeTransfers = $derived(scenario.snapshot.transfers.filter((transfer) => !transfer.status.isTerminal));
   let activeDownloads = $derived(activeTransfers.filter((transfer) => transfer.identity.direction === 'download'));

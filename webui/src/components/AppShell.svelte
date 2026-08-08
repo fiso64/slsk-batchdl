@@ -3,6 +3,7 @@
   import type { PrototypeScenario, ScenarioId } from '../mock/types';
   import type { PageId } from '../prototype/navigation';
   import type { SearchDraft } from '../prototype/search';
+  import type { PrototypeSearchConditions } from '../prototype/search-config';
   import GlobalSearch from './GlobalSearch.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -15,7 +16,7 @@
     onnavigate: (page: PageId) => void;
     onscenariochange: (scenario: ScenarioId) => void;
     onsearchchange: (search: SearchDraft) => void;
-    onsearchsubmit: (search: SearchDraft) => void;
+    onsearchsubmit: (search: SearchDraft, conditions: PrototypeSearchConditions) => void;
     children: Snippet;
   }
 
@@ -88,10 +89,11 @@
 
   <div class="workspace">
     <header class="topbar">
-      <GlobalSearch value={search} onchange={onsearchchange} onsubmit={onsearchsubmit} />
-      <div class="user-badge" aria-label="Prototype user">fi</div>
+      <div class="topbar-inner">
+        <GlobalSearch value={search} onchange={onsearchchange} onsubmit={onsearchsubmit} />
+        <div class="user-badge" aria-label="Prototype user">fi</div>
+      </div>
     </header>
-
 
     <main class:chat-content={activePage === 'chat'} class="page-content">
       {@render children()}

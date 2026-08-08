@@ -9,18 +9,40 @@
   import TransferPage from './pages/TransferPage.svelte';
   import type { PageId } from './prototype/navigation';
   import { emptySearchDraft, type SearchDraft } from './prototype/search';
+  import type { PrototypeSearchConditions } from './prototype/search-config';
+  import {
+    createInitialSearches,
+    createSearchRecord,
+    type SearchRecord,
+    type SearchView,
+  } from './prototype/search-results';
 
   let activePage = $state<PageId>('dashboard');
   let scenarioId = $state<ScenarioId>('normal');
   let scenario = $derived(getScenario(scenarioId));
   let search = $state<SearchDraft>({ ...emptySearchDraft });
+  let searches = $state<SearchRecord[]>(createInitialSearches());
+  let searchView = $state<SearchView>('list');
+  let activeSearchId = $state<string | null>('search-boards');
 
   function useSearch(next: SearchDraft): void {
     search = { ...next };
   }
 
-  function submitSearch(next: SearchDraft): void {
+  function navigate(page: PageId): void {
+    if (page === 'search' && activePage === 'search' && searchView === 'results') {
+      searchView = 'list';
+      return;
+    }
+    activePage = page;
+  }
+
+  function submitSearch(next: SearchDraft, conditions: PrototypeSearchConditions): void {
     useSearch(next);
+    const record = createSearchRecord(next, conditions);
+    searches = [record, ...searches];
+    activeSearchId = record.id;
+    searchView = 'results';
     activePage = 'search';
   }
 </script>
@@ -30,7 +52,7 @@
   {scenarioId}
   {scenario}
   {search}
-  onnavigate={(page) => (activePage = page)}
+  onnavigate={navigate}
   onscenariochange={(nextScenario) => (scenarioId = nextScenario)}
   onsearchchange={useSearch}
   onsearchsubmit={submitSearch}
@@ -38,7 +60,13 @@
   {#if activePage === 'dashboard'}
     <Dashboard {scenario} />
   {:else if activePage === 'search'}
-    <Search {search} onusequery={useSearch} />
+    <Search
+      {search}
+      bind:searches
+      bind:view={searchView}
+      bind:activeSearchId
+      onusequery={useSearch}
+    />
   {:else if activePage === 'downloads'}
     <TransferPage {scenario} direction="download" />
   {:else if activePage === 'uploads'}

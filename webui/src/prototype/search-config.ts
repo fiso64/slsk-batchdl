@@ -35,32 +35,12 @@ export interface PrototypeSearchConditions {
 }
 
 export function createPrototypeSearchConditions(): PrototypeSearchConditions {
-  return {
-    common: {
-      formats: ['FLAC'],
-      minBitrate: '320',
-      maxBitrate: '',
-      sampleRate: '44100',
-      bitDepth: '',
-      rejectUnknownMetadata: false,
-      strictArtist: true,
-      allowedUsers: '',
-      bannedUsers: 'lowquality_uploader',
-    },
-    track: {
-      strictTitle: true,
-      expectedLength: '',
-      lengthTolerance: '3',
-      acceptNoLength: true,
-    },
-    album: {
-      strictAlbum: true,
-      minTrackCount: '8',
-      maxTrackCount: '14',
-      requiredTrackTitles: ['Music Is Math'],
-      strictAlbumQuality: false,
-    },
-  };
+  // Keep the global search's initial pills visible without narrowing the mock
+  // result fixtures. These are the audio formats represented by the prototype
+  // data, so a fresh search still shows the complete fixture set.
+  const conditions = createEmptySearchConditions();
+  conditions.common.formats = ['FLAC', 'MP3', 'M4A', 'WAV'];
+  return conditions;
 }
 
 export function createEmptySearchConditions(): PrototypeSearchConditions {
@@ -146,5 +126,19 @@ export function toNecessarySearchPatch(
         : null,
     } : null,
     strictAlbumQuality: resultMode === 'album' ? conditions.album.strictAlbumQuality || null : null,
+  };
+}
+
+export function cloneSearchConditions(conditions: PrototypeSearchConditions): PrototypeSearchConditions {
+  return {
+    common: {
+      ...conditions.common,
+      formats: [...conditions.common.formats],
+    },
+    track: { ...conditions.track },
+    album: {
+      ...conditions.album,
+      requiredTrackTitles: [...conditions.album.requiredTrackTitles],
+    },
   };
 }

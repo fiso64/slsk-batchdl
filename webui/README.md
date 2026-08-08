@@ -47,8 +47,9 @@ The prototype currently uses a **Carbon + Blue** palette: nearly neutral black/g
 
 The current scale pass favors roughly 14 px primary row text, 12 px secondary metadata and form labels, 32–34 px form controls, and 24–26 px condition pills. The global search remains intentionally larger at 54 px.
 
-The shell currently has five destinations:
+The shell currently has six destinations:
 
+- **Dashboard**
 - **Search**
 - **Downloads**
 - **Uploads**
@@ -85,6 +86,17 @@ Track mode exposes title and duration-related controls. Album mode instead expos
 
 The UI treats sample rate and bit depth as exact values. A small adapter in `src/prototype/search-config.ts` demonstrates how those choices map to both the generated API's min and max fields.
 
+
+## Search tab exploration
+
+The Search tab now has persistent prototype state with two views: a newest-first Searches list and a projected Results view. Submitting the global search creates a search and opens its results; opening an existing search restores its Track or Album projection. The back button returns to Searches, and clicking Search in the sidebar while already viewing results does the same. Leaving Search and returning from another tab preserves the last Search subview.
+
+Search result refinement is deliberately compact: text filtering and sort controls share one row, while the applied search conditions sit in a separate pill bar. **Edit** opens the same `SearchConfigPanel` component used by the global search rather than a second ad-hoc condition UI. Removing or changing conditions filters the mock result projection immediately.
+
+Track results show the full file path, lock state, size, length, and available bitrate/sample-rate/bit-depth metadata. Whole track rows are selectable. Album results show the full album directory path and a nested file list using paths relative to the album folder; clicking the album summary selects or clears the whole album, while individual files remain independently selectable. Adjacent results from the same peer share one collapsible peer header with free-slot state beside the peer name and compact upload/queue/file statistics on the right. Relevance sorting separates backend-marked preferred matches from other matches; speed, queue, and two-way size sorting use one combined result stream. Selection actions appear contextually rather than reserving a permanent toolbar.
+
+Prototype searches now start with neutral/no-op conditions so fixture results are visible until the user deliberately applies result constraints. Checkboxes use a dark native-like treatment throughout the application when the OS requests dark mode, including indeterminate album selection.
+
 ## Mock data and OpenAPI
 
 The prototype does not need a live daemon, but its transfer fixtures satisfy the generated `TransferStateDto` contract. Scenarios compose these fixtures into situations that are useful for design:
@@ -108,6 +120,8 @@ src/
   components/
     AppShell.svelte
     GlobalSearch.svelte
+    SearchConditionPills.svelte
+    SearchConfigPanel.svelte
     PrototypeScenarioPicker.svelte
     Sidebar.svelte
   mock/
@@ -117,6 +131,7 @@ src/
       index.ts
     types.ts
   pages/
+    Dashboard.svelte
     Search.svelte
     TransferPage.svelte
     Chat.svelte
@@ -125,6 +140,7 @@ src/
     navigation.ts
     search.ts
     search-config.ts
+    search-results.ts
     transfers.ts
   App.svelte
 ```
@@ -150,4 +166,6 @@ The prototype now opens on a Dashboard tab. Its history range control is intenti
 The lower dashboard uses independent vertical columns so panels size to their own content. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space.
 
 - Dashboard activity curves use bounded Bezier smoothing so sample values stay exact without angular joins.
-- The workspace itself owns vertical scrolling; page width is capped inside it so the scrollbar stays at the browser edge on every tab.
+- The workspace itself owns vertical scrolling, so the scrollbar stays at the browser edge on every tab.
+- Normal tab content is centered inside a shared 90rem maximum-width container, avoiding a large one-sided void on ultrawide/4K displays.
+- The top search controls use the same centered container but are capped independently at 76rem, so the query bar remains comfortably scannable on very wide displays.
