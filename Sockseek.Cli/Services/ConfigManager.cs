@@ -307,7 +307,8 @@ public static partial class ConfigManager
                     else if (OptionUsesBoolValue(t))
                     {
                         string value = "true";
-                        if (i + 1 < tokens.Count && IsBoolLiteral(tokens[i + 1].Value))
+                        if (i + 1 < tokens.Count
+                            && (tokens[i + 1].IsAttachedValue || IsBoolLiteral(tokens[i + 1].Value)))
                             value = tokens[++i].Value;
                         AddProfileOption(entry, t, value, downloadDeltaBuilder);
                     }
@@ -1229,7 +1230,10 @@ public static partial class ConfigManager
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private readonly record struct NormalizedArg(string Value, bool AllowsLeadingHyphen = false);
+    private readonly record struct NormalizedArg(
+        string Value,
+        bool AllowsLeadingHyphen = false,
+        bool IsAttachedValue = false);
 
     /// Normalize argv: expand --arg=val into --arg val, and -abc into -a -b -c.
     /// Attached values retain their origin so they may intentionally begin with '-'.
@@ -1246,7 +1250,10 @@ public static partial class ConfigManager
                     {
                         var eq = arg.IndexOf('=');
                         result.Add(new(arg[..eq]));
-                        result.Add(new(arg[(eq + 1)..], AllowsLeadingHyphen: true));
+                        result.Add(new(
+                            arg[(eq + 1)..],
+                            AllowsLeadingHyphen: true,
+                            IsAttachedValue: true));
                         continue;
                     }
                 }

@@ -663,6 +663,26 @@ namespace Tests.ConfigParsingTests
             Assert.AreEqual("bob", eng.Username);
         }
 
+        [TestMethod]
+        public void InlineEquals_InvalidBooleanValueThrows()
+        {
+            var ex = Assert.ThrowsException<Exception>(() =>
+                Bind("--strict-artist=111"));
+
+            Assert.AreEqual(
+                "Input error: Option '--strict-artist' requires a boolean parameter, got '111'",
+                ex.Message);
+        }
+
+        [TestMethod]
+        public void BooleanFlag_LeavesNonBooleanPositionalInputUnconsumed()
+        {
+            var (_, download, _) = Bind("--strict-artist", "111");
+
+            Assert.IsTrue(download.Search.NecessaryCond.StrictArtist);
+            Assert.AreEqual("111", download.Extraction.Input);
+        }
+
         // ── Positional ────────────────────────────────────────────────────────
 
         [TestMethod]
