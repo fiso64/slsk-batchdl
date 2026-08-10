@@ -125,5 +125,35 @@ namespace Tests.Playlist
             Assert.AreEqual(1, lines.Length, "Playlist should only contain the audio file.");
             Assert.IsTrue(lines[0].EndsWith("Track.mp3"));
         }
+
+        [TestMethod]
+        public void Playlist_IncludesAiffButExcludesStandalonePdf()
+        {
+            var queue = new JobList("Test Queue");
+            var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, []);
+
+            var aiff = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" })
+            {
+                ResolvedTarget = new FileCandidate(response, TestHelpers.CreateSlFile(@"Music\Track.aiff")),
+                DownloadPath = "Music/Track.aiff",
+            };
+            aiff.SetDone();
+            queue.Add(aiff);
+
+            var pdf = new SongJob(new SongQuery { Artist = "Artist", Title = "Booklet" })
+            {
+                DownloadPath = "Music/Booklet.pdf",
+            };
+            pdf.SetDone();
+            queue.Add(pdf);
+
+            var editor = new M3uEditor(testM3uPath, queue, M3uOption.Playlist, false);
+            editor.Update();
+
+            var lines = File.ReadAllLines(testM3uPath);
+            Assert.AreEqual(1, lines.Length);
+            Assert.IsTrue(lines[0].EndsWith("Track.aiff"));
+            Assert.IsFalse(lines.Any(line => line.Contains("Booklet.pdf")));
+        }
     }
 }

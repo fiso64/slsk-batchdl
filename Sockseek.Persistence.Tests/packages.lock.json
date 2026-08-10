@@ -33,8 +33,8 @@
       },
       "AngleSharp": {
         "type": "Transitive",
-        "resolved": "1.4.0",
-        "contentHash": "6ph8mpaQx0KL0COYRt0kI8MB9gSp1PtKijKMhJU//+aVFgKAJLKDesG/+26JSaVCOrHNgPf12wpfoyRcMYOeXg=="
+        "resolved": "1.7.1",
+        "contentHash": "QBblGpRB3SYD66Mls7fHyl1mWkP93n7ErWDWHc1vd9sPHhdlTkmUoY3CjgfjcWNxGF9m7xjNyztRfErXqoBKOA=="
       },
       "EmbedIO": {
         "type": "Transitive",
@@ -72,8 +72,8 @@
       },
       "Google.Apis.YouTube.v3": {
         "type": "Transitive",
-        "resolved": "1.75.0.4176",
-        "contentHash": "Q5Hc5Qwg9EOc9OBvowxj93Nb1hx4kKbXC2ohbDclVSx1uIvyqbZtA4bDGaCCxGgq+BUyyaGSCloJqRqk+X7Y6g==",
+        "resolved": "1.75.0.4207",
+        "contentHash": "TOKMObxt9Ba3mF76c9O7R29q30WB1lXB53lp8am8qAh4TNWKULKXpwmiPv5GhsGpnv7eR5cAqJUpo38yed/RoA==",
         "dependencies": {
           "Google.Apis": "1.75.0",
           "Google.Apis.Auth": "1.75.0"
@@ -83,11 +83,6 @@
         "type": "Transitive",
         "resolved": "1.12.4",
         "contentHash": "ljqvBabvFwKoLniuoQKO8b5bJfJweKLs4fUNS/V5dsvpo0A8MlJqxxn9XVmP2DaskbUXty6IYaWAi1SArGIMeQ=="
-      },
-      "JsonExtensions": {
-        "type": "Transitive",
-        "resolved": "1.2.0",
-        "contentHash": "ujtrK6m5BQVQLEteLfl54upN7Z59c1ZqEKmU3OlYriqnV74dIgIlNM2vkcgn2AuZEItQDNORD/2H1biI/asOdg=="
       },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
@@ -197,16 +192,16 @@
       },
       "Microsoft.Extensions.DependencyInjection": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "NijozhERJDIaJ4k5TSMy1jOi0cSC2HfkvRD/Sl+kGSSKgVbFnF4GxgtMN/MrzHB8D1JxIrD4xSer9Blh9v3axQ==",
+        "resolved": "10.0.10",
+        "contentHash": "ANyvsgkNBRvcJh2XLgn8veGmajf+8m0AbKK+HPWdRL1yraSNVVSmQhFntLtdz/C795jxqqup+k05cs/3jZQPOA==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.10"
         }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "g41l/30G3K4B/d/L8kjux0+30e27c8D0FVQ/PFCpbekgfDpj9mnDhieP67EqXWvl1EWNeZh2rpR4F5B/jcDOHA=="
+        "resolved": "10.0.10",
+        "contentHash": "z/2xXlFw2aLGjHyEm6E0tQ+In6VfzQzTrtArbQ2c0TQE16ZbyDCMGPvaUT9I0s8rgy9sRWlU2P9waW37qV04qA=="
       },
       "Microsoft.Extensions.DependencyModel": {
         "type": "Transitive",
@@ -215,35 +210,35 @@
       },
       "Microsoft.Extensions.Logging": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "N7Gm9SjugYjmmnhwbBKC9DFqGqjfJvh6YfOJgtwh0AW0Xpok3dIVors1ik050XmUxKAgAc7nNngDIJyFb06K2g==",
+        "resolved": "10.0.10",
+        "contentHash": "Tf6z5HsL0VDYRTfvsoNrTGHGheCwkTsZBA2FFh5ATJUbkAwug+FFNISJK2gjpUNemlAOoWllAK52HOWCjto3EQ==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection": "10.0.9",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.9",
-          "Microsoft.Extensions.Options": "10.0.9"
+          "Microsoft.Extensions.DependencyInjection": "10.0.10",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.10",
+          "Microsoft.Extensions.Options": "10.0.10"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "9S/DFt4cohlMPpzIxjG6kk0L8MuN2vDm9pbMCulxtJzzk82oJHVLBd8vuQxaPskaYQwKqmFmbannf5eoChgjYg==",
+        "resolved": "10.0.10",
+        "contentHash": "zkFxGYUvdxAvIKTyXHrmW+Sux53D4SezD9dMyZ6hrwwzPQJNuwCRy1f5W7AvYTqacEGhWF2XderRQG1OvbV8og==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.10"
         }
       },
       "Microsoft.Extensions.Options": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "hyNdX4c2UwkRkzb9byw0H2DQkRzwBM3mzY2sCM9egwzTyg8dvQJmp5noQHGEaaCORQrNK3DD2gREBsc2DlXS4A==",
+        "resolved": "10.0.10",
+        "contentHash": "srnhnk7nE8krBiIXp71LvBmKBtraBONWSRzdjJgRv1Ko9Mp8IVNqv4vIS9hGeVteBig8aQkva9ZG+sC+o5sVcA==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9",
-          "Microsoft.Extensions.Primitives": "10.0.9"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.10",
+          "Microsoft.Extensions.Primitives": "10.0.10"
         }
       },
       "Microsoft.Extensions.Primitives": {
         "type": "Transitive",
-        "resolved": "10.0.9",
-        "contentHash": "fmEbAUFsaIKirgLt/lYhuFRBwhcSJN31jjHgCdbQxJiWOum6EdLjkbgGuukSP9z/a+9LibaxII/kF+GwOXgC4g=="
+        "resolved": "10.0.10",
+        "contentHash": "5wu/GrYVd8mG2DVUw3vFJzF+O336TyTGg/Kmcgw9bfwYhCoFiV5lR5QeEmKecJyrW4W54nMfD3p3589E8a7czQ=="
       },
       "Microsoft.Testing.Extensions.Telemetry": {
         "type": "Transitive",
@@ -390,25 +385,22 @@
       },
       "YoutubeExplode": {
         "type": "Transitive",
-        "resolved": "6.6.0",
-        "contentHash": "DCFAmPvADs/ZB3pB24kLFzVY/1o6iECqJ7IL9LKi4zkSZLgcXDwFbOJe3vd2K3FBw36Xa3O/QMv10zelT7hjfA==",
-        "dependencies": {
-          "AngleSharp": "1.4.0",
-          "JsonExtensions": "1.2.0"
-        }
+        "resolved": "6.6.1",
+        "contentHash": "9sVVl1n/YqzVN4olebZuZgMdhNCuYXOUt9KPhyivi90QIfm8QQt7GoTQtPpMJCtON6QUCUGZubBxK2xwlGHRMg=="
       },
       "sockseek.core": {
         "type": "Project",
         "dependencies": {
-          "Google.Apis.YouTube.v3": "[1.75.0.4176, )",
+          "AngleSharp": "[1.7.1, )",
+          "Google.Apis.YouTube.v3": "[1.75.0.4207, )",
           "HtmlAgilityPack": "[1.12.4, )",
-          "Microsoft.Extensions.Logging": "[10.0.9, )",
+          "Microsoft.Extensions.Logging": "[10.0.10, )",
           "SmallestCSVParser": "[1.2.0, )",
           "Soulseek": "[10.0.2, )",
           "SpotifyAPI.Web": "[7.4.2, )",
           "SpotifyAPI.Web.Auth": "[7.4.2, )",
           "TagLibSharp": "[2.3.0, )",
-          "YoutubeExplode": "[6.6.0, )"
+          "YoutubeExplode": "[6.6.1, )"
         }
       },
       "sockseek.persistence": {
@@ -416,7 +408,7 @@
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.9, )",
           "SQLitePCLRaw.lib.e_sqlite3": "[3.53.3, )",
-          "Sockseek.Core": "[3.0.5, )"
+          "Sockseek.Core": "[4.0.0, )"
         }
       }
     }

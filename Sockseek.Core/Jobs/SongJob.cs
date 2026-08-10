@@ -15,10 +15,13 @@ namespace Sockseek.Core.Jobs;
         protected override bool  DefaultCanBeSkipped => true;
 
         // True for non-audio files inside album folders (cover art, .txt, etc.).
-        // Computed from the candidate filename.
+        // Prefer the remote candidate classification, but fall back to a known local
+        // path for already-existing/index-restored standalone files.
         public bool IsNotAudio => ResolvedTarget != null
             ? !Utils.IsMusicFile(ResolvedTarget.Filename)
-            : false;
+            : !string.IsNullOrWhiteSpace(DownloadPath)
+                ? !Utils.IsMusicFile(DownloadPath)
+                : false;
 
         // Populated after search; ordered best-first. Null = not yet searched.
         public List<FileCandidate>? Candidates { get; set; }

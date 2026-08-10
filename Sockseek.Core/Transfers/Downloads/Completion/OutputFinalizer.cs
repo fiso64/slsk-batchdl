@@ -12,11 +12,13 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
     public static OutputFinalizationResult Completed(JobOutcome outcome)
         => new(outcome, null);
 
-    public static OutputFinalizationResult Failed(FileOrganizationException exception)
+    public static OutputFinalizationResult Failed(FileOrganizationException exception, string? retainedPath = null)
         => new(
             JobOutcome.Failed(
                 JobFailureReason.Other,
-                exception.Message,
+                retainedPath == null
+                    ? exception.Message
+                    : $"{exception.Message}{Environment.NewLine}Downloaded payload retained at: {retainedPath}",
                 SockseekLog.ExceptionDetail(exception)),
             exception);
 }
@@ -42,11 +44,8 @@ internal sealed class OutputFinalizer
         if (string.IsNullOrWhiteSpace(config.Output.NameFormat))
             return new(organizer.GetSavePath(candidate.Filename), PublishToDuplicateCache: true);
 
-        var parentDir = string.IsNullOrWhiteSpace(config.Output.ParentDir)
-            ? Directory.GetCurrentDirectory()
-            : config.Output.ParentDir;
         var sourceFileName = Utils.GetFileNameSlsk(candidate.Filename).CleanPath(config.Output.InvalidReplaceStr);
-        var stagingPath = Path.Join(parentDir, ".sockseek-staging", song.Id.ToString("N"), sourceFileName);
+        var stagingPath = Path.Join(OutputStaging.Root(config.Output), song.Id.ToString("N"), sourceFileName);
 
         return new(stagingPath, PublishToDuplicateCache: false);
     }
@@ -56,9 +55,9 @@ internal sealed class OutputFinalizer
         Job parentJob,
         JobOutcome outcome,
         FileManager organizer,
-        bool organize)
+        bool finalizePlacement)
     {
-        if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded || !organize)
+        if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded || !finalizePlacement)
             return OutputFinalizationResult.Completed(outcome);
 
         return downloadedFiles.WithExclusiveAccess(() =>
@@ -66,15 +65,18 @@ internal sealed class OutputFinalizer
             song.UpdateActivity(JobActivityPhase.Organizing);
             try
             {
-                organizer.OrganizeSong(song);
+                organizer.OrganizeDownloadedFile(song);
+                EnsureFileLeftStaging(song, parentJob.Config.Output);
                 PublishDownloadedFileCache(song, outcome);
                 return OutputFinalizationResult.Completed(outcome);
             }
-            catch (FileOrganizationException ex)
+            catch (Exception ex)
             {
-                SockseekLog.Jobs.Error(song, $"{ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
-                CleanupStagedDownloadAfterOrganizationFailure(song, parentJob.Config.Output);
-                return OutputFinalizationResult.Failed(ex);
+                var organizationException = AsOrganizationException(ex, song.DownloadPath, targetPath: null);
+                SockseekLog.Jobs.Error(song, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                return OutputFinalizationResult.Failed(
+                    organizationException,
+                    RetainedStagedPayload(song.DownloadPath, parentJob.Config.Output));
             }
         });
     }
@@ -86,7 +88,11 @@ internal sealed class OutputFinalizer
         List<SongJob>? additionalImages,
         JobOutcome outcome)
     {
-        if (chosenFiles == null || string.IsNullOrEmpty(album.DownloadPath))
+        var filesToOrganize = (chosenFiles ?? [])
+            .Concat(additionalImages ?? [])
+            .Distinct()
+            .ToList();
+        if (filesToOrganize.Count == 0)
         {
             PublishDownloadedFileCache(chosenFiles);
             PublishDownloadedFileCache(additionalImages);
@@ -97,15 +103,24 @@ internal sealed class OutputFinalizer
         {
             try
             {
-                organizer.OrganizeAlbum(album, chosenFiles, additionalImages);
+                if (!string.IsNullOrEmpty(album.DownloadPath))
+                    organizer.OrganizeAlbum(album, filesToOrganize, additionalImages);
+                EnsureAlbumFilesLeftStaging(album, chosenFiles, additionalImages, outcome);
+                RefreshSuccessfulAlbumPath(album, filesToOrganize, outcome);
                 PublishDownloadedFileCache(chosenFiles);
                 PublishDownloadedFileCache(additionalImages);
                 return OutputFinalizationResult.Completed(outcome);
             }
-            catch (FileOrganizationException ex)
+            catch (Exception ex)
             {
-                SockseekLog.Jobs.Error(album, $"{ex.Message} {SockseekLog.ExceptionSummary(ex.InnerException ?? ex)}");
-                return OutputFinalizationResult.Failed(ex);
+                var strandedPath = SuccessfulFiles(chosenFiles, additionalImages)
+                    .Select(file => file.DownloadPath)
+                    .FirstOrDefault(path => OutputStaging.Contains(path, album.Config.Output));
+                var organizationException = AsOrganizationException(ex, strandedPath, album.DownloadPath);
+                SockseekLog.Jobs.Error(album, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                return OutputFinalizationResult.Failed(
+                    organizationException,
+                    RetainedStagedPayload(strandedPath, album.Config.Output));
             }
         });
     }
@@ -126,6 +141,8 @@ internal sealed class OutputFinalizer
         var candidate = song.ChosenCandidate;
         if (candidate == null || string.IsNullOrEmpty(song.DownloadPath))
             return;
+        if (song.Config != null && OutputStaging.Contains(song.DownloadPath, song.Config.Output))
+            return;
 
         downloadedFiles.Publish(song.DownloadPath, candidate);
     }
@@ -139,26 +156,78 @@ internal sealed class OutputFinalizer
             PublishDownloadedFileCache(song);
     }
 
-    private static void CleanupStagedDownloadAfterOrganizationFailure(SongJob song, OutputSettings output)
+    private static void EnsureFileLeftStaging(SongJob song, OutputSettings output)
     {
-        if (string.IsNullOrWhiteSpace(song.DownloadPath))
+        if (!OutputStaging.Contains(song.DownloadPath, output))
             return;
 
-        var parentDir = string.IsNullOrWhiteSpace(output.ParentDir)
-            ? Directory.GetCurrentDirectory()
-            : output.ParentDir;
-        var stagingRoot = Path.Join(parentDir, ".sockseek-staging");
-        if (!Utils.IsInDirectory(song.DownloadPath, stagingRoot, strict: true))
-            return;
-
-        try
-        {
-            Utils.DeleteFileAndParentsIfEmpty(song.DownloadPath, stagingRoot);
-            song.DownloadPath = null;
-        }
-        catch (Exception ex)
-        {
-            SockseekLog.Jobs.Warn(song, $"failed to clean staged file '{song.DownloadPath}' after organization failure: {SockseekLog.ExceptionSummary(ex)}");
-        }
+        throw new FileOrganizationException(
+            $"Finalization left the downloaded file in Sockseek staging: '{song.DownloadPath}'.",
+            song.DownloadPath!,
+            "",
+            new InvalidOperationException("A leaf that owns final placement cannot commit from staging."));
     }
+
+    private static void EnsureAlbumFilesLeftStaging(
+        AlbumJob album,
+        IEnumerable<SongJob>? chosenFiles,
+        IEnumerable<SongJob>? additionalImages,
+        JobOutcome outcome)
+    {
+        if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded)
+            return;
+
+        var stranded = SuccessfulFiles(chosenFiles, additionalImages)
+            .FirstOrDefault(file => OutputStaging.Contains(file.DownloadPath, album.Config.Output));
+        if (stranded == null)
+            return;
+
+        throw new FileOrganizationException(
+            $"Album finalization left a downloaded file in Sockseek staging: '{stranded.DownloadPath}'.",
+            stranded.DownloadPath!,
+            album.DownloadPath ?? "",
+            new InvalidOperationException("A successful album cannot retain a successfully downloaded child in staging."));
+    }
+
+    private static IEnumerable<SongJob> SuccessfulFiles(
+        IEnumerable<SongJob>? chosenFiles,
+        IEnumerable<SongJob>? additionalImages)
+        => (chosenFiles ?? [])
+            .Concat(additionalImages ?? [])
+            .Where(file => file.TerminalOutcome == JobTerminalOutcome.Succeeded)
+            .Distinct();
+
+    private static void RefreshSuccessfulAlbumPath(
+        AlbumJob album,
+        IEnumerable<SongJob> files,
+        JobOutcome outcome)
+    {
+        if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded)
+            return;
+
+        var finalizedPaths = files
+            .Where(file => file.TerminalOutcome == JobTerminalOutcome.Succeeded)
+            .Select(file => file.DownloadPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path) && !OutputStaging.Contains(path, album.Config.Output))
+            .Cast<string>()
+            .ToList();
+        if (finalizedPaths.Count > 0)
+            album.DownloadPath = Utils.GreatestCommonDirectory(finalizedPaths);
+    }
+
+    private static FileOrganizationException AsOrganizationException(
+        Exception exception,
+        string? sourcePath,
+        string? targetPath)
+        => exception as FileOrganizationException
+            ?? new FileOrganizationException(
+                "Failed to finalize downloaded file placement.",
+                sourcePath ?? "",
+                targetPath ?? "",
+                exception);
+
+    private static string? RetainedStagedPayload(string? path, OutputSettings output)
+        => OutputStaging.Contains(path, output) && File.Exists(path)
+            ? path
+            : null;
 }

@@ -4,10 +4,10 @@ using Sockseek.Core;
 using Sockseek.Core.Settings;
 
 namespace Sockseek.Core.Services;
-    public readonly record struct NameIndexEntry(string PathPart, string Name);
-    public readonly record struct NameConditionIndexEntry(string PathPart, string Name, SimpleFile File);
-    public readonly record struct TagIndexEntry(string Artist, string Title, string Album, string AlbumArtist);
-    public readonly record struct TagConditionIndexEntry(string Artist, string Title, string Album, string AlbumArtist, SimpleFile File);
+    public readonly record struct NameIndexEntry(string PathPart, string Name, bool IsKnownAudio);
+    public readonly record struct NameConditionIndexEntry(string PathPart, string Name, SimpleFile File, bool IsKnownAudio);
+    public readonly record struct TagIndexEntry(string Artist, string Title, string Album, string AlbumArtist, bool IsKnownAudio);
+    public readonly record struct TagConditionIndexEntry(string Artist, string Title, string Album, string AlbumArtist, SimpleFile File, bool IsKnownAudio);
 
     public static class TrackSkipperRegistry
     {
@@ -154,15 +154,14 @@ namespace Sockseek.Core.Services;
         public override void BuildIndex()
         {
             if (!Directory.Exists(dir)) { IndexIsBuilt = true; return; }
-            int removeLen = Preprocess(dir, false, false).Length + 1;
             foreach (var path in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
             {
-                if (Utils.IsMusicFile(path))
-                {
-                    string ppath = Preprocess(path[removeLen..path.LastIndexOf('.')], false, false);
-                    string pname = Path.GetFileName(ppath);
-                    index.Add((path, new NameIndexEntry(ppath, pname)));
-                }
+                if (FileIndexPathPolicy.ShouldIgnoreNameIndexPath(path))
+                    continue;
+
+                string ppath = Preprocess(FileIndexPathPolicy.RelativePathWithoutExtension(dir, path), false, false);
+                string pname = Path.GetFileName(ppath);
+                index.Add((path, new NameIndexEntry(ppath, pname, Utils.IsMusicFile(path))));
             }
             IndexIsBuilt = true;
         }
@@ -171,7 +170,9 @@ namespace Sockseek.Core.Services;
             => item.Name.ContainsWithBoundary(title) && item.PathPart.ContainsWithBoundary(artist);
 
         protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, NameIndexEntry item, TrackSkipperContext c, AlbumJob job)
-            => item.PathPart.ContainsWithBoundary(album) && item.PathPart.ContainsWithBoundary(albumArtist);
+            => item.IsKnownAudio
+                && item.PathPart.ContainsWithBoundary(album)
+                && item.PathPart.ContainsWithBoundary(albumArtist);
     }
 
     public class NameConditionalSkipper : FileBasedSkipper<NameConditionIndexEntry>
@@ -195,26 +196,21 @@ namespace Sockseek.Core.Services;
         public override void BuildIndex()
         {
             if (!Directory.Exists(dir)) { IndexIsBuilt = true; return; }
-            int removeLen = Preprocess(dir, false, false).Length + 1;
             foreach (var path in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
             {
-                if (Utils.IsMusicFile(path))
-                {
-                    try
-                    {
-                        using var musicFile = TagLib.File.Create(path);
-                        string ppath  = Preprocess(path[..path.LastIndexOf('.')], false, false)[removeLen..];
-                        string pname  = Path.GetFileName(ppath);
-                        var    parent = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
-                        var    simpleFile = new SimpleFile(musicFile);
+                if (FileIndexPathPolicy.ShouldIgnoreNameIndexPath(path))
+                    continue;
 
-                        if (!index.TryGetValue(parent, out var value))
-                            index[parent] = new() { (path, new NameConditionIndexEntry(ppath, pname, simpleFile)) };
-                        else
-                            value.Add((path, new NameConditionIndexEntry(ppath, pname, simpleFile)));
-                    }
-                    catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
-                }
+                string ppath  = Preprocess(FileIndexPathPolicy.RelativePathWithoutExtension(dir, path), false, false);
+                string pname  = Path.GetFileName(ppath);
+                var    parent = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
+                var    simpleFile = new SimpleFile(path);
+                var    item = new NameConditionIndexEntry(ppath, pname, simpleFile, Utils.IsMusicFile(path));
+
+                if (!index.TryGetValue(parent, out var value))
+                    index[parent] = new() { (path, item) };
+                else
+                    value.Add((path, item));
             }
             IndexIsBuilt = true;
         }
@@ -231,8 +227,14 @@ namespace Sockseek.Core.Services;
             if (context.conditions == null)
                 return true;
 
+            if (!item.IsKnownAudio)
+                return false;
+
             var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.File.Path)!);
-            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.File), context, job);
+            return AlbumConditionsSatisfy(
+                index[parent].Where(x => x.item.IsKnownAudio).Select(x => x.item.File),
+                context,
+                job);
         }
     }
 
@@ -255,19 +257,19 @@ namespace Sockseek.Core.Services;
             if (!Directory.Exists(dir)) { IndexIsBuilt = true; return; }
             foreach (var path in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
             {
-                if (Utils.IsMusicFile(path))
+                if (FileIndexPathPolicy.ShouldIgnoreTagIndexPath(path))
+                    continue;
+
+                try
                 {
-                    try
-                    {
-                        using var musicFile = TagLib.File.Create(path);
-                        string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
-                        string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
-                        string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
-                        string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
-                        index.Add((path, new TagIndexEntry(partist, ptitle, palbum, palbumArtist)));
-                    }
-                    catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
+                    using var musicFile = TagLib.File.Create(path);
+                    string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
+                    string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
+                    string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
+                    string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
+                    index.Add((path, new TagIndexEntry(partist, ptitle, palbum, palbumArtist, Utils.IsMusicFile(path))));
                 }
+                catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
             }
             IndexIsBuilt = true;
         }
@@ -276,7 +278,9 @@ namespace Sockseek.Core.Services;
             => title == item.Title && item.Artist.Contains(artist);
 
         protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, TagIndexEntry item, TrackSkipperContext c, AlbumJob job)
-            => album == item.Album && (albumArtist == null || item.AlbumArtist.Contains(albumArtist));
+            => item.IsKnownAudio
+                && album == item.Album
+                && (albumArtist == null || item.AlbumArtist.Contains(albumArtist));
     }
 
     public class TagConditionalSkipper : FileBasedSkipper<TagConditionIndexEntry>
@@ -298,25 +302,32 @@ namespace Sockseek.Core.Services;
             if (!Directory.Exists(dir)) { IndexIsBuilt = true; return; }
             foreach (var path in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
             {
-                if (Utils.IsMusicFile(path))
-                {
-                    try
-                    {
-                        using var musicFile = TagLib.File.Create(path);
-                        string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
-                        string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
-                        string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
-                        string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
-                        var    parent       = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
-                        var    simpleFile   = new SimpleFile(musicFile);
+                if (FileIndexPathPolicy.ShouldIgnoreTagIndexPath(path))
+                    continue;
 
-                        if (!index.TryGetValue(parent, out var value))
-                            index[parent] = new() { (path, new TagConditionIndexEntry(partist, ptitle, palbum, palbumArtist, simpleFile)) };
-                        else
-                            value.Add((path, new TagConditionIndexEntry(partist, ptitle, palbum, palbumArtist, simpleFile)));
-                    }
-                    catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
+                try
+                {
+                    using var musicFile = TagLib.File.Create(path);
+                    string partist      = Preprocess(musicFile.Tag.JoinedPerformers ?? "",   false, false);
+                    string ptitle       = Preprocess(musicFile.Tag.Title ?? "",              false, false);
+                    string palbum       = Preprocess(musicFile.Tag.Album ?? "",              false, false);
+                    string palbumArtist = Preprocess(musicFile.Tag.JoinedAlbumArtists ?? "", false, false);
+                    var    parent       = Utils.NormalizedPath(Path.GetDirectoryName(path)!);
+                    var    simpleFile   = new SimpleFile(musicFile);
+                    var    item = new TagConditionIndexEntry(
+                        partist,
+                        ptitle,
+                        palbum,
+                        palbumArtist,
+                        simpleFile,
+                        Utils.IsMusicFile(path));
+
+                    if (!index.TryGetValue(parent, out var value))
+                        index[parent] = new() { (path, item) };
+                    else
+                        value.Add((path, item));
                 }
+                catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{path}': {ex.Message}"); continue; }
             }
             IndexIsBuilt = true;
         }
@@ -328,12 +339,40 @@ namespace Sockseek.Core.Services;
 
         protected override bool DirectoryMatchesAlbum(string dir, string? albumArtist, string album, TagConditionIndexEntry item, TrackSkipperContext c, AlbumJob job)
         {
-            if (album != item.Album) return false;
+            if (!item.IsKnownAudio || album != item.Album) return false;
             if (albumArtist != null && !item.AlbumArtist.Contains(albumArtist)) return false;
             if (c.conditions == null) return true;
 
             var parent = Utils.NormalizedPath(Path.GetDirectoryName(item.File.Path)!);
-            return AlbumConditionsSatisfy(index[parent].Select(x => x.item.File), c, job);
+            return AlbumConditionsSatisfy(
+                index[parent].Where(x => x.item.IsKnownAudio).Select(x => x.item.File),
+                c,
+                job);
+        }
+    }
+
+    internal static class FileIndexPathPolicy
+    {
+        public static string RelativePathWithoutExtension(string root, string path)
+        {
+            var relative = Path.GetRelativePath(root, path);
+            return Path.Join(
+                Path.GetDirectoryName(relative),
+                Path.GetFileNameWithoutExtension(relative));
+        }
+
+        public static bool ShouldIgnoreNameIndexPath(string path)
+            => IsTransientSockseekPath(path);
+
+        public static bool ShouldIgnoreTagIndexPath(string path)
+            => IsTransientSockseekPath(path);
+
+        private static bool IsTransientSockseekPath(string path)
+        {
+            var segments = Utils.NormalizedPath(path)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return segments.Contains(OutputStaging.DirectoryName, StringComparer.OrdinalIgnoreCase)
+                || path.EndsWith(".incomplete", StringComparison.OrdinalIgnoreCase);
         }
     }
 

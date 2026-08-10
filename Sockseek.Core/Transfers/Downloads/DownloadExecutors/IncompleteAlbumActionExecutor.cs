@@ -2,6 +2,7 @@ using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Services;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -25,7 +26,7 @@ internal sealed class IncompleteAlbumActionExecutor
         var failedAlbumPath = action.Path;
         var outputParentDir = config.Output.ParentDir;
         var filesToHandle = job.EnsureTrackJobs(folder)
-            .Where(IsIncompleteAlbumActionFile)
+            .Where(song => IsIncompleteAlbumActionFile(song, config.Output))
             .ToList();
 
         if (filesToHandle.Count == 0)
@@ -86,9 +87,10 @@ internal sealed class IncompleteAlbumActionExecutor
             context.Events.RaiseJobStatus(job, $"moved to {failedAlbumPath}");
     }
 
-    static bool IsIncompleteAlbumActionFile(SongJob song)
+    static bool IsIncompleteAlbumActionFile(SongJob song, OutputSettings output)
         => song.TerminalOutcome == JobTerminalOutcome.Succeeded
             && !string.IsNullOrEmpty(song.DownloadPath)
+            && !OutputStaging.Contains(song.DownloadPath, output)
             && !song.DownloadPath.EndsWith(".incomplete", StringComparison.OrdinalIgnoreCase)
             && File.Exists(song.DownloadPath);
 }

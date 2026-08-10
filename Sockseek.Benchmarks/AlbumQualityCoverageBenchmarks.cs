@@ -37,7 +37,7 @@ public class AlbumQualityCoverageBenchmarks
         strictRequiredFlacSearch.StrictAlbumQuality = true;
 
         legacyProjectionSearch = CloneSearchSettings(requiredFlacSearch);
-        legacyProjectionSearch.NecessaryCond = legacyProjectionSearch.NecessaryCond.WithoutAudioQualityConditions();
+        legacyProjectionSearch.NecessaryCond = legacyProjectionSearch.NecessaryCond.WithoutAlbumTrackConditions();
     }
 
     [Benchmark(Baseline = true)]

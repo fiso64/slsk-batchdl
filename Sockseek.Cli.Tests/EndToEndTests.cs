@@ -245,6 +245,7 @@ public class CliEndToEndTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task InteractiveAlbumSelection_ShiftSStillAllowsRetryPromptForAcceptedAlbum()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), "slsk-mock-out-interactive-skip-retry-" + Guid.NewGuid());

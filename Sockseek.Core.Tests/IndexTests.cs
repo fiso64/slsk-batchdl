@@ -322,5 +322,30 @@ namespace Tests.Index
             Assert.IsFalse(lines.Any(l => l.Contains("Track.mp3")), "Index should not contain individual album child audio files.");
             Assert.IsFalse(lines.Any(l => l.Contains("Cover.jpg")), "Index should not contain non-audio files.");
         }
+
+        [TestMethod]
+        public void Index_PersistsStandaloneNonAudioFile()
+        {
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Booklet" });
+            song.ResolvedTarget = new FileCandidate(
+                new Soulseek.SearchResponse("user", 1, true, 100, 0, []),
+                TestHelpers.CreateSlFile(@"Documents\Artist - Booklet.pdf"));
+            song.SetDone();
+            song.DownloadPath = "Documents/Artist - Booklet.pdf";
+
+            var (queue, _, _) = MakeSongQueue([song]);
+            File.WriteAllText(testM3uPath, "");
+            var editor = new M3uEditor(testM3uPath, queue, M3uOption.Index, true);
+            editor.Update();
+
+            var lookup = new SongJob(new SongQuery { Artist = "Artist", Title = "Booklet" });
+            var (lookupQueue, _, _) = MakeSongQueue([lookup]);
+            var reloaded = new M3uEditor(testM3uPath, lookupQueue, M3uOption.Index, true);
+
+            Assert.IsTrue(reloaded.TryGetPreviousRunResult(lookup, out var previous));
+            Assert.IsNotNull(previous);
+            Assert.AreEqual(JobStateOld.Done, previous.State);
+            Assert.AreEqual(song.DownloadPath, previous.DownloadPath);
+        }
     }
 }

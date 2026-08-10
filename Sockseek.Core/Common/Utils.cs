@@ -7,19 +7,30 @@ namespace Sockseek.Core;
 
 public static partial class Utils
 {
-    public static readonly string[] musicExtensions = new string[] { ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac" };
+    // TODO [MEDIA TYPES]: Evaluate the rest of TagLib#'s supported audio extensions with
+    // real fixtures before expanding this classification. Each addition also changes album
+    // track counting, playlist inclusion, failure criticality, and progressive placement;
+    // container extensions such as .webm must not be classified as unconditionally audio.
+    public static IReadOnlySet<string> KnownAudioExtensions { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".flac", ".ogg", ".m4a", ".opus", ".wav", ".aac", ".alac",
+        ".aif", ".aiff",
+    };
+
+    [Obsolete("Use KnownAudioExtensions. Requested default formats are available from SearchDefaults.Formats.")]
+    public static readonly string[] musicExtensions = [.. KnownAudioExtensions];
     public static readonly string[] imageExtensions = new string[] { ".jpg", ".png", ".jpeg", ".gif", ".webp" };
     public static readonly string[] videoExtensions = new string[] { ".mp4", ".mkv", ".avi", ".mov", ".webm", ".mpeg" };
 
 
     public static bool IsMusicExtension(string extension)
     {
-        return musicExtensions.Contains(extension.ToLower());
+        return KnownAudioExtensions.Contains(extension);
     }
 
     public static bool IsMusicFile(string fileName)
     {
-        return musicExtensions.Contains(Path.GetExtension(fileName).ToLower());
+        return KnownAudioExtensions.Contains(Path.GetExtension(fileName));
     }
 
     public static bool IsImageExtension(string extension)
@@ -251,7 +262,9 @@ public static partial class Utils
 
         while (y.StartsWith(x + '/') && FileCountRecursive(y) == 0)
         {
-            Directory.Delete(y, true);
+            // Never recursively delete after an emptiness check: another process may
+            // create a payload between the check and deletion.
+            Directory.Delete(y, recursive: false);
 
             string prev = y;
             y = NormalizedPath(Path.GetDirectoryName(y) ?? "");

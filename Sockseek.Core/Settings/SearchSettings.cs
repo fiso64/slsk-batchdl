@@ -13,7 +13,7 @@ public class SearchSettings
 
     public FileConditions NecessaryCond { get; set; } = new()
     {
-        Formats = ["mp3", "flac", "ogg", "m4a", "opus", "wav", "aac", "alac"],
+        Formats = [.. SearchDefaults.Formats],
         LengthTolerance = 3,
     };
 
@@ -31,8 +31,8 @@ public class SearchSettings
     public FolderConditions NecessaryFolderCond { get; set; } = new();
     public FolderConditions PreferredFolderCond { get; set; } = new();
 
-    /// When required album audio-quality conditions are set (format, bitrate,
-    /// sample rate, or bit depth), require every visible audio file in the
+    /// When required album-track conditions are set (format, bitrate, sample
+    /// rate, or bit depth), require every visible audio file in the
     /// candidate folder to satisfy them. When false, mixed-quality album folders
     /// are allowed and ranked by quality coverage.
     public bool StrictAlbumQuality { get; set; }

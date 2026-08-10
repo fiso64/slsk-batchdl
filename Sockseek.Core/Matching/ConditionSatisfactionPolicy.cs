@@ -127,9 +127,9 @@ internal static class ConditionSatisfactionPolicy
         public AlbumSearchFilter(AlbumQuery query, SearchSettings search)
         {
             SortQuery = SearchResultProjector.AlbumFileMatchQuery(query);
-            // Album audio quality is checked as folder coverage after grouping;
-            // per-file filtering only applies non-quality conditions.
-            nonQualityFileConditions = search.NecessaryCond.WithoutAudioQualityConditions();
+            // Album track format/properties are checked as folder coverage after grouping;
+            // per-file filtering only applies conditions outside that album-track policy.
+            nonQualityFileConditions = search.NecessaryCond.WithoutAlbumTrackConditions();
             checkUser =
                 nonQualityFileConditions.BannedUsers.Length > 0
                 || nonQualityFileConditions.AllowedUsers.Length > 0;
@@ -192,7 +192,7 @@ internal static class ConditionSatisfactionPolicy
         SongQuery? perFileQuery)
     {
         var files = audioFiles.ToList();
-        var nonQualityConditions = conditions.WithoutAudioQualityConditions();
+        var nonQualityConditions = conditions.WithoutAlbumTrackConditions();
         foreach (var file in files)
         {
             if (!nonQualityConditions.FileSatisfies(file, perFileQuery, response: null, filenameChecks: true, checkUser: false))

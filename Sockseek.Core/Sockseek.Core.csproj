@@ -19,15 +19,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Google.Apis.YouTube.v3" Version="1.75.0.4176" />
+    <PackageReference Include="AngleSharp" Version="1.7.1" />
+    <PackageReference Include="Google.Apis.YouTube.v3" Version="1.75.0.4207" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
     <PackageReference Include="SmallestCSVParser" Version="1.2.0" />
     <PackageReference Include="Soulseek" Version="10.0.2" />
     <PackageReference Include="SpotifyAPI.Web" Version="7.4.2" />
     <PackageReference Include="SpotifyAPI.Web.Auth" Version="7.4.2" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="YoutubeExplode" Version="6.6.0" />
+    <PackageReference Include="YoutubeExplode" Version="6.6.1" />
   </ItemGroup>
 
 </Project>

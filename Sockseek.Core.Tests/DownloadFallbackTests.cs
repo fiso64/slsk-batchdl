@@ -8,6 +8,7 @@ using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
 using Sockseek.Core.Snapshots;
+using Sockseek.Core.Transfers.Downloads.State;
 using Directory = System.IO.Directory;
 
 namespace Tests.Core
@@ -436,6 +437,95 @@ namespace Tests.Core
         }
 
         [TestMethod]
+        public async Task AlbumNameFormat_FinalizesAudioAndAllAncillaryFiles()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-generic-files-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            var audio = TestHelpers.CreateSlFile(@"Music\Artist\Album\01. Artist - Song.flac", size: 18_000, length: 180);
+            var cover = TestHelpers.CreateSlFile(@"Music\Artist\Album\cover.jpg", size: 4_096);
+            var booklet = TestHelpers.CreateSlFile(@"Music\Artist\Album\booklet.pdf", size: 8_192);
+            var log = TestHelpers.CreateSlFile(@"Music\Artist\Album\rip.log", size: 1_024);
+            var response = new SearchResponse("user1", 1, true, 100, 0, [audio, cover, booklet, log]);
+            var testClient = new ClientTests.MockSoulseekClient([response]);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "Organized/{foldername}/{filename}";
+                dl.Search.NoBrowseFolder = true;
+                dl.Skip.SkipExisting = false;
+
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                app.Enqueue(album, dl);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);
+                Assert.AreEqual(4, album.TrackJobs.Count);
+                Assert.IsTrue(album.TrackJobs.All(file => file.TerminalOutcome == JobTerminalOutcome.Succeeded));
+                foreach (var filename in new[] { "01. Artist - Song.flac", "cover.jpg", "booklet.pdf", "rip.log" })
+                    Assert.IsTrue(System.IO.File.Exists(Path.Combine(outputDir, "Organized", "Album", filename)), $"Missing finalized album file '{filename}'.");
+
+                Assert.IsTrue(album.TrackJobs.All(file =>
+                    !string.IsNullOrEmpty(file.DownloadPath)
+                    && !Utils.IsInDirectory(file.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true)));
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task AlbumAncillaryOrganizationFailure_FailsAlbumAndRetainsStagedPayload()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-ancillary-organization-failure-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            var audio = TestHelpers.CreateSlFile(@"Music\Artist\Album\01. Artist - Song.flac", size: 18_000, length: 180);
+            var booklet = TestHelpers.CreateSlFile(@"Music\Artist\Album\booklet.pdf", size: 8_192);
+            var response = new SearchResponse("user1", 1, true, 100, 0, [audio, booklet]);
+            var testClient = new ClientTests.MockSoulseekClient([response]);
+            var blockedBookletPath = Path.Combine(outputDir, "Organized", "Album", "booklet.pdf");
+            Directory.CreateDirectory(blockedBookletPath);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "Organized/{foldername}/{filename}";
+                dl.Search.NoBrowseFolder = true;
+                dl.Skip.SkipExisting = false;
+
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                app.Enqueue(album, dl);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Failed, album.TerminalOutcome);
+                StringAssert.Contains(album.FailureMessage ?? "", "Failed to move album ancillary file");
+                StringAssert.Contains(album.FailureMessage ?? "", "Downloaded payload retained at:");
+                var pdf = album.TrackJobs.Single(file => file.IsNotAudio);
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, pdf.TerminalOutcome);
+                Assert.IsNotNull(pdf.DownloadPath);
+                Assert.IsTrue(Utils.IsInDirectory(pdf.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true));
+                Assert.IsTrue(System.IO.File.Exists(pdf.DownloadPath));
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task AlbumArtOnly_SucceedsWhenImageDownloads()
         {
             var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-art-only-" + Guid.NewGuid());
@@ -467,6 +557,47 @@ namespace Tests.Core
                 var image = album.TrackJobs.Single(file => file.IsNotAudio);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, image.TerminalOutcome);
                 Assert.IsTrue(System.IO.File.Exists(image.DownloadPath), $"Expected downloaded image at {image.DownloadPath}");
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task AlbumArtOnly_WithNameFormat_FinalizesImageOutsideStaging()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-art-only-name-format-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            var audio = TestHelpers.CreateSlFile(@"Music\Artist\Album\01. Artist - Song.mp3", size: 18_000, length: 180);
+            var cover = TestHelpers.CreateSlFile(@"Music\Artist\Album\cover.jpg", size: 4_096);
+            var response = new SearchResponse("user1", 1, true, 100, 0, [audio, cover]);
+            var testClient = new ClientTests.MockSoulseekClient([response]);
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "IgnoredForAncillary/{filename}";
+                dl.Output.AlbumArtOnly = true;
+                dl.Output.AlbumArtOption = AlbumArtOption.Largest;
+                dl.Skip.SkipExisting = false;
+
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                app.Enqueue(album, dl);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);
+                var image = album.TrackJobs.Single(file => file.IsNotAudio);
+                Assert.AreEqual(Path.GetFullPath(outputDir), Path.GetFullPath(album.DownloadPath!));
+                Assert.AreEqual(Path.Combine(outputDir, "cover.jpg"), image.DownloadPath);
+                Assert.IsTrue(System.IO.File.Exists(image.DownloadPath));
+                Assert.IsFalse(Utils.IsInDirectory(image.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true));
             }
             finally
             {
@@ -807,11 +938,136 @@ namespace Tests.Core
                 Assert.IsTrue(song.IsUnsuccessfulTerminal, "A song whose name-formatted final placement fails must not be reported as successful.");
                 Assert.AreEqual(JobFailureReason.Other, song.FailureReason);
                 StringAssert.Contains(song.FailureMessage ?? "", "Failed to move organized file");
+                StringAssert.Contains(song.FailureMessage ?? "", "Downloaded payload retained at:");
                 Assert.IsTrue(Directory.Exists(finalPath), "The blocked destination directory should be left untouched.");
-                Assert.IsFalse(Directory.Exists(Path.Combine(outputDir, ".sockseek-staging")), "Failed organization should clean Sockseek-owned staging residue.");
+                Assert.IsNotNull(song.DownloadPath);
+                Assert.IsTrue(System.IO.File.Exists(song.DownloadPath), "A fully downloaded payload should survive organization failure.");
+                Assert.IsTrue(
+                    Utils.IsInDirectory(song.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true),
+                    $"The recovery payload should remain in staging, but was '{song.DownloadPath}'.");
             }
             finally
             {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public void OutputFinalizer_FailsIfOrganizerLeavesOwnedFileInsideStaging()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-name-format-staging-invariant-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "";
+                var candidate = new FileCandidate(
+                    new SearchResponse("user1", 1, true, 100, 0, []),
+                    TestHelpers.CreateSlFile(@"Music\Artist - Payload.xyz", size: 10_000));
+                var stagingPath = Path.Combine(outputDir, ".sockseek-staging", Guid.NewGuid().ToString("N"), "Artist - Payload.xyz");
+                Directory.CreateDirectory(Path.GetDirectoryName(stagingPath)!);
+                System.IO.File.WriteAllText(stagingPath, "downloaded payload");
+                var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Payload" })
+                {
+                    Config = dl,
+                    ResolvedTarget = candidate,
+                    DownloadPath = stagingPath,
+                };
+                var organizer = new FileManager(song, dl.Output, dl.Extraction);
+                var finalizer = new OutputFinalizer(new DownloadedFileCache());
+
+                var result = finalizer.FinalizeSongPlacement(
+                    song,
+                    song,
+                    JobOutcome.Done(stagingPath, candidate),
+                    organizer,
+                    finalizePlacement: true);
+
+                Assert.AreEqual(JobTerminalOutcome.Failed, result.Outcome.TerminalOutcome);
+                StringAssert.Contains(result.Outcome.FailureMessage ?? "", "left the downloaded file in Sockseek staging");
+                StringAssert.Contains(result.Outcome.FailureMessage ?? "", "Downloaded payload retained at:");
+                Assert.AreEqual(stagingPath, song.DownloadPath);
+                Assert.IsTrue(System.IO.File.Exists(stagingPath));
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
+        public async Task AlbumAudioTrack_IsNameFormattedBeforeWholeAlbumCompletes()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-progressive-organization-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            var first = TestHelpers.CreateSlFile(@"Music\Album\01. Artist - First.mp3", size: 10_000, length: 180);
+            var second = TestHelpers.CreateSlFile(@"Music\Album\02. Artist - Second.mp3", size: 10_000, length: 181);
+            var response = new SearchResponse("user1", 1, true, 100, 0, [first, second]);
+            var secondTransferReachedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseSecondTransfer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            int completionOrder = 0;
+            var testClient = new ClientTests.MockSoulseekClient([response])
+            {
+                BeforeDownloadCompletesAsync = async (_, _, ct) =>
+                {
+                    if (Interlocked.Increment(ref completionOrder) != 2)
+                        return;
+
+                    secondTransferReachedCompletion.TrySetResult();
+                    await releaseSecondTransfer.Task.WaitAsync(ct);
+                },
+            };
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "Organized/{filename}";
+                dl.Search.NoBrowseFolder = true;
+                dl.Skip.SkipExisting = false;
+
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
+                var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(testClient, eng));
+                app.Enqueue(album, dl);
+                app.CompleteEnqueue();
+
+                var runTask = app.RunAsync(CancellationToken.None);
+                await secondTransferReachedCompletion.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+                var deadline = DateTime.UtcNow.AddSeconds(5);
+                SongJob? organizedTrack;
+                do
+                {
+                    organizedTrack = album.TrackJobs.FirstOrDefault(track =>
+                        track.TerminalOutcome == JobTerminalOutcome.Succeeded
+                        && !string.IsNullOrEmpty(track.DownloadPath)
+                        && !Utils.IsInDirectory(track.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true));
+                    if (organizedTrack == null)
+                        await Task.Delay(10);
+                }
+                while (organizedTrack == null && DateTime.UtcNow < deadline);
+
+                Assert.IsNotNull(organizedTrack, "A completed audio child should be organized while a later album transfer is still blocked.");
+                Assert.IsTrue(System.IO.File.Exists(organizedTrack.DownloadPath));
+                Assert.IsFalse(runTask.IsCompleted, "The observation must happen before the album finishes.");
+                Assert.AreNotEqual(JobLifecycleState.Terminal, album.LifecycleState);
+
+                releaseSecondTransfer.TrySetResult();
+                await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);
+                Assert.IsTrue(album.TrackJobs.Where(track => !track.IsNotAudio).All(track =>
+                    !string.IsNullOrEmpty(track.DownloadPath)
+                    && System.IO.File.Exists(track.DownloadPath)
+                    && !Utils.IsInDirectory(track.DownloadPath, Path.Combine(outputDir, ".sockseek-staging"), strict: true)));
+            }
+            finally
+            {
+                releaseSecondTransfer.TrySetResult();
                 if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
             }
         }

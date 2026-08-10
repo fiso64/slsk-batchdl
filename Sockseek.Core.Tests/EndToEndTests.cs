@@ -268,6 +268,81 @@ namespace Tests.EndToEnd
             }
         }
 
+        [DataTestMethod]
+        [DataRow("aiff")]
+        [DataRow("pdf")]
+        [DataRow("xyz")]
+        public async Task CsvSongList_NameFormat_FinalizesAndIndexesArbitraryRequestedFormat(string extension)
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-generic-format-" + Guid.NewGuid());
+            var outputDir = Path.Combine(tempRoot, "out");
+            var sourceDir = Path.Combine(tempRoot, "source");
+            Directory.CreateDirectory(outputDir);
+            Directory.CreateDirectory(sourceDir);
+
+            var csvPath = Path.Combine(sourceDir, "tracks.csv");
+            var indexPath = Path.Combine(outputDir, "_index.csv");
+            File.WriteAllText(csvPath, "artist,title\nTest Artist,First Track\n");
+
+            DownloadSettings CreateSettings()
+            {
+                var settings = new DownloadSettings();
+                settings.Extraction.Input = csvPath;
+                settings.Extraction.InputType = InputType.CSV;
+                settings.Output.ParentDir = outputDir;
+                settings.Output.NameFormat = "Completed/{artist|filename}";
+                settings.Output.WriteIndex = true;
+                settings.Output.HasConfiguredIndex = true;
+                settings.Output.IndexFilePath = indexPath;
+                settings.Search.NecessaryCond.Formats = [extension];
+                return settings;
+            }
+
+            var remoteFile = TestHelpers.CreateSlFile($@"Music\Test Artist - First Track.{extension}", size: 10_000);
+            var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, [remoteFile]);
+
+            try
+            {
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var firstClient = new ClientTests.MockSoulseekClient([response]);
+                var firstApp = new DownloadEngine(
+                    engineSettings,
+                    TestHelpers.CreateMockClientManager(firstClient, engineSettings));
+                firstApp.Enqueue(new ExtractJob(csvPath, InputType.CSV), CreateSettings());
+                firstApp.CompleteEnqueue();
+
+                await firstApp.RunAsync(CancellationToken.None);
+
+                var firstSong = firstApp.Queue.AllSongs().Single();
+                var expectedPath = Path.Combine(outputDir, "Completed", $"Test Artist - First Track.{extension}");
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, firstSong.TerminalOutcome);
+                Assert.IsTrue(File.Exists(expectedPath), $"Expected finalized output at '{expectedPath}'.");
+                Assert.AreEqual(Path.GetFullPath(expectedPath), Path.GetFullPath(firstSong.DownloadPath!));
+                Assert.IsFalse(
+                    Directory.Exists(Path.Combine(outputDir, ".sockseek-staging")),
+                    "A completely empty staging root should be removed at the end of the run.");
+                Assert.AreEqual(1, firstClient.DownloadCallCount);
+
+                var secondClient = new ClientTests.MockSoulseekClient([response]);
+                var secondApp = new DownloadEngine(
+                    engineSettings,
+                    TestHelpers.CreateMockClientManager(secondClient, engineSettings));
+                secondApp.Enqueue(new ExtractJob(csvPath, InputType.CSV), CreateSettings());
+                secondApp.CompleteEnqueue();
+
+                await secondApp.RunAsync(CancellationToken.None);
+
+                var secondSong = secondApp.Queue.AllSongs().Single();
+                Assert.AreEqual(0, secondClient.DownloadCallCount, "The persisted index should prevent a second download.");
+                Assert.IsTrue(secondSong.IsSkippedAlreadyExists);
+                Assert.AreEqual(Path.GetFullPath(expectedPath), Path.GetFullPath(secondSong.DownloadPath!));
+            }
+            finally
+            {
+                if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true);
+            }
+        }
+
         [TestMethod]
         public async Task CsvAlbumList_DefaultOutputDir_DownloadsAlbumInsideCsvNamedFolder()
         {
