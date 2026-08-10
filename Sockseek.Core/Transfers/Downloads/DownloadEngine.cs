@@ -310,13 +310,13 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
         foreach (var parentDir in outputParents)
         {
-            var stagingRoot = Path.Join(parentDir, ".sockseek-staging");
+            var stagingRoot = Path.Join(parentDir, OutputStaging.DirectoryName);
             if (!Directory.Exists(stagingRoot) || Utils.FileCountRecursive(stagingRoot) > 0)
                 continue;
 
             try
             {
-                Directory.Delete(stagingRoot, recursive: true);
+                Directory.Delete(stagingRoot, recursive: false);
             }
             catch (Exception ex)
             {

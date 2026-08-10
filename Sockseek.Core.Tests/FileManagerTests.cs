@@ -372,7 +372,7 @@ namespace Tests.FileManagerTests
             var manager = PreparedManager(song, contexts);
             MarkDownloaded(song, @"User1\Artist1 - Nested.mp3", Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
 
-            manager.OrganizeSong(song);
+            manager.OrganizeDownloadedFile(song);
 
             string expected = Path.Combine(testRoot, "Outer", "Inner", "Artist1 - Nested.mp3");
             AssertSamePath(expected, song.DownloadPath!);
@@ -483,7 +483,7 @@ namespace Tests.FileManagerTests
             var manager = PreparedManager(song, contexts);
             MarkDownloaded(song, @"User1\Test Artist - First Song.mp3", Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
 
-            manager.OrganizeSong(song);
+            manager.OrganizeDownloadedFile(song);
 
             string expected = Path.Combine(testRoot, "wishlist", "songs", "Test Artist - First Song.mp3");
             AssertSamePath(expected, song.DownloadPath!);
@@ -503,12 +503,77 @@ namespace Tests.FileManagerTests
             string defaultPath = manager.GetSavePath(AlbumRemoteTrack);
             var song = DownloadedSong(AlbumRemoteTrack, defaultPath);
 
-            manager.OrganizeSong(song);
+            manager.OrganizeDownloadedFile(song);
 
             string expected = Path.Combine(testRoot, "Custom", "01. Track1.mp3");
             AssertSamePath(expected, song.DownloadPath!);
             Assert.IsTrue(File.Exists(expected));
             Assert.IsFalse(File.Exists(Path.Combine(testRoot, "MyPlaylist", "Album1", "Custom", "01. Track1.mp3")));
+        }
+
+        [DataTestMethod]
+        [DataRow("pdf")]
+        [DataRow("aiff")]
+        [DataRow("xyz")]
+        public void StandaloneNameFormat_OrganizesAnyDownloadedExtension(string extension)
+        {
+            config.Output.NameFormat = "Formatted/{artist|filename}";
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Document" });
+            var contexts = Prepare(song);
+            var manager = PreparedManager(song, contexts);
+            MarkDownloaded(
+                song,
+                $@"User1\Original File.{extension}",
+                Path.Combine(testRoot, ".sockseek-staging", $"download.{extension}"));
+
+            manager.OrganizeDownloadedFile(song);
+
+            string expected = Path.Combine(testRoot, "Formatted", $"Original File.{extension}");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
+        }
+
+        [TestMethod]
+        public void IsAudioVariable_UsesKnownAudioClassification()
+        {
+            var aiff = DownloadedSong(@"User1\Track.aiff", Path.Combine(testRoot, "Track.aiff"));
+            var pdf = DownloadedSong(@"User1\Booklet.pdf", Path.Combine(testRoot, "Booklet.pdf"));
+
+            bool aiffFound = FileManager.TryGetCleanVarValue(
+                "is-audio",
+                FileManagerContext.FromSongJob(aiff, aiff),
+                () => null,
+                "_",
+                out string aiffValue);
+            bool pdfFound = FileManager.TryGetCleanVarValue(
+                "is-audio",
+                FileManagerContext.FromSongJob(pdf, pdf),
+                () => null,
+                "_",
+                out string pdfValue);
+
+            Assert.IsTrue(aiffFound);
+            Assert.IsTrue(pdfFound);
+            Assert.AreEqual("true", aiffValue);
+            Assert.AreEqual("false", pdfValue);
+        }
+
+        [TestMethod]
+        public void IsAudioVariable_ClassifiesAlreadyExistingFileFromLocalPath()
+        {
+            var pdf = new SongJob(new SongQuery { Artist = "Artist1", Title = "Booklet" })
+            {
+                DownloadPath = Path.Combine(testRoot, "Artist1 - Booklet.pdf"),
+            };
+
+            FileManager.TryGetCleanVarValue(
+                "is-audio",
+                FileManagerContext.FromSongJob(pdf, pdf),
+                () => null,
+                "_",
+                out string value);
+
+            Assert.AreEqual("false", value);
         }
 
         [TestMethod]
@@ -524,7 +589,7 @@ namespace Tests.FileManagerTests
             string stagingPath = CreateDownloadedFile(Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
             var song = DownloadedSong(AlbumRemoteTrack, stagingPath);
 
-            manager.OrganizeSong(song);
+            manager.OrganizeDownloadedFile(song);
 
             string expected = Path.Combine(testRoot, "MyPlaylist", "Album1", "01. Track1.mp3");
             AssertSamePath(expected, song.DownloadPath!);

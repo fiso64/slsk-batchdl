@@ -407,11 +407,12 @@ In other words, by default, Sockseek will
 Moreover, it will prefer files whose paths contain the supplied title and album.
 Changing the last two preferred conditions is not recommended.  
 
-In album mode, required audio-quality conditions (format, bitrate, sample rate, bit depth)
+In album mode, required album-track conditions (format, bitrate, sample rate, bit depth)
 rank or reject whole folders instead of removing individual tracks. A folder with 9 FLAC files
 and 1 MP3 is preferred over a mostly-MP3 folder, and the selected folder is still downloaded as
 a whole. Use `--strict-album-quality` to require every audio file in the folder to satisfy those
-quality conditions. In default mixed-quality mode, coverage is based on the folder contents
+track conditions. Here `--format` means the acceptable format of primary audio tracks; it does
+not select ancillary files such as PDFs or logs. In default mixed-quality mode, coverage is based on the folder contents
 Sockseek has seen so far; if a later folder browse reveals hidden files, the coverage can change,
 but the folder is still treated as a whole. In strict mode, Sockseek retrieves the full folder when
 needed and rejects the candidate before download if hidden files break the required quality

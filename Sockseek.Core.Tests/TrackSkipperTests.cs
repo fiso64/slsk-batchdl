@@ -518,6 +518,90 @@ namespace Tests.TrackSkipperTests
         }
 
         [TestMethod]
+        public void NameSkipper_MatchingPdf_ReturnsTrue()
+        {
+            string pdfPath = Path.Combine(_tempDir, "Cool Artist - Great Booklet.pdf");
+            File.WriteAllText(pdfPath, "pdf payload");
+
+            var skipper = new NameSkipper(_tempDir);
+            skipper.BuildIndex();
+
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Booklet" });
+            Assert.IsTrue(skipper.SongExists(song, new TrackSkipperContext(), out string? foundPath));
+            Assert.AreEqual(pdfPath, foundPath);
+        }
+
+        [TestMethod]
+        public void NameConditionalSkipper_MatchingPdfHonorsFormatCondition()
+        {
+            string pdfPath = Path.Combine(_tempDir, "Cool Artist - Great Booklet.pdf");
+            File.WriteAllText(pdfPath, "pdf payload");
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Booklet" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["pdf"] },
+                PreferredCond = new FileConditions(),
+            };
+
+            var skipper = new NameConditionalSkipper(_tempDir);
+            skipper.BuildIndex();
+            var context = TrackSkipperContext.From(
+                new JobContext(),
+                new SkipSettings { SkipCheckCond = true },
+                search);
+
+            Assert.IsTrue(skipper.SongExists(song, context, out string? foundPath));
+            Assert.AreEqual(pdfPath, foundPath);
+
+            search.NecessaryCond.Formats = ["xyz"];
+            context = TrackSkipperContext.From(
+                new JobContext(),
+                new SkipSettings { SkipCheckCond = true },
+                search);
+            Assert.IsFalse(skipper.SongExists(song, context, out _));
+        }
+
+        [TestMethod]
+        public void NameConditionalSkipper_PdfFailsRequiredAudioPropertyWhenMissingPropertiesAreRejected()
+        {
+            File.WriteAllText(Path.Combine(_tempDir, "Cool Artist - Great Booklet.pdf"), "pdf payload");
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Booklet" });
+            var search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions
+                {
+                    Formats = ["pdf"],
+                    MinBitrate = 128,
+                    AcceptMissingProps = false,
+                },
+                PreferredCond = new FileConditions(),
+            };
+
+            var skipper = new NameConditionalSkipper(_tempDir);
+            skipper.BuildIndex();
+            var context = TrackSkipperContext.From(
+                new JobContext(),
+                new SkipSettings { SkipCheckCond = true },
+                search);
+
+            Assert.IsFalse(skipper.SongExists(song, context, out _));
+        }
+
+        [TestMethod]
+        public void NameSkipper_IgnoresSockseekStagingFiles()
+        {
+            var staging = Path.Combine(_tempDir, ".sockseek-staging", "job");
+            Directory.CreateDirectory(staging);
+            File.WriteAllText(Path.Combine(staging, "Cool Artist - Great Booklet.pdf"), "staged payload");
+
+            var skipper = new NameSkipper(_tempDir);
+            skipper.BuildIndex();
+
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Booklet" });
+            Assert.IsFalse(skipper.SongExists(song, new TrackSkipperContext(), out _));
+        }
+
+        [TestMethod]
         public void NameSkipper_SkipCheckCond_FileFailingRequiredBitrateCondition_SkipsWithoutFlagButNotWithFlag()
         {
             string mp3Path = Path.Combine(_tempDir, "Cool Artist - Great Song.mp3");
@@ -678,6 +762,19 @@ namespace Tests.TrackSkipperTests
             Assert.IsFalse(
                 checkedSkipper.SongExists(song, checkedContext, out _),
                 "With skip-check-cond, tag-mode skipping must not skip when the matching local file fails the bitrate condition.");
+        }
+
+        [TestMethod]
+        public void TagSkipper_UnreadablePdfIsIgnoredWithoutCrashing()
+        {
+            File.WriteAllText(Path.Combine(_tempDir, "Cool Artist - Great Booklet.pdf"), "not a TagLib file");
+
+            var skipper = new TagSkipper(_tempDir);
+            skipper.BuildIndex();
+
+            var song = new SongJob(new SongQuery { Artist = "Cool Artist", Title = "Great Booklet" });
+            Assert.IsFalse(skipper.SongExists(song, new TrackSkipperContext(), out _));
+            Assert.IsTrue(skipper.IndexIsBuilt);
         }
     }
 

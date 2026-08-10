@@ -273,9 +273,6 @@ public class M3uEditor
 
                 foreach (var song in songs)
                 {
-                    if (song.IsNotAudio)
-                        continue;
-
                     SockseekLog.Trace($"M3uEditor: Checking song {song.Query.Title} (Lifecycle: {song.LifecycleState}, Activity: {song.ActivityPhase}, Outcome: {song.TerminalOutcome}, Skip: {song.SkipReason}, Path: {song.DownloadPath})");
                     if (song.IsPending)
                         continue;
@@ -292,7 +289,7 @@ public class M3uEditor
                             JobToIndexState(song).state, song.FailureReason);
                     }
 
-                    if (option == M3uOption.All || option == M3uOption.Playlist)
+                    if (!song.IsNotAudio && (option == M3uOption.All || option == M3uOption.Playlist))
                     {
                         var line = SongToLine(song);
                         newLines.Add(line);

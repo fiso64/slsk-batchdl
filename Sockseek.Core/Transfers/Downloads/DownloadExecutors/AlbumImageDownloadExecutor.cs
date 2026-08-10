@@ -117,7 +117,14 @@ internal sealed class AlbumImageDownloadExecutor
             {
                 if (af.ResolvedTarget != null && af.Candidates == null)
                     af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-                await songDownloads.DownloadEmbeddedSong(af, job, config, fileManager, cts, cancelGroupOnFail: false, organize: true);
+                await songDownloads.DownloadEmbeddedSong(
+                    af,
+                    job,
+                    config,
+                    fileManager,
+                    cts,
+                    cancelGroupOnFail: false,
+                    finalizePlacement: false);
                 if (af.TerminalOutcome == JobTerminalOutcome.Succeeded)
                     result.Add(af);
                 else

@@ -5,7 +5,10 @@ namespace Sockseek.Core.Services;
 
 internal static class AlbumQualityPolicy
 {
-    public static ActiveAudioQualityConditions ActiveConditions(FileConditions conditions)
+    // In album mode, Format means the acceptable format of primary audio tracks.
+    // Selecting ancillary album files by extension is a separate product concern and
+    // must not be implemented by broadening this policy to PDFs, logs, or images.
+    public static ActiveAlbumTrackConditions ActiveConditions(FileConditions conditions)
         => new(
             conditions.HasActiveFormatCondition(),
             conditions.MinBitrate != null || conditions.MaxBitrate != null,
@@ -15,7 +18,7 @@ internal static class AlbumQualityPolicy
     public static AlbumAudioQualityCoverage Evaluate(
         IEnumerable<Soulseek.File> audioFiles,
         FileConditions conditions,
-        ActiveAudioQualityConditions activeQuality)
+        ActiveAlbumTrackConditions activeQuality)
         => Evaluate(
             audioFiles.Select(ConditionFile.From),
             conditions,
@@ -24,7 +27,7 @@ internal static class AlbumQualityPolicy
     public static AlbumAudioQualityCoverage Evaluate(
         IEnumerable<ConditionFile> audioFiles,
         FileConditions conditions,
-        ActiveAudioQualityConditions activeQuality)
+        ActiveAlbumTrackConditions activeQuality)
     {
         int audioFileCount = 0;
         int formatMatchingFileCount = 0;
@@ -59,7 +62,7 @@ internal static class AlbumQualityPolicy
     public static AlbumAudioQualityCoverage Evaluate(
         AlbumFolder folder,
         FileConditions conditions,
-        ActiveAudioQualityConditions activeQuality)
+        ActiveAlbumTrackConditions activeQuality)
         => Evaluate(
             folder.Files
                 .Where(file => !file.IsNotAudio)
@@ -73,7 +76,7 @@ internal static class AlbumQualityPolicy
             : AlbumQualityCoverageBucket.Inactive(audioFileCount);
 }
 
-internal readonly record struct ActiveAudioQualityConditions(
+internal readonly record struct ActiveAlbumTrackConditions(
     bool Format,
     bool Bitrate,
     bool SampleRate,

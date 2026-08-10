@@ -57,7 +57,7 @@ public struct FileManagerContext
             TerminalOutcome = song.TerminalOutcome,
             SkipReason = song.SkipReason,
             FailureReason = song.FailureReason,
-            IsNotAudio = false,
+            IsNotAudio = song.IsNotAudio,
             LineNumber = song.LineNumber,
             ItemNumber = song.ItemNumber,
             RemoteBaseDir = remoteBaseDir,
@@ -128,6 +128,10 @@ public sealed class OutputScope
 public partial class FileManager
 {
     readonly Job job;
+    // TODO [PLACEMENT STATE]: Replace this organizer-local bookkeeping and the
+    // remainingOnly flag with explicit per-child placement state when Job state is
+    // moved to the planned immutable reducer. Progressive album-track placement must
+    // remain observable; this is not a request to defer all album files until the end.
     readonly HashSet<object> organized = new();
     readonly Lock sync = new();
     public string? remoteBaseDir { get; private set; }
@@ -206,7 +210,7 @@ public partial class FileManager
             {
                 if (remainingOnly && organized.Contains(file))
                     continue;
-                OrganizeSong(file);
+                OrganizeDownloadedFile(file);
             }
 
             var nonAudioToOrganize = string.IsNullOrEmpty(output.NameFormat)
@@ -232,11 +236,11 @@ public partial class FileManager
         }
     }
 
-    public void OrganizeSong(SongJob song)
+    public void OrganizeDownloadedFile(SongJob song)
     {
         lock (sync)
         {
-            if (string.IsNullOrEmpty(song.DownloadPath) || !Utils.IsMusicFile(song.DownloadPath))
+            if (string.IsNullOrEmpty(song.DownloadPath))
                 return;
 
             if (output.NameFormat.Length == 0)
@@ -257,15 +261,24 @@ public partial class FileManager
 
             if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(song.DownloadPath))
             {
+                var oldFilePath = song.DownloadPath;
                 try
                 {
-                    Utils.MoveAndDeleteParent(song.DownloadPath, newFilePath, CleanupRootForSourcePath(song.DownloadPath));
+                    Utils.MoveAndDeleteParent(oldFilePath, newFilePath, CleanupRootForSourcePath(oldFilePath));
                 }
                 catch (Exception ex)
                 {
+                    if (File.Exists(newFilePath) && !File.Exists(oldFilePath))
+                    {
+                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] file was organized to '{newFilePath}', but cleanup of its previous directory failed: {SockseekLog.ExceptionSummary(ex)}");
+                        song.DownloadPath = newFilePath;
+                        organized.Add(song);
+                        return;
+                    }
+
                     throw new FileOrganizationException(
-                        $"Failed to move organized file from '{song.DownloadPath}' to '{newFilePath}'.",
-                        song.DownloadPath,
+                        $"Failed to move organized file from '{oldFilePath}' to '{newFilePath}'.",
+                        oldFilePath,
                         newFilePath,
                         ex);
                 }
@@ -275,6 +288,10 @@ public partial class FileManager
             organized.Add(song);
         }
     }
+
+    [Obsolete("Use OrganizeDownloadedFile. Placement applies to downloaded files of any requested format.")]
+    public void OrganizeSong(SongJob song)
+        => OrganizeDownloadedFile(song);
 
     private void OrganizeNonAudio(SongJob file, string parent, bool isAdditionalImage)
     {
@@ -292,8 +309,27 @@ public partial class FileManager
 
         if (Utils.NormalizedPath(newFilePath) != Utils.NormalizedPath(file.DownloadPath))
         {
-            try { Utils.MoveAndDeleteParent(file.DownloadPath, newFilePath, CleanupRootForSourcePath(file.DownloadPath)); }
-            catch (Exception ex) { SockseekLog.Jobs.Error(file, $"failed to move non-audio file from '{file.DownloadPath}' to '{newFilePath}' for parent job [{job.DisplayId}]: {ex}"); return; }
+            var oldFilePath = file.DownloadPath;
+            try
+            {
+                Utils.MoveAndDeleteParent(oldFilePath, newFilePath, CleanupRootForSourcePath(oldFilePath));
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(newFilePath) && !File.Exists(oldFilePath))
+                {
+                    SockseekLog.Jobs.Debug($"[{file.DisplayId}] album ancillary file was organized to '{newFilePath}', but cleanup of its previous directory failed: {SockseekLog.ExceptionSummary(ex)}");
+                    file.DownloadPath = newFilePath;
+                    organized.Add(file);
+                    return;
+                }
+
+                throw new FileOrganizationException(
+                    $"Failed to move album ancillary file from '{oldFilePath}' to '{newFilePath}'.",
+                    oldFilePath,
+                    newFilePath,
+                    ex);
+            }
         }
 
         file.DownloadPath = newFilePath;
@@ -302,7 +338,7 @@ public partial class FileManager
 
     private string CleanupRootForSourcePath(string sourcePath)
     {
-        var stagingRoot = Path.Join(OutputParentDir, ".sockseek-staging");
+        var stagingRoot = OutputStaging.Root(output);
         return Utils.IsInDirectory(sourcePath, stagingRoot, strict: true)
             ? stagingRoot
             : OutputParentDir;

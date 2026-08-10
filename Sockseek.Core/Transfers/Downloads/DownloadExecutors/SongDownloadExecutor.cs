@@ -41,12 +41,12 @@ internal sealed class SongDownloadExecutor
         JobOutcome outcome,
         JobContext jobCtx,
         FileManager organizer,
-        bool organize,
+        bool finalizePlacement,
         bool updateIndexes)
     {
         DownloadExecutorCoordinator.ApplyPreCommitOutcomeMetadata(song, outcome);
         if (outcome.FailureReason != JobFailureReason.Cancelled)
-            outcome = await CompleteSongBeforeCommit(song, parentJob, outcome, jobCtx, organizer, organize);
+            outcome = await CompleteSongBeforeCommit(song, parentJob, outcome, jobCtx, organizer, finalizePlacement);
 
         outcome = DownloadExecutorCoordinator.OutcomeWithCurrentMetadata(song, outcome);
         JobOutcomeCommitter.Commit(song, outcome);
@@ -78,7 +78,7 @@ internal sealed class SongDownloadExecutor
         FileManager organizer,
         CancellationTokenSource groupCts,
         bool cancelGroupOnFail,
-        bool organize)
+        bool finalizePlacement)
     {
         if (song.LifecycleState != JobLifecycleState.Pending) return JobOutcome.NoChange();
 
@@ -117,7 +117,7 @@ internal sealed class SongDownloadExecutor
                 outcome,
                 context.Ctx(parentJob),
                 organizer,
-                organize,
+                finalizePlacement,
                 updateIndexes: false);
 
             if (cancelGroupOnFail && ShouldCancelGroupOnEmbeddedOutcome(finalOutcome))
@@ -146,9 +146,20 @@ internal sealed class SongDownloadExecutor
         }
     }
 
-    private async Task<JobOutcome> CompleteSongBeforeCommit(SongJob song, Job parentJob, JobOutcome outcome, JobContext jobCtx, FileManager organizer, bool organize)
+    private async Task<JobOutcome> CompleteSongBeforeCommit(
+        SongJob song,
+        Job parentJob,
+        JobOutcome outcome,
+        JobContext jobCtx,
+        FileManager organizer,
+        bool finalizePlacement)
     {
-        var finalization = context.OutputFinalizer.FinalizeSongPlacement(song, parentJob, outcome, organizer, organize);
+        var finalization = context.OutputFinalizer.FinalizeSongPlacement(
+            song,
+            parentJob,
+            outcome,
+            organizer,
+            finalizePlacement);
         if (finalization.OrganizationException != null)
             return finalization.Outcome;
 

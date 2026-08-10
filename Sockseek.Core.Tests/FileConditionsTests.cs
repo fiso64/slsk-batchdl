@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using Sockseek.Core.Settings;
 using Soulseek;
 
 namespace Tests.FileConditionsTests
@@ -251,6 +252,64 @@ namespace Tests.FileConditionsTests
         {
             var fc = new FileConditions { Formats = new[] { "mp3" } };
             Assert.IsFalse(fc.FormatSatisfies("song"));
+        }
+
+        [TestMethod]
+        public void DefaultFormats_AreNotAnActiveOverride()
+        {
+            var settings = new SearchSettings();
+
+            Assert.IsFalse(settings.NecessaryCond.HasActiveFormatCondition());
+            CollectionAssert.AreEqual(SearchDefaults.Formats.ToArray(), settings.NecessaryCond.Formats);
+        }
+
+        [TestMethod]
+        public void ArbitraryFormat_IsAnActiveOverride()
+        {
+            var conditions = new FileConditions { Formats = ["pdf"] };
+
+            Assert.IsTrue(conditions.HasActiveFormatCondition());
+        }
+
+        [TestMethod]
+        public void KnownAiffClassification_DoesNotChangeDefaultRequestedFormats()
+        {
+            var settings = new SearchSettings();
+
+            Assert.IsTrue(Utils.KnownAudioExtensions.Contains(".aif"));
+            Assert.IsTrue(Utils.KnownAudioExtensions.Contains(".aiff"));
+            Assert.IsFalse(settings.NecessaryCond.Formats.Contains("aif"));
+            Assert.IsFalse(settings.NecessaryCond.Formats.Contains("aiff"));
+            Assert.IsFalse(settings.NecessaryCond.HasActiveFormatCondition());
+        }
+
+        [TestMethod]
+        public void FormatOnly_IsAnAlbumTrackConditionButNotAnAudioPropertyCondition()
+        {
+            var conditions = new FileConditions { Formats = ["flac"] };
+
+            Assert.IsFalse(conditions.HasActiveAudioPropertyConditions());
+            Assert.IsTrue(conditions.HasActiveAlbumTrackConditions());
+        }
+
+        [TestMethod]
+        public void RemovingAudioProperties_RetainsFormats()
+        {
+            var conditions = new FileConditions
+            {
+                Formats = ["pdf"],
+                MinBitrate = 128,
+                MinSampleRate = 44_100,
+                MinBitDepth = 16,
+            };
+
+            var withoutProperties = conditions.WithoutAudioPropertyConditions();
+            var withoutAlbumTrackConditions = conditions.WithoutAlbumTrackConditions();
+
+            CollectionAssert.AreEqual(new[] { "pdf" }, withoutProperties.Formats);
+            Assert.IsFalse(withoutProperties.HasActiveAudioPropertyConditions());
+            CollectionAssert.AreEqual(Array.Empty<string>(), withoutAlbumTrackConditions.Formats);
+            Assert.IsFalse(withoutAlbumTrackConditions.HasActiveAlbumTrackConditions());
         }
     }
 

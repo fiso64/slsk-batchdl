@@ -1,4 +1,4 @@
-
+using Sockseek.Core.Settings;
 
 using SearchResponse = Soulseek.SearchResponse;
 
@@ -186,19 +186,24 @@ namespace Sockseek.Core.Models;
             MaxBitDepth = null;
         }
 
-        public bool HasActiveAudioQualityConditions()
-            => HasActiveFormatCondition()
-                || MinBitrate != null
+        public bool HasActiveAudioPropertyConditions()
+            => MinBitrate != null
                 || MaxBitrate != null
                 || MinSampleRate != null
                 || MaxSampleRate != null
                 || MinBitDepth != null
                 || MaxBitDepth != null;
 
-        public FileConditions WithoutAudioQualityConditions()
+        public bool HasActiveAlbumTrackConditions()
+            => HasActiveFormatCondition() || HasActiveAudioPropertyConditions();
+
+        [Obsolete("Use HasActiveAudioPropertyConditions or HasActiveAlbumTrackConditions to state the intended policy.")]
+        public bool HasActiveAudioQualityConditions()
+            => HasActiveAudioPropertyConditions();
+
+        public FileConditions WithoutAudioPropertyConditions()
         {
             var result = new FileConditions(this);
-            result.Formats = [];
             result.MinBitrate = null;
             result.MaxBitrate = null;
             result.MinSampleRate = null;
@@ -207,6 +212,17 @@ namespace Sockseek.Core.Models;
             result.MaxBitDepth = null;
             return result;
         }
+
+        public FileConditions WithoutAlbumTrackConditions()
+        {
+            var result = WithoutAudioPropertyConditions();
+            result.Formats = [];
+            return result;
+        }
+
+        [Obsolete("Use WithoutAudioPropertyConditions or WithoutAlbumTrackConditions to state the intended policy.")]
+        public FileConditions WithoutAudioQualityConditions()
+            => WithoutAudioPropertyConditions();
 
         public bool HasActiveFormatCondition()
         {
@@ -219,11 +235,11 @@ namespace Sockseek.Core.Models;
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(format => format, StringComparer.Ordinal)
                 .ToArray();
-            var allKnownAudio = Utils.musicExtensions
+            var defaultFormats = SearchDefaults.Formats
                 .Select(format => format.TrimStart('.').ToLowerInvariant())
                 .OrderBy(format => format, StringComparer.Ordinal)
                 .ToArray();
-            return !configured.SequenceEqual(allKnownAudio);
+            return !configured.SequenceEqual(defaultFormats);
         }
 
         internal bool FileSatisfies(

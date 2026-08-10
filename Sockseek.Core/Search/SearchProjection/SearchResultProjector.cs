@@ -479,7 +479,7 @@ public static partial class SearchResultProjector
         public void AddRank(int rank)
             => FirstRank = Math.Min(FirstRank, rank);
 
-        public void RefreshQualityCoverage(FileConditions conditions, ActiveAudioQualityConditions activeQuality)
+        public void RefreshQualityCoverage(FileConditions conditions, ActiveAlbumTrackConditions activeQuality)
             => QualityCoverage = AlbumQualityPolicy.Evaluate(
                 Files.Where(file => file.IsMusic).Select(file => file.File),
                 conditions,

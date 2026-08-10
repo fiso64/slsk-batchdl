@@ -393,7 +393,7 @@ internal sealed class AlbumDownloadExecutor
         FileManager organizer,
         AlbumAudioDownloadState state,
         AlbumCandidateSelection selection,
-        ActiveAudioQualityConditions activeQuality,
+        ActiveAlbumTrackConditions activeQuality,
         bool verifyStrictAlbumQuality)
     {
         if (!verifyStrictAlbumQuality)
@@ -517,7 +517,14 @@ internal sealed class AlbumDownloadExecutor
             if (af.LifecycleState != JobLifecycleState.Pending) return;
             if (af.ResolvedTarget != null && af.Candidates == null)
                 af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-            await songDownloads.DownloadEmbeddedSong(af, job, config, organizer, cts, cancelGroupOnFail: !af.IsNotAudio, organize: true);
+            await songDownloads.DownloadEmbeddedSong(
+                af,
+                job,
+                config,
+                organizer,
+                cts,
+                cancelGroupOnFail: !af.IsNotAudio,
+                finalizePlacement: !af.IsNotAudio);
         });
         await Task.WhenAll(tasks);
     }

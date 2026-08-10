@@ -537,7 +537,7 @@ internal sealed class JobOrchestrator
                     alreadyExistsOutcome,
                     ctx,
                     organizer,
-                    organize: false,
+                    finalizePlacement: false,
                     updateIndexes: false);
             }
             else

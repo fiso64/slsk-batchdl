@@ -39,7 +39,7 @@ internal sealed class DownloadExecutorCoordinator
                     var songParent = parentJob ?? sj;
                     var songOrganizer = new FileManager(sj, config.Output, config.Extraction, ctx.OutputScope);
                     outcome = await songDownloads.ProcessSongDownload(sj, songParent, songOrganizer, parentToken);
-                    outcome = await songDownloads.CommitAndFinalizeSong(sj, songParent, outcome, ctx, songOrganizer, organize: true, updateIndexes: true);
+                    outcome = await songDownloads.CommitAndFinalizeSong(sj, songParent, outcome, ctx, songOrganizer, finalizePlacement: true, updateIndexes: true);
                     break;
 
                 case AlbumJob aj:
@@ -72,9 +72,9 @@ internal sealed class DownloadExecutorCoordinator
         JobOutcome outcome,
         JobContext jobCtx,
         FileManager organizer,
-        bool organize,
+        bool finalizePlacement,
         bool updateIndexes)
-        => await songDownloads.CommitAndFinalizeSong(song, parentJob, outcome, jobCtx, organizer, organize, updateIndexes);
+        => await songDownloads.CommitAndFinalizeSong(song, parentJob, outcome, jobCtx, organizer, finalizePlacement, updateIndexes);
 
     public async Task<JobOutcome> RunOnCompleteIfApplicable(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
         => await songDownloads.RunOnCompleteIfApplicable(job, song, ctx, outcome);
