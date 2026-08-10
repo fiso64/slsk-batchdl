@@ -4,18 +4,18 @@
     "net10.0": {
       "Microsoft.AspNetCore.OpenApi": {
         "type": "Direct",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "1ihb8FO9cGgEK1/m3CTtT/SfnynwmiZib0W2pcDVj3KSWk/Sca4VOXEtaptKQc582zpFrzTFiwkGRCglt6H+WQ==",
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "d4Atx9IHq7JgX0F/h7Db+m9zAUzC+cKdI9k+OWnnyQIOUQtfvjIEuhvbjPigVMkAmPUgCbJ8Yp6M9ghUqHtJSQ==",
         "dependencies": {
           "Microsoft.OpenApi": "2.0.0"
         }
       },
       "Microsoft.Extensions.ApiDescription.Server": {
         "type": "Direct",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "n1m7EAbCbHMGiTy++F+mLSan4MrZe0t00XEpJrkai6BFpB6lwEcirflI9FiMm4G4u55h/2RnWToYBDwS+MnN6g=="
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "AdNZonHDGXO67UoaE+NZ7YDZAztU4qszxeWyE51FeCfHXDSHV9VjxYeq+oDdHhLgT6TheoJzhDnqoVfJRIT5Wg=="
       },
       "Microsoft.OpenApi": {
         "type": "Direct",
@@ -25,8 +25,8 @@
       },
       "AngleSharp": {
         "type": "Transitive",
-        "resolved": "1.4.0",
-        "contentHash": "6ph8mpaQx0KL0COYRt0kI8MB9gSp1PtKijKMhJU//+aVFgKAJLKDesG/+26JSaVCOrHNgPf12wpfoyRcMYOeXg=="
+        "resolved": "1.7.1",
+        "contentHash": "QBblGpRB3SYD66Mls7fHyl1mWkP93n7ErWDWHc1vd9sPHhdlTkmUoY3CjgfjcWNxGF9m7xjNyztRfErXqoBKOA=="
       },
       "EmbedIO": {
         "type": "Transitive",
@@ -64,8 +64,8 @@
       },
       "Google.Apis.YouTube.v3": {
         "type": "Transitive",
-        "resolved": "1.75.0.4176",
-        "contentHash": "Q5Hc5Qwg9EOc9OBvowxj93Nb1hx4kKbXC2ohbDclVSx1uIvyqbZtA4bDGaCCxGgq+BUyyaGSCloJqRqk+X7Y6g==",
+        "resolved": "1.75.0.4207",
+        "contentHash": "TOKMObxt9Ba3mF76c9O7R29q30WB1lXB53lp8am8qAh4TNWKULKXpwmiPv5GhsGpnv7eR5cAqJUpo38yed/RoA==",
         "dependencies": {
           "Google.Apis": "1.75.0",
           "Google.Apis.Auth": "1.75.0"
@@ -75,11 +75,6 @@
         "type": "Transitive",
         "resolved": "1.12.4",
         "contentHash": "ljqvBabvFwKoLniuoQKO8b5bJfJweKLs4fUNS/V5dsvpo0A8MlJqxxn9XVmP2DaskbUXty6IYaWAi1SArGIMeQ=="
-      },
-      "JsonExtensions": {
-        "type": "Transitive",
-        "resolved": "1.2.0",
-        "contentHash": "ujtrK6m5BQVQLEteLfl54upN7Z59c1ZqEKmU3OlYriqnV74dIgIlNM2vkcgn2AuZEItQDNORD/2H1biI/asOdg=="
       },
       "Newtonsoft.Json": {
         "type": "Transitive",
@@ -138,30 +133,27 @@
       },
       "YoutubeExplode": {
         "type": "Transitive",
-        "resolved": "6.6.0",
-        "contentHash": "DCFAmPvADs/ZB3pB24kLFzVY/1o6iECqJ7IL9LKi4zkSZLgcXDwFbOJe3vd2K3FBw36Xa3O/QMv10zelT7hjfA==",
-        "dependencies": {
-          "AngleSharp": "1.4.0",
-          "JsonExtensions": "1.2.0"
-        }
+        "resolved": "6.6.1",
+        "contentHash": "9sVVl1n/YqzVN4olebZuZgMdhNCuYXOUt9KPhyivi90QIfm8QQt7GoTQtPpMJCtON6QUCUGZubBxK2xwlGHRMg=="
       },
       "sockseek.api": {
         "type": "Project",
         "dependencies": {
-          "Sockseek.Core": "[3.0.4, )"
+          "Sockseek.Core": "[3.0.5, )"
         }
       },
       "sockseek.core": {
         "type": "Project",
         "dependencies": {
-          "Google.Apis.YouTube.v3": "[1.75.0.4176, )",
+          "AngleSharp": "[1.7.1, )",
+          "Google.Apis.YouTube.v3": "[1.75.0.4207, )",
           "HtmlAgilityPack": "[1.12.4, )",
           "SmallestCSVParser": "[1.2.0, )",
           "Soulseek": "[10.0.2, )",
           "SpotifyAPI.Web": "[7.4.2, )",
           "SpotifyAPI.Web.Auth": "[7.4.2, )",
           "TagLibSharp": "[2.3.0, )",
-          "YoutubeExplode": "[6.6.0, )"
+          "YoutubeExplode": "[6.6.1, )"
         }
       }
     }
