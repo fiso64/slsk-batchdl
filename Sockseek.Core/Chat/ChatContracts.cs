@@ -158,14 +158,14 @@ public sealed record OutgoingChatPreparationResult(
 
 public static class ChatIdentity
 {
-    public static string NormalizeAccount(string username)
-        => NormalizeUsername(username);
+    public static string ValidateAccount(string username)
+        => ValidateUsername(username);
 
-    public static string NormalizeUsername(string username)
+    public static string ValidateUsername(string username)
     {
-        string normalized = PeerUsername.Normalize(username);
-        EnsureUtf8Bound(normalized, ChatLimits.MaximumUsernameUtf8Bytes, "username");
-        return normalized;
+        string exact = PeerUsername.Validate(username);
+        EnsureUtf8Bound(exact, ChatLimits.MaximumUsernameUtf8Bytes, "username");
+        return exact;
     }
 
     public static string NormalizeRoom(string roomName)

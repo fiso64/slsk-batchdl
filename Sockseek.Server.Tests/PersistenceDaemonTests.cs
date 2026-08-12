@@ -286,10 +286,10 @@ public sealed class PersistenceDaemonTests
                     Assert.AreEqual("Complete", historicalProjection.PersistenceState);
                     Assert.AreEqual(1, historicalProjection.Items.Count);
                     Assert.AreEqual(expectedCandidate.Ref, historicalProjection.Items[0].Ref);
-                    Assert.AreEqual(expectedCandidate.Size, historicalProjection.Items[0].Size);
-                    Assert.AreEqual(expectedCandidate.BitRate, historicalProjection.Items[0].BitRate);
-                    Assert.AreEqual(expectedCandidate.SampleRate, historicalProjection.Items[0].SampleRate);
-                    Assert.AreEqual(expectedCandidate.Length, historicalProjection.Items[0].Length);
+                    Assert.AreEqual(expectedCandidate.File.Size, historicalProjection.Items[0].File.Size);
+                    Assert.AreEqual(expectedCandidate.File.BitRate, historicalProjection.Items[0].File.BitRate);
+                    Assert.AreEqual(expectedCandidate.File.SampleRate, historicalProjection.Items[0].File.SampleRate);
+                    Assert.AreEqual(expectedCandidate.File.Length, historicalProjection.Items[0].File.Length);
 
                     var facade = second.Services.GetRequiredService<HistoricalQueryFacade>();
                     var workflowPage = await facade.GetWorkflowsAsync(null, 100);

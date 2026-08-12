@@ -47,7 +47,7 @@ specified here; later sections explain how it works.
   selection.
 - The cart can contain directory subtrees and individual files across several
   branches. A single submission creates one visible workflow with an independently
-  observable general-directory child for each canonical selection root.
+  observable remote-directory child for each canonical selection root.
 - `sockseek user shares-page <browse-id>` is the non-interactive, page-oriented
   companion. It accepts `--parent`, `--query`, `--cursor`, and `--limit`; `--json`
   prints the exact directory page DTO. `--files <directory-id>` selects a file page
@@ -55,7 +55,7 @@ specified here; later sections explain how it works.
 - `sockseek user shares-download <browse-id> --folder <directory-id>` submits a
   scriptable download. `--folder` is repeatable, `--file` is repeatable, and
   folder selection includes its complete public subtree. It accepts transfer,
-  output-parent, and general name-format options and prints the resulting workflow
+  output-parent, and structural name-format options and prints the resulting workflow
   ID.
 - `sockseek user shares-cancel <browse-id>` explicitly cancels an active daemon
   browse. Interrupting a waiting CLI detaches by default because another client
@@ -79,7 +79,7 @@ specified here; later sections explain how it works.
 - It does not expose peer IP addresses or ports. Sockseek needs those internally;
   a profile UI does not.
 - Version one does not add "download this browsed directory as an album." Browse
-  selection is explicitly general. The shared target/snapshot and job hierarchy
+  selection uses the ordinary remote interpretation. The shared target/snapshot and job hierarchy
   leave room for a later explicit music-album action without inferring albums from
   directory shape or retrieving the peer twice.
 - It does not make browse results part of the historical database or backup
@@ -103,7 +103,7 @@ The implementation is complete only when:
 5. All outbound user operations reuse the daemon's single Soulseek session and
    existing peer/operator policy seams.
 6. Browse-selected downloads materialize the shared `PeerFileIdentity`,
-   `PeerFileTarget`, and `DirectoryTransferPlan` model, create the general remote
+   `PeerFileTarget`, and `DirectoryTransferPlan` model, create the ordinary remote
    job subtypes, use the existing job engine, and appear like other workflows in
    CLI and future GUI monitoring.
 
@@ -192,17 +192,18 @@ browse selection -> server-side resolver -> DirectoryTransferPlan
 
 ### Prerequisite transfer refactor
 
-Browse-selected download implementation starts only after
+The prerequisite
 [`resolved-remote-transfer-refactor-plan.md`](resolved-remote-transfer-refactor-plan.md)
-has established the shared exact target, immutable directory plan, file/directory
-lifecycle bases, and general remote job subtypes. This feature does not introduce
+is now implemented and verified. It established the shared exact target,
+immutable directory plan, file/directory lifecycle bases, and remote job
+subtypes. The browse feature does not introduce
 another peer-file target, directory candidate, placement planner, or transfer
 runner.
 
 The dependency is deliberately below the public resources. Album search, a user
 browse artifact, and a direct Soulseek link have different discovery and identity
 contracts, but all three converge on `PeerFileIdentity`/`PeerFileTarget` after the
-server has resolved an exact file. Album orchestration and general directory jobs
+server has resolved an exact file. Album orchestration and ordinary directory jobs
 share directory lifecycle state while retaining different planners/finalizers.
 Album orchestration produces a `DirectoryTransferPlan` only after candidate
 selection; a browse submission produces one directly from leased artifact rows.
@@ -221,7 +222,7 @@ to both the client manager's fallback user-info resolver and
 Core owns remote-path parsing, bounded browse decoding, artifact writing, shared
 `PeerFileIdentity`/`PeerFileTarget`/`DirectoryTransferPlan` values, and exact
 transfer runners. It also owns the abstract `FileDownloadJob`/
-`DirectoryDownloadJob` lifecycle bases and concrete general
+`DirectoryDownloadJob` lifecycle bases and concrete remote
 `RemoteFileJob`/`RemoteDirectoryJob` subtypes. Server owns authorization, HTTP
 resources, live projections, artifact-to-plan resolution, and creation of jobs.
 API owns wire DTOs and clients. CLI owns presentation and interaction.
@@ -266,10 +267,11 @@ Unicode normalization; spaces and NFC/NFD distinctions are preserved. Display
 escaping is presentation only. Invalid input produces `400 invalid-username`
 before Soulseek is contacted.
 
-The existing `PeerUsername.Normalize` uppercases, trims, and NFC-normalizes, so it
-is not a Soulseek protocol canonicalizer and MUST NOT be used here. Implementation
-splits wire identity from display sanitization and migrates the shared peer policy,
-chat, and uploads to the same ordinal wire identity before user browsing ships.
+The prerequisite transfer refactor replaced the former normalizing username path
+with `PeerUsername.Validate`/`PeerIdentityValidator.ValidateUsername`. Those
+validators preserve exact wire spelling. Shared peer policy, chat, uploads,
+search, direct links, and transfer targets use the same ordinal identity; display
+sanitization remains a separate presentation concern.
 
 Every outbound profile, picture, browse, and browse-selected download checks the
 shared `PeerAccessPolicy`. A blocked peer produces `404 user-not-found`; this
@@ -663,15 +665,18 @@ usernames, paths, sizes, speeds, or attributes. `RequestId` is an idempotency ke
 repeating the same authenticated request returns the same submitted workflow,
 while reusing it with different content returns `409 idempotency-conflict`.
 
-This endpoint always selects general interpretation in version one. Its
-`SubmissionOptionsDto` is projected to the refactor's typed general policy:
+This endpoint always selects ordinary remote interpretation in version one. Its
+`SubmissionOptionsDto` is projected to the refactor's typed remote-transfer policy:
 transfer settings, output parent, safe-component replacement, shared name format,
-and the generic on-complete hook may apply. The format may use general
-peer/file/selection/relative-path variables; a music-only query/tag variable
-produces `400 invalid-name-format-variable`. Explicit per-request search,
+and the generic on-complete hook may apply. The format may use shared structural
+file and relative-path variables; a music-only query/tag variable
+in an explicit request produces `400 invalid-name-format-variable`. An
+incompatible inherited format falls back to ordinary filename/tree placement;
+`generic-file` and `generic-directory` auto profiles run first and may replace it
+with a structural format. Explicit per-request search,
 preprocessing, fallback, album-art, playlist/index, or incomplete-album overrides
-produce `400 invalid-general-download-option`. A selected/global profile may
-contain those settings for music jobs, but they are not projected into general
+produce `400 invalid-remote-transfer-option`. A selected/global profile may
+contain those settings for music jobs, but they are not projected into ordinary remote
 execution.
 
 Before submission the server:
@@ -699,22 +704,21 @@ connection, capacity, and idempotency are still rechecked. The artifact lease ca
 end after job construction because the job owns its target data; eviction never
 changes an already submitted workflow.
 
-### General directory jobs over resolved plans
+### Remote directory jobs over resolved plans
 
 The prerequisite transfer refactor supplies the shared model, lifecycle bases,
 semantic subtypes, planners, and runners. `AlbumJob` and `RemoteDirectoryJob` both
 derive from abstract `DirectoryDownloadJob`, but browse selections create the
-general subtype. A peer directory is not evidence of an album, and routing it
+remote subtype. A peer directory is not evidence of an album, and routing it
 through album planning would incorrectly invite track-count rules, images, tag
 organization, playlists, and album-shaped presentation.
 
-Browse submission uses the general subtypes with an already-resolved source:
+Browse submission uses the remote subtypes with an already-resolved source:
 
 ```csharp
 public sealed class RemoteDirectoryJob : DirectoryDownloadJob
 {
     public RemoteDirectorySource Source { get; }
-    public IReadOnlyList<RemoteFileJob> RemoteFiles { get; }
 }
 
 public sealed class RemoteFileJob : FileDownloadJob
@@ -724,7 +728,7 @@ public sealed class RemoteFileJob : FileDownloadJob
 }
 
 var job = new RemoteDirectoryJob(
-    new ResolvedDirectorySource(plan));
+    new RemoteDirectorySource.Resolved(plan));
 ```
 
 The root remains a normal `JobList` named `Shares from <username>`. Each canonical
@@ -732,27 +736,27 @@ directory selection becomes one `RemoteDirectoryJob`; standalone files from the
 same containing directory share one such job. A synthetic selection root is valid
 because each plan entry retains a real exact wire filename.
 
-The `ResolvedDirectorySource` union case starts the job in its planned directory
+The `RemoteDirectorySource.Resolved` union case starts the job in its planned directory
 state and has no transition that invokes folder retrieval. Thus browse-selected
 downloads perform no search, directory retrieval, album discovery, or second
-browse, even though a different `RemoteDirectoryJob(PeerDirectorySource)` used by
+browse, even though a different `RemoteDirectoryJob(RemoteDirectorySource.PeerDirectory)` used by
 a direct folder link may retrieve contents as part of its lifecycle.
 
 `SongJob : FileDownloadJob` and `AlbumJob : DirectoryDownloadJob` use the same
 exact-peer runner and generic parent/child mechanics after their own discovery and
-planning phases. General placement preserves the selected relative tree;
+planning phases. The default `PlacementPlanner` preserves the selected relative tree;
 music-specific placement and finalization remain outside shared runners.
 
-No second downloader, queue, or connection is created. The general job kinds
+No second downloader, queue, or connection is created. The remote job kinds
 participate in the existing workflow snapshots, activity log, cancellation,
 retry, concurrency, skip-existing, and terminal-state rules. Cancelling a
 directory cancels its file children; cancelling one file or sibling directory
 does not cancel the others.
 
 Output is always rooted at the resolved output parent. With an empty name format,
-it preserves `<selection-root>/<relative-directories>/<filename>`; a configured
-general format may instead render the relative destination from shared
-structural/remote-file variables. In both cases, every component is sanitized
+it preserves `<selected-folder>/<descendant-folders>/<filename>`; a configured
+format may instead render the relative destination from shared structural
+variables. In both cases, every component is sanitized
 independently, containment is checked after joining, and normalization collisions
 receive a stable suffix rather than overwriting. Transfer/output-parent/profile
 resolution applies; music discovery, track filters, tag-derived naming, album
@@ -760,7 +764,7 @@ image, playlist, and incomplete-album settings do not apply to these job kinds.
 Only query/tag-derived format variables are music-specific. An explicit
 incompatible music override in this request is rejected rather than silently
 ignored; unrelated music defaults inherited from a profile are not projected into
-the general executor. CLI help states this instead of presenting music options as
+the remote executor. CLI help states this instead of presenting music options as
 share behavior.
 
 The expanded job tree is admitted only within a measured fixed engine-memory
@@ -771,7 +775,7 @@ The review response gives exact totals so users can choose smaller subtrees.
 The existing search-scoped `StartFolderDownload` endpoint is not reused as the
 public contract: it requires a search job and accepts folder-shaped client data.
 The dedicated browse endpoint resolves compact IDs server-side, then submits the
-new general jobs through the same engine path as every other workflow.
+new remote jobs through the same engine path as every other workflow.
 
 ## CLI behavior
 
@@ -894,8 +898,8 @@ Errors use the existing `ApiErrorDto` envelope and add these stable codes:
 |---:|---|---|
 | 400 | `invalid-username` | Fix the username before retrying. |
 | 400 | `invalid-selection` | Fix empty, mixed, or malformed selection IDs. |
-| 400 | `invalid-general-download-option` | Remove music/search-only overrides from a general share submission. |
-| 400 | `invalid-name-format-variable` | Remove variables unavailable to general downloads or choose music interpretation. |
+| 400 | `invalid-remote-transfer-option` | Remove music/search-only overrides from a share transfer submission. |
+| 400 | `invalid-name-format-variable` | Remove variables unavailable to remote downloads or choose music interpretation. |
 | 400 | `invalid-cursor` | Restart paging from the first page. |
 | 404 | `user-not-found` | User is inaccessible or denied by peer policy. |
 | 409 | `browse-not-ready` | Wait on the browse resource. |
@@ -998,7 +1002,7 @@ Per-row events and metrics are prohibited.
   browse pages never expose the target username or exact wire filename.
 - Same idempotency key/same body returns one workflow; changed body conflicts.
 - Preview creates no workflow; submission is one `JobList` with independent
-  `RemoteDirectoryJob(ResolvedDirectorySource)` children and nested
+  `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` children and nested
   `RemoteFileJob` leaves, with no browse/search afterward.
 - The resolved source cannot call directory retrieval, while a peer-directory
   source fixture proves the shared subtype can retrieve exactly once for direct
@@ -1006,13 +1010,14 @@ Per-row events and metrics are prohibited.
 - Artifact deletion immediately after submission does not affect downloads.
 - Root versus child cancellation, partial failure, retry, skip-existing, output
   tree preservation, sanitization, collision handling, and containment.
-- Empty name format preserves the selected tree. General username, filename,
-  extension, selection-root, and relative-path variables render deterministically;
+- Empty name format preserves the selected tree. Shared username, filename,
+  output-extension (`ext`), foldername, and relative-path variables render
+  deterministically;
   music-only query/tag variables fail before workflow creation.
 - Music search, track filtering, tag-derived naming, album images, playlists, and
-  incomplete-album behavior are absent from general share jobs.
+  incomplete-album behavior are absent from ordinary share jobs.
 - Explicit music-only submission overrides are rejected; inherited music defaults
-  are not projected into general execution.
+  are not projected into remote execution.
 
 ### CLI and GUI readiness
 
@@ -1046,7 +1051,7 @@ The feature MUST NOT ship until:
 
 1. Complete
    [`resolved-remote-transfer-refactor-plan.md`](resolved-remote-transfer-refactor-plan.md),
-   including exact identity, abstract lifecycle state, general/music policy
+   including exact identity, abstract lifecycle state, remote/music policy
    separation, album/direct-link regressions, shared runners, concrete job
    payloads, and measured job-memory admission.
 2. Add bounded browse ingress, protocol fixtures, artifact schema/store, and source
@@ -1055,7 +1060,7 @@ The feature MUST NOT ship until:
    coordination, and artifact lifecycle.
 4. Add API DTOs/endpoints/typed clients and live `UserBrowse` scope.
 5. Add browse selection resolution that materializes shared exact targets/plans,
-   then submit `RemoteDirectoryJob(ResolvedDirectorySource)` with
+   then submit `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` with
    `RemoteFileJob` leaves through the existing engine.
 6. Add the filesystem-style share browser, profile/share CLI commands, and image
    renderers; reuse only terminal primitives that remain genuinely generic.
@@ -1068,8 +1073,8 @@ historical user data.
 
 ## Authoritative checklist
 
-All boxes are intentionally unchecked because this file is a design, not an
-implementation claim.
+Feature boxes remain unchecked because this file is a design, not an
+implementation claim. The completed prerequisite is marked separately.
 
 - [ ] One shared Soulseek runtime and peer policy are reused.
 - [ ] Profile data is composite, partial, bounded, and excludes peer endpoints.
@@ -1079,8 +1084,8 @@ implementation claim.
 - [ ] Browse lifecycle is durable for its short resource lifetime and live-visible.
 - [ ] Directories/files are paged; large collections never enter live deltas.
 - [ ] Multiple folder/file selections resolve from artifact IDs on the server.
-- [ ] The resolved remote-transfer refactor and its regression gates are complete.
-- [ ] Downloads are `JobList`/general `RemoteDirectoryJob` workflows with no
+- [x] The resolved remote-transfer refactor and its regression gates are complete.
+- [ ] Downloads are `JobList`/`RemoteDirectoryJob` workflows with no
   second browse or music-policy leakage.
 - [ ] The share UI is filesystem-shaped and album interactive behavior is unchanged.
 - [ ] Typed clients make the same surface usable by CLI and future WebUI.

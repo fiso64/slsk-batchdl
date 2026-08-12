@@ -121,12 +121,12 @@ public class DownloadEvents
     internal void RaiseWorkflowMessage(Guid workflowId, LogLevel level, string? source, string message)
         => Publish(new WorkflowMessageChange(NextSequence(), UtcNow(), workflowId, level, source, message));
 
-    internal void RaiseDownloadStarted(Guid transferId, SongJob song, FileCandidate c, string outputPath)
+    internal void RaiseDownloadStarted(Guid transferId, FileDownloadJob song, PeerFileTarget c, string outputPath)
         => PublishNonTerminalTransfer(transferId, () => new DownloadStartedChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, c, outputPath, state: "Started", bytesTransferred: song.BytesTransferred, totalBytes: c.Size > 0 ? c.Size : 0, attemptCount: 0, incrementRevision: true)));
+            SnapshotTransfer(transferId, song, c, outputPath, state: "Started", bytesTransferred: song.BytesTransferred, totalBytes: c.Size ?? 0, attemptCount: 0, incrementRevision: true)));
 
     internal void RaiseFallbackTransferStarted(Guid transferId, SongJob song, string sourceReference, string outputPath)
         => PublishNonTerminalTransfer(transferId, () => new FallbackTransferStartedChange(
@@ -135,14 +135,14 @@ public class DownloadEvents
             Snapshot(song),
             SnapshotFallbackTransfer(transferId, song, sourceReference, outputPath, "Started", 0, 0, 0, incrementRevision: true)));
 
-    internal void RaiseDownloadProgress(Guid transferId, SongJob song, FileCandidate c, string outputPath, long xfer, long total)
+    internal void RaiseDownloadProgress(Guid transferId, FileDownloadJob song, PeerFileTarget c, string outputPath, long xfer, long total)
         => PublishNonTerminalTransfer(transferId, () => new DownloadProgressedChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
             SnapshotTransfer(transferId, song, c, outputPath, state: "InProgress", bytesTransferred: xfer, totalBytes: total, attemptCount: 0, incrementRevision: true)));
 
-    internal void RaiseDownloadStateChanged(Guid transferId, SongJob song, FileCandidate c, string outputPath, TransferStates s, long bytesTransferred, long totalBytes)
+    internal void RaiseDownloadStateChanged(Guid transferId, FileDownloadJob song, PeerFileTarget c, string outputPath, TransferStates s, long bytesTransferred, long totalBytes)
         => PublishNonTerminalTransfer(transferId, () => new DownloadStateChangedChange(
             NextSequence(),
             UtcNow(),
@@ -151,8 +151,8 @@ public class DownloadEvents
 
     internal void RaiseDownloadAttemptFailed(
         Guid transferId,
-        SongJob song,
-        FileCandidate c,
+        FileDownloadJob song,
+        PeerFileTarget c,
         string transferOutputPath,
         string attemptOutputPath,
         int attempt,
@@ -162,7 +162,7 @@ public class DownloadEvents
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, c, transferOutputPath, state: "AttemptFailed", bytesTransferred: song.BytesTransferred, totalBytes: c.Size > 0 ? c.Size : 0, attemptCount: attempt, incrementRevision: true),
+            SnapshotTransfer(transferId, song, c, transferOutputPath, state: "AttemptFailed", bytesTransferred: song.BytesTransferred, totalBytes: c.Size ?? 0, attemptCount: attempt, incrementRevision: true),
             attemptOutputPath,
             attempt,
             maxAttempts,
@@ -170,8 +170,8 @@ public class DownloadEvents
 
     internal void RaiseTransferCompleted(
         Guid transferId,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string finalLocalPath,
         long totalBytes,
         int attemptCount)
@@ -184,8 +184,8 @@ public class DownloadEvents
 
     internal void RaiseTransferFailed(
         Guid transferId,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string outputPath,
         long bytesTransferred,
         long totalBytes,
@@ -202,8 +202,8 @@ public class DownloadEvents
 
     internal void RaiseTransferCancelled(
         Guid transferId,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string outputPath,
         long bytesTransferred,
         long totalBytes,
@@ -264,15 +264,15 @@ public class DownloadEvents
         Guid transferId,
         Guid attemptId,
         int attemptNumber,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string transferOutputPath,
         string attemptOutputPath)
         => PublishNonTerminalTransfer(transferId, () => new TransferAttemptStartedChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptStarted", song.BytesTransferred, Math.Max(candidate.Size, 0), attemptNumber, incrementRevision: true),
+            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptStarted", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
             NextAttemptRevision(attemptId),
@@ -283,14 +283,14 @@ public class DownloadEvents
         Guid transferId,
         Guid attemptId,
         int attemptNumber,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string transferOutputPath)
         => PublishNonTerminalTransfer(transferId, () => new TransferAttemptCompletedChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCompleted", song.BytesTransferred, Math.Max(candidate.Size, 0), attemptNumber, incrementRevision: true),
+            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCompleted", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
             NextAttemptRevision(attemptId)));
@@ -299,15 +299,15 @@ public class DownloadEvents
         Guid transferId,
         Guid attemptId,
         int attemptNumber,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string transferOutputPath,
         Exception exception)
         => PublishNonTerminalTransfer(transferId, () => new TransferAttemptFailedChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptFailed", song.BytesTransferred, Math.Max(candidate.Size, 0), attemptNumber, incrementRevision: true),
+            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptFailed", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
             NextAttemptRevision(attemptId),
@@ -317,15 +317,15 @@ public class DownloadEvents
         Guid transferId,
         Guid attemptId,
         int attemptNumber,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string transferOutputPath,
         TransferCancellationReason reason)
         => PublishNonTerminalTransfer(transferId, () => new TransferAttemptCancelledChange(
             NextSequence(),
             UtcNow(),
             Snapshot(song),
-            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCancelled", song.BytesTransferred, Math.Max(candidate.Size, 0), attemptNumber, incrementRevision: true),
+            SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCancelled", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
             NextAttemptRevision(attemptId),
@@ -443,8 +443,8 @@ public class DownloadEvents
 
     private TransferSnapshot SnapshotTransfer(
         Guid transferId,
-        SongJob song,
-        FileCandidate candidate,
+        FileDownloadJob song,
+        PeerFileTarget candidate,
         string outputPath,
         string? state,
         long bytesTransferred,

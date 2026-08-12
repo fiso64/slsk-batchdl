@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Sockseek.Api;
 using Sockseek.Core.Chat;
+using Sockseek.Core.Services;
 using Sockseek.Server.Persistence;
 
 namespace Sockseek.Server;
@@ -1561,7 +1562,10 @@ public static class ServerHost
     {
         TryCreateBadRequest(ex, out var error);
         Sockseek.Core.SockseekLog.Daemon.Warn($"Bad request: {error}");
-        return Results.BadRequest(new ApiErrorDto(error, "InvalidRequest"));
+        string code = ex is UnsupportedNameFormatVariableException
+            ? "invalid-name-format-variable"
+            : "InvalidRequest";
+        return Results.BadRequest(new ApiErrorDto(error, code));
     }
 
     private static IResult ChatUnavailable()

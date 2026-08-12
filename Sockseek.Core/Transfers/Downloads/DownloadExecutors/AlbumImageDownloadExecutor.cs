@@ -87,16 +87,18 @@ internal sealed class AlbumImageDownloadExecutor
             if (existing != null)
                 return existing;
 
-            var imageJob = AlbumJob.CreateTrackJob(file);
-            job.TrackJobs.Add(imageJob);
-            return imageJob;
+            return job.AddSupplementalTrackJob(file);
         }
 
         while (imageFolders.Count > 0)
         {
             var imgs = imageFolders[0];
             imageFolders.RemoveAt(0);
-            var imageJobs = imgs.Select(ImageJobFor).ToList();
+            var imageJobs = config.Output.AlbumArtOnly
+                ? job.BeginAlbumArtTransferAttempt(
+                    job.Results.First(folder => imgs.All(folder.Files.Contains)),
+                    imgs)
+                : imgs.Select(ImageJobFor).ToList();
 
             if (imageJobs.All(af => af.TerminalOutcome == JobTerminalOutcome.Succeeded
                     || (af.TerminalOutcome == JobTerminalOutcome.Skipped && af.SkipReason == JobSkipReason.AlreadyExists))

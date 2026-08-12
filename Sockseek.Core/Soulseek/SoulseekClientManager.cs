@@ -212,7 +212,14 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         lock (stateLock)
         {
             _fatalException ??= exception;
-            _readyTcs.TrySetException(_fatalException);
+            if (_readyTcs.TrySetException(_fatalException))
+            {
+                // Existing readiness waiters still receive the fatal exception.
+                // If there are no waiters, observing this broadcast task here
+                // prevents a second, unobserved copy of the already propagated
+                // login failure from surfacing later on the finalizer thread.
+                _ = _readyTcs.Task.Exception;
+            }
         }
 
         _monitorCts?.Cancel();

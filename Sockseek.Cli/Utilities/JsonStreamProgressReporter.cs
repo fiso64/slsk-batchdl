@@ -248,10 +248,10 @@ public class JsonStreamProgressReporter
         {
             artist = song.Query.Artist,
             title = song.Query.Title,
-            username = change.Candidate.Username,
-            filename = change.Candidate.Filename,
-            size = change.Candidate.Size,
-            extension = GetExtension(change.Candidate.Filename),
+            username = change.Target.Identity.Username,
+            filename = change.Target.Identity.Filename,
+            size = change.Target.Size,
+            extension = GetExtension(change.Target.Identity.Filename),
         });
     }
 
@@ -292,7 +292,7 @@ public class JsonStreamProgressReporter
     {
         var chosen = song.TerminalOutcome == JobTerminalOutcome.Succeeded
             || (song.TerminalOutcome == JobTerminalOutcome.Skipped && song.SkipReason == JobSkipReason.AlreadyExists)
-                ? song.ChosenCandidate
+                ? song.ResolvedTarget
                 : null;
         WriteEvent("track_state", new
         {
@@ -329,12 +329,14 @@ public class JsonStreamProgressReporter
             terminalOutcome = job.TerminalOutcome.ToString(),
             skipReason = job.SkipReason != JobSkipReason.None ? job.SkipReason.ToString() : null,
             failureReason = job.FailureReason != JobFailureReason.None ? job.FailureReason.ToString() : null,
-            downloadPath = !string.IsNullOrEmpty(song.DownloadPath) ? song.DownloadPath : null,
-            username = chosen?.Username,
-            filename = chosen?.Filename,
-            size = chosen?.Size,
-            bitRate = chosen?.BitRate,
-            extension = chosen != null ? GetExtension(chosen.Filename) : null,
+            downloadPath = !string.IsNullOrEmpty(song.File.DownloadPath) ? song.File.DownloadPath : null,
+            username = chosen?.Username ?? song.ExactTarget?.Identity.Username,
+            filename = chosen?.Filename ?? song.ExactTarget?.Identity.Filename,
+            size = chosen?.Size ?? song.ExactTarget?.Size,
+            bitRate = chosen?.BitRate ?? song.ExactTarget?.BitRate,
+            extension = chosen != null
+                ? GetExtension(chosen.Filename)
+                : song.ExactTarget?.Extension,
             rawResultCount = job.Discovery?.RawResultCount,
             lockedCount = job.Discovery?.LockedFileCount,
         });

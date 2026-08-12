@@ -1,23 +1,17 @@
 using System.Net;
-using System.Text;
+using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
 
 namespace Sockseek.Core.Sharing;
 
 public static class PeerUsername
 {
-    public static string Normalize(string username)
-    {
-        ArgumentNullException.ThrowIfNull(username);
-        string normalized = username.Trim().Normalize(NormalizationForm.FormC);
-
-        if (normalized.Length == 0)
-            throw new ArgumentException("Input error: Peer username cannot be empty.");
-        if (normalized.Any(char.IsControl))
-            throw new ArgumentException("Input error: Peer username cannot contain control characters.");
-
-        return normalized.ToUpperInvariant();
-    }
+    /// <summary>
+    /// Validates a Soulseek username while retaining the exact spelling supplied
+    /// by the protocol or caller. Soulseek.NET receives this same value.
+    /// </summary>
+    public static string Validate(string username)
+        => PeerIdentityValidator.ValidateUsername(username);
 }
 
 /// <summary>
@@ -33,7 +27,7 @@ public sealed class PeerAccessPolicy
         ArgumentNullException.ThrowIfNull(settings);
 
         blockedUsernames = settings.BlockedUsernames
-            .Select(PeerUsername.Normalize)
+            .Select(PeerUsername.Validate)
             .ToHashSet(StringComparer.Ordinal);
 
         blockedIpAddresses = settings.BlockedIpAddresses
@@ -46,7 +40,7 @@ public sealed class PeerAccessPolicy
     public bool HasBlockedIpAddresses => blockedIpAddresses.Count > 0;
 
     public bool IsUsernameBlocked(string username)
-        => blockedUsernames.Contains(PeerUsername.Normalize(username));
+        => blockedUsernames.Contains(PeerUsername.Validate(username));
 
     public bool IsIpAddressBlocked(IPAddress address)
     {

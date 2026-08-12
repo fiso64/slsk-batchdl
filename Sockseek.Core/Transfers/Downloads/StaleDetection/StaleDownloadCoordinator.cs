@@ -156,7 +156,7 @@ internal sealed class StaleDownloadCoordinator
             {
                 var now = timeProvider.GetTimestamp();
                 attempt.LastOwnActivityTimestamp = now;
-                latestActivityByUser[attempt.Download.Candidate.Username] = now;
+                latestActivityByUser[attempt.Download.Target.Username] = now;
             }
         }
 
@@ -210,7 +210,7 @@ internal sealed class StaleDownloadCoordinator
         var latest = new Dictionary<string, long>(latestActivityByUser, StringComparer.OrdinalIgnoreCase);
         foreach (var attempt in attempts.Values)
         {
-            var username = attempt.Download.Candidate.Username;
+            var username = attempt.Download.Target.Username;
             if (!latest.TryGetValue(username, out var latestActivity)
                 || attempt.LastOwnActivityTimestamp > latestActivity)
             {
@@ -229,7 +229,7 @@ internal sealed class StaleDownloadCoordinator
         // Queued siblings from the same user are protected by any fresh same-user activity;
         // an in-progress transfer must make progress on its own.
         if (!IsInProgress(attempt.State)
-            && latestActivityByUser.TryGetValue(attempt.Download.Candidate.Username, out var latestUserActivity)
+            && latestActivityByUser.TryGetValue(attempt.Download.Target.Username, out var latestUserActivity)
             && latestUserActivity > referenceTimestamp)
         {
             referenceTimestamp = latestUserActivity;

@@ -95,11 +95,12 @@ public sealed class SharingSettingsTests
         Assert.AreEqual("MUSIC", settings.Sharing.Roots[0].EffectiveAlias);
         Assert.AreEqual(Path.GetFullPath(rootPath), settings.Sharing.Roots[0].LocalPath);
         Assert.AreEqual(Path.GetFullPath(excludedPath), settings.Sharing.ExcludedDirectories[0]);
-        Assert.AreEqual("ALICE", settings.PeerAccess.BlockedUsernames[0]);
+        Assert.AreEqual(" Alice ", settings.PeerAccess.BlockedUsernames[0]);
         Assert.AreEqual("192.0.2.10", settings.PeerAccess.BlockedIpAddresses[0]);
 
         var policy = new PeerAccessPolicy(settings.PeerAccess);
-        Assert.IsTrue(policy.IsUsernameBlocked("alice"));
+        Assert.IsTrue(policy.IsUsernameBlocked(" Alice "));
+        Assert.IsFalse(policy.IsUsernameBlocked("alice"));
         Assert.IsTrue(policy.IsIpAddressBlocked(IPAddress.Parse("::ffff:192.0.2.10")));
         Assert.IsFalse(policy.IsUsernameBlocked("bob"));
     }

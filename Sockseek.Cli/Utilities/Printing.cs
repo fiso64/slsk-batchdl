@@ -460,7 +460,7 @@ public static class Printing
         if (folderPath.Length == 0)
             return "";
 
-        return filename.StartsWith(folderPath + "\\", StringComparison.OrdinalIgnoreCase)
+        return filename.StartsWith(folderPath + "\\", StringComparison.Ordinal)
             ? filename[(folderPath.Length + 1)..]
             : Utils.GetFileNameSlsk(filename);
     }

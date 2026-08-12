@@ -100,7 +100,7 @@ public sealed class UploadCoordinatorTests
             @"Public\Track.bin");
         await protocol.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var duplicate = await coordinator.AdmitAsync(
-            "alice",
+            "Alice",
             null,
             @"public\track.BIN");
 

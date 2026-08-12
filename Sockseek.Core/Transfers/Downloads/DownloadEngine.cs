@@ -79,7 +79,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         return job != null && TryNextCandidate(job.Id);
     }
 
-    // ── public state (read by Searcher / Downloader) ─────────────────────────
+    // ── public state (read by search and transfer services) ──────────────────
 
     public ISoulseekClient? Client => _clientManager.Client;
     public SoulseekClientStates ClientState => _clientManager.State;

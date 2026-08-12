@@ -41,7 +41,7 @@ public sealed class SharingConfigParsingTests
         Assert.AreEqual("Second Alias", settings.Sharing.Roots[1].EffectiveAlias);
         CollectionAssert.AreEqual(new[] { "one", "two" }, settings.Sharing.Filters);
         CollectionAssert.AreEqual(
-            new[] { "ALICE", "BOB" },
+            new[] { "Alice", "Bob" },
             settings.PeerAccess.BlockedUsernames);
         CollectionAssert.AreEqual(
             new[] { "192.0.2.1", "2001:db8::1" },

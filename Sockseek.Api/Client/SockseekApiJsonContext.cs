@@ -153,6 +153,8 @@ namespace Sockseek.Api;
 [JsonSerializable(typeof(AlbumAggregateJobPayloadDto))]
 [JsonSerializable(typeof(JobListPayloadDto))]
 [JsonSerializable(typeof(RetrieveFolderJobPayloadDto))]
+[JsonSerializable(typeof(RemoteFileJobPayloadDto))]
+[JsonSerializable(typeof(RemoteDirectoryJobPayloadDto))]
 [JsonSerializable(typeof(GenericJobPayloadDto))]
 
 [JsonSerializable(typeof(SongQueryDto))]
@@ -166,6 +168,7 @@ namespace Sockseek.Api;
 [JsonSerializable(typeof(SearchResultSnapshotDto<AggregateTrackCandidateDto>))]
 [JsonSerializable(typeof(SearchResultSnapshotDto<AggregateAlbumCandidateDto>))]
 [JsonSerializable(typeof(FileCandidateDto))]
+[JsonSerializable(typeof(FileMetadataDto))]
 [JsonSerializable(typeof(AlbumFolderDto))]
 [JsonSerializable(typeof(AggregateTrackCandidateDto))]
 [JsonSerializable(typeof(AggregateAlbumCandidateDto))]

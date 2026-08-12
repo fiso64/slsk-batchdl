@@ -117,9 +117,56 @@ public class EngineStateStoreTests
 
         var payload = store.GetJobDetail(song.Id)?.Payload as SongJobPayloadDto;
         Assert.IsNotNull(payload);
-        Assert.AreEqual(25, payload.BytesTransferred);
-        Assert.AreEqual(100, payload.TotalBytes);
-        Assert.AreEqual(25d, payload.ProgressPercent);
+        Assert.AreEqual(25, payload.File.BytesTransferred);
+        Assert.AreEqual(100, payload.File.FileSize);
+        Assert.AreEqual(25d, payload.File.ProgressPercent);
+    }
+
+    [TestMethod]
+    public void ExactSongPayload_UsesExactTargetWithoutFabricatingSearchEvidence()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" })
+        {
+            ExactTarget = new PeerFileTarget(
+                new PeerFileIdentity(" Peer ", @"Share\File.bin"),
+                42,
+                ".bin"),
+        };
+
+        Register(store, song);
+
+        var payload = store.GetJobDetail(song.Id)?.Payload as SongJobPayloadDto;
+        Assert.IsNotNull(payload);
+        Assert.IsNotNull(payload.ExactTarget);
+        Assert.AreEqual(" Peer ", payload.ExactTarget.Username);
+        Assert.IsNull(payload.ResolvedUsername);
+        Assert.IsNull(payload.ResolvedFilename);
+        Assert.IsNull(payload.ResolvedHasFreeUploadSlot);
+    }
+
+    [TestMethod]
+    public void ResolvedDirectoryPayload_SerializesOwnedPlanOnlyOnce()
+    {
+        var store = new EngineStateStore();
+        var target = new PeerFileTarget(
+            new PeerFileIdentity("Peer", @"Root\File.bin"),
+            42,
+            ".bin");
+        var plan = new DirectoryTransferPlan("Root", [
+            new DirectoryTransferEntry(target, []),
+        ]);
+        var job = new RemoteDirectoryJob(new RemoteDirectorySource.Resolved(plan));
+
+        Register(store, job);
+
+        var payload = store.GetJobDetail(job.Id)?.Payload as RemoteDirectoryJobPayloadDto;
+        Assert.IsNotNull(payload);
+        Assert.AreEqual(RemoteDirectorySourceKindDto.Resolved, payload.SourceKind);
+        Assert.IsNotNull(payload.ResolvedPlanSource);
+        Assert.IsNull(payload.ActivePlan);
+        Assert.AreEqual("planned", payload.Directory.Phase);
+        Assert.AreEqual(1, payload.Directory.AttemptNumber);
     }
 
     [TestMethod]
@@ -530,8 +577,8 @@ public class EngineStateStoreTests
     private static TransferSnapshot Transfer(SongJob song, TransferStates state)
     {
         var response = new SearchResponse("user", 1, true, 100_000, 0, []);
-        var file = new Soulseek.File(1, $"{song.Query.Title}.mp3", song.FileSize > 0 ? song.FileSize : 100, ".mp3");
-        var candidate = new FileCandidate(response, file);
+        var file = new Soulseek.File(1, $"{song.Query.Title}.mp3", song.FileSize is > 0 ? song.FileSize.Value : 100, ".mp3");
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
         return CoreSnapshotFactory.CreateDownloadTransfer(
             Guid.NewGuid(),
             song,
@@ -540,7 +587,7 @@ public class EngineStateStoreTests
             revision: 1,
             state: state.ToString(),
             bytesTransferred: song.BytesTransferred,
-            totalBytes: song.FileSize > 0 ? song.FileSize : file.Size,
+            totalBytes: song.FileSize is > 0 ? song.FileSize.Value : file.Size,
             attemptCount: 0);
     }
 

@@ -11,6 +11,51 @@ namespace Tests.OnCompleteExecutorTests
     // following the established pattern in this test suite.
 
     [TestClass]
+    public class RemoteJobContextTests
+    {
+        [TestMethod]
+        public void RemoteFileContext_ExposesCommonPathAndExactTargetWithoutTagSource()
+        {
+            var target = new PeerFileTarget(
+                new PeerFileIdentity("Peer", @"Share\Documents\notes.txt"),
+                size: 12,
+                extension: ".txt");
+            var job = new RemoteFileJob(target)
+            {
+                DownloadPath = Path.GetFullPath("notes.txt"),
+            };
+
+            var (variables, tagSourcePath) = BuildJobContext(job);
+
+            Assert.AreSame(job, variables.Job);
+            Assert.AreSame(target, variables.PeerTarget);
+            Assert.AreEqual(job.DownloadPath, variables.DownloadPath);
+            Assert.IsNull(tagSourcePath);
+
+            Assert.IsTrue(FileManager.TryResolveNameFormatVariable("path", variables, () => null, out var path));
+            Assert.IsTrue(FileManager.TryResolveNameFormatVariable("path-noext", variables, () => null, out var pathNoExt));
+            Assert.IsTrue(FileManager.TryResolveNameFormatVariable("is-audio", variables, () => null, out var isAudio));
+            Assert.AreEqual(Path.GetFullPath(job.DownloadPath), path.Value);
+            Assert.AreEqual(Path.Combine(
+                Path.GetDirectoryName(Path.GetFullPath(job.DownloadPath)) ?? "",
+                Path.GetFileNameWithoutExtension(job.DownloadPath)), pathNoExt.Value);
+            Assert.AreEqual("false", isAudio.Value);
+        }
+
+        private static (FileManagerContext Variables, string? TagSourcePath) BuildJobContext(Job job)
+        {
+            var method = typeof(OnCompleteExecutor).GetMethod(
+                "BuildJobOnCompleteContext",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            var context = method.Invoke(null, [job])!;
+            var type = context.GetType();
+            return (
+                (FileManagerContext)type.GetProperty("Variables")!.GetValue(context)!,
+                (string?)type.GetProperty("TagSourcePath")!.GetValue(context));
+        }
+    }
+
+    [TestClass]
     public class ParseCommandSyntaxTests
     {
         private static object InvokeParseCommand(string rawCommand)
@@ -87,28 +132,28 @@ namespace Tests.OnCompleteExecutorTests
         [TestMethod]
         public void ParseCommand_MissingDelimiter_ThrowsHelpfulError()
         {
-            var ex = Assert.ThrowsException<ArgumentException>(() => InvokeParseCommand("mycommand"));
+            var ex = Assert.ThrowsExactly<ArgumentException>(() => InvokeParseCommand("mycommand"));
             StringAssert.Contains(ex.Message, "Missing `--` command delimiter");
         }
 
         [TestMethod]
         public void ParseCommand_LegacyPrefixSyntax_ThrowsMigrationHint()
         {
-            var ex = Assert.ThrowsException<ArgumentException>(() => InvokeParseCommand("1:a:h: mycommand"));
+            var ex = Assert.ThrowsExactly<ArgumentException>(() => InvokeParseCommand("1:a:h: mycommand"));
             StringAssert.Contains(ex.Message, "Legacy one-letter prefixes are no longer supported");
         }
 
         [TestMethod]
         public void ParseCommand_EmptyCommandAfterDelimiter_Throws()
         {
-            var ex = Assert.ThrowsException<ArgumentException>(() => InvokeParseCommand("hidden -- "));
+            var ex = Assert.ThrowsExactly<ArgumentException>(() => InvokeParseCommand("hidden -- "));
             StringAssert.Contains(ex.Message, "Command after `--` is empty");
         }
 
         [TestMethod]
         public void ParseCommand_UnknownOption_Throws()
         {
-            var ex = Assert.ThrowsException<ArgumentException>(() => InvokeParseCommand("bogus -- mycommand"));
+            var ex = Assert.ThrowsExactly<ArgumentException>(() => InvokeParseCommand("bogus -- mycommand"));
             StringAssert.Contains(ex.Message, "Unknown option `bogus`");
         }
     }
@@ -872,7 +917,7 @@ namespace Tests.OnCompleteExecutorTests
                 album.SetDone(albumPath);
 
                 var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, []);
-                var candidate = new FileCandidate(response, new Soulseek.File(1, @"remote\Artist\Album\01.mp3", 100, ".mp3"));
+                var candidate = SoulseekSearchAdapter.ToFileCandidate(response, new Soulseek.File(1, @"remote\Artist\Album\01.mp3", 100, ".mp3"));
                 var firstAudio = new SongJob(new SongQuery { Artist = "TrackSourceArtist", Album = "TrackSourceAlbum", Title = "TrackSourceTitle" })
                 {
                     Config = settings,

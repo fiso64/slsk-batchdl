@@ -35,24 +35,24 @@ public static class OnCompleteExecutor
 
     private struct CommandConfig
     {
-        public string  Command                { get; set; }
-        public bool    UseShellExecute        { get; set; }
-        public bool    CreateNoWindow         { get; set; }
-        public CommandScope Scope             { get; set; }
-        public CommandWhen  When              { get; set; }
-        public bool    UseOutputToUpdateIndex { get; set; }
-        public bool    UseLocking             { get; set; }
+        public string Command { get; set; }
+        public bool UseShellExecute { get; set; }
+        public bool CreateNoWindow { get; set; }
+        public CommandScope Scope { get; set; }
+        public CommandWhen When { get; set; }
+        public bool UseOutputToUpdateIndex { get; set; }
+        public bool UseLocking { get; set; }
     }
 
     private struct ProcessResult
     {
-        public int     ExitCode { get; set; }
-        public string? Stdout   { get; set; }
-        public string? Stderr   { get; set; }
-        public int     StdoutCharsRead { get; set; }
-        public int     StderrCharsRead { get; set; }
-        public bool    StdoutTruncated { get; set; }
-        public bool    StderrTruncated { get; set; }
+        public int ExitCode { get; set; }
+        public string? Stdout { get; set; }
+        public string? Stderr { get; set; }
+        public int StdoutCharsRead { get; set; }
+        public int StderrCharsRead { get; set; }
+        public bool StdoutTruncated { get; set; }
+        public bool StderrTruncated { get; set; }
     }
 
     private readonly record struct CapturedProcessOutput(string? Text, int CharsRead, bool Truncated);
@@ -84,9 +84,9 @@ public static class OnCompleteExecutor
 
         // Build a FileManagerContext for variable substitution.
         string extractorName = job.Config.Extraction.InputType.ToString();
-        string inputSource   = job.Config.Extraction.Input ?? "";
-        string outputDir     = job.Config.Output.ParentDir ?? "";
-        string configDir     = job.Config.RuntimePathContext.ConfigDir ?? "";
+        string inputSource = job.Config.Extraction.Input ?? "";
+        string outputDir = job.Config.Output.ParentDir ?? "";
+        string configDir = job.Config.RuntimePathContext.ConfigDir ?? "";
 
         var onCompleteContext = song != null
             ? BuildSongOnCompleteContext(song, job)
@@ -110,9 +110,9 @@ public static class OnCompleteExecutor
         };
 
         var currentOutcome = outcome;
-        bool needUpdateIndex    = false;
+        bool needUpdateIndex = false;
         ProcessResult? firstCommandResult = null;
-        ProcessResult? prevCommandResult  = null;
+        ProcessResult? prevCommandResult = null;
 
         for (int i = 0; i < job.Config.Output.OnComplete.Count; i++)
         {
@@ -208,18 +208,28 @@ public static class OnCompleteExecutor
     }
 
     private static OnCompleteContext BuildJobOnCompleteContext(Job job)
-        => new(new FileManagerContext
+    {
+        string? downloadPath = job switch
+        {
+            FileDownloadJob file => file.DownloadPath,
+            DirectoryDownloadJob directory => directory.DownloadPath,
+            _ => null,
+        };
+        return new(new FileManagerContext
         {
             Job = job,
             Query = job.QueryTrack ?? new SongQuery(),
-            LifecycleState = job.LifecycleState,
-            ActivityPhase = job.ActivityPhase,
+            PeerTarget = (job as RemoteFileJob)?.Target,
+            DownloadPath = downloadPath,
             TerminalOutcome = job.TerminalOutcome,
             SkipReason = job.SkipReason,
             FailureReason = job.FailureReason,
+            IsNotAudio = job is not FileDownloadJob
+                || !Utils.IsMusicFile((job as RemoteFileJob)?.Target.Filename ?? downloadPath ?? ""),
             LineNumber = job.LineNumber,
             ItemNumber = job.ItemNumber,
         }, TagSourcePath: null);
+    }
 
     private static OnCompleteContext BuildAlbumOnCompleteContext(AlbumJob albumJob)
     {
@@ -238,10 +248,8 @@ public static class OnCompleteExecutor
                 URI = albumJob.Query.URI,
                 ArtistMaybeWrong = albumJob.Query.ArtistMaybeWrong,
             },
-            Candidate = representativeFile?.ChosenCandidate ?? representativeFile?.Candidates?.FirstOrDefault(),
+            Candidate = representativeFile?.ResolvedTarget ?? representativeFile?.Candidates?.FirstOrDefault(),
             DownloadPath = albumJob.DownloadPath,
-            LifecycleState = albumJob.LifecycleState,
-            ActivityPhase = albumJob.ActivityPhase,
             TerminalOutcome = albumJob.TerminalOutcome,
             SkipReason = albumJob.SkipReason,
             FailureReason = albumJob.FailureReason,
@@ -261,8 +269,6 @@ public static class OnCompleteExecutor
         return ctx with
         {
             DownloadPath = outcome.DownloadPath ?? ctx.DownloadPath,
-            LifecycleState = JobLifecycleState.Terminal,
-            ActivityPhase = JobActivityPhase.None,
             TerminalOutcome = outcome.TerminalOutcome,
             SkipReason = outcome.SkipReason,
             FailureReason = outcome.FailureReason,
@@ -438,6 +444,7 @@ public static class OnCompleteExecutor
 
     private static bool ShouldExecuteCommand(CommandConfig config, JobOutcome outcome, bool isTrack, bool isAlbum)
     {
+        if (!outcome.IsTerminal) return false;
         if (config.Scope == CommandScope.Track && !isTrack) return false;
         if (config.Scope == CommandScope.Album && !isAlbum) return false;
 
@@ -482,12 +489,12 @@ public static class OnCompleteExecutor
             string command = FileManager.ReplaceVariables(commandTemplate, ctx.Variables, audio);
 
             command = command
-                .Replace("{exitcode}",       prevResult?.ExitCode.ToString()  ?? "-1")
+                .Replace("{exitcode}", prevResult?.ExitCode.ToString() ?? "-1")
                 .Replace("{first-exitcode}", firstResult?.ExitCode.ToString() ?? "-1")
-                .Replace("{stdout}",         string.IsNullOrWhiteSpace(prevResult?.Stdout)  ? "null" : prevResult.Value.Stdout)
-                .Replace("{stderr}",         string.IsNullOrWhiteSpace(prevResult?.Stderr)  ? "null" : prevResult.Value.Stderr)
-                .Replace("{first-stdout}",   string.IsNullOrWhiteSpace(firstResult?.Stdout) ? "null" : firstResult.Value.Stdout)
-                .Replace("{first-stderr}",   string.IsNullOrWhiteSpace(firstResult?.Stderr) ? "null" : firstResult.Value.Stderr);
+                .Replace("{stdout}", string.IsNullOrWhiteSpace(prevResult?.Stdout) ? "null" : prevResult.Value.Stdout)
+                .Replace("{stderr}", string.IsNullOrWhiteSpace(prevResult?.Stderr) ? "null" : prevResult.Value.Stderr)
+                .Replace("{first-stdout}", string.IsNullOrWhiteSpace(firstResult?.Stdout) ? "null" : firstResult.Value.Stdout)
+                .Replace("{first-stderr}", string.IsNullOrWhiteSpace(firstResult?.Stderr) ? "null" : firstResult.Value.Stderr);
 
             return command.Trim();
         }
@@ -524,7 +531,7 @@ public static class OnCompleteExecutor
             int firstSpaceIndex = preparedCommand.IndexOf(' ');
             if (firstSpaceIndex > 0)
             {
-                fileName  = preparedCommand.Substring(0, firstSpaceIndex);
+                fileName = preparedCommand.Substring(0, firstSpaceIndex);
                 arguments = preparedCommand.Substring(firstSpaceIndex + 1).TrimStart();
             }
             else
@@ -540,19 +547,19 @@ public static class OnCompleteExecutor
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName        = fileName,
-            Arguments       = argString,
+            FileName = fileName,
+            Arguments = argString,
             UseShellExecute = config.UseShellExecute,
-            CreateNoWindow  = config.CreateNoWindow,
+            CreateNoWindow = config.CreateNoWindow,
         };
 
         if (!config.UseShellExecute || config.UseOutputToUpdateIndex)
         {
-            startInfo.UseShellExecute          = false;
-            startInfo.RedirectStandardOutput   = true;
-            startInfo.RedirectStandardError    = true;
-            startInfo.StandardOutputEncoding   = System.Text.Encoding.UTF8;
-            startInfo.StandardErrorEncoding    = System.Text.Encoding.UTF8;
+            startInfo.UseShellExecute = false;
+            startInfo.RedirectStandardOutput = true;
+            startInfo.RedirectStandardError = true;
+            startInfo.StandardOutputEncoding = System.Text.Encoding.UTF8;
+            startInfo.StandardErrorEncoding = System.Text.Encoding.UTF8;
         }
 
         return startInfo;
@@ -579,7 +586,7 @@ public static class OnCompleteExecutor
             }
 
             Task<CapturedProcessOutput>? readStdoutTask = startInfo.RedirectStandardOutput ? CaptureProcessOutputAsync(process.StandardOutput) : null;
-            Task<CapturedProcessOutput>? readStderrTask = startInfo.RedirectStandardError  ? CaptureProcessOutputAsync(process.StandardError)  : null;
+            Task<CapturedProcessOutput>? readStderrTask = startInfo.RedirectStandardError ? CaptureProcessOutputAsync(process.StandardError) : null;
 
             await process.WaitForExitAsync();
 
@@ -716,7 +723,7 @@ public static class OnCompleteExecutor
             case "downloaded":
                 var path = newPath ?? currentOutcome.DownloadPath ?? GetDownloadPath(indexTarget);
                 var successOutcome = indexTarget is SongJob song
-                    ? JobOutcome.Done(path, currentOutcome.ChosenCandidate ?? song.ChosenCandidate, currentOutcome.DownloadSource != SongDownloadSource.None ? currentOutcome.DownloadSource : song.DownloadSource)
+                    ? JobOutcome.Done(path, currentOutcome.ChosenCandidate ?? song.ResolvedTarget, currentOutcome.DownloadSource != SongDownloadSource.None ? currentOutcome.DownloadSource : song.DownloadSource)
                     : JobOutcome.Done(path);
                 return new UpdateIndexStateResult(successOutcome, AllowsPathUpdate: true);
 

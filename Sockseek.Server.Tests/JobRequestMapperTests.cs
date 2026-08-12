@@ -35,6 +35,32 @@ public class JobRequestMapperTests
             JobRequestMapper.ApplySelectedFolderSnapshot(ResolvedFolder(), request));
     }
 
+    [TestMethod]
+    public void RemoteDirectoryDraft_RequiresExactlyOneCompleteSourceCase()
+    {
+        var plan = new DirectoryTransferPlanDto(
+            "Root",
+            [new DirectoryTransferEntryDto(
+                new PeerFileTargetDto("Peer", @"Root\File.bin", 10, ".bin"),
+                [])],
+            10);
+
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            JobRequestMapper.CreateJob(new RemoteDirectoryJobDraftDto()));
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            JobRequestMapper.CreateJob(new RemoteDirectoryJobDraftDto(Username: "Peer")));
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            JobRequestMapper.CreateJob(new RemoteDirectoryJobDraftDto("Peer", "Root", plan)));
+
+        var peer = (RemoteDirectoryJob)JobRequestMapper.CreateJob(
+            new RemoteDirectoryJobDraftDto("Peer", "Root"));
+        var resolved = (RemoteDirectoryJob)JobRequestMapper.CreateJob(
+            new RemoteDirectoryJobDraftDto(Plan: plan));
+
+        Assert.IsInstanceOfType<RemoteDirectorySource.PeerDirectory>(peer.Source);
+        Assert.IsInstanceOfType<RemoteDirectorySource.Resolved>(resolved.Source);
+    }
+
     private static AlbumFolder ResolvedFolder()
         => new("local", @"Artist\Album", []);
 
@@ -55,9 +81,12 @@ public class JobRequestMapperTests
             username,
             filename,
             new PeerInfoDto(username),
-            Size: 123,
-            BitRate: null,
-            SampleRate: null,
-            Length: null,
-            Extension: ".mp3");
+            new FileMetadataDto(
+                Path.GetFileName(filename),
+                Size: 123,
+                Extension: ".mp3",
+                BitRate: null,
+                BitDepth: null,
+                SampleRate: null,
+                Length: null));
 }

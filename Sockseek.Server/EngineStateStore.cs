@@ -1587,13 +1587,8 @@ public sealed class EngineStateStore
 
         return job.Payload switch
         {
-            AlbumJobSnapshotPayload album => job with
-            {
-                Payload = album with
-                {
-                    TrackJobs = album.TrackJobs.Select(RefreshNestedSnapshots).ToList(),
-                },
-            },
+            AlbumJobSnapshotPayload album => RefreshAlbumPayload(job, album),
+            RemoteDirectoryJobSnapshotPayload directory => RefreshRemoteDirectoryPayload(job, directory),
             AggregateJobSnapshotPayload aggregate => job with
             {
                 Payload = aggregate with
@@ -1611,6 +1606,62 @@ public sealed class EngineStateStore
             _ => job,
         };
     }
+
+    private JobSnapshot RefreshAlbumPayload(JobSnapshot job, AlbumJobSnapshotPayload album)
+    {
+        var children = album.TrackJobs.Select(RefreshNestedSnapshots).ToList();
+        return job with
+        {
+            Payload = album with
+            {
+                TrackJobs = children,
+                Directory = RefreshDirectoryState(album.Directory, children),
+            },
+        };
+    }
+
+    private JobSnapshot RefreshRemoteDirectoryPayload(
+        JobSnapshot job,
+        RemoteDirectoryJobSnapshotPayload directory)
+    {
+        var children = directory.FileJobs.Select(RefreshNestedSnapshots).ToList();
+        return job with
+        {
+            Payload = directory with
+            {
+                FileJobs = children,
+                Directory = RefreshDirectoryState(directory.Directory, children),
+            },
+        };
+    }
+
+    private static DirectoryDownloadStateSnapshot RefreshDirectoryState(
+        DirectoryDownloadStateSnapshot state,
+        IReadOnlyList<JobSnapshot> children)
+    {
+        long bytes = children.Sum(FileBytesTransferred);
+        return state with
+        {
+            FileCount = children.Count,
+            TerminalFileCount = children.Count(child => child.LifecycleState == JobLifecycleState.Terminal),
+            SuccessfulFileCount = children.Count(child =>
+                child.TerminalOutcome == JobTerminalOutcome.Succeeded
+                || child.SkipReason == JobSkipReason.AlreadyExists),
+            FailedFileCount = children.Count(child =>
+                child.LifecycleState == JobLifecycleState.Terminal
+                && child.TerminalOutcome != JobTerminalOutcome.Succeeded
+                && child.SkipReason != JobSkipReason.AlreadyExists),
+            BytesTransferred = bytes,
+        };
+    }
+
+    private static long FileBytesTransferred(JobSnapshot child)
+        => child.Payload switch
+        {
+            SongJobSnapshotPayload song => song.File.BytesTransferred,
+            RemoteFileJobSnapshotPayload remote => remote.File.BytesTransferred,
+            _ => 0,
+        };
 
     private JobSummaryDto BuildJobSummary(JobSnapshot job)
     {

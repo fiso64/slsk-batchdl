@@ -165,22 +165,25 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Song.mp3", config.Extraction);
 
-            var slj = (SongJob)result;
-            Assert.IsNotNull(slj.ResolvedTarget);
+            Assert.IsInstanceOfType<RemoteFileJob>(result);
+            var remote = (RemoteFileJob)result;
+            Assert.AreEqual("someuser", remote.Target.Username);
+            Assert.AreEqual(@"Music\Artist\Song.mp3", remote.Target.Filename);
         }
 
         [TestMethod]
-        public async Task GetTracks_FolderLink_CreatesAlbumType()
+        public async Task GetTracks_FolderLink_CreatesRemoteDirectory()
         {
             var extractor = new SoulseekExtractor();
             var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://someuser/Music/Artist/Album/", config.Extraction);
 
-            Assert.IsInstanceOfType(result, typeof(AlbumJob));
-            var album = (AlbumJob)result;
-            Assert.IsNotNull(album.ResolvedTarget);
-            Assert.IsTrue(album.ResolvedTargetNeedsInitialFolderRetrieval);
-            Assert.IsFalse(album.AllowBrowseResolvedTarget);
+            Assert.IsInstanceOfType<RemoteDirectoryJob>(result);
+            var remote = (RemoteDirectoryJob)result;
+            Assert.IsInstanceOfType<RemoteDirectorySource.PeerDirectory>(remote.Source);
+            var source = (RemoteDirectorySource.PeerDirectory)remote.Source;
+            Assert.AreEqual("someuser", source.Directory.Username);
+            Assert.AreEqual(@"Music\Artist\Album", source.Directory.FolderPath);
         }
 
         [TestMethod]
@@ -201,10 +204,10 @@ namespace Tests.ExtractorTests2
             var config = TestHelpers.CreateDefaultSettings().Download;
             var result = await extractor.GetTracks("slsk://myuser/Music/folder/track.mp3", config.Extraction);
 
-            var song = (SongJob)result;
-            Assert.IsNotNull(song.Candidates);
-            Assert.IsTrue(song.Candidates.Count > 0);
-            Assert.AreEqual("myuser", song.Candidates[0].Response.Username);
+            Assert.IsInstanceOfType<RemoteFileJob>(result);
+            var remote = (RemoteFileJob)result;
+            Assert.AreEqual("myuser", remote.Target.Username);
+            Assert.AreEqual(@"Music\folder\track.mp3", remote.Target.Filename);
         }
 
         [DataTestMethod]
@@ -736,6 +739,25 @@ namespace Tests.ExtractorTests2
             var (type, extractor) = ExtractorRegistry.GetMatchingExtractor("anything", InputType.Soulseek, _dl);
             Assert.AreEqual(InputType.Soulseek, type);
             Assert.IsInstanceOfType(extractor, typeof(SoulseekExtractor));
+        }
+
+        [TestMethod]
+        public void TryResolveInputType_UsesTheSameAutomaticClassificationAsExtraction()
+        {
+            Assert.IsTrue(ExtractorRegistry.TryResolveInputType(
+                "https://www.youtube.com/playlist?list=test",
+                InputType.None,
+                out InputType youtube));
+            Assert.AreEqual(InputType.YouTube, youtube);
+
+            Assert.IsTrue(ExtractorRegistry.TryResolveInputType(
+                "slsk://Peer/Share/File.bin",
+                InputType.None,
+                out InputType soulseek));
+            Assert.AreEqual(InputType.Soulseek, soulseek);
+
+            Assert.IsFalse(ExtractorRegistry.TryResolveInputType(null, InputType.None, out InputType none));
+            Assert.AreEqual(InputType.None, none);
         }
     }
 }

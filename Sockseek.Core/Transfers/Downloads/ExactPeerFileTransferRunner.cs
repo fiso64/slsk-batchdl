@@ -13,28 +13,31 @@ using Sockseek.Core.Events;
 namespace Sockseek.Core.Services;
 
 
-public sealed record FileDownloadResult(
+public sealed record ExactFileTransferResult(
     string OutputPath,
-    FileCandidate Candidate,
+    PeerFileTarget Target,
     Guid? TransferId = null,
     int AttemptCount = 0);
 
-public enum FileDownloadStatus
+public enum ExactFileTransferStatus
 {
     Completed,
     ManuallySkipped,
 }
 
-public sealed record FileDownloadOutcome(FileDownloadStatus Status, FileDownloadResult? Result, FileCandidate Candidate)
+public sealed record ExactFileTransferOutcome(
+    ExactFileTransferStatus Status,
+    ExactFileTransferResult? Result,
+    PeerFileTarget Target)
 {
-    public static FileDownloadOutcome Completed(FileDownloadResult result)
-        => new(FileDownloadStatus.Completed, result, result.Candidate);
+    public static ExactFileTransferOutcome Completed(ExactFileTransferResult result)
+        => new(ExactFileTransferStatus.Completed, result, result.Target);
 
-    public static FileDownloadOutcome ManuallySkipped(FileCandidate candidate)
-        => new(FileDownloadStatus.ManuallySkipped, null, candidate);
+    public static ExactFileTransferOutcome ManuallySkipped(PeerFileTarget target)
+        => new(ExactFileTransferStatus.ManuallySkipped, null, target);
 }
 
-public class Downloader
+public sealed class ExactPeerFileTransferRunner
 {
     private readonly ISoulseekClient client;
     private readonly SoulseekClientManager clientManager;
@@ -43,7 +46,7 @@ public class Downloader
     private readonly DownloadEvents events;
     private readonly StaleDownloadCoordinator staleDownloads;
 
-    internal Downloader(ISoulseekClient client,
+    internal ExactPeerFileTransferRunner(ISoulseekClient client,
                         SoulseekClientManager clientManager,
                         ActiveDownloadTracker activeDownloads,
                         DownloadedFileCache downloadedFiles,
@@ -58,32 +61,39 @@ public class Downloader
         this.staleDownloads = staleDownloads;
     }
 
-    public async Task<FileDownloadOutcome> DownloadFile(
-        FileCandidate candidate,
+    public async Task<ExactFileTransferOutcome> DownloadFile(
+        PeerFileTarget target,
         string outputPath,
-        SongJob song,
+        FileDownloadJob owner,
         TransferSettings transfer,
         string? parentDir,
+        int maxStaleTimeMs,
         CancellationToken? ct = null,
         bool publishToDuplicateCache = true,
-        Job? parentJob = null)
+        Job? parentJob = null,
+        bool deferTerminalCompletion = false)
     {
-        if (downloadedFiles.TryGetReusable(candidate, out var existingDownload))
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(owner);
+        if (maxStaleTimeMs <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxStaleTimeMs));
+
+        if (downloadedFiles.TryGetReusable(target, out var existingDownload))
         {
             var existingPath     = existingDownload.OutputPath;
             var outputFileInfo   = new FileInfo(outputPath);
             var existingFileInfo = new FileInfo(existingPath);
 
-            SockseekLog.Jobs.Debug($"File \"{candidate.Filename}\" already downloaded at {existingPath}");
+            SockseekLog.Jobs.Debug($"File \"{target.Filename}\" already downloaded at {existingPath}");
 
             if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
             {
-                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: copying existing download from '{existingPath}' to '{outputPath}'");
+                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: copying existing download from '{existingPath}' to '{outputPath}'");
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                 File.Copy(existingPath!, outputPath, true);
             }
 
-            return FileDownloadOutcome.Completed(new FileDownloadResult(outputPath, existingDownload.Candidate));
+            return ExactFileTransferOutcome.Completed(new ExactFileTransferResult(outputPath, existingDownload.Target));
         }
 
         await clientManager.WaitUntilReadyAsync(ct ?? CancellationToken.None);
@@ -92,9 +102,9 @@ public class Downloader
         var transferId = TransferIds.New();
         int attemptCount = 0;
         Guid currentAttemptId = Guid.Empty;
-        long totalBytes = candidate.Size > 0 ? candidate.Size : 0;
+        long totalBytes = target.Size ?? 0;
 
-        SockseekLog.Soulseek.Debug($"Downloading: {song} from '{candidate.Username}\\{candidate.Filename}' to '{incompleteOutputPath}'");
+        SockseekLog.Soulseek.Debug($"Downloading: {owner} from '{target.Username}\\{target.Filename}' to '{incompleteOutputPath}'");
 
         StaleDownloadCoordinator.PeerTransferActivity? staleActivity = null;
         var transferOptions = new TransferOptions(
@@ -104,24 +114,24 @@ public class Downloader
                 staleActivity?.ReportState(state.Transfer);
                 events.RaiseDownloadStateChanged(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
                     state.Transfer.State,
                     state.Transfer.BytesTransferred,
-                    candidate.Size > 0 ? candidate.Size : 0);
+                    target.Size ?? 0);
             },
             progressUpdated: (progress) =>
             {
                 staleActivity?.ReportProgress(progress.Transfer);
-                song.BytesTransferred = progress.PreviousBytesTransferred;
+                owner.BytesTransferred = progress.PreviousBytesTransferred;
                 events.RaiseDownloadProgress(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
                     progress.PreviousBytesTransferred,
-                    candidate.Size > 0 ? candidate.Size : 0);
+                    target.Size ?? 0);
             }
         );
 
@@ -134,11 +144,11 @@ public class Downloader
             try
             {
                 Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, CleanupRootForIncompletePath(incompleteOutputPath, parentDir));
-                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: deleted incomplete download '{incompleteOutputPath}' after failure");
+                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: deleted incomplete download '{incompleteOutputPath}' after failure");
             }
             catch (Exception ex)
             {
-                SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: failed to delete incomplete download '{incompleteOutputPath}' after failure: {ex.Message}");
+                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: failed to delete incomplete download '{incompleteOutputPath}' after failure: {ex.Message}");
             }
         }
 
@@ -150,13 +160,13 @@ public class Downloader
 
             using var outputStream = new FileStream(incompleteOutputPath, FileMode.Create);
 
-            song.FileSize = candidate.Size;
-            activeDownload = new ActiveDownload(transferId, song, candidate, outputPath, downloadCts, parentJob);
+            owner.FileSize = target.Size;
+            activeDownload = new ActiveDownload(transferId, owner, target, outputPath, downloadCts, parentJob);
             activeDownloads.TryAdd(activeDownload);
 
-            events.RaiseDownloadStarted(transferId, song, candidate, outputPath);
+            events.RaiseDownloadStarted(transferId, owner, target, outputPath);
 
-            int maxRetries = 3;
+            int maxRetries = checked(transfer.UnknownErrorRetries + 1);
             while (true)
             {
                 try
@@ -167,21 +177,21 @@ public class Downloader
                         transferId,
                         currentAttemptId,
                         attemptCount,
-                        song,
-                        candidate,
+                        owner,
+                        target,
                         outputPath,
                         incompleteOutputPath);
                     await staleDownloads.WatchPeerTransferAsync(
                         activeDownload,
-                        song.Config?.Search.MaxStaleTime ?? 30_000,
+                        maxStaleTimeMs,
                         async activity =>
                         {
                             staleActivity = activity;
                             try
                             {
-                                return await client.DownloadAsync(candidate.Username, candidate.Filename,
+                                return await client.DownloadAsync(target.Username, target.Filename,
                                     () => Task.FromResult((Stream)outputStream),
-                                    candidate.Size == -1 ? null : candidate.Size,
+                                    target.Size,
                                     startOffset: outputStream.Position,
                                     options: transferOptions,
                                     cancellationToken: downloadCts.Token);
@@ -195,36 +205,34 @@ public class Downloader
                         transferId,
                         currentAttemptId,
                         attemptCount,
-                        song,
-                        candidate,
+                        owner,
+                        target,
                         outputPath);
                     break;
                 }
                 catch (Exception e) when (e is not OperationCanceledException)
                 {
-                    bool canRetry = e is SoulseekClientException
-                        && !clientManager.IsConnectedAndLoggedIn;
-                    int reportedMaxRetries = canRetry
-                        ? Math.Max(maxRetries, attemptCount + 1)
-                        : attemptCount;
+                    bool canRetry = IsRetryableTransferFailure(e)
+                        && attemptCount < maxRetries;
 
                     SockseekLog.Soulseek.Debug(
-                        $"Error while downloading '{candidate.Username}\\{candidate.Filename}' to '{incompleteOutputPath}' " +
+                        $"Error while downloading '{target.Username}\\{target.Filename}' to '{incompleteOutputPath}' " +
                         $"(attempt {attemptCount}/{maxRetries}): {SockseekLog.ExceptionSummary(e)}");
                     events.RaiseTransferAttemptFailed(
                         transferId,
                         currentAttemptId,
                         attemptCount,
-                        song,
-                        candidate,
+                        owner,
+                        target,
                         outputPath,
                         e);
-                    events.RaiseDownloadAttemptFailed(transferId, song, candidate, outputPath, incompleteOutputPath, attemptCount, reportedMaxRetries, e);
+                    events.RaiseDownloadAttemptFailed(transferId, owner, target, outputPath, incompleteOutputPath, attemptCount, maxRetries, e);
 
                     if (!canRetry)
                         throw;
 
-                    await clientManager.WaitUntilReadyAsync(downloadCts.Token);
+                    if (!clientManager.IsConnectedAndLoggedIn)
+                        await clientManager.WaitUntilReadyAsync(downloadCts.Token);
                 }
             }
         }
@@ -233,24 +241,23 @@ public class Downloader
             DeleteIncompleteDownloadAfterFailure();
 
             var staleException = new StaleDownloadException(
-                candidate,
-                activeDownload.StaleMaxStaleTimeMs ?? song.Config?.Search.MaxStaleTime ?? 30_000);
-            if (parentJob is not AlbumJob || song.IsNotAudio)
-                events.RaiseDownloadAttemptFailed(transferId, song, candidate, outputPath, incompleteOutputPath, Math.Max(attemptCount, 1), Math.Max(attemptCount, 1), staleException);
+                target,
+                activeDownload.StaleMaxStaleTimeMs ?? maxStaleTimeMs);
+            events.RaiseDownloadAttemptFailed(transferId, owner, target, outputPath, incompleteOutputPath, Math.Max(attemptCount, 1), Math.Max(attemptCount, 1), staleException);
             events.RaiseTransferAttemptCancelled(
                 transferId,
                 currentAttemptId,
                 Math.Max(attemptCount, 1),
-                song,
-                candidate,
+                owner,
+                target,
                 outputPath,
                 TransferCancellationReason.Stale);
             events.RaiseTransferFailed(
                 transferId,
-                song,
-                candidate,
+                owner,
+                target,
                 outputPath,
-                song.BytesTransferred,
+                owner.BytesTransferred,
                 totalBytes,
                 Math.Max(attemptCount, 1),
                 TransferFailureReason.Stale,
@@ -267,20 +274,20 @@ public class Downloader
                     transferId,
                     currentAttemptId,
                     Math.Max(attemptCount, 1),
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
                     TransferCancellationReason.ManualSkip);
                 events.RaiseTransferCancelled(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
-                    song.BytesTransferred,
+                    owner.BytesTransferred,
                     totalBytes,
                     Math.Max(attemptCount, 1),
                     TransferCancellationReason.ManualSkip);
-                return FileDownloadOutcome.ManuallySkipped(candidate);
+                return ExactFileTransferOutcome.ManuallySkipped(target);
             }
 
             if (ex is OperationCanceledException)
@@ -289,16 +296,16 @@ public class Downloader
                     transferId,
                     currentAttemptId,
                     Math.Max(attemptCount, 1),
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
                     TransferCancellationReason.Requested);
                 events.RaiseTransferCancelled(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
-                    song.BytesTransferred,
+                    owner.BytesTransferred,
                     totalBytes,
                     Math.Max(attemptCount, 1),
                     TransferCancellationReason.Requested);
@@ -307,10 +314,10 @@ public class Downloader
             {
                 events.RaiseTransferFailed(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
-                    song.BytesTransferred,
+                    owner.BytesTransferred,
                     totalBytes,
                     Math.Max(attemptCount, 1),
                     TransferFailureReason.PeerFailure,
@@ -337,7 +344,7 @@ public class Downloader
                 }
                 catch (Exception cleanupEx)
                 {
-                    SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: failed to delete incomplete download '{incompleteOutputPath}' after final rename failure: {cleanupEx.Message}");
+                    SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: failed to delete incomplete download '{incompleteOutputPath}' after final rename failure: {cleanupEx.Message}");
                 }
 
                 var finalizationException = new IOException(
@@ -345,10 +352,10 @@ public class Downloader
                     ex);
                 events.RaiseTransferFailed(
                     transferId,
-                    song,
-                    candidate,
+                    owner,
+                    target,
                     outputPath,
-                    song.BytesTransferred,
+                    owner.BytesTransferred,
                     totalBytes,
                     Math.Max(attemptCount, 1),
                     TransferFailureReason.Finalization,
@@ -357,16 +364,37 @@ public class Downloader
             }
         }
 
-        var result = new FileDownloadResult(outputPath, candidate, transferId, Math.Max(attemptCount, 1));
+        var result = new ExactFileTransferResult(outputPath, target, transferId, Math.Max(attemptCount, 1));
         if (publishToDuplicateCache)
-            downloadedFiles.Publish(result);
+            downloadedFiles.Publish(result.OutputPath, result.Target);
         activeDownloads.TryRemove(transferId, out _);
 
-        if (candidate.Size > 0)
-            song.BytesTransferred = candidate.Size;
+        if (target.Size is > 0)
+            owner.BytesTransferred = target.Size.Value;
 
-        return FileDownloadOutcome.Completed(result);
+        if (!deferTerminalCompletion)
+        {
+            long completedBytes = File.Exists(outputPath)
+                ? new FileInfo(outputPath).Length
+                : target.Size ?? owner.BytesTransferred;
+            events.RaiseTransferCompleted(
+                transferId,
+                owner,
+                target,
+                outputPath,
+                completedBytes,
+                Math.Max(attemptCount, 1));
+        }
+
+        return ExactFileTransferOutcome.Completed(result);
     }
+
+    private static bool IsRetryableTransferFailure(Exception exception)
+        => exception is not (OperationCanceledException
+            or FileNotFoundException
+            or UserNotFoundException
+            or TransferRejectedException
+            or StaleDownloadException);
 
     static string GetStateLabel(TransferStates s)
     {

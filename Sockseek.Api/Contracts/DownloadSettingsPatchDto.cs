@@ -47,7 +47,6 @@ public sealed record SearchSettingsPatchDto(
     FolderConditionsPatchDto? NecessaryFolderCond = null,
     FolderConditionsPatchDto? PreferredFolderCond = null,
     int? SearchTimeout = null,
-    int? MaxStaleTime = null,
     int? DownrankOn = null,
     int? IgnoreOn = null,
     bool? FastSearch = null,
@@ -121,7 +120,8 @@ public sealed record TransferSettingsPatchDto(
     int? MaxDownloadRetries = null,
     int? UnknownErrorRetries = null,
     bool? NoIncompleteExt = null,
-    int? AlbumTrackCountMaxRetries = null);
+    int? AlbumTrackCountMaxRetries = null,
+    int? MaxStaleTime = null);
 
 public sealed record SpotifySettingsPatchDto(
     string? ClientId = null,
@@ -222,7 +222,6 @@ public static class DownloadSettingsPatchDtoMapper
         ApplyFolderConditions(target.NecessaryFolderCond, patch.NecessaryFolderCond);
         ApplyFolderConditions(target.PreferredFolderCond, patch.PreferredFolderCond);
         if (patch.SearchTimeout is { } searchTimeout) target.SearchTimeout = searchTimeout;
-        if (patch.MaxStaleTime is { } maxStaleTime) target.MaxStaleTime = maxStaleTime;
         if (patch.DownrankOn is { } downrankOn) target.DownrankOn = downrankOn;
         if (patch.IgnoreOn is { } ignoreOn) target.IgnoreOn = ignoreOn;
         if (patch.FastSearch is { } fastSearch) target.FastSearch = fastSearch;
@@ -317,6 +316,7 @@ public static class DownloadSettingsPatchDtoMapper
         if (patch.UnknownErrorRetries is { } unknownErrorRetries) target.UnknownErrorRetries = unknownErrorRetries;
         if (patch.NoIncompleteExt is { } noIncompleteExt) target.NoIncompleteExt = noIncompleteExt;
         if (patch.AlbumTrackCountMaxRetries is { } albumTrackCountMaxRetries) target.AlbumTrackCountMaxRetries = albumTrackCountMaxRetries;
+        if (patch.MaxStaleTime is { } maxStaleTime) target.MaxStaleTime = maxStaleTime;
     }
 
     private static void ApplySpotify(SpotifySettings target, SpotifySettingsPatchDto? patch)
@@ -422,7 +422,6 @@ public static class DownloadSettingsPatchDtoMapper
                 case "Output.AlbumArtOption": Output.AlbumArtOption = op.AlbumArtOptionValue; break;
 
                 case "Search.SearchTimeout": Search.SearchTimeout = Int(op); break;
-                case "Search.MaxStaleTime": Search.MaxStaleTime = Int(op); break;
                 case "Search.DownrankOn": Search.DownrankOn = Int(op); break;
                 case "Search.IgnoreOn": Search.IgnoreOn = Int(op); break;
                 case "Search.FastSearch": Search.FastSearch = Bool(op); break;
@@ -507,6 +506,7 @@ public static class DownloadSettingsPatchDtoMapper
                 case "Transfer.UnknownErrorRetries": Transfer.UnknownErrorRetries = Int(op); break;
                 case "Transfer.NoIncompleteExt": Transfer.NoIncompleteExt = Bool(op); break;
                 case "Transfer.AlbumTrackCountMaxRetries": Transfer.AlbumTrackCountMaxRetries = Int(op); break;
+                case "Transfer.MaxStaleTime": Transfer.MaxStaleTime = Int(op); break;
 
                 case "Spotify.ClientId": Spotify.ClientId = op.StringValue; break;
                 case "Spotify.ClientSecret": Spotify.ClientSecret = op.StringValue; break;
@@ -603,10 +603,10 @@ public static class DownloadSettingsPatchDtoMapper
         public FileConditionsBuilder PreferredCond { get; } = new();
         public FolderConditionsBuilder NecessaryFolderCond { get; } = new();
         public FolderConditionsBuilder PreferredFolderCond { get; } = new();
-        public int? SearchTimeout, MaxStaleTime, DownrankOn, IgnoreOn, FastSearchDelay, MinSharesAggregate, AggregateLengthTol;
+        public int? SearchTimeout, DownrankOn, IgnoreOn, FastSearchDelay, MinSharesAggregate, AggregateLengthTol;
         public double? FastSearchMinUpSpeed;
         public bool? FastSearch, DesperateSearch, NoRemoveSpecialChars, RemoveSingleCharSearchTerms, NoBrowseFolder, Relax, StrictAlbumQuality, ArtistMaybeWrong, IsAggregate;
-        public SearchSettingsPatchDto Build() => new(NecessaryCond.Build(), PreferredCond.Build(), NecessaryFolderCond.Build(), PreferredFolderCond.Build(), SearchTimeout, MaxStaleTime, DownrankOn, IgnoreOn, FastSearch, FastSearchDelay, FastSearchMinUpSpeed, DesperateSearch, NoRemoveSpecialChars, RemoveSingleCharSearchTerms, NoBrowseFolder, Relax, StrictAlbumQuality, ArtistMaybeWrong, IsAggregate, MinSharesAggregate, AggregateLengthTol);
+        public SearchSettingsPatchDto Build() => new(NecessaryCond.Build(), PreferredCond.Build(), NecessaryFolderCond.Build(), PreferredFolderCond.Build(), SearchTimeout, DownrankOn, IgnoreOn, FastSearch, FastSearchDelay, FastSearchMinUpSpeed, DesperateSearch, NoRemoveSpecialChars, RemoveSingleCharSearchTerms, NoBrowseFolder, Relax, StrictAlbumQuality, ArtistMaybeWrong, IsAggregate, MinSharesAggregate, AggregateLengthTol);
     }
 
     private sealed class FileConditionsBuilder
@@ -660,9 +660,9 @@ public static class DownloadSettingsPatchDtoMapper
 
     private sealed class TransferBuilder
     {
-        public int? MaxDownloadRetries, UnknownErrorRetries, AlbumTrackCountMaxRetries;
+        public int? MaxDownloadRetries, UnknownErrorRetries, AlbumTrackCountMaxRetries, MaxStaleTime;
         public bool? NoIncompleteExt;
-        public TransferSettingsPatchDto Build() => new(MaxDownloadRetries, UnknownErrorRetries, NoIncompleteExt, AlbumTrackCountMaxRetries);
+        public TransferSettingsPatchDto Build() => new(MaxDownloadRetries, UnknownErrorRetries, NoIncompleteExt, AlbumTrackCountMaxRetries, MaxStaleTime);
     }
 
     private sealed class SpotifyBuilder

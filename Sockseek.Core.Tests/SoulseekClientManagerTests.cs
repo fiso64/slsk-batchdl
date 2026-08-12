@@ -157,6 +157,63 @@ public class SoulseekClientManagerTests
         }
     }
 
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task FatalLoginWithoutReadinessWaiter_DoesNotPublishUnobservedTaskException()
+    {
+        const string marker = "fatal-login-unobserved-regression";
+        var unobserved = new List<AggregateException>();
+        EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, args) =>
+        {
+            if (args.Exception.ToString().Contains(marker, StringComparison.Ordinal))
+            {
+                lock (unobserved)
+                    unobserved.Add(args.Exception);
+                args.SetObserved();
+            }
+        };
+
+        TaskScheduler.UnobservedTaskException += handler;
+        try
+        {
+            await CreateAndDisposeFatalManager(marker);
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await Task.Yield();
+            }
+
+            lock (unobserved)
+                Assert.AreEqual(0, unobserved.Count, "A handled fatal login must not leave a second faulted readiness task unobserved.");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= handler;
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task CreateAndDisposeFatalManager(string marker)
+    {
+        var settings = new EngineSettings
+        {
+            Username = "user",
+            Password = "pass",
+        };
+        var mockClient = new MockSoulseekClient(
+            new(),
+            initialState: SoulseekClientStates.None)
+        {
+            ConnectException = new InvalidOperationException(marker),
+        };
+        using var manager = new SoulseekClientManager(settings, mockClient);
+
+        await Assert.ThrowsExactlyAsync<SoulseekConnectionUnavailableException>(
+            () => manager.EnsureConnectedAndLoggedInAsync(settings));
+    }
+
     [DataTestMethod]
     [DataRow(null, null, "Missing Soulseek username and password.")]
     [DataRow("bbbbbbb", null, "Missing Soulseek password.")]

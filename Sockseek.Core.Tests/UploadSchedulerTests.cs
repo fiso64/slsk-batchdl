@@ -59,7 +59,7 @@ public sealed class UploadSchedulerTests
     }
 
     [TestMethod]
-    public void Scheduler_EnforcesOneActiveTransferPerNormalizedUsername()
+    public void Scheduler_TreatsExactUsernameSpellingsAsDistinctPeers()
     {
         var scheduler = CreateScheduler(slots: 4);
 
@@ -68,11 +68,11 @@ public sealed class UploadSchedulerTests
         var other = Admit(scheduler, "Bob", "three");
 
         AssertGrant(first.Result, first.Id);
-        Assert.AreEqual(0, second.Result.Grants.Count);
+        AssertGrant(second.Result, second.Id);
         AssertGrant(other.Result, other.Id);
-        Assert.AreEqual(2, scheduler.GetRuntimeSnapshot().ActiveSlots);
+        Assert.AreEqual(3, scheduler.GetRuntimeSnapshot().ActiveSlots);
 
-        AssertGrant(scheduler.Terminalize(first.Id), second.Id);
+        Assert.AreEqual(0, scheduler.Terminalize(first.Id).Grants.Count);
     }
 
     [TestMethod]
@@ -83,7 +83,7 @@ public sealed class UploadSchedulerTests
         var before = scheduler.GetRuntimeSnapshot();
 
         Guid duplicateId = Guid.NewGuid();
-        var duplicate = scheduler.Admit(Request(duplicateId, "alice", "same"));
+        var duplicate = scheduler.Admit(Request(duplicateId, "Alice", "same"));
         var after = scheduler.GetRuntimeSnapshot();
 
         Assert.AreEqual(UploadAdmissionResultKind.Duplicate, duplicate.Kind);
@@ -91,6 +91,18 @@ public sealed class UploadSchedulerTests
         Assert.AreEqual(0, duplicate.Grants.Count);
         Assert.AreEqual(before, after);
         Assert.IsFalse(scheduler.TryGet(duplicateId, out _));
+    }
+
+    [TestMethod]
+    public void DuplicateAdmission_DoesNotFoldUsernameCase()
+    {
+        var scheduler = CreateScheduler(slots: 2);
+        _ = Admit(scheduler, "Alice", "same");
+
+        var distinct = scheduler.Admit(Request(Guid.NewGuid(), "alice", "same"));
+
+        Assert.AreEqual(UploadAdmissionResultKind.Accepted, distinct.Kind);
+        Assert.AreEqual("alice", distinct.Entry!.Username);
     }
 
     [TestMethod]

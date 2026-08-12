@@ -20,7 +20,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
     private readonly SemaphoreSlim jobSemaphore;
     private readonly SemaphoreSlim extractorSemaphore;
     private Searcher? searcher;
-    private Downloader? downloader;
+    private ExactPeerFileTransferRunner? exactFileTransfers;
     private Task? staleDownloadTask;
     private bool servicesInitialized;
     private bool disposed;
@@ -55,7 +55,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
     public Searcher Searcher => searcher
         ?? throw new InvalidOperationException("Engine search services have not been initialized.");
 
-    public Downloader Downloader => downloader
+    public ExactPeerFileTransferRunner ExactFileTransfers => exactFileTransfers
         ?? throw new InvalidOperationException("Engine download services have not been initialized.");
 
     public async Task EnsureServicesInitializedAsync(CancellationToken ct, bool automaticStaleChecksEnabled)
@@ -80,7 +80,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         await clientManager.WaitUntilReadyAsync(ct);
         var client = clientManager.Client ?? throw new InvalidOperationException("Soulseek client is not available after login.");
         searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents, timeProvider);
-        downloader = new Downloader(client, clientManager, activeDownloads, downloadedFiles, events, staleDownloads);
+        exactFileTransfers = new ExactPeerFileTransferRunner(client, clientManager, activeDownloads, downloadedFiles, events, staleDownloads);
 
         if (automaticStaleChecksEnabled)
             staleDownloadTask ??= Task.Run(() => staleDownloads.RunAsync(appCts.Token), appCts.Token);

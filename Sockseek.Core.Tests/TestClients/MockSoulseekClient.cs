@@ -21,7 +21,7 @@ namespace Tests.ClientTests
         private List<Soulseek.SearchResponse> index;
         private readonly int searchDelayMs;
         private readonly HashSet<string> failingUsers;
-        private readonly HashSet<string> disconnectingUsers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> disconnectingUsers = new(StringComparer.Ordinal);
         private int disconnectingSearches;
         private int failingSearches;
 
@@ -76,7 +76,7 @@ namespace Tests.ClientTests
         {
             this.index         = index;
             this.searchDelayMs = searchDelayMs;
-            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             State = initialState;
         }
 
@@ -397,7 +397,7 @@ namespace Tests.ClientTests
                 }
 
                 // Find the file in the directories
-                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
+                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.Ordinal));
                 if (foundFile == null)
                 {
                     throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");

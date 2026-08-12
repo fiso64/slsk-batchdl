@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 
@@ -61,7 +62,12 @@ public class OpenApiContractTests
             StringAssert.Contains(json, nameof(JobSummaryDto));
             StringAssert.Contains(json, nameof(SubmitAlbumJobRequestDto));
             StringAssert.Contains(json, nameof(AlbumJobPayloadDto));
+            StringAssert.Contains(json, nameof(RemoteFileJobPayloadDto));
+            StringAssert.Contains(json, nameof(RemoteDirectoryJobPayloadDto));
+            StringAssert.Contains(json, nameof(PeerFileTargetDto));
+            StringAssert.Contains(json, nameof(DirectoryTransferPlanDto));
             StringAssert.Contains(json, nameof(FileCandidateDto));
+            StringAssert.Contains(json, nameof(FileMetadataDto));
             StringAssert.Contains(json, nameof(WorkflowTreeDto));
             StringAssert.Contains(json, nameof(StateSnapshotDto));
             StringAssert.Contains(json, nameof(ApiErrorDto));
@@ -78,6 +84,10 @@ public class OpenApiContractTests
             StringAssert.Contains(json, "terminalOutcome");
             StringAssert.Contains(json, "discriminator");
             StringAssert.Contains(json, "kind");
+            StringAssert.Contains(json, "requestedMode");
+            StringAssert.Contains(json, "exactTarget");
+            StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteFile);
+            StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteDirectory);
             Assert.IsTrue(document.RootElement
                 .GetProperty("paths")
                 .TryGetProperty("/api/daemon/snapshot", out _));
@@ -149,6 +159,29 @@ public class OpenApiContractTests
             if (Directory.Exists(outputDir))
                 Directory.Delete(outputDir, recursive: true);
         }
+    }
+
+    [TestMethod]
+    public void SearchCandidate_ComposesSharedFileMetadataWithoutFlatCompatibilityFields()
+    {
+        var candidate = new FileCandidateSnapshot(
+            "Peer",
+            @"Share\Folder\Track.flac",
+            new PeerSnapshot("Peer", true, 1000),
+            123,
+            900,
+            24,
+            96_000,
+            180,
+            ".flac",
+            []);
+
+        FileCandidateDto dto = ServerSnapshotMapper.ToFileCandidateDto(candidate);
+
+        Assert.AreEqual("Track.flac", dto.File.Name);
+        Assert.AreEqual(24, dto.File.BitDepth);
+        Assert.IsNull(typeof(FileCandidateDto).GetProperty("Size"));
+        Assert.IsNull(typeof(FileCandidateDto).GetProperty("Extension"));
     }
 
     private static string ExpectedOpenApiVersion()

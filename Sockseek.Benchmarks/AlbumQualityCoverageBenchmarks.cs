@@ -73,7 +73,6 @@ public class AlbumQualityCoverageBenchmarks
             PreferredFolderCond = new FolderConditions(source.PreferredFolderCond),
             StrictAlbumQuality = source.StrictAlbumQuality,
             SearchTimeout = source.SearchTimeout,
-            MaxStaleTime = source.MaxStaleTime,
             DownrankOn = source.DownrankOn,
             IgnoreOn = source.IgnoreOn,
             FastSearch = source.FastSearch,

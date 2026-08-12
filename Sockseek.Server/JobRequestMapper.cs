@@ -157,18 +157,20 @@ public static class JobRequestMapper
 
     private static FileCandidate ToFileCandidate(FileCandidateDto dto)
         => new(
-            dto.Username,
-            dto.Filename,
-            dto.Size,
-            dto.BitRate,
-            bitDepth: null,
-            responseFileCount: 0,
-            dto.SampleRate,
-            dto.Length,
-            dto.Extension ?? Path.GetExtension(dto.Filename),
-            dto.Peer.UploadSpeed,
-            dto.Peer.HasFreeUploadSlot,
-            dto.Attributes?.Select(attr => new FileAttributeSnapshot(attr.Type, attr.Value)).ToList());
+            new PeerFileTarget(
+                new PeerFileIdentity(dto.Username, dto.Filename),
+                dto.File.Size < 0 ? null : dto.File.Size,
+                dto.File.Extension ?? Path.GetExtension(dto.Filename),
+                dto.File.BitRate,
+                dto.File.BitDepth,
+                dto.File.SampleRate,
+                dto.File.Length,
+                dto.File.Attributes?.Select(attr => new FileAttributeSnapshot(attr.Type, attr.Value)).ToList()),
+            new SearchPeerSnapshot(
+                dto.Username,
+                responseFileCount: 0,
+                dto.Peer.UploadSpeed,
+                dto.Peer.HasFreeUploadSlot));
 
     public static Job CreateJob(JobDraftDto item)
         => item switch
@@ -185,8 +187,58 @@ public static class JobRequestMapper
             AggregateJobDraftDto aggregate => ApplyProvenance(ApplyDownloadBehavior(new AggregateJob(ToSongQuery(aggregate.SongQuery)), aggregate.DownloadBehavior), aggregate.Provenance),
             AlbumAggregateJobDraftDto aggregate => ApplyProvenance(ApplyDownloadBehavior(new AlbumAggregateJob(ToAlbumQuery(aggregate.AlbumQuery)), aggregate.DownloadBehavior), aggregate.Provenance),
             JobListJobDraftDto list => ApplyProvenance(CreateJobList(list.Name, list.Jobs), list.Provenance),
+            RemoteFileJobDraftDto remoteFile => ApplyProvenance(CreateRemoteFileJob(remoteFile), remoteFile.Provenance),
+            RemoteDirectoryJobDraftDto remoteDirectory => ApplyProvenance(CreateRemoteDirectoryJob(remoteDirectory), remoteDirectory.Provenance),
             _ => throw new ArgumentException($"Unsupported job draft type '{item.GetType().Name}'")
         };
+
+    private static RemoteFileJob CreateRemoteFileJob(RemoteFileJobDraftDto draft)
+        => new(
+            ToPeerFileTarget(draft.Target),
+            draft.OutputPathComponents == null
+                ? null
+                : new RelativeOutputPath(draft.OutputPathComponents));
+
+    private static RemoteDirectoryJob CreateRemoteDirectoryJob(RemoteDirectoryJobDraftDto draft)
+    {
+        bool hasDirectory = draft.Username != null || draft.FolderPath != null;
+        if (hasDirectory == (draft.Plan != null))
+            throw new ArgumentException("A remote directory draft requires exactly one peer-directory or resolved-plan source.");
+        if (hasDirectory)
+        {
+            if (draft.Username == null || draft.FolderPath == null)
+                throw new ArgumentException("Both username and folderPath are required for a peer-directory source.");
+            return new RemoteDirectoryJob(new RemoteDirectorySource.PeerDirectory(
+                new PeerDirectoryIdentity(draft.Username, draft.FolderPath)));
+        }
+
+        return new RemoteDirectoryJob(new RemoteDirectorySource.Resolved(
+            ToDirectoryTransferPlan(draft.Plan!)));
+    }
+
+    private static PeerFileTarget ToPeerFileTarget(PeerFileTargetDto target)
+        => new(
+            new PeerFileIdentity(target.Username, target.Filename),
+            target.Size,
+            target.Extension,
+            target.BitRate,
+            target.BitDepth,
+            target.SampleRate,
+            target.Length,
+            target.Attributes?.Select(attribute =>
+                new FileAttributeSnapshot(attribute.Type, attribute.Value)).ToList());
+
+    private static DirectoryTransferPlan ToDirectoryTransferPlan(DirectoryTransferPlanDto plan)
+    {
+        var result = new DirectoryTransferPlan(
+            plan.DisplayRoot,
+            plan.Entries.Select(entry => new DirectoryTransferEntry(
+                ToPeerFileTarget(entry.Target),
+                entry.RelativeDirectoryComponents)).ToList());
+        if (result.TotalKnownBytes != plan.TotalKnownBytes)
+            throw new ArgumentException("Resolved directory plan totalKnownBytes does not match its entries.");
+        return result;
+    }
 
     private static TJob ApplyProvenance<TJob>(TJob job, JobProvenanceDto? provenance)
         where TJob : Job
@@ -323,7 +375,7 @@ public static class JobRequestMapper
             .Where(folder => string.Equals(folder.Username, folderRef.Username, StringComparison.Ordinal)
                 && PathsAreRelated(folder.FolderPath, folderRef.FolderPath))
             .SelectMany(folder => folder.Files)
-            .Where(file => file.Filename.StartsWith(folderRef.FolderPath + "\\", StringComparison.OrdinalIgnoreCase))
+            .Where(file => file.Filename.StartsWith(folderRef.FolderPath + "\\", StringComparison.Ordinal))
             .ToList();
 
         return seedFiles.Count == 0
@@ -337,8 +389,8 @@ public static class JobRequestMapper
             || right.StartsWith(left.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsInFolderPath(string filename, string folderPath)
-        => filename.StartsWith(folderPath.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase)
-            || filename.Equals(folderPath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+        => filename.StartsWith(folderPath.TrimEnd('\\') + "\\", StringComparison.Ordinal)
+            || filename.Equals(folderPath.TrimEnd('\\'), StringComparison.Ordinal);
 
     public static AlbumFolder ApplyFolderDownloadSelection(AlbumFolder folder, AlbumFolderDownloadSelectionDto? selection)
     {
@@ -367,8 +419,31 @@ public static class JobRequestMapper
 
     public static void ApplyFolderDownloadSelection(AlbumJob job, AlbumFolderDownloadSelectionDto? selection)
     {
-        job.AllowBrowseResolvedTarget = selection?.ExactFiles != true;
-        job.SkipResolvedTargetTrackCountVerification = selection?.SkipTrackCountVerification == true;
+        job.DirectoryResolutionPolicy = selection?.ExactFiles == true
+            ? AlbumDirectoryResolutionPolicy.UseSelectedSnapshot
+            : AlbumDirectoryResolutionPolicy.CompleteIfNeeded;
+        job.ValidationRequirement = selection?.SkipTrackCountVerification == true
+            ? AlbumValidationRequirement.UserAccepted
+            : AlbumValidationRequirement.Standard;
+    }
+
+    public static RemoteDirectoryJob CreateRemoteDirectoryDownload(
+        AlbumFolder folder,
+        AlbumFolderDownloadSelectionDto? selection)
+    {
+        ArgumentNullException.ThrowIfNull(folder);
+        if (!folder.IsFullyRetrieved && selection?.ExactFiles != true)
+        {
+            return new RemoteDirectoryJob(new RemoteDirectorySource.PeerDirectory(
+                folder.DirectoryIdentity));
+        }
+
+        var selectedSnapshot = new PeerDirectorySnapshot(
+            folder.DirectoryIdentity,
+            folder.Files.Select(file => file.Candidate.Target).ToArray(),
+            isComplete: true);
+        return new RemoteDirectoryJob(new RemoteDirectorySource.Resolved(
+            DirectoryTransferPlanner.FromSnapshot(selectedSnapshot)));
     }
 
     private static JobList CreateJobList(string? name, IReadOnlyList<JobDraftDto> jobs)

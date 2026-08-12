@@ -110,7 +110,7 @@ public sealed class UploadScheduler
         if (request.SizeBytes < 0)
             throw new ArgumentOutOfRangeException(nameof(request), "Upload size cannot be negative.");
 
-        string username = PeerUsername.Normalize(request.Username);
+        string username = PeerUsername.Validate(request.Username);
         var duplicateKey = new DuplicateKey(username, request.RemotePathKey);
 
         lock (sync)
@@ -251,7 +251,7 @@ public sealed class UploadScheduler
 
     public bool CouldStartImmediately(string username)
     {
-        username = PeerUsername.Normalize(username);
+        username = PeerUsername.Validate(username);
         lock (sync)
         {
             if (active.Count >= slots)
@@ -316,7 +316,7 @@ public sealed class UploadScheduler
         if (afterRequestedAtUtc.HasValue != afterTransferId.HasValue)
             throw new ArgumentException("Both live queue cursor fields must be supplied together.");
         if (username is not null)
-            username = PeerUsername.Normalize(username);
+            username = PeerUsername.Validate(username);
 
         lock (sync)
         {

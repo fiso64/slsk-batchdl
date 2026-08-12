@@ -45,6 +45,17 @@ public sealed class ChatContractsTests
     }
 
     [TestMethod]
+    public void UsernameValidationPreservesExactSoulseekSpelling()
+    {
+        string decomposed = " Cafe\u0301 ";
+
+        Assert.AreEqual(decomposed, ChatIdentity.ValidateUsername(decomposed));
+        Assert.AreNotEqual(
+            ChatIdentity.ValidateUsername("Alice"),
+            ChatIdentity.ValidateUsername("alice"));
+    }
+
+    [TestMethod]
     public void CanonicallyEquivalentRoomNamesNormalizeToOneIdentity()
     {
         Assert.AreEqual("caf\u00e9", ChatIdentity.NormalizeRoom(" cafe\u0301 "));

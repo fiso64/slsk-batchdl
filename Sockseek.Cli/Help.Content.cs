@@ -385,8 +385,10 @@ Input types
       within the collection.
 
   Soulseek Link
-    A direct path starting with slsk://. Paths ending in / are album/folder downloads; file paths
-    are direct single-file downloads unless --album is explicitly requested.
+    A direct path starting with slsk://. By default, a path ending in / is an ordinary folder
+    download and a path without it is an ordinary exact-file download. Use --song or --album to
+    request music-specific handling. --song rejects directory links; --album treats the supplied
+    remote path as the selected album directory, whether or not it has a trailing slash.
 
   Search string
     Name of the track, album, or artist to search for. The input can either be an arbitrary search
@@ -512,10 +514,11 @@ File conditions
 
     const string nameFormatHelp = @"
 Name format
-  Variables enclosed in {} will be replaced by the corresponding file tag value. Name format
+  Variables enclosed in {} will be replaced by the corresponding available value. Name format
   supports subdirectories as well as conditional expressions like {tag1|tag2} - If tag1 is null, use
   tag2. This can be chained arbitrarily many times. String literals enclosed in parentheses are
-  ignored in the null check.
+  ignored in the null check. See Variables for the complete reference, also available with sockseek
+  --help variables.
 
   Examples
     - {artist} - {title} Always name it 'Artist - Title'. Because some files on Soulseek are
@@ -524,10 +527,33 @@ Name format
       otherwise use the original filename.
     - {albumartist(/)album(/)track(. )title|(missing-tags/)slsk-foldername(/)slsk-filename} Sort
       files into artist/album folders if all tags are present, otherwise put them in the
-      'missing-tags' folder.
+      'missing-tags' folder.";
 
-  Available variables
-    The following values are read from the downloaded file's tags:
+    const string variablesHelp = @"
+Variables
+  Variables are shared by name formats and on-complete commands.
+
+  Shared placement variables
+    These variables are available for all download jobs.
+
+    peer-username / username        Username of the peer serving the file
+    filename / slsk-filename        Remote filename without its extension
+    ext                             Final output file extension, including the dot
+    relative-path                   Relative directory plus filename, without the extension
+    foldername / slsk-foldername    Selected root plus relative directory; for a direct
+                                    file, its immediate remote parent folder
+    item-name                       Current song, album, file, or folder name
+    default-folder                  Default Sockseek folder for the current job
+                                    (e.g. Spotify playlist name)
+    output-dir / outputdir          Output parent directory (--output)
+    type                            Job type (Song, Album, RemoteFile, RemoteDirectory, ..)
+    extractor                       Name of the input extractor (Spotify, CSV, ..)
+    input                           Original input string
+    bindir                          Base application directory
+    configdir                       Active config file directory
+
+  Music variables
+    These are read from the downloaded file's tags:
 
     artist                         First artist
     artists                        Artists, joined with '&'
@@ -540,35 +566,16 @@ Name format
     disc                           Disc number
     length                         Track length (in seconds)
 
-    The following values are taken from the input source (CSV file data, Spotify, etc):
+    These are taken from the input source (CSV file data, Spotify, etc):
 
-    sartist                        Source artist
+    sartist / sartists             Source artist
     stitle                         Source track title
     salbum                         Source album name
     slength                        Source track length
-    uri                            Track URI
+    uri / url                      Track URI
     snum                           Source item number (1-indexed, including offset)
-    row/line                       Line number (1-indexed, only for CSV or list input)
-
-    Other variables:
-
-    type                           Track type
-    state                          Track state
-    failure-reason                 Reason for failure if any
-    is-audio                       If track is audio (true/false)
-    artist-maybe-wrong             If artist might be incorrect (true/false)
-    slsk-filename                  Soulseek filename without extension
-    slsk-foldername                Soulseek folder name
-    extractor                      Name of the extractor used
-    input                          Input string
-    item-name                      Name of the playlist/source
-    default-folder                 Default Sockseek folder name
-    bindir                         Base application directory
-    outputdir                      Output directory (--output-dir)
-    configdir                      Active config file directory
-    path                           Download file path (or folder if album)
-    path-noext                     Download file path without extension
-    ext                            File extension";
+    row / line                     Line number (1-indexed, only for CSV or list input)
+    artist-maybe-wrong             If the source artist might be incorrect (true/false)";
     
     const string configHelp = @"
 Configuration
@@ -613,11 +620,16 @@ Configuration
     profile-cond = input-type == ""youtube""
     output-dir = ~/downloads/sockseek-youtube
 
+    # use structural naming for non-music downloads
+    [generic-layout]
+    profile-cond = download-mode == ""generic-file"" || download-mode == ""generic-directory""
+    name-format = {peer-username}/{foldername}/{filename}
+
     The following operators are supported for use in profile-cond: &&, ||, ==, !=, !{bool}. The
     following variables are available:
 
     input-type        (""youtube""|""csv""|""string""|""bandcamp""|""spotify""|""list""|""soulseek""|""musicbrainz""|""none"")
-    download-mode     (""normal""|""song""|""aggregate""|""album""|""album-aggregate"")
+    download-mode     (""song""|""aggregate""|""album""|""album-aggregate""|""generic-file""|""generic-directory"")
     album             (bool)
     aggregate         (bool)
     interactive       (bool)
@@ -656,14 +668,28 @@ On-Complete Actions
     If when= is omitted, it behaves like when=completed. This preserves the usual ""run when work
     completed"" behavior while avoiding commands for already-existing or not-found-last-time skips.
 
-  Variables
-    The available variables are the same as in name-format, with the following additions:
-    - {exitcode} - Previous command's exit code
-    - {stdout} - Previous command's stdout
-    - {stderr} - Previous command's stderr
-    - {first-exitcode} - First command's exit code
-    - {first-stdout} - First command's stdout
-    - {first-stderr} - First command's stderr
+  Command-output variables
+    See the shared Variables reference, also available with sockseek --help variables. On-complete
+    commands additionally provide:
+
+    is-audio            true for an audio file; false otherwise
+    path                Absolute downloaded file or directory path
+    path-noext          Absolute downloaded path without its final file extension
+
+    terminal-outcome    Succeeded, Failed, Skipped, Cancelled, or PartialSuccess
+    skip-reason         AlreadyExists, NotFoundLastTime, Manual, or Filtered;
+                        None when the outcome is not a skip or has no specific reason
+    failure-reason      None, InvalidSearchString, OutOfDownloadRetries,
+                        AllDownloadsFailed, Other, ExtractionFailed, Cancelled,
+                        ChildJobsFailed, NoSearchResults, or NoMatchingResults
+
+    exitcode            Previous command's exit code
+    stdout              Previous command's stdout
+    stderr              Previous command's stderr
+    first-exitcode      First command's exit code
+    first-stdout        First command's stdout
+    first-stderr        First command's stderr
+
     Sockseek captures bounded stdout/stderr for ordinary on-complete commands, so chained commands
     can use output variables from the previous ones. Commands launched with shell use shell execute
     and cannot expose stdout/stderr.

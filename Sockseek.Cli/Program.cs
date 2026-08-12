@@ -272,7 +272,11 @@ internal static partial class Program
         }
 
         var engine = new DownloadEngine(engineSettings, clientManager, localSubmissionOptionsResolver);
-        var backend = new LocalCliBackend(engine, rootSettings, localSubmissionOptionsResolver);
+        var backend = new LocalCliBackend(
+            engine,
+            rootSettings,
+            localSubmissionOptionsResolver,
+            ConfigManager.CreateCliDownloadSettingsPatch(bindArgs));
 
         CliProgressReporter? cliReporter = null;
         if (cliSettings.ProgressJson)
@@ -1364,18 +1368,33 @@ internal static partial class Program
 
     private static RetrieveFolderJob ToRetrieveFolderJob(RetrieveFolderJobPayloadDto folder, JobSummaryDto summary)
     {
-        var target = folder.Folder != null
-            ? ToAlbumFolder(folder.Folder)
-            : new AlbumFolder(folder.Username, folder.FolderPath, []);
-        var job = new RetrieveFolderJob(target)
+        var directory = new PeerDirectoryIdentity(folder.Username, folder.FolderPath);
+        var job = new RetrieveFolderJob(directory)
         {
             NewFilesFoundCount = folder.NewFilesFoundCount,
             RetrievalOutcome = ToCoreFolderRetrievalOutcome(folder.RetrievalOutcome),
+            Result = folder.Folder == null ? null : ToPeerDirectorySnapshot(folder.Folder),
         };
 
         ApplyJobOutcome(job, summary.LifecycleState, summary.ActivityPhase, summary.TerminalOutcome, summary.SkipReason, summary.FailureReason, summary.FailureMessage, summary.CancellationSource);
         return job;
     }
+
+    private static PeerDirectorySnapshot ToPeerDirectorySnapshot(AlbumFolderDto folder)
+        => new(
+            new PeerDirectoryIdentity(folder.Username, folder.FolderPath),
+            folder.Files?.Select(file => new PeerFileTarget(
+                new PeerFileIdentity(file.Username, file.Filename),
+                file.File.Size < 0 ? null : file.File.Size,
+                file.File.Extension,
+                file.File.BitRate,
+                file.File.BitDepth,
+                file.File.SampleRate,
+                file.File.Length,
+                file.File.Attributes?.Select(attribute => new Sockseek.Core.Snapshots.FileAttributeSnapshot(
+                    attribute.Type,
+                    attribute.Value)).ToArray())).ToArray() ?? [],
+            folder.IsFullyRetrieved);
 
     private static void ApplyRemotePrintConfig(Job job, DownloadSettings settings)
         => job.Config = SettingsCloner.Clone(settings);
@@ -1589,7 +1608,9 @@ internal static partial class Program
             ArtistMaybeWrong = song.Query.ArtistMaybeWrong,
         })
         {
-            DownloadPath = song.DownloadPath,
+            DownloadPath = song.File.DownloadPath,
+            BytesTransferred = song.File.BytesTransferred,
+            FileSize = song.File.FileSize,
             Candidates = song.Candidates?.Select(ToFileCandidate).ToList(),
             DownloadSource = ToSongDownloadSource(song.DownloadSource),
         };
@@ -1601,7 +1622,11 @@ internal static partial class Program
             ApplyJobOutcome(job, summary.LifecycleState, summary.ActivityPhase, summary.TerminalOutcome, summary.SkipReason, summary.FailureReason, summary.FailureMessage, summary.CancellationSource);
         }
 
-        if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
+        if (song.ExactTarget != null)
+        {
+            job.ExactTarget = ToPeerFileTarget(song.ExactTarget);
+        }
+        else if (!string.IsNullOrWhiteSpace(song.ResolvedUsername)
             && !string.IsNullOrWhiteSpace(song.ResolvedFilename))
         {
             job.ResolvedTarget = ToFileCandidate(new FileCandidateDto(
@@ -1609,16 +1634,31 @@ internal static partial class Program
                 song.ResolvedUsername,
                 song.ResolvedFilename,
                 new PeerInfoDto(song.ResolvedUsername, song.ResolvedHasFreeUploadSlot, song.ResolvedUploadSpeed),
-                song.ResolvedSize ?? 0,
-                null,
-                null,
-                null,
-                song.ResolvedExtension,
-                song.ResolvedAttributes));
+                new FileMetadataDto(
+                    Utils.GetFileNameSlsk(song.ResolvedFilename),
+                    song.ResolvedSize ?? 0,
+                    song.ResolvedExtension,
+                    null,
+                    null,
+                    null,
+                    null,
+                    song.ResolvedAttributes)));
         }
 
         return job;
     }
+
+    private static PeerFileTarget ToPeerFileTarget(PeerFileTargetDto target)
+        => new(
+            new PeerFileIdentity(target.Username, target.Filename),
+            target.Size,
+            target.Extension,
+            target.BitRate,
+            target.BitDepth,
+            target.SampleRate,
+            target.Length,
+            target.Attributes?.Select(attribute =>
+                new FileAttributeSnapshot(attribute.Type, attribute.Value, 0)).ToList());
 
     private static AlbumJob ToAlbumJob(AlbumJobPayloadDto album)
         => ToAlbumJob(album, null);
@@ -1628,7 +1668,7 @@ internal static partial class Program
         var job = new AlbumJob(ToAlbumQuery(album.Query))
         {
             Results = album.Results?.Select(ToAlbumFolder).ToList() ?? [],
-            DownloadPath = album.DownloadPath,
+            DownloadPath = album.Directory.DownloadPath,
         };
 
         if (summary != null)
@@ -1798,16 +1838,18 @@ internal static partial class Program
 
     private static FileCandidate ToFileCandidate(FileCandidateDto candidate)
         => new(
-            candidate.Username,
-            candidate.Filename,
-            candidate.Size,
-            candidate.BitRate,
-            bitDepth: null,
-            responseFileCount: 0,
-            candidate.SampleRate,
-            candidate.Length,
-            candidate.Extension ?? Path.GetExtension(candidate.Filename),
-            candidate.Peer.UploadSpeed,
-            candidate.Peer.HasFreeUploadSlot,
-            candidate.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList());
+            new PeerFileTarget(
+                new PeerFileIdentity(candidate.Username, candidate.Filename),
+                candidate.File.Size < 0 ? null : candidate.File.Size,
+                candidate.File.Extension ?? Path.GetExtension(candidate.Filename),
+                candidate.File.BitRate,
+                candidate.File.BitDepth,
+                candidate.File.SampleRate,
+                candidate.File.Length,
+                candidate.File.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList()),
+            new SearchPeerSnapshot(
+                candidate.Username,
+                responseFileCount: 0,
+                candidate.Peer.UploadSpeed,
+                candidate.Peer.HasFreeUploadSlot));
 }

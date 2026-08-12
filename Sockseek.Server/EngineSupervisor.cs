@@ -426,7 +426,7 @@ public sealed class EngineSupervisor
     {
         var job = JobRequestMapper.CreateJobList(request);
         ApplyDraftJobOptions(job, request.Jobs);
-        return SubmitJobAsync(job, request.Options, ct);
+        return SubmitJobAsync(job, request.Options, ct, request.Jobs);
     }
 
     private void ApplyDraftJobOptions(JobList jobList, IReadOnlyList<JobDraftDto> drafts)
@@ -438,7 +438,9 @@ public sealed class EngineSupervisor
     private void ApplyDraftJobOptions(Job job, JobDraftDto draft)
     {
         if (DraftDownloadSettings(draft) is { } patch)
+        {
             jobSettingsResolver.SetJobOptions(job.Id, new SubmissionOptionsDto(DownloadSettings: patch));
+        }
 
         if (job is JobList childList && draft is JobListJobDraftDto childDraft)
             ApplyDraftJobOptions(childList, childDraft.Jobs);
@@ -455,10 +457,16 @@ public sealed class EngineSupervisor
             AggregateJobDraftDto typed => typed.DownloadSettings,
             AlbumAggregateJobDraftDto typed => typed.DownloadSettings,
             JobListJobDraftDto typed => typed.DownloadSettings,
+            RemoteFileJobDraftDto typed => typed.DownloadSettings,
+            RemoteDirectoryJobDraftDto typed => typed.DownloadSettings,
             _ => null,
         };
 
-    private async Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
+    private async Task<JobSummaryDto> SubmitJobAsync(
+        Job job,
+        SubmissionOptionsDto? options,
+        CancellationToken ct,
+        IReadOnlyList<JobDraftDto>? childDrafts = null)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -469,6 +477,11 @@ public sealed class EngineSupervisor
 
         var settings = jobSettingsResolver.Resolve(defaultDownloadSettings, job);
 
+        ValidateExplicitRemoteTransferOverrides(job, options?.DownloadSettings, settings);
+        if (job is JobList jobList && childDrafts != null)
+            ValidateDraftRemoteTransferOverrides(jobList, childDrafts, settings);
+        ValidateSubmissionSettings(job, settings);
+
         if (ContainsLoginRequiredJob(job, defaultDownloadSettings, settings) && !CanAcceptLoginRequiredJobs())
             throw new ArgumentException("This server is not configured for Soulseek login. Configure username/password, enable random login, or use a non-login submission.");
 
@@ -476,6 +489,75 @@ public sealed class EngineSupervisor
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(job, settings), ct);
 
         return StateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);
+    }
+
+    private void ValidateSubmissionSettings(Job job, DownloadSettings effectiveSettings)
+    {
+        if (IsRemoteTransfer(job, effectiveSettings))
+        {
+            RemoteTransferNameFormatPolicy.ApplyInherited(effectiveSettings.Output);
+        }
+
+        if (job is not JobList list)
+            return;
+
+        foreach (var child in list.Jobs)
+        {
+            var childSettings = jobSettingsResolver.Resolve(effectiveSettings, child);
+            ValidateSubmissionSettings(child, childSettings);
+        }
+    }
+
+    private static bool IsRemoteTransfer(Job job, DownloadSettings settings)
+        => job is RemoteFileJob or RemoteDirectoryJob
+            || (job is ExtractJob extract
+                && Sockseek.Core.Extractors.SoulseekExtractor.InputMatches(extract.Input)
+                && settings.Extraction.RequestedMode is null or ExtractionMode.General);
+
+    private void ValidateExplicitRemoteTransferOverrides(
+        Job job,
+        DownloadSettingsPatchDto? patch,
+        DownloadSettings effectiveSettings)
+    {
+        if (!ContainsRemoteTransfer(job, effectiveSettings))
+            return;
+
+        RemoteTransferSettingsValidator.ValidateExplicitNameFormat(options.LaunchDownloadSettings);
+        if (patch != null)
+            RemoteTransferSettingsValidator.ValidateExplicitPatch(patch);
+    }
+
+    private bool ContainsRemoteTransfer(Job job, DownloadSettings effectiveSettings)
+    {
+        if (IsRemoteTransfer(job, effectiveSettings))
+            return true;
+        if (job is not JobList list)
+            return false;
+
+        return list.Jobs.Any(child => ContainsRemoteTransfer(
+            child,
+            jobSettingsResolver.Resolve(effectiveSettings, child)));
+    }
+
+    private void ValidateDraftRemoteTransferOverrides(
+        JobList list,
+        IReadOnlyList<JobDraftDto> drafts,
+        DownloadSettings parentSettings)
+    {
+        for (int index = 0; index < list.Jobs.Count && index < drafts.Count; index++)
+        {
+            Job child = list.Jobs[index];
+            JobDraftDto draft = drafts[index];
+            DownloadSettings childSettings = jobSettingsResolver.Resolve(parentSettings, child);
+            if (DraftDownloadSettings(draft) is { } patch
+                && ContainsRemoteTransfer(child, childSettings))
+            {
+                RemoteTransferSettingsValidator.ValidateExplicitPatch(patch);
+            }
+
+            if (child is JobList childList && draft is JobListJobDraftDto childDraft)
+                ValidateDraftRemoteTransferOverrides(childList, childDraft.Jobs, childSettings);
+        }
     }
 
     private bool ContainsLoginRequiredJob(Job job, DownloadSettings inheritedSettings, DownloadSettings? resolvedSettings = null)
@@ -805,7 +887,11 @@ public sealed class EngineSupervisor
         if (folder == null)
             throw new ArgumentException("Requested folder was not found in this job's album candidates.");
 
-        var retrieveJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath };
+        var retrieveJob = new RetrieveFolderJob(folder.DirectoryIdentity)
+        {
+            ItemName = folder.FolderPath,
+            ResultObserver = snapshot => Searcher.ApplyDirectorySnapshot(folder, snapshot),
+        };
         retrieveJob.WorkflowId = sourceJob.WorkflowId;
         retrieveJob.EnsureDisplayId();
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(retrieveJob, sourceJob.Config, SourceJobId: sourceJobId), ct);
@@ -820,7 +906,7 @@ public sealed class EngineSupervisor
         var historical = await ResolveHistoricalFolderAsync(sourceJobId, request.Folder, request.AlbumQuery, ct).ConfigureAwait(false);
         if (historical == null)
             return null;
-        var retrieveJob = new RetrieveFolderJob(historical.Value.Folder)
+        var retrieveJob = new RetrieveFolderJob(historical.Value.Folder.DirectoryIdentity)
         {
             ItemName = historical.Value.Folder.FolderPath,
             WorkflowId = historical.Value.Job.WorkflowId,
@@ -836,6 +922,8 @@ public sealed class EngineSupervisor
     {
         if (request.Files.Count == 0)
             throw new ArgumentException("At least one file is required.");
+        if (request.RequestedMode == ExtractionMode.Album)
+            throw new ArgumentException("A file selection cannot be interpreted as an album.");
 
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
@@ -843,7 +931,8 @@ public sealed class EngineSupervisor
 
         var summaries = new List<JobSummaryDto>();
 
-        if (sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
+        if ((request.RequestedMode is null or ExtractionMode.Song)
+            && sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
         {
             if (request.Files.Count != 1)
                 throw new ArgumentException("Manual song jobs require exactly one selected file.");
@@ -869,25 +958,35 @@ public sealed class EngineSupervisor
             if (candidate == null)
                 throw new ArgumentException("Requested file was not found in this job's file candidates.");
 
-            var songQuery = sourceJob switch
+            Job followUpJob;
+            if (request.RequestedMode == ExtractionMode.General)
             {
-                SearchJob searchJob => searchJob.DefaultFileProjection?.Query
-                    ?? Searcher.InferSongQuery(candidate.Filename, new SongQuery { Title = searchJob.QueryText }),
-                SongJob existingSongJob => existingSongJob.Query,
-                AggregateJob aggregateJob => aggregateJob.Songs
-                    .FirstOrDefault(song => song.Candidates?.Contains(candidate) == true)?.Query
-                    ?? Searcher.InferSongQuery(candidate.Filename, aggregateJob.Query),
-                _ => Searcher.InferSongQuery(candidate.Filename, sourceJob.QueryTrack ?? new SongQuery()),
-            };
-
-            var followUpSongJob = new SongJob(new SongQuery(songQuery))
+                followUpJob = new RemoteFileJob(candidate.Target)
+                {
+                    ItemName = sourceJob.ItemName,
+                };
+            }
+            else
             {
-                ResolvedTarget = candidate,
-                ItemName = sourceJob.ItemName,
-            };
+                var songQuery = sourceJob switch
+                {
+                    SearchJob searchJob => searchJob.DefaultFileProjection?.Query
+                        ?? Searcher.InferSongQuery(candidate.Filename, new SongQuery { Title = searchJob.QueryText }),
+                    SongJob existingSongJob => existingSongJob.Query,
+                    AggregateJob aggregateJob => aggregateJob.Songs
+                        .FirstOrDefault(song => song.Candidates?.Contains(candidate) == true)?.Query
+                        ?? Searcher.InferSongQuery(candidate.Filename, aggregateJob.Query),
+                    _ => Searcher.InferSongQuery(candidate.Filename, sourceJob.QueryTrack ?? new SongQuery()),
+                };
+                followUpJob = new SongJob(new SongQuery(songQuery))
+                {
+                    ResolvedTarget = candidate,
+                    ItemName = sourceJob.ItemName,
+                };
+            }
 
-            var followUpSettings = jobSettingsResolver.ResolveFollowUp(followUpSongJob, request.Options);
-            summaries.Add(await SubmitFollowUpJobAsync(sourceJobId, sourceJob, followUpSongJob, followUpSettings, request.Options, isolateOptions: true, ct));
+            var followUpSettings = jobSettingsResolver.ResolveFollowUp(followUpJob, request.Options);
+            summaries.Add(await SubmitFollowUpJobAsync(sourceJobId, sourceJob, followUpJob, followUpSettings, request.Options, isolateOptions: true, ct));
         }
 
         return summaries;
@@ -928,28 +1027,36 @@ public sealed class EngineSupervisor
 
             var result = lookup.Result;
             var candidate = new FileCandidate(
-                result.Username,
-                result.RemoteFilename,
-                result.SizeBytes,
-                result.BitRate,
-                result.BitDepth,
-                result.ResponseFileCount,
-                result.SampleRate,
-                result.DurationSeconds,
-                result.Extension,
-                result.UploadSpeed,
-                result.HasFreeUploadSlot,
-                DeserializeFileAttributes(result.AttributesJson));
-            var query = Searcher.InferSongQuery(
-                candidate.Filename,
-                new SongQuery { Title = lookup.Metadata.Query });
-            var followUp = new SongJob(query)
-            {
-                ResolvedTarget = candidate,
-                ItemName = persistedJob.ItemName,
-                WorkflowId = persistedJob.WorkflowId,
-            };
+                new PeerFileTarget(
+                    new PeerFileIdentity(result.Username, result.RemoteFilename),
+                    result.SizeBytes < 0 ? null : result.SizeBytes,
+                    result.Extension,
+                    result.BitRate,
+                    result.BitDepth,
+                    result.SampleRate,
+                    result.DurationSeconds,
+                    DeserializeFileAttributes(result.AttributesJson)),
+                new SearchPeerSnapshot(
+                    result.Username,
+                    result.ResponseFileCount,
+                    result.UploadSpeed,
+                    result.HasFreeUploadSlot));
+            Job followUp = request.RequestedMode == ExtractionMode.General
+                ? new RemoteFileJob(candidate.Target)
+                : new SongJob(Searcher.InferSongQuery(
+                    candidate.Filename,
+                    new SongQuery { Title = lookup.Metadata.Query }))
+                {
+                    ResolvedTarget = candidate,
+                };
+            followUp.ItemName = persistedJob.ItemName;
+            followUp.WorkflowId = persistedJob.WorkflowId;
             var settings = jobSettingsResolver.ResolveFollowUp(followUp, request.Options);
+            ValidateExplicitRemoteTransferOverrides(
+                followUp,
+                request.Options?.DownloadSettings ?? new DownloadSettingsPatchDto(),
+                settings);
+            ValidateSubmissionSettings(followUp, settings);
             jobSettingsResolver.SetJobOptions(followUp.Id, request.Options);
             followUp.EnsureDisplayId();
             await submissionChannel.Writer.WriteAsync(
@@ -979,6 +1086,8 @@ public sealed class EngineSupervisor
 
     public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct)
     {
+        if (request.RequestedMode == ExtractionMode.Song)
+            throw new ArgumentException("A directory selection cannot be interpreted as one song.");
         var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return await StartHistoricalFolderDownloadAsync(sourceJobId, request, ct).ConfigureAwait(false);
@@ -989,6 +1098,16 @@ public sealed class EngineSupervisor
 
         folder = JobRequestMapper.ApplySelectedFolderSnapshot(folder, request);
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
+
+        if (request.RequestedMode == ExtractionMode.General)
+        {
+            var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
+            directoryJob.ItemName = sourceJob.ItemName;
+            var directorySettings = jobSettingsResolver.ResolveFollowUp(directoryJob, request.Options);
+            return await SubmitFollowUpJobAsync(
+                sourceJobId, sourceJob, directoryJob, directorySettings,
+                request.Options, isolateOptions: true, ct);
+        }
 
         var albumQuery = request.AlbumQuery != null
             ? JobRequestMapper.ToAlbumQuery(request.AlbumQuery)
@@ -1043,6 +1162,23 @@ public sealed class EngineSupervisor
             return null;
         var folder = JobRequestMapper.ApplySelectedFolderSnapshot(historical.Value.Folder, request);
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
+        if (request.RequestedMode == ExtractionMode.General)
+        {
+            var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
+            directoryJob.ItemName = historical.Value.Job.ItemName;
+            directoryJob.WorkflowId = historical.Value.Job.WorkflowId;
+            var directorySettings = jobSettingsResolver.ResolveFollowUp(directoryJob, request.Options);
+            ValidateExplicitRemoteTransferOverrides(
+                directoryJob,
+                request.Options?.DownloadSettings ?? new DownloadSettingsPatchDto(),
+                directorySettings);
+            ValidateSubmissionSettings(directoryJob, directorySettings);
+            jobSettingsResolver.SetJobOptions(directoryJob.Id, request.Options);
+            directoryJob.EnsureDisplayId();
+            await submissionChannel.Writer.WriteAsync(
+                new QueuedSubmission(directoryJob, directorySettings, SourceJobId: sourceJobId), ct).ConfigureAwait(false);
+            return StateStore.GetJobSummary(directoryJob.Id) ?? BuildSubmittedJobSummary(directoryJob, sourceJobId);
+        }
         var albumJob = new AlbumJob(new AlbumQuery(historical.Value.Query))
         {
             ResolvedTarget = folder,
@@ -1166,12 +1302,15 @@ public sealed class EngineSupervisor
             candidate.Username,
             candidate.Filename,
             new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
-            candidate.Size,
-            candidate.BitRate,
-            candidate.SampleRate,
-            candidate.Length,
-            candidate.Extension,
-            candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
+            new FileMetadataDto(
+                Utils.GetFileNameSlsk(candidate.Filename),
+                candidate.Size,
+                candidate.Extension,
+                candidate.BitRate,
+                candidate.BitDepth,
+                candidate.SampleRate,
+                candidate.Length,
+                candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList()));
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(
@@ -1344,6 +1483,11 @@ public sealed class EngineSupervisor
             followUpJob.CopySourceMutationFrom(sourceJob);
         if (isolateOptions)
             jobSettingsResolver.SetJobOptions(followUpJob.Id, options);
+        ValidateExplicitRemoteTransferOverrides(
+            followUpJob,
+            options?.DownloadSettings,
+            settings);
+        ValidateSubmissionSettings(followUpJob, settings);
         followUpJob.EnsureDisplayId();
         await submissionChannel.Writer.WriteAsync(new QueuedSubmission(followUpJob, settings, SourceJobId: sourceJobId), ct);
         return StateStore.GetJobSummary(followUpJob.Id) ?? BuildSubmittedJobSummary(followUpJob, sourceJobId);

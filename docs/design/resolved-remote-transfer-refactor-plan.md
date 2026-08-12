@@ -1,6 +1,6 @@
 # Sockseek v4 resolved remote transfer refactor
 
-Status: design only; not implemented
+Status: implemented and verified
 
 Target: Sockseek v4, before user-browse download work
 
@@ -9,13 +9,109 @@ transfer plans, direct file/directory jobs, and shared download execution
 
 Source review: 2026-08-11
 
+Implementation progress (2026-08-12):
+
+- Migration stages 1-9 are implemented. Production direct links no longer
+  fabricate Soulseek search objects; exact file identity, search evidence,
+  directory snapshots/plans, lifecycle bases, remote subtypes, shared runners,
+  settings applicability, API payloads, persistence, and CLI presentation use
+  the model below.
+- Neutral/default mechanisms have unqualified names (`PlacementPlanner`,
+  `FilePlacement`, `NameFormatVariableProvider`, and `NameFormatContext`). Only
+  semantic specializations use qualifiers such as `Album*`, `Song*`, or
+  `Music*`. `ExtractionMode.General` remains an input-intent value, not a type or
+  service naming convention.
+- `DirectoryDownloadJob` owns all current children for generic progress,
+  cancellation, snapshot, and terminal traversal. An immutable attempt still
+  owns exactly one planned child per entry; a specialization can explicitly add
+  post-plan work (currently album art) without an album branch in generic
+  orchestration.
+- Search candidates now compose `FileMetadataDto`, including bit depth, instead
+  of publishing flat duplicate file-fact fields. The future browse projection
+  can reuse that leaf without reusing search identity or evidence.
+- The directory allocation benchmark measured approximately 1.21 KiB per
+  ordinary entry/child graph (122.25 KiB at 100, 1,207.65 KiB at 1,000, and
+  12,087.95 KiB at 10,000 on 64-bit .NET 10). Admission conservatively budgets
+  1.5 KiB plus strings/attributes per entry, with limits of 20,000 files, 2 TiB
+  known bytes, and 128 MiB estimated retained memory. The default policy is
+  applied when an attempt is created, before a pre-resolved job can be
+  registered or any child becomes visible.
+- Read-only `FileCandidate` convenience properties remain as projections of its
+  single authoritative target/evidence composition; the obsolete constructor,
+  duplicate transfer authority, old album booleans, and `PeerUsername.Normalize`
+  use in exact identity paths are removed.
+- Soulseek links expose `generic-file`/`generic-directory` auto-profile modes before
+  extraction. Explicit incompatible remote name formats fail at submission;
+  incompatible inherited formats fall back to empty ordinary placement only
+  after a matching auto profile has had the opportunity to replace them.
+- Focused Core, Server, Persistence, OpenAPI, and CLI tests have been added. The
+  clean solution build and all four full test suites pass: Core 737,
+  Persistence 52, Server 125, and CLI 257 (1,171 total). `git diff --check` is
+  clean.
+
+## Intentional behavior and compatibility changes
+
+This refactor is not behavior-neutral for unqualified Soulseek links. The old
+extractor treated every direct file as a music track and every trailing-slash
+directory as an album. The new default reflects Soulseek's general file-sharing
+semantics:
+
+| Input | Before this refactor | After this refactor |
+| --- | --- | --- |
+| `slsk://peer/path/file.ext` with no requested mode | A `SongJob` containing fabricated search objects | An exact `RemoteFileJob`; no search, music fallback, tag-derived naming, playlist/index work, or album handling |
+| `slsk://peer/path/folder/` with no requested mode | An `AlbumJob` | A `RemoteDirectoryJob` that retrieves the directory once, applies admission limits, and preserves the returned tree without inferring an album |
+| File link with explicit `Song` intent (`--song`) | A preselected `SongJob` represented as a fake search result | A preselected `SongJob` with an exact target and no fake search evidence; music behavior remains enabled |
+| Directory link with explicit `Song` intent | The trailing slash won and produced an `AlbumJob` | Rejected because a directory cannot represent one music track |
+| Link with explicit `Album` intent (`--album`) | An `AlbumJob` using the supplied path as the selected directory | Still an `AlbumJob` using that path as the selected directory; album validation, naming, art, and finalization remain enabled |
+
+For the default interpretation, the trailing slash is therefore significant: a
+path without it is an exact file target, while a path with it is an exact
+directory source. The new `ExtractionMode.General` value is the explicit form
+of the same ordinary remote interpretation. There is currently no separate `--general` CLI
+switch; the mode is available through the settings/API contracts used by remote
+submission flows. It is not a global reinterpretation switch: non-Soulseek
+extractors retain their source-defined behavior, and ambiguous string input
+rejects `General` rather than silently treating a search query as a remote file.
+
+Ordinary remote output also has deliberately different semantics from music
+output. With an empty `NameFormat`, an exact file keeps its remote leaf name and
+a directory keeps `<selection root>/<relative tree>/<remote leaf>`. A configured
+format may use common structural variables, but music-only query/tag variables
+are rejected when explicitly supplied for that remote submission. An incompatible
+format inherited from global, default, or selected-profile configuration instead
+falls back to the empty ordinary format: a file keeps its leaf name and a
+directory keeps its tree. Auto profiles run before this fallback, and Soulseek
+links expose `download-mode == "generic-file"` or `"generic-directory"` before
+extraction, so a matching auto profile can replace a global music format with a
+compatible structural format. Explicit search, fallback, playlist/index,
+album-art, and incomplete-album settings on an ordinary remote submission are
+rejected rather than ignored; other unrelated inherited music defaults are not
+projected into its executor. Common transfer, output-parent, structural naming,
+and generic on-complete behavior still apply.
+
+Peer identity handling changes at the same protocol boundary. Usernames are now
+validated but retain their exact spelling; the old code trimmed, NFC-normalized,
+and uppercased them. Remote paths likewise retain their supplied spelling, and
+the migrated exact-identity/directory paths use ordinal rather than
+case-insensitive comparison. Chat, peer-policy, upload, and direct-link paths now
+follow Soulseek/slskd-style exact username handling. This is a compatibility
+change for configurations that relied on the former normalization; for example,
+a blocked username must now use the exact spelling.
+
+The public job contract also adds `remote-file` and `remote-directory` payload
+kinds and exposes shared file/directory lifecycle state. Search candidates now
+contain one composed `FileMetadataDto` instead of duplicating those metadata
+fields at the candidate's top level. API consumers must handle those new
+discriminators and the candidate shape; persisted records now encode the new job
+kinds and shared lifecycle state.
+
 This refactor establishes one Sockseek-owned representation and execution path for
 files selected from Soulseek. Album search, direct `slsk://` inputs, and user
 browsing may discover files differently, but after discovery they must converge on
 the same exact target and transfer primitives.
 
-The refactor preserves existing song and album runtime behavior while making the
-general-download path first-class. It is a prerequisite for the download portion of
+The refactor preserves explicit song and album runtime behavior while making the
+ordinary remote-download path first-class. It is a prerequisite for the download portion of
 [`user-browsing-design.md`](user-browsing-design.md), not an implementation of
 remote profiles or browse acquisition.
 
@@ -66,15 +162,16 @@ The refactor is complete when:
 4. `SongJob` and exact `RemoteFileJob` share a small `FileDownloadJob` lifecycle
    base and the same exact-peer transfer runner without sharing discovery or
    finalization policy.
-5. `AlbumJob` and general `RemoteDirectoryJob` share a
+5. `AlbumJob` and `RemoteDirectoryJob` share a
    `DirectoryDownloadJob` lifecycle base. Full directory retrieval is part of the
    job when its explicit source requires it; an already-resolved source performs
    no second retrieval.
 6. Every resolved directory attempt owns an immutable `DirectoryTransferPlan`.
    An album may resolve another candidate on a later attempt, but an individual
    plan is never mutated or retargeted.
-7. General and music-focused planning, placement, settings, and completion remain
-   separate services. Shared runners never branch on a `music`/`general` flag.
+7. Neutral transfer mechanics and music-focused planning, settings, and
+   completion remain separate services. Shared runners never branch on a
+   semantic-mode flag.
 8. Existing song/album discovery, manual selection, retries, output placement,
    album art, playlists, tags, incomplete-album handling, cancellation, live
    monitoring, and persistence behavior remain covered by regression tests.
@@ -83,7 +180,8 @@ The refactor is complete when:
 10. The user-browse implementation can map leased artifact rows into the shared
    target/plan types without depending on album search models.
 11. A future explicit "download as track/album" action can reuse the same peer
-    target or directory snapshot without teaching a general job about music.
+    target or directory snapshot without teaching an ordinary remote job about
+    music.
 
 ## Non-goals
 
@@ -114,13 +212,13 @@ The refactor is complete when:
    cases and are persisted as such.
 5. `AlbumJob : DirectoryDownloadJob` and `SongJob : FileDownloadJob` are valid
    because the abstract bases do not promise a resolved peer target at
-   construction. General remote jobs are sibling semantic subtypes.
+   construction. Ordinary remote jobs are sibling semantic subtypes.
 6. Shared execution is implemented by composition. Executors accept exact targets,
    plans, destinations, and child state; they do not branch on a synthetic
-   `music`/`general` mode.
-7. General and music interpretation is selected at the request/extraction boundary
-   by choosing a job subtype. It is never stored on `PeerFileTarget` or
-   `DirectoryTransferPlan`.
+   semantic mode.
+7. Ordinary remote and music interpretation is selected at the
+   request/extraction boundary by choosing a job subtype. It is never stored on
+   `PeerFileTarget` or `DirectoryTransferPlan`.
 8. Public DTO reuse follows shared semantics, not matching property names. Search
    candidates and browse entries remain different resource projections.
 9. Soulseek identity is exact wire data. Username and path validation must not
@@ -128,6 +226,9 @@ The refactor is complete when:
    spelling. Comparison behavior is defined explicitly at each protocol boundary.
 10. No Core transfer value contains `SearchResponse`, `Soulseek.File`, API DTOs, or
    Server types.
+11. Neutral/default mechanisms use unqualified names such as `PlacementPlanner`.
+   Qualifiers belong on semantic specializations such as music, album, or song;
+   `General*` is not used as a prefix for the ordinary mechanism.
 
 ## Stable conceptual model
 
@@ -135,9 +236,9 @@ Four concerns vary independently and must not be collapsed into one mode enum:
 
 | Job | Interpretation | Initial resolution | Specialized behavior |
 | --- | --- | --- | --- |
-| `RemoteFileJob` | General file | Exact `PeerFileTarget` | Preserve file identity and explicit destination |
+| `RemoteFileJob` | Remote file | Exact `PeerFileTarget` | Preserve file identity and explicit destination |
 | `SongJob` | Music track | Query/candidates or explicit target | Ranking, fallback, music naming and metadata |
-| `RemoteDirectoryJob` | General directory/tree | Peer directory identity or resolved plan | Preserve the selected tree by default, or apply general name formatting; resolve collisions deterministically |
+| `RemoteDirectoryJob` | Remote directory/tree | Peer directory identity or resolved plan | Preserve the selected tree by default, or apply structural name formatting; resolve collisions deterministically |
 | `AlbumJob` | Music album | Album query/candidates or explicit directory | Album validation, roles, images, organization and retry |
 
 The two abstract bases provide shared observable shape:
@@ -145,10 +246,10 @@ The two abstract bases provide shared observable shape:
 ```text
 Job
 ├─ FileDownloadJob
-│  ├─ RemoteFileJob       general, exact peer file
+│  ├─ RemoteFileJob       ordinary exact peer file
 │  └─ SongJob             music-focused discovery/fallback
 └─ DirectoryDownloadJob
-   ├─ RemoteDirectoryJob  general directory or resolved tree
+   ├─ RemoteDirectoryJob  ordinary remote directory or resolved tree
    └─ AlbumJob            music-focused directory discovery
 ```
 
@@ -293,9 +394,9 @@ detection. A plan:
 
 `DisplayRoot` is presentation and logical tree intent, not protocol identity or a
 pre-approved local path. A synthetic browse root is valid because each entry still
-contains one exact wire filename. `GeneralPlacementPlanner` preserves this tree by
-default, or renders the configured shared name format from general structural
-variables. Music planning uses the same format engine with additional query/tag
+contains one exact wire filename. `PlacementPlanner` preserves this tree by
+default, or renders the configured shared name format from structural variables.
+Music planning uses the same format engine with additional query/tag
 variables. Neither changes the plan or target.
 
 ## Job model
@@ -379,13 +480,14 @@ subordinate concern and maps to existing activity phases such as `Searching`,
 `RemoteDirectorySource` is immutable and has two cases:
 
 ```csharp
-public abstract record RemoteDirectorySource;
+public abstract record RemoteDirectorySource
+{
+    public sealed record PeerDirectory(PeerDirectoryIdentity Directory)
+        : RemoteDirectorySource;
 
-public sealed record PeerDirectorySource(PeerDirectoryIdentity Directory)
-    : RemoteDirectorySource;
-
-public sealed record ResolvedDirectorySource(DirectoryTransferPlan Plan)
-    : RemoteDirectorySource;
+    public sealed record Resolved(DirectoryTransferPlan Plan)
+        : RemoteDirectorySource;
+}
 ```
 
 A peer-directory source performs one full directory retrieval before planning. A
@@ -395,7 +497,7 @@ without narrowing every directory job to transfer-only behavior.
 
 For a resolved source, the source plan becomes attempt one; it is not copied into
 a second mutable job field. Persistence stores one plan payload and references it
-from source/attempt state so maximum-size general jobs do not pay twice in memory
+from source/attempt state so maximum-size remote jobs do not pay twice in memory
 or on disk.
 
 `AlbumJob` now legitimately derives from `DirectoryDownloadJob`. Candidate
@@ -428,7 +530,7 @@ children cannot be mistaken for the active candidate. Whether failed attempt
 children remain in the live tree or only in activity/history is decided once for
 all directory subtypes and covered by snapshot/persistence tests.
 
-`RemoteDirectoryJob` uses `RemoteFileJob` children and general planning.
+`RemoteDirectoryJob` uses `RemoteFileJob` children and neutral planning.
 `AlbumJob` uses `SongJob` children and music planning. The shared base exposes
 them as `FileDownloadJob` values, allowing generic cancellation/progress traversal
 without erasing subtype-specific payloads.
@@ -445,21 +547,21 @@ or folder shape:
 
 | Input intent | File link | Directory link |
 | --- | --- | --- |
-| General (Soulseek default) | `RemoteFileJob(target)` | `RemoteDirectoryJob(PeerDirectorySource)` |
+| Ordinary remote (Soulseek default) | `RemoteFileJob(target)` | `RemoteDirectoryJob(RemoteDirectorySource.PeerDirectory)` |
 | Music track | preselected `SongJob(target)` | not applicable |
-| Music album | album discovery if given a file hint | preselected `AlbumJob(directory)` |
+| Music album | `AlbumJob` treating the supplied path as its selected directory | preselected `AlbumJob(directory)` |
 
-This requires a general interpretation in the input contract alongside the
-existing song/album interpretations. Other extractors keep their source-defined
-defaults; changing the default for Soulseek links does not make Spotify, CSV, or
-MusicBrainz inputs general downloads.
+The new `ExtractionMode.General` input value selects this ordinary remote
+interpretation alongside the song and album interpretations. Other extractors
+keep their source-defined defaults; changing the default for Soulseek links does
+not change the interpretation of Spotify, CSV, or MusicBrainz inputs.
 
 Extend the existing `ExtractionMode` with `General` rather than introducing an
 overlapping mode type. `ExtractionMode` answers how an input is interpreted;
 `DownloadBehaviorPolicy` continues to answer automatic versus manual candidate
 selection. Neither is copied into the target or transfer plan.
 
-An exact file never needs fake search evidence. A general directory link performs
+An exact file never needs fake search evidence. An ordinary directory link performs
 folder retrieval inside its `RemoteDirectoryJob`. A preselected album may also
 retrieve its directory, but then applies album validation and finalization. The
 same peer identity or snapshot can therefore support both user intents without a
@@ -508,14 +610,14 @@ or live-state channel.
 
 ### Planning, placement, and settings
 
-General and music downloads deliberately use different planners around the shared
-runner:
+Ordinary remote and music downloads deliberately use different planners around
+the shared runner:
 
 ```text
 RemoteDirectoryResolutionCoordinator
-  PeerDirectorySource       -> retrieve snapshot
-  ResolvedDirectorySource   -> reuse plan
-  GeneralPlacementPlanner   -> contained deterministic destinations
+  RemoteDirectorySource.PeerDirectory -> retrieve snapshot
+  RemoteDirectorySource.Resolved      -> reuse plan
+  PlacementPlanner          -> contained deterministic destinations
 
 AlbumResolutionCoordinator
   query/candidate selection -> optional snapshot retrieval
@@ -525,16 +627,16 @@ AlbumResolutionCoordinator
 both -> DirectoryTransferRunner -> ExactPeerFileTransferRunner
 ```
 
-`GeneralPlacementPlanner` preserves the plan's logical tree when `NameFormat` is
+`PlacementPlanner` preserves the plan's logical tree when `NameFormat` is
 empty. When configured, it renders one relative destination per file using the
-shared name-format engine and general variables such as peer username, filename,
-extension, selection root, relative directory/path, remote folder/file name,
-item/default folder, and output context. It then sanitizes every rendered
+shared name-format engine and shared placement variables such as peer username,
+filename, final output extension (`ext`), relative path, folder name,
+item/default folder, input/extractor, and output/runtime context. It then sanitizes every rendered
 component, applies stable collision suffixes, and proves containment beneath the
 resolved output parent.
 
-Music jobs use the same parser, conditional/fallback syntax, escaping, and common
-variables, while adding source-query and downloaded-tag variables such as artist,
+Music jobs use the same parser, conditional/fallback syntax, escaping, and the
+same shared provider, while adding source-query and downloaded-tag variables such as artist,
 title, album, track, and disc. A variable registry declares which job semantics
 support each variable and whether it is available before or after transfer.
 Referencing a variable unsupported by the selected semantic job fails validation
@@ -547,7 +649,8 @@ files according to those query/tag values. The exact-file runner receives a
 resolved destination and cannot distinguish those callers.
 
 The current `FileManagerContext.FromSongJob` and monolithic variable dictionary
-are split into a common naming context plus general and music variable providers.
+are split into a common naming context plus a structural provider and a
+music-enriched provider.
 The `FileManager` type check (`job is AlbumJob`) is removed from shared path
 construction. Album-specific organization may remain in a music-named component;
 the template engine and generic containment/sanitization move to job-agnostic
@@ -557,7 +660,7 @@ The existing `DownloadSettings` object may remain the configuration aggregate
 during this refactor, but executors receive typed projections with an explicit
 applicability matrix:
 
-| Concern | Shared transfer | General file/tree | Music track/album |
+| Concern | Shared transfer | Remote file/tree | Music track/album |
 | --- | --- | --- | --- |
 | Output parent, cancellation, peer retry/timeouts | Yes | Yes | Yes |
 | Safe components, containment, collision policy | Utility | Default tree or formatted relative path | Used for staging where applicable |
@@ -570,17 +673,21 @@ applicability matrix:
 | Playlist and music index | No | No | Yes |
 | On-complete | Common job hook with generic context | Yes | Yes, with music context extension |
 
-`Output.NameFormat` is valid for general submissions. Its common variables are
-validated against the general provider; music-only variables produce a specific
-`400 invalid-name-format-variable` error rather than empty path components. Other
-explicit API/CLI overrides that are invalid for a general submission are likewise
-rejected rather than silently ignored. Unrelated album defaults in a global
-profile are simply not projected into a general executor. This avoids making
-operators maintain separate configuration files while preventing accidental music
-behavior.
+`Output.NameFormat` is valid for ordinary remote submissions. Its structural
+variables are validated against the neutral provider. A music-only variable in an
+explicit API/CLI override produces `400 invalid-name-format-variable` rather than
+an empty path component. If the incompatible format is only inherited, the
+remote policy uses empty `NameFormat` and therefore ordinary filename/tree
+placement. Auto-profile conditions distinguish `generic-file` and
+`generic-directory` before this projection and may supply a valid structural
+format. Other explicit API/CLI overrides that are invalid for an ordinary remote
+submission are likewise rejected rather than silently ignored. Unrelated album
+defaults in a global profile are not projected into an ordinary remote executor.
+This prevents accidental music behavior without forcing existing music-oriented
+global naming to block ordinary transfers.
 
 `DownloadBehaviorPolicy` continues to govern discovery/manual selection where it
-is meaningful. Already-resolved general jobs are automatic; do not add remote
+is meaningful. Already-resolved remote jobs are automatic; do not add remote
 file/directory policy fields merely because they share a base class.
 
 ## API, snapshots, and persistence
@@ -621,7 +728,7 @@ fields.
 Add explicit payload/snapshot discriminators for the concrete `RemoteFileJob` and
 `RemoteDirectoryJob`. Abstract bases are not protocol job kinds. Instead, compose
 small `FileDownloadStateDto` and `DirectoryDownloadStateDto` components into both
-general and music payloads so progress, directory phase/attempt, counts,
+remote and music payloads so progress, directory phase/attempt, counts,
 output-relative placement, and terminal metadata have one representation without
 flattening semantic fields into a nullable union. `SongJobPayloadDto` keeps query,
 candidate, and source information; `AlbumJobPayloadDto` keeps album results and
@@ -664,15 +771,15 @@ interpretation change.
    through the exact runner, then add `RemoteFileJob`.
 5. **Introduce neutral transfer plans and placement seams.** Map a selected album
    directory into an immutable `DirectoryTransferPlan`; separate job-agnostic safe
-   path utilities, general tree placement, and music placement/finalization.
+   path utilities, neutral tree placement, and music placement/finalization.
 6. **Extract the directory lifecycle.** Add abstract `DirectoryDownloadJob` and
    explicit resolution/attempt transitions, then make `AlbumJob` derive from it
    without changing album behavior.
-7. **Add the general directory subtype.** Add `RemoteDirectorySource` and
+7. **Add the remote directory subtype.** Add `RemoteDirectorySource` and
    `RemoteDirectoryJob`; route peer-directory sources through generic retrieval
    and resolved-plan sources directly into shared transfer mechanics.
 8. **Migrate direct links and contracts.** Remove fake search responses and album
-   control flags from ordinary `slsk://` handling, add explicit general versus
+   control flags from ordinary `slsk://` handling, add explicit remote versus
    music interpretation, and update dispatch, snapshots, persistence, actions,
    typed clients, settings validation, and CLI presentation atomically.
 9. **Remove compatibility scaffolding.** Delete obsolete constructors, duplicate
@@ -680,7 +787,7 @@ interpretation change.
    the new model.
 10. **Begin user-browse downloads.** Map artifact selections directly to
     `PeerFileTarget` and `DirectoryTransferPlan`, then construct
-    `RemoteDirectoryJob(ResolvedDirectorySource)`; do not add another target or
+    `RemoteDirectoryJob(RemoteDirectorySource.Resolved)`; do not add another target or
     transfer hierarchy.
 
 ## Verification plan
@@ -699,11 +806,11 @@ end-to-end classes:
   ownership, child lifecycle, cancellation, progress, and aggregate outcomes;
 - `Sockseek.Core.Tests/RemoteDirectoryJobTests.cs` for both source variants and
   retrieval behavior;
-- `Sockseek.Core.Tests/GeneralPlacementPlannerTests.cs` for containment,
-  sanitization, stable collisions, default tree preservation, and general
+- `Sockseek.Core.Tests/PlacementPlannerTests.cs` for containment,
+  sanitization, stable collisions, default tree preservation, and structural
   name-format rendering;
 - focused additions to `NameFormatTests.cs` for variable-provider capability and
-  general/music validation; and
+  remote/music validation; and
 - focused additions to `ExtractorTests2`, `DownloadEventsTests`,
   `DownloadFallbackTests`, `StaleDownloadTests`, and `EndToEndTests` for direct
   links and album behavior preservation.
@@ -732,7 +839,7 @@ adapter tests should need Soulseek.NET response/file objects.
 - Reject a plan with mixed peers, duplicate exact targets, rooted relative paths,
   empty or traversal components, or overflowed totals. Its
   admission validator rejects more entries/bytes than policy allows.
-- Verify deterministic entry order. Separately verify the general placement
+- Verify deterministic entry order. Separately verify the default placement
   planner's collision suffixes for case, separator, Unicode-normalization, and
   sanitized-name collisions.
 - Verify a synthetic display root never becomes a wire request; every entry still
@@ -785,22 +892,26 @@ adapter tests should need Soulseek.NET response/file objects.
 
 ### Directory job tests
 
-- `RemoteDirectoryJob(PeerDirectorySource)` retrieves exactly once, transitions
+- `RemoteDirectoryJob(RemoteDirectorySource.PeerDirectory)` retrieves exactly once, transitions
   through resolving/planned/transferring, and uses the returned complete snapshot.
-- `RemoteDirectoryJob(ResolvedDirectorySource)` begins planned and cannot invoke
+- `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` begins planned and cannot invoke
   directory retrieval, including after restart or retry.
 - A resolved source and its first attempt share one owned plan; snapshot and
   persistence fixtures prove the entry collection is not duplicated.
-- A plan with nested relative paths is preserved by general placement below the
+- A plan with nested relative paths is preserved by default placement below the
   chosen output root and never escapes it; music placement remains free to choose
   its documented name format.
-- Empty general `NameFormat` preserves the selection tree. A configured format
-  renders peer/file/selection/relative-path variables, preserves the original
-  extension according to existing format rules, and still passes through
+- Empty `NameFormat` preserves the selection tree. A configured format
+  renders shared structural file and relative-path variables, preserves the final
+  output extension (`ext`) without duplication, and still passes through
   sanitization, collision, and containment checks.
-- General jobs reject query/tag-only variables before registration. Music jobs
+- Remote jobs reject query/tag-only variables before registration. Music jobs
   accept them, and missing supported tag values continue to exercise conditional
   fallback syntax rather than becoming unsupported-variable errors.
+- An explicitly submitted tag-only format fails before registration. An inherited
+  tag-only format falls back to empty ordinary placement, while a matching
+  `generic-file`/`generic-directory` auto profile can override it with a structural
+  format before fallback is evaluated.
 - Multiple files use existing concurrency limits; the directory does not create a
   second queue or bypass transfer admission.
 - Cancelling the directory cancels unfinished children. Cancelling one file leaves
@@ -810,10 +921,11 @@ adapter tests should need Soulseek.NET response/file objects.
   deleted.
 - `RemoteDirectoryJob` does not apply music search, track filters, album images,
   tag formats, playlists, or incomplete-album behavior.
-- Explicit incompatible music overrides on a general submission fail validation;
-  inherited global music defaults never reach the general planner. Common
-  transfer, output-parent, and valid common-variable name formats apply to both
-  paths.
+- Explicit incompatible music overrides on an ordinary remote submission fail
+  validation; inherited global music defaults never reach the neutral planner.
+  An inherited incompatible `NameFormat` is specifically projected to empty
+  ordinary placement. Common transfer, output-parent, and valid common-variable
+  name formats apply to both paths.
 - Snapshot, live delta, persistence round-trip in every directory phase, restart
   restoration, action availability, history paging, and CLI rendering cover
   `RemoteFileJob`, `RemoteDirectoryJob`, and the shared state components used by
@@ -829,31 +941,31 @@ adapter tests should need Soulseek.NET response/file objects.
 - Explicit music-track intent creates a preselected `SongJob` without fabricated
   search evidence. Explicit album intent creates album orchestration and retains
   current album behavior.
-- Soulseek's general default does not change source-defined interpretation for
+- Soulseek's ordinary remote default does not change source-defined interpretation for
   Spotify, CSV, YouTube, Bandcamp, or MusicBrainz inputs.
 - Malformed username/path inputs fail before Soulseek is contacted and create no
   workflow.
 
-### General/music separation tests
+### Remote/music separation tests
 
 - Feed the same `PeerFileTarget` to `RemoteFileJob` and a preselected `SongJob`.
   Assert one identical Soulseek wire request and transfer outcome, while only the
   song path receives music naming/fallback/finalization context.
-- Feed one complete `PeerDirectorySnapshot` to a general remote-directory request
-  and an explicit preselected-album request. Neither retrieves again. The general
+- Feed one complete `PeerDirectorySnapshot` to an ordinary remote-directory request
+  and an explicit preselected-album request. Neither retrieves again. The remote
   planner preserves every selected entry/tree component; the album planner applies
   documented file roles, conditions, and music finalization.
 - A directory name that resembles an album still creates `RemoteDirectoryJob`
-  under general intent. Only explicit music-album intent creates `AlbumJob`.
+  under ordinary remote intent. Only explicit music-album intent creates `AlbumJob`.
 - Common transfer/output-parent overrides yield the same effective runner policy
-  for general and music jobs. The same common-variable name format renders through
+  for remote and music jobs. The same common-variable name format renders through
   the shared engine for both. Music-only variables/overrides are accepted for the
-  applicable semantic job and rejected for general jobs.
-- General completion never writes playlists/music indexes or runs incomplete-album
+  applicable semantic job and rejected for remote jobs.
+- Remote completion never writes playlists/music indexes or runs incomplete-album
   actions. Music regression fixtures prove those behaviors remain active.
 - Adding a test-only third semantic `FileDownloadJob` or `DirectoryDownloadJob`
-  subtype can reuse the exact runner without extending a `music/general` enum or
-  modifying general/music placement services.
+  subtype can reuse the exact runner without extending a semantic-mode enum or
+  modifying neutral/music placement services.
 
 ### Architecture and contract tests
 
@@ -874,11 +986,12 @@ adapter tests should need Soulseek.NET response/file objects.
   `AlbumJob : DirectoryDownloadJob`, and
   `RemoteDirectoryJob : DirectoryDownloadJob`. No semantic subtype inherits from
   another semantic subtype.
-- Generic runners and path utilities contain no album/browse, music/general, or
+- Generic runners and path utilities contain no album/browse, semantic-mode, or
   concrete job-type switch. Concrete orchestration dispatch is allowed only before
   entering shared runners.
-- The name-format parser is shared; variable providers declare applicability and
-  phase. The common provider has no `SongQuery`, TagLib, album, or concrete-job
+- The name-format parser and shared provider are reused directly; music composes
+  query/tag enrichment rather than redefining shared names. Providers declare
+  applicability and phase. The common provider has no `SongQuery`, TagLib, album, or concrete-job
   dependency.
 - OpenAPI contains one supported discriminator/payload for each concrete job kind;
   common file/directory state is composed consistently and typed clients
@@ -890,13 +1003,42 @@ adapter tests should need Soulseek.NET response/file objects.
 
 ### Performance checks
 
-- Benchmark direct-file execution before/after extraction; the shared runner adds
-  no material allocation or throughput regression.
+- Guard direct-file execution with resolved-song/remote-file parity tests and an
+  architecture check that both enter the same exact runner. The originally
+  proposed synthetic before/after network benchmark was dropped during
+  implementation: the extraction moved the existing protocol loop rather than
+  adding a wrapper, and a mocked or variable peer transfer would measure the
+  harness/network instead of the refactor. Future client-independent work inside
+  the runner should add a microbenchmark at that seam.
 - Measure directory plan and child-job retained bytes at representative and
   maximum admitted counts; use the measurement to set the fixed job-memory bound
   consumed by user browsing.
 - Confirm progress/live events remain coalesced and bounded for a maximum admitted
   directory job.
+
+### Verification results (2026-08-12)
+
+- `dotnet build Sockseek.sln --no-restore -v:q` succeeds with no errors.
+- Full suites pass: Core 735, Persistence 52, Server 122, and CLI 254 (1,163
+  total). This includes the exact-runner failure/cancellation matrix, album
+  retry/art/finalization regressions, remote settings/direct-link behavior,
+  payload/OpenAPI contracts, persistence, and CLI parity/presentation.
+- Architecture tests reject semantic dependencies in shared runners, `General*`
+  prefixes on neutral Core mechanisms, parallel directory source modes, and
+  normalized exact identities. Production direct links contain no fabricated
+  `SearchResponse` or `Soulseek.File` values.
+- The directory allocation benchmark reports 122.25 KiB at 100 entries,
+  1,207.65 KiB at 1,000, and 12,087.95 KiB at 10,000 on 64-bit .NET 10. The
+  estimator and admission policy deliberately remain conservative relative to
+  those measurements.
+- Directory progress is derived from owned children without a second plan graph;
+  the existing coalescer, bounded live dispatcher, and non-blocking bounded
+  persistence tests cover slow consumers independently of directory size.
+- `git diff --check` is clean after generated OpenAPI and typed-contract updates.
+- A combined solution run with project/test parallelization also passes. Its
+  regression coverage waits for asynchronous server job registration before
+  inspecting concrete runtime type and proves a handled fatal login cannot leave
+  an unobserved readiness-broadcast fault for the finalizer thread.
 
 ## Release gates
 
@@ -904,7 +1046,7 @@ The refactor is ready for user-browse download work only when:
 
 1. Existing song and album regression suites pass without compatibility-only fake
    `SearchResponse` or `Soulseek.File` construction in production direct-link code.
-2. General file/directory jobs and music jobs use the existing
+2. Remote file/directory jobs and music jobs use the existing
    transfer/runtime/persistence path and are fully observable through current
    workflow clients.
 3. The abstract lifecycle bases contain no semantic policy; music behavior is
@@ -912,9 +1054,9 @@ The refactor is ready for user-browse download work only when:
 4. Username/path exactness tests pass across search, direct links, chat, peer
    policy, uploads, and the target factories used by future browsing.
 5. The directory job admission budget is based on measured retained memory.
-6. General versus music settings applicability and direct-link interpretation are
+6. Remote versus music settings applicability and direct-link interpretation are
    enforced by contract tests rather than undocumented ignored options.
-7. General name formatting supports structural/remote variables through the shared
+7. Remote name formatting supports shared placement variables through the shared
    engine, rejects music-only variables clearly, and remains containment-safe.
 8. The updated user-browsing design references these shared targets, plans,
    lifecycle bases, runners, and remote job subtypes rather than defining parallel

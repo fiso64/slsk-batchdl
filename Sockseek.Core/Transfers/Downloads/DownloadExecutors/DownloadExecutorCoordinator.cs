@@ -11,6 +11,8 @@ internal sealed class DownloadExecutorCoordinator
     private readonly AggregateDownloadExecutor aggregateDownloads;
     private readonly SongDownloadExecutor songDownloads;
     private readonly AlbumDownloadExecutor albumDownloads;
+    private readonly RemoteFileDownloadExecutor remoteFileDownloads;
+    private readonly RemoteDirectoryDownloadExecutor remoteDirectoryDownloads;
 
     public DownloadExecutorCoordinator(DownloadExecutionContext context, JobOrchestrator jobs)
     {
@@ -19,6 +21,8 @@ internal sealed class DownloadExecutorCoordinator
         aggregateDownloads = new AggregateDownloadExecutor(context, jobs);
         songDownloads = new SongDownloadExecutor(context, jobs);
         albumDownloads = new AlbumDownloadExecutor(context, jobs, songDownloads);
+        remoteFileDownloads = new RemoteFileDownloadExecutor(context);
+        remoteDirectoryDownloads = new RemoteDirectoryDownloadExecutor(context);
     }
 
     public async Task<JobOutcome> ProcessLeafDownload(Job job, JobContext ctx, CancellationToken parentToken, Job? parentJob)
@@ -44,6 +48,18 @@ internal sealed class DownloadExecutorCoordinator
 
                 case AlbumJob aj:
                     outcome = await albumDownloads.ProcessAlbumDownload(aj, ctx);
+                    break;
+
+                case RemoteFileJob remoteFile:
+                    outcome = await remoteFileDownloads.Process(remoteFile, parentJob);
+                    outcome = await OnCompleteExecutor.ExecuteAsync(remoteFile, null, ctx, outcome);
+                    JobOutcomeCommitter.Commit(remoteFile, outcome);
+                    break;
+
+                case RemoteDirectoryJob remoteDirectory:
+                    outcome = await remoteDirectoryDownloads.Process(remoteDirectory);
+                    outcome = await OnCompleteExecutor.ExecuteAsync(remoteDirectory, null, ctx, outcome);
+                    JobOutcomeCommitter.Commit(remoteDirectory, outcome);
                     break;
 
                 case AggregateJob ag:
@@ -84,15 +100,19 @@ internal sealed class DownloadExecutorCoordinator
         if (job is SongJob song)
         {
             if (outcome.ChosenCandidate != null)
-                song.ChosenCandidate = outcome.ChosenCandidate;
+                song.ResolvedTarget = outcome.ChosenCandidate;
             if (outcome.ShouldUpdateDownloadPath)
                 song.DownloadPath = outcome.DownloadPath;
             if (outcome.DownloadSource != SongDownloadSource.None)
                 song.DownloadSource = outcome.DownloadSource;
         }
-        else if (job is AlbumJob album && outcome.ShouldUpdateDownloadPath)
+        else if (job is DirectoryDownloadJob album && outcome.ShouldUpdateDownloadPath)
         {
             album.DownloadPath = outcome.DownloadPath;
+        }
+        else if (job is FileDownloadJob file && outcome.ShouldUpdateDownloadPath)
+        {
+            file.DownloadPath = outcome.DownloadPath;
         }
     }
 
@@ -101,7 +121,7 @@ internal sealed class DownloadExecutorCoordinator
         if (job is SongJob song)
         {
             var downloadPath = song.DownloadPath ?? outcome.DownloadPath;
-            var chosenCandidate = song.ChosenCandidate ?? outcome.ChosenCandidate;
+            var chosenCandidate = song.ResolvedTarget ?? outcome.ChosenCandidate;
             var downloadSource = song.DownloadSource != SongDownloadSource.None
                 ? song.DownloadSource
                 : outcome.DownloadSource;
@@ -115,7 +135,7 @@ internal sealed class DownloadExecutorCoordinator
             };
         }
 
-        if (job is AlbumJob album)
+        if (job is DirectoryDownloadJob album)
         {
             var downloadPath = album.DownloadPath ?? outcome.DownloadPath;
 

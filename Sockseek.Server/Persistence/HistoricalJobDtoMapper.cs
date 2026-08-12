@@ -87,7 +87,7 @@ internal static class HistoricalJobDtoMapper
             ServerJobKind.Song => new SongJobPayloadDto(
                 SongQuery(root),
                 null,
-                Text(root, "DownloadPath"),
+                FileState(root),
                 JobId: job.Id,
                 DisplayId: checked((int)job.DisplayId),
                 LifecycleState: Parse(job.LifecycleState, ServerJobLifecycleState.Pending),
@@ -99,13 +99,16 @@ internal static class HistoricalJobDtoMapper
                 FailureMessage: job.FailureMessage,
                 AvailableActions: [],
                 CancellationSource: Parse(job.CancellationSource, ServerJobCancellationSource.None),
-                DownloadSource: Parse(Text(root, "DownloadSource"), ServerSongDownloadSource.None)),
+                DownloadSource: Parse(Text(root, "DownloadSource"), ServerSongDownloadSource.None),
+                ExactTarget: NullablePeerTarget(Child(root, "ExactTarget"))),
             ServerJobKind.Album => new AlbumJobPayloadDto(
                 AlbumQuery(root),
                 Int(root, "ResultCount"),
-                Text(root, "DownloadPath"),
+                DirectoryState(root),
                 null,
                 null),
+            ServerJobKind.RemoteFile => RemoteFilePayload(root),
+            ServerJobKind.RemoteDirectory => RemoteDirectoryPayload(root),
             ServerJobKind.Aggregate => new AggregateJobPayloadDto(
                 SongQuery(root),
                 Int(root, "SongCount"),
@@ -149,6 +152,104 @@ internal static class HistoricalJobDtoMapper
             Bool(query, "ArtistMaybeWrong"));
     }
 
+    private static FileDownloadStateDto FileState(JsonElement root)
+    {
+        var file = Child(root, "File");
+        if (file.ValueKind != JsonValueKind.Object)
+            return new FileDownloadStateDto(Text(root, "DownloadPath"), 0, null, null);
+
+        long transferred = Long(file, "BytesTransferred");
+        long? size = NullableLong(file, "FileSize");
+        return new FileDownloadStateDto(
+            Text(file, "DownloadPath"),
+            transferred,
+            size,
+            size > 0 ? Math.Round((double)transferred / size.Value * 100, 2) : null);
+    }
+
+    private static DirectoryDownloadStateDto DirectoryState(JsonElement root)
+    {
+        var directory = Child(root, "Directory");
+        if (directory.ValueKind != JsonValueKind.Object)
+        {
+            return new DirectoryDownloadStateDto(
+                "unresolved", null, Text(root, "DownloadPath"), 0, 0, 0, 0, 0, 0, null);
+        }
+
+        long transferred = Long(directory, "BytesTransferred");
+        long total = Long(directory, "TotalKnownBytes");
+        return new DirectoryDownloadStateDto(
+            Text(directory, "Phase") ?? "unresolved",
+            NullableInt(directory, "AttemptNumber"),
+            Text(directory, "DownloadPath"),
+            Int(directory, "FileCount"),
+            Int(directory, "TerminalFileCount"),
+            Int(directory, "SuccessfulFileCount"),
+            Int(directory, "FailedFileCount"),
+            transferred,
+            total,
+            total > 0 ? Math.Round((double)transferred / total * 100, 2) : null);
+    }
+
+    private static RemoteFileJobPayloadDto RemoteFilePayload(JsonElement root)
+    {
+        var output = Child(root, "OutputPath");
+        return new RemoteFileJobPayloadDto(
+            PeerTarget(Child(root, "Target")),
+            StringArray(output, "Components"),
+            FileState(root));
+    }
+
+    private static RemoteDirectoryJobPayloadDto RemoteDirectoryPayload(JsonElement root)
+    {
+        var source = Child(root, "DirectorySource");
+        return new RemoteDirectoryJobPayloadDto(
+            Parse(Text(root, "SourceKind"), RemoteDirectorySourceKindDto.PeerDirectory),
+            Text(source, "Username"),
+            Text(source, "FolderPath"),
+            Plan(Child(root, "ResolvedPlanSource")),
+            Plan(Child(root, "ActivePlan")),
+            DirectoryState(root));
+    }
+
+    private static DirectoryTransferPlanDto? Plan(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return null;
+        var entries = ChildArray(element, "Entries")
+            .Select(entry => new DirectoryTransferEntryDto(
+                PeerTarget(Child(entry, "Target")),
+                StringArray(entry, "RelativeDirectoryComponents")))
+            .ToArray();
+        return new DirectoryTransferPlanDto(
+            Text(element, "DisplayRoot") ?? "directory",
+            entries,
+            Long(element, "TotalKnownBytes"));
+    }
+
+    private static PeerFileTargetDto PeerTarget(JsonElement element)
+    {
+        var identity = Child(element, "Identity");
+        var attributes = ChildArray(element, "Attributes")
+            .Select(attribute => new FileAttributeDto(
+                Text(attribute, "Type") ?? "Unknown",
+                Int(attribute, "Value")))
+            .ToArray();
+        return new PeerFileTargetDto(
+            Text(identity, "Username") ?? "",
+            Text(identity, "Filename") ?? "",
+            NullableLong(element, "Size"),
+            Text(element, "Extension"),
+            NullableInt(element, "BitRate"),
+            NullableInt(element, "BitDepth"),
+            NullableInt(element, "SampleRate"),
+            NullableInt(element, "Length"),
+            attributes.Length == 0 ? null : attributes);
+    }
+
+    private static PeerFileTargetDto? NullablePeerTarget(JsonElement element)
+        => element.ValueKind == JsonValueKind.Object ? PeerTarget(element) : null;
+
     private static JsonElement Child(JsonElement root, string name)
         => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Object ? value : default;
 
@@ -169,6 +270,30 @@ internal static class HistoricalJobDtoMapper
             && value.TryGetInt32(out int result)
                 ? result
                 : null;
+
+    private static long Long(JsonElement root, string name)
+        => NullableLong(root, name) ?? 0;
+
+    private static long? NullableLong(JsonElement root, string name)
+        => root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt64(out long result)
+                ? result
+                : null;
+
+    private static IReadOnlyList<JsonElement> ChildArray(JsonElement root, string name)
+        => root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Array
+                ? value.EnumerateArray().ToArray()
+                : Array.Empty<JsonElement>();
+
+    private static IReadOnlyList<string> StringArray(JsonElement root, string name)
+        => ChildArray(root, name)
+            .Where(value => value.ValueKind == JsonValueKind.String)
+            .Select(value => value.GetString() ?? "")
+            .ToArray();
 
     private static bool Bool(JsonElement root, string name)
         => root.ValueKind == JsonValueKind.Object

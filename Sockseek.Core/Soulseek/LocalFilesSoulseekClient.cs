@@ -318,7 +318,7 @@ namespace Sockseek.Core.Services
                 }
 
                 // Find the file in the directories
-                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
+                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.Ordinal));
                 if (foundFile == null)
                 {
                     throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");

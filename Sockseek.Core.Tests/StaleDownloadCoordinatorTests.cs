@@ -17,7 +17,7 @@ public class StaleDownloadCoordinatorTests
     private static readonly TimeSpan MaxStaleTime = TimeSpan.FromSeconds(5);
 
     [TestMethod]
-    public void StaleCoordinator_IsOnlyArmedByDownloaderPeerTransferScope()
+    public void StaleCoordinator_IsOnlyArmedByExactPeerTransferRunner()
     {
         var repositoryRoot = FindRepositoryRoot();
         var coreRoot = Path.Combine(repositoryRoot, "Sockseek.Core");
@@ -30,7 +30,7 @@ public class StaleDownloadCoordinatorTests
         var watchPattern = new Regex(@"\.WatchPeerTransferAsync\s*\(", RegexOptions.Singleline);
         var allowedWatchFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            Path.Combine(coreRoot, "Transfers", "Downloads", "Downloader.cs"),
+            Path.Combine(coreRoot, "Transfers", "Downloads", "ExactPeerFileTransferRunner.cs"),
             Path.Combine(coreRoot, "Transfers", "Downloads", "StaleDetection", "StaleDownloadCoordinator.cs"),
         };
 
@@ -52,7 +52,7 @@ public class StaleDownloadCoordinatorTests
             .ToList();
 
         if (offenders.Count > 0)
-            Assert.Fail("Stale cancellation must only be armed by Downloader via StaleDownloadCoordinator.WatchPeerTransferAsync:\n" + string.Join("\n", offenders));
+            Assert.Fail("Stale cancellation must only be armed by ExactPeerFileTransferRunner via StaleDownloadCoordinator.WatchPeerTransferAsync:\n" + string.Join("\n", offenders));
     }
 
     [TestMethod]
@@ -293,7 +293,7 @@ public class StaleDownloadCoordinatorTests
         {
             var response = new SearchResponse(username, 1, true, 100_000, 0, []);
             var file = TestHelpers.CreateSlFile(filename, size: 50_000, length: 180);
-            var candidate = new FileCandidate(response, file);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
             var song = new SongJob(new SongQuery { Artist = "Artist", Title = Path.GetFileNameWithoutExtension(filename) })
             {
                 Cts = new CancellationTokenSource(),
@@ -340,11 +340,11 @@ public class StaleDownloadCoordinatorTests
         private static Transfer CreateTransfer(AttemptHandle attempt, TransferStates state, long bytesTransferred)
             => new(
                 TransferDirection.Download,
-                attempt.Download.Candidate.Username,
-                attempt.Download.Candidate.Filename,
+                attempt.Download.Target.Username,
+                attempt.Download.Target.Filename,
                 1,
                 state,
-                attempt.Download.Candidate.File.Size,
+                attempt.Download.Target.Size ?? 0,
                 0,
                 bytesTransferred);
 

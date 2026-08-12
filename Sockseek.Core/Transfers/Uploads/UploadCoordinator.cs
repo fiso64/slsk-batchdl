@@ -206,8 +206,8 @@ public sealed class UploadCoordinator : IAsyncDisposable
                 return Rejected(UploadAdmissionRejection.InvalidRequest);
             }
 
-            string normalizedUsername = PeerUsername.Normalize(username);
-            if (accessPolicy.IsBlocked(normalizedUsername, endpoint))
+            string exactUsername = PeerUsername.Validate(username);
+            if (accessPolicy.IsBlocked(exactUsername, endpoint))
                 return Rejected(UploadAdmissionRejection.Denied);
 
             RemotePathKey pathKey;
@@ -233,7 +233,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
 
             var request = new UploadAdmissionRequest(
                 Guid.NewGuid(),
-                normalizedUsername,
+                exactUsername,
                 resolved.File.RemotePath,
                 pathKey,
                 resolved.File.SizeBytes,
@@ -291,13 +291,13 @@ public sealed class UploadCoordinator : IAsyncDisposable
     {
         try
         {
-            string normalized = PeerUsername.Normalize(username);
+            string exactUsername = PeerUsername.Validate(username);
             var key = RemotePathKey.Create(remotePath);
             lock (sync)
             {
                 Work? existing = work.Values.FirstOrDefault(
                     value => !IsTerminal(value.State)
-                             && value.Request.Username == normalized
+                             && value.Request.Username == exactUsername
                              && value.Request.RemotePathKey.Equals(key));
                 return existing is null
                     ? new UploadQueueEstimate(

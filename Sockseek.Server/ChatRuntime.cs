@@ -178,7 +178,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         string username, Guid messageId, string text, CancellationToken cancellationToken)
     {
         username = username.Trim();
-        ChatIdentity.NormalizeUsername(username);
+        ChatIdentity.ValidateUsername(username);
         text = ChatIdentity.ValidateMessage(text);
         EnsureReady();
         if (soulseek.AccessPolicy.IsUsernameBlocked(username))
@@ -513,7 +513,7 @@ public sealed class ChatRuntime : IAsyncDisposable
     public async Task AddPrivateRoomMemberAsync(Guid roomId, string username, CancellationToken cancellationToken)
     {
         username = username.Trim();
-        ChatIdentity.NormalizeUsername(username);
+        ChatIdentity.ValidateUsername(username);
         var room = await store.GetRoomAsync(Account, roomId, cancellationToken).ConfigureAwait(false)
                    ?? throw new KeyNotFoundException("The room was not found.");
         var session = GetRoomSession(room.RoomKey);
@@ -558,8 +558,8 @@ public sealed class ChatRuntime : IAsyncDisposable
         string? current = soulseek.ClientManager.LoggedInUsername;
         return current is not null
                && string.Equals(
-                   ChatIdentity.NormalizeAccount(current),
-                   ChatIdentity.NormalizeAccount(account),
+                   ChatIdentity.ValidateAccount(current),
+                   ChatIdentity.ValidateAccount(account),
                    StringComparison.Ordinal);
     }
 
@@ -612,7 +612,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             bool discard = soulseek.AccessPolicy.IsUsernameBlocked(e.Username);
             if (!discard)
             {
-                ChatIdentity.NormalizeUsername(e.Username);
+                ChatIdentity.ValidateUsername(e.Username);
                 ChatIdentity.ValidateMessage(e.Message);
             }
             IngressItem item = discard
@@ -657,7 +657,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                 return;
             }
             ChatIdentity.NormalizeRoom(e.RoomName);
-            ChatIdentity.NormalizeUsername(e.Username);
+            ChatIdentity.ValidateUsername(e.Username);
             ChatIdentity.ValidateMessage(e.Message);
             string? account = soulseek.ClientManager.LoggedInUsername;
             if (account is null)
@@ -685,7 +685,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         try
         {
             ChatIdentity.NormalizeRoom(e.RoomName);
-            ChatIdentity.NormalizeUsername(e.UserData.Username);
+            ChatIdentity.ValidateUsername(e.UserData.Username);
             TryEnqueueRoster(new RosterJoined(e.RoomName, MapMember(e.UserData, null, [])));
         }
         catch (Exception ex)
@@ -700,7 +700,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         try
         {
             ChatIdentity.NormalizeRoom(e.RoomName);
-            ChatIdentity.NormalizeUsername(e.Username);
+            ChatIdentity.ValidateUsername(e.Username);
             TryEnqueueRoster(new RosterLeft(e.RoomName, e.Username));
         }
         catch (Exception ex)
@@ -920,8 +920,8 @@ public sealed class ChatRuntime : IAsyncDisposable
             }
 
             var roomMessage = (RoomMessage)item;
-            if (ChatIdentity.NormalizeUsername(roomMessage.Username)
-                == ChatIdentity.NormalizeAccount(roomMessage.LocalAccount))
+            if (ChatIdentity.ValidateUsername(roomMessage.Username)
+                == ChatIdentity.ValidateAccount(roomMessage.LocalAccount))
             {
                 continue;
             }
@@ -1230,7 +1230,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                         ApplyCurrentAccountModerationLocked(
                             session,
                             currentAccount,
-                            ChatIdentity.NormalizeAccount(currentAccount),
+                            ChatIdentity.ValidateAccount(currentAccount),
                             moderated);
                     }
                     session.Provisional.Clear();
@@ -1343,7 +1343,7 @@ public sealed class ChatRuntime : IAsyncDisposable
     private void ApplyRosterJoin(string roomName, RoomMemberDto member)
     {
         string roomKey = ChatIdentity.NormalizeRoom(roomName);
-        string memberKey = ChatIdentity.NormalizeUsername(member.Username);
+        string memberKey = ChatIdentity.ValidateUsername(member.Username);
         lock (stateGate)
         {
             if (!roomSessions.TryGetValue(roomKey, out RoomSession? session))
@@ -1351,9 +1351,9 @@ public sealed class ChatRuntime : IAsyncDisposable
             member = member with
             {
                 IsOwner = session.Owner is not null
-                          && ChatIdentity.NormalizeUsername(session.Owner) == memberKey,
+                          && ChatIdentity.ValidateUsername(session.Owner) == memberKey,
                 IsOperator = session.Operators.Any(item =>
-                    ChatIdentity.NormalizeUsername(item) == memberKey),
+                    ChatIdentity.ValidateUsername(item) == memberKey),
             };
             var mutation = new RosterAdd(memberKey, member);
             if (session.Phase == ChatRoomJoinPhase.Joining)
@@ -1374,7 +1374,7 @@ public sealed class ChatRuntime : IAsyncDisposable
     private void ApplyRosterLeave(string roomName, string username)
     {
         string roomKey = ChatIdentity.NormalizeRoom(roomName);
-        string memberKey = ChatIdentity.NormalizeUsername(username);
+        string memberKey = ChatIdentity.ValidateUsername(username);
         lock (stateGate)
         {
             if (!roomSessions.TryGetValue(roomKey, out RoomSession? session))
@@ -1401,7 +1401,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         if (currentAccount is null)
             return;
         string roomKey = ChatIdentity.NormalizeRoom(roomName);
-        string accountKey = ChatIdentity.NormalizeAccount(currentAccount);
+        string accountKey = ChatIdentity.ValidateAccount(currentAccount);
         lock (stateGate)
         {
             if (!roomSessions.TryGetValue(roomKey, out RoomSession? session))
@@ -1419,12 +1419,12 @@ public sealed class ChatRuntime : IAsyncDisposable
         bool moderated)
     {
         bool wasModerated = session.Operators.Any(item =>
-            ChatIdentity.NormalizeUsername(item) == accountKey);
+            ChatIdentity.ValidateUsername(item) == accountKey);
         bool changed = wasModerated != moderated;
         if (changed)
         {
             var operators = session.Operators
-                .Where(item => ChatIdentity.NormalizeUsername(item) != accountKey)
+                .Where(item => ChatIdentity.ValidateUsername(item) != accountKey)
                 .ToImmutableArray();
             if (moderated)
             {
@@ -1562,11 +1562,11 @@ public sealed class ChatRuntime : IAsyncDisposable
     {
         RoomSessionSnapshot runtime = GetRoomSession(room.RoomKey);
         bool configured = configuredRooms.Contains(room.RoomKey);
-        string localAccountKey = ChatIdentity.NormalizeAccount(Account);
+        string localAccountKey = ChatIdentity.ValidateAccount(Account);
         bool owned = runtime.Owner is not null
-                     && ChatIdentity.NormalizeUsername(runtime.Owner) == localAccountKey;
+                     && ChatIdentity.ValidateUsername(runtime.Owner) == localAccountKey;
         bool moderated = runtime.Operators.Any(item =>
-            ChatIdentity.NormalizeUsername(item) == localAccountKey);
+            ChatIdentity.ValidateUsername(item) == localAccountKey);
         return new ChatRoomSummaryDto(
             room.RoomId,
             room.DisplayName,
@@ -1864,9 +1864,9 @@ public sealed class ChatRuntime : IAsyncDisposable
             user.Status.ToString(),
             user.CountryCode,
             owner is not null
-                && ChatIdentity.NormalizeUsername(owner) == ChatIdentity.NormalizeUsername(user.Username),
+                && ChatIdentity.ValidateUsername(owner) == ChatIdentity.ValidateUsername(user.Username),
             operators.Any(item =>
-                ChatIdentity.NormalizeUsername(item) == ChatIdentity.NormalizeUsername(user.Username)));
+                ChatIdentity.ValidateUsername(item) == ChatIdentity.ValidateUsername(user.Username)));
 
     private static RosterSnapshot BuildRosterSnapshot(RoomData joined)
     {
@@ -1874,7 +1874,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         string? owner = joined.Owner;
         if (owner is not null)
         {
-            try { ChatIdentity.NormalizeUsername(owner); }
+            try { ChatIdentity.ValidateUsername(owner); }
             catch (ArgumentException) { owner = null; complete = false; }
         }
 
@@ -1884,7 +1884,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         {
             try
             {
-                string key = ChatIdentity.NormalizeUsername(candidate);
+                string key = ChatIdentity.ValidateUsername(candidate);
                 if (!operatorKeys.Add(key))
                     continue;
                 if (operators.Count == ChatLimits.MaximumRoomOperators)
@@ -1902,7 +1902,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         {
             try
             {
-                string key = ChatIdentity.NormalizeUsername(user.Username);
+                string key = ChatIdentity.ValidateUsername(user.Username);
                 if (!members.ContainsKey(key) && members.Count == ChatLimits.MaximumRoomMembers)
                 {
                     complete = false;

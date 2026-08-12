@@ -16,7 +16,7 @@ namespace Sockseek.Core.Transfers.Downloads.Runtime;
 internal sealed record PendingTerminalTransfer(
     Guid TransferId,
     int AttemptCount,
-    FileCandidate? Candidate,
+    PeerFileTarget? Target,
     string SourceReference,
     string InitialOutputPath);
 

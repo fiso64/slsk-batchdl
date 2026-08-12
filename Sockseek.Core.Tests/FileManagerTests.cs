@@ -129,13 +129,13 @@ namespace Tests.FileManagerTests
                 ? new Soulseek.SearchResponse("user", 1, true, 100, 0, new List<Soulseek.File> { slFile })
                 : null;
             FileCandidate? candidate = slFile != null && response != null
-                ? new FileCandidate(response, slFile)
+                ? SoulseekSearchAdapter.ToFileCandidate(response, slFile)
                 : null;
             return new FileManagerContext
             {
-                Job          = job,
-                Query        = query,
-                Candidate    = candidate,
+                Job = job,
+                Query = query,
+                Candidate = candidate,
                 DownloadPath = downloadPath,
             };
         }
@@ -397,7 +397,7 @@ namespace Tests.FileManagerTests
 
             var file1 = new SongJob(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track1" })
             {
-                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
                                                    new Soulseek.File(0, @"Artist1\Album1\01. Track1.mp3", 0, "mp3")),
                 DownloadPath = audio1Base,
             };
@@ -405,7 +405,7 @@ namespace Tests.FileManagerTests
 
             var file2 = new SongJob(new SongQuery { Artist = "Artist1", Album = "Album1", Title = "Track2" })
             {
-                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
                                                    new Soulseek.File(0, @"Artist1\Album1\02. Track2.mp3", 0, "mp3")),
                 DownloadPath = audio2Base,
             };
@@ -413,7 +413,7 @@ namespace Tests.FileManagerTests
 
             var coverFile = new SongJob(new SongQuery())
             {
-                ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
+                ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(new Soulseek.SearchResponse("user", 0, false, 0, 0, null),
                                                    new Soulseek.File(0, @"Artist1\Album1\Cover.jpg", 0, "jpg")),
                 DownloadPath = coverBase,
             };
@@ -511,7 +511,7 @@ namespace Tests.FileManagerTests
             Assert.IsFalse(File.Exists(Path.Combine(testRoot, "MyPlaylist", "Album1", "Custom", "01. Track1.mp3")));
         }
 
-        [DataTestMethod]
+        [TestMethod]
         [DataRow("pdf")]
         [DataRow("aiff")]
         [DataRow("xyz")]
@@ -531,6 +531,26 @@ namespace Tests.FileManagerTests
             string expected = Path.Combine(testRoot, "Formatted", $"Original File.{extension}");
             AssertSamePath(expected, song.DownloadPath!);
             Assert.IsTrue(File.Exists(expected));
+        }
+
+        [TestMethod]
+        public void NameFormat_OutputExtensionVariableIsNotAppendedTwice()
+        {
+            config.Output.NameFormat = "Formatted/{filename}{ext}";
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Track" });
+            var contexts = Prepare(song);
+            var manager = PreparedManager(song, contexts);
+            MarkDownloaded(
+                song,
+                @"User1\Original File.flac",
+                Path.Combine(testRoot, ".sockseek-staging", "download.flac"));
+
+            manager.OrganizeDownloadedFile(song);
+
+            string expected = Path.Combine(testRoot, "Formatted", "Original File.flac");
+            AssertSamePath(expected, song.DownloadPath!);
+            Assert.IsTrue(File.Exists(expected));
+            Assert.IsFalse(File.Exists(expected + ".flac"));
         }
 
         [TestMethod]
@@ -630,7 +650,7 @@ namespace Tests.FileManagerTests
         private static FileCandidate Candidate(string filename)
         {
             var response = new Soulseek.SearchResponse("user", 1, true, 100, 0, []);
-            return new FileCandidate(response, TestHelpers.CreateSlFile(filename));
+            return SoulseekSearchAdapter.ToFileCandidate(response, TestHelpers.CreateSlFile(filename));
         }
 
         private SongJob MarkDownloaded(SongJob song, string remoteFilename, string localPath)

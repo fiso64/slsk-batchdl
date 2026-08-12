@@ -41,7 +41,6 @@ public class SearchSettings
 
     public int SearchTimeout { get; set; } = 5_000;
 
-    public int MaxStaleTime { get; set; } = 30_000;
 
     // ── Ranking ───────────────────────────────────────────────────────────────
 

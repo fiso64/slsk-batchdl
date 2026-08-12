@@ -156,7 +156,7 @@ namespace Tests.Unit
             Assert.AreEqual(4, testUserFolder.Files.Count);
             CollectionAssert.AreEqual(
                 index.First(response => response.Username == "testuser").Files.Select(file => file.Filename).ToList(),
-                testUserFolder.Files.Select(file => file.Candidate.File.Filename).ToList());
+                testUserFolder.Files.Select(file => file.Candidate.Target.Filename).ToList());
         }
 
         [TestMethod]

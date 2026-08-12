@@ -46,6 +46,12 @@ internal static class JobInfoPrinter
             case RetrieveFolderJobPayloadDto retrieve:
                 PrintRetrieveFolder(retrieve);
                 break;
+            case RemoteFileJobPayloadDto remoteFile:
+                PrintRemoteFile(remoteFile);
+                break;
+            case RemoteDirectoryJobPayloadDto remoteDirectory:
+                PrintRemoteDirectory(remoteDirectory, detail.Children);
+                break;
             case GenericJobPayloadDto generic:
                 Field("Info", generic.Text);
                 break;
@@ -70,14 +76,14 @@ internal static class JobInfoPrinter
             Field("From", p.ResolvedUsername, ConsoleColor.DarkCyan);
         if (p.ResolvedFilename != null)
             Field("Remote path", p.ResolvedFilename);
-        if (p.DownloadPath != null)
-            Field("Saved to", p.DownloadPath);
+        if (p.File.DownloadPath != null)
+            Field("Saved to", p.File.DownloadPath);
 
-        if (p.TotalBytes > 0)
+        if (p.File.FileSize > 0)
         {
-            var xfer = p.BytesTransferred is long x ? FormatBytes(x) : "?";
-            var total = FormatBytes(p.TotalBytes.Value);
-            var pct = p.ProgressPercent is double pv ? $" ({pv:F0}%)" : "";
+            var xfer = FormatBytes(p.File.BytesTransferred);
+            var total = FormatBytes(p.File.FileSize.Value);
+            var pct = p.File.ProgressPercent is double pv ? $" ({pv:F0}%)" : "";
             Field("Transfer", $"{xfer} of {total}{pct}");
         }
         else if (p.ResolvedSize > 0)
@@ -101,14 +107,14 @@ internal static class JobInfoPrinter
             Field("From", p.ResolvedFolderUsername, ConsoleColor.DarkCyan);
         if (p.ResolvedFolderPath != null)
             Field("Remote path", p.ResolvedFolderPath);
-        if (p.DownloadPath != null)
-            Field("Saved to", p.DownloadPath);
+        if (p.Directory.DownloadPath != null)
+            Field("Saved to", p.Directory.DownloadPath);
 
-        if (p.SelectedFolderFileCount is int total && total > 0)
+        if (p.Directory.FileCount is int total && total > 0)
         {
-            var completed = p.SelectedFolderCompletedFileCount ?? 0;
-            var ok = p.SelectedFolderSucceededFileCount ?? 0;
-            var failed = p.SelectedFolderFailedFileCount ?? 0;
+            var completed = p.Directory.TerminalFileCount;
+            var ok = p.Directory.SuccessfulFileCount;
+            var failed = p.Directory.FailedFileCount;
             Field("Progress", $"{completed} / {total} files  ({ok} ok, {failed} failed)");
         }
 
@@ -186,6 +192,44 @@ internal static class JobInfoPrinter
         Field("Outcome", p.RetrievalOutcome.ToString());
         if (p.RetrievalCancelled)
             Field("Cancelled", "yes", ConsoleColor.Yellow);
+    }
+
+    private static void PrintRemoteFile(RemoteFileJobPayloadDto p)
+    {
+        Field("From", p.Target.Username, ConsoleColor.DarkCyan);
+        Field("Remote path", p.Target.Filename);
+        if (p.File.DownloadPath != null)
+            Field("Saved to", p.File.DownloadPath);
+        if (p.File.FileSize > 0)
+        {
+            var percent = p.File.ProgressPercent is double value ? $" ({value:F0}%)" : "";
+            Field("Transfer", $"{FormatBytes(p.File.BytesTransferred)} of {FormatBytes(p.File.FileSize.Value)}{percent}");
+        }
+    }
+
+    private static void PrintRemoteDirectory(
+        RemoteDirectoryJobPayloadDto p,
+        IReadOnlyList<JobSummaryDto> children)
+    {
+        if (p.SourceUsername != null)
+            Field("From", p.SourceUsername, ConsoleColor.DarkCyan);
+        if (p.SourceFolderPath != null)
+            Field("Remote path", p.SourceFolderPath);
+        if (p.Directory.DownloadPath != null)
+            Field("Saved to", p.Directory.DownloadPath);
+        Field("Directory phase", p.Directory.Phase);
+        if (p.Directory.FileCount > 0)
+        {
+            Field("Progress", $"{p.Directory.TerminalFileCount} / {p.Directory.FileCount} files  " +
+                $"({p.Directory.SuccessfulFileCount} ok, {p.Directory.FailedFileCount} failed)");
+        }
+        if (children.Count > 0)
+        {
+            Printing.WriteLine(force: true);
+            Printing.WriteLine($"  Files ({children.Count}):", ConsoleColor.Gray, force: true);
+            foreach (var child in children)
+                PrintChildSummary(child);
+        }
     }
 
     private static void PrintAlbumTrack(SongJobPayloadDto track, string? folderPath)

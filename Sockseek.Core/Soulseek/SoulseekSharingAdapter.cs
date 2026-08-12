@@ -363,10 +363,10 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                 throw new DownloadEnqueueException("File not shared");
             }
 
-            string normalizedUsername = PeerUsername.Normalize(username);
+            string exactUsername = PeerUsername.Validate(username);
 
             UploadCoordinatorAdmission result = await uploads.AdmitAsync(
-                normalizedUsername,
+                exactUsername,
                 endpoint,
                 remotePath,
                 timeout.Token).ConfigureAwait(false);
@@ -441,7 +441,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         {
             return Encoding.UTF8.GetByteCount(username)
                        <= UploadCoordinator.MaximumUsernameUtf8Bytes
-                   && PeerUsername.Normalize(username).Length > 0;
+                   && PeerUsername.Validate(username).Length > 0;
         }
         catch
         {

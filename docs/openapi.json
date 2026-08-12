@@ -5862,6 +5862,99 @@
           }
         }
       },
+      "DirectoryDownloadStateDto": {
+        "required": [
+          "phase",
+          "attemptNumber",
+          "downloadPath",
+          "fileCount",
+          "terminalFileCount",
+          "successfulFileCount",
+          "failedFileCount",
+          "bytesTransferred",
+          "totalKnownBytes",
+          "progressPercent"
+        ],
+        "type": "object",
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "attemptNumber": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "downloadPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "fileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "terminalFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "successfulFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "failedFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "bytesTransferred": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "totalKnownBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "progressPercent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "DirectoryTransferPlanDto": { },
       "DownloadBehavior": {
         "enum": [
           "Automatic",
@@ -6124,36 +6217,14 @@
           }
         }
       },
-      "FileAttributeDto": {
-        "required": [
-          "type",
-          "value"
-        ],
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string"
-          },
-          "value": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          }
-        }
-      },
+      "FileAttributeDto": { },
       "FileCandidateDto": {
         "required": [
           "ref",
           "username",
           "filename",
           "peer",
-          "size",
-          "bitRate",
-          "sampleRate",
-          "length"
+          "file"
         ],
         "type": "object",
         "properties": {
@@ -6169,55 +6240,8 @@
           "peer": {
             "$ref": "#/components/schemas/PeerInfoDto"
           },
-          "size": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "bitRate": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "sampleRate": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "length": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "extension": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "attributes": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/FileAttributeDto"
-            }
+          "file": {
+            "$ref": "#/components/schemas/FileMetadataDto"
           }
         }
       },
@@ -6361,6 +6385,125 @@
               "null",
               "boolean"
             ]
+          }
+        }
+      },
+      "FileDownloadStateDto": {
+        "required": [
+          "downloadPath",
+          "bytesTransferred",
+          "fileSize",
+          "progressPercent"
+        ],
+        "type": "object",
+        "properties": {
+          "downloadPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "bytesTransferred": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "fileSize": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "progressPercent": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "FileMetadataDto": {
+        "required": [
+          "name",
+          "size",
+          "extension",
+          "bitRate",
+          "bitDepth",
+          "sampleRate",
+          "length"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "extension": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "bitRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "length": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "attributes": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FileAttributeDto"
+            }
           }
         }
       },
@@ -6598,6 +6741,12 @@
           },
           {
             "$ref": "#/components/schemas/JobDraftDtoJobListJobDraftDto"
+          },
+          {
+            "$ref": "#/components/schemas/JobDraftDtoRemoteFileJobDraftDto"
+          },
+          {
+            "$ref": "#/components/schemas/JobDraftDtoRemoteDirectoryJobDraftDto"
           }
         ],
         "discriminator": {
@@ -6610,7 +6759,9 @@
             "album": "#/components/schemas/JobDraftDtoAlbumJobDraftDto",
             "aggregate": "#/components/schemas/JobDraftDtoAggregateJobDraftDto",
             "album-aggregate": "#/components/schemas/JobDraftDtoAlbumAggregateJobDraftDto",
-            "job-list": "#/components/schemas/JobDraftDtoJobListJobDraftDto"
+            "job-list": "#/components/schemas/JobDraftDtoJobListJobDraftDto",
+            "remote-file": "#/components/schemas/JobDraftDtoRemoteFileJobDraftDto",
+            "remote-directory": "#/components/schemas/JobDraftDtoRemoteDirectoryJobDraftDto"
           }
         }
       },
@@ -6892,6 +7043,95 @@
           }
         }
       },
+      "JobDraftDtoRemoteDirectoryJobDraftDto": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "remote-directory"
+            ],
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "folderPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DirectoryTransferPlanDto"
+              }
+            ]
+          },
+          "downloadSettings": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadSettingsPatchDto"
+              }
+            ]
+          },
+          "provenance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobProvenanceDto"
+              }
+            ]
+          }
+        }
+      },
+      "JobDraftDtoRemoteFileJobDraftDto": {
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "remote-file"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/PeerFileTargetDto"
+          },
+          "outputPathComponents": { },
+          "downloadSettings": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadSettingsPatchDto"
+              }
+            ]
+          },
+          "provenance": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/JobProvenanceDto"
+              }
+            ]
+          }
+        }
+      },
       "JobDraftDtoSongJobDraftDto": {
         "required": [
           "songQuery"
@@ -7076,6 +7316,12 @@
             "$ref": "#/components/schemas/JobPayloadDtoRetrieveFolderJobPayloadDto"
           },
           {
+            "$ref": "#/components/schemas/JobPayloadDtoRemoteFileJobPayloadDto"
+          },
+          {
+            "$ref": "#/components/schemas/JobPayloadDtoRemoteDirectoryJobPayloadDto"
+          },
+          {
             "$ref": "#/components/schemas/JobPayloadDtoGenericJobPayloadDto"
           }
         ],
@@ -7090,6 +7336,8 @@
             "album-aggregate": "#/components/schemas/JobPayloadDtoAlbumAggregateJobPayloadDto",
             "job-list": "#/components/schemas/JobPayloadDtoJobListPayloadDto",
             "retrieve-folder": "#/components/schemas/JobPayloadDtoRetrieveFolderJobPayloadDto",
+            "remote-file": "#/components/schemas/JobPayloadDtoRemoteFileJobPayloadDto",
+            "remote-directory": "#/components/schemas/JobPayloadDtoRemoteDirectoryJobPayloadDto",
             "generic": "#/components/schemas/JobPayloadDtoGenericJobPayloadDto"
           }
         }
@@ -7184,7 +7432,7 @@
         "required": [
           "query",
           "resultCount",
-          "downloadPath",
+          "directory",
           "resolvedFolderUsername",
           "resolvedFolderPath"
         ],
@@ -7206,11 +7454,8 @@
             ],
             "format": "int32"
           },
-          "downloadPath": {
-            "type": [
-              "null",
-              "string"
-            ]
+          "directory": {
+            "$ref": "#/components/schemas/DirectoryDownloadStateDto"
           },
           "resolvedFolderUsername": {
             "type": [
@@ -7223,42 +7468,6 @@
               "null",
               "string"
             ]
-          },
-          "selectedFolderFileCount": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "selectedFolderCompletedFileCount": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "selectedFolderSucceededFileCount": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "selectedFolderFailedFileCount": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
           },
           "results": {
             "type": [
@@ -7408,6 +7617,89 @@
           }
         }
       },
+      "JobPayloadDtoRemoteDirectoryJobPayloadDto": {
+        "required": [
+          "sourceKind",
+          "sourceUsername",
+          "sourceFolderPath",
+          "resolvedPlanSource",
+          "activePlan",
+          "directory"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "remote-directory"
+            ],
+            "type": "string"
+          },
+          "sourceKind": {
+            "$ref": "#/components/schemas/RemoteDirectorySourceKindDto"
+          },
+          "sourceUsername": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sourceFolderPath": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "resolvedPlanSource": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DirectoryTransferPlanDto"
+              }
+            ]
+          },
+          "activePlan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DirectoryTransferPlanDto"
+              }
+            ]
+          },
+          "directory": {
+            "$ref": "#/components/schemas/DirectoryDownloadStateDto"
+          }
+        }
+      },
+      "JobPayloadDtoRemoteFileJobPayloadDto": {
+        "required": [
+          "target",
+          "outputPathComponents",
+          "file"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "remote-file"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/PeerFileTargetDto"
+          },
+          "outputPathComponents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "file": {
+            "$ref": "#/components/schemas/FileDownloadStateDto"
+          }
+        }
+      },
       "JobPayloadDtoRetrieveFolderJobPayloadDto": {
         "required": [
           "folderPath",
@@ -7519,7 +7811,7 @@
         "required": [
           "query",
           "candidateCount",
-          "downloadPath"
+          "file"
         ],
         "properties": {
           "kind": {
@@ -7540,11 +7832,8 @@
             ],
             "format": "int32"
           },
-          "downloadPath": {
-            "type": [
-              "null",
-              "string"
-            ]
+          "file": {
+            "$ref": "#/components/schemas/FileDownloadStateDto"
           },
           "resolvedUsername": {
             "type": [
@@ -7694,33 +7983,6 @@
               "string"
             ]
           },
-          "bytesTransferred": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "totalBytes": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "progressPercent": {
-            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
-            "type": [
-              "null",
-              "number",
-              "string"
-            ],
-            "format": "double"
-          },
           "availableActions": {
             "type": [
               "null",
@@ -7741,6 +8003,16 @@
           },
           "downloadSource": {
             "$ref": "#/components/schemas/ServerSongDownloadSource"
+          },
+          "exactTarget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PeerFileTargetDto"
+              }
+            ]
           }
         }
       },
@@ -8203,6 +8475,7 @@
           }
         }
       },
+      "PeerFileTargetDto": { },
       "PeerInfoDto": {
         "required": [
           "username"
@@ -8903,6 +9176,12 @@
           }
         }
       },
+      "RemoteDirectorySourceKindDto": {
+        "enum": [
+          "PeerDirectory",
+          "Resolved"
+        ]
+      },
       "ResourceActionDto": {
         "required": [
           "kind",
@@ -9291,15 +9570,6 @@
             ],
             "format": "int32"
           },
-          "maxStaleTime": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
           "downrankOn": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
@@ -9573,6 +9843,8 @@
           "album-aggregate",
           "job-list",
           "retrieve-folder",
+          "remote-file",
+          "remote-directory",
           "generic"
         ]
       },
@@ -10006,7 +10278,7 @@
         "required": [
           "query",
           "candidateCount",
-          "downloadPath"
+          "file"
         ],
         "type": "object",
         "properties": {
@@ -10022,11 +10294,8 @@
             ],
             "format": "int32"
           },
-          "downloadPath": {
-            "type": [
-              "null",
-              "string"
-            ]
+          "file": {
+            "$ref": "#/components/schemas/FileDownloadStateDto"
           },
           "resolvedUsername": {
             "type": [
@@ -10160,33 +10429,6 @@
               "string"
             ]
           },
-          "bytesTransferred": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "totalBytes": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "progressPercent": {
-            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
-            "type": [
-              "null",
-              "number",
-              "string"
-            ],
-            "format": "double"
-          },
           "availableActions": { },
           "transferState": {
             "type": [
@@ -10199,6 +10441,16 @@
           },
           "downloadSource": {
             "$ref": "#/components/schemas/ServerSongDownloadSource"
+          },
+          "exactTarget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PeerFileTargetDto"
+              }
+            ]
           }
         }
       },
@@ -10364,6 +10616,16 @@
                 "$ref": "#/components/schemas/SubmissionOptionsDto"
               }
             ]
+          },
+          "requestedMode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExtractionMode"
+              }
+            ]
           }
         }
       },
@@ -10413,6 +10675,16 @@
               },
               {
                 "$ref": "#/components/schemas/AlbumFolderDto"
+              }
+            ]
+          },
+          "requestedMode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExtractionMode"
               }
             ]
           }
@@ -11341,6 +11613,15 @@
             ]
           },
           "albumTrackCountMaxRetries": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "maxStaleTime": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
               "null",
