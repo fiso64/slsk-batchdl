@@ -9,6 +9,7 @@ using Sockseek.Core.Jobs;
 namespace Tests.Core;
 
 [TestClass]
+[DoNotParallelize]
 public class SockseekLogTests
 {
     [TestCleanup]

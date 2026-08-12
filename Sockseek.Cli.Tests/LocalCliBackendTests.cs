@@ -712,7 +712,7 @@ public class LocalCliBackendTests
             if (condition())
                 return;
 
-            await Task.Delay(25);
+            await Task.Delay(5);
         }
 
         Assert.Fail(failureMessage);

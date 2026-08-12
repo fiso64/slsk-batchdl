@@ -10,6 +10,7 @@ using Sockseek.Server;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using Tests.ClientTests;
 
 namespace Tests.Cli;
 
@@ -722,6 +723,7 @@ public class RemoteCliBackendTests
         for (int i = 1; i <= 12; i++)
             File.WriteAllBytes(Path.Combine(albumDir, $"{i:00}. Artist - Track {i:00}.mp3"), new byte[1024]);
 
+        var client = CreateBlockedDownloadClient(musicRoot);
         string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
@@ -729,8 +731,8 @@ public class RemoteCliBackendTests
             {
                 MockFilesDir = musicRoot,
                 MockFilesReadTags = false,
-                MockFilesSlow = true,
             },
+            ClientFactory = _ => client,
             DefaultDownload = new DownloadSettings
             {
                 Output =
@@ -819,6 +821,7 @@ public class RemoteCliBackendTests
             File.WriteAllBytes(Path.Combine(albumTwoDir, $"{i:00}. Artist Two - Track {i:00}.mp3"), new byte[1024]);
         }
 
+        var client = CreateBlockedDownloadClient(musicRoot);
         string url = DynamicLoopbackUrl;
         await using var app = ServerHost.Build([], new ServerOptions
         {
@@ -826,8 +829,8 @@ public class RemoteCliBackendTests
             {
                 MockFilesDir = musicRoot,
                 MockFilesReadTags = false,
-                MockFilesSlow = true,
             },
+            ClientFactory = _ => client,
             DefaultDownload = new DownloadSettings
             {
                 Output =
@@ -1274,6 +1277,7 @@ public class RemoteCliBackendTests
                 new byte[1024]);
         }
 
+        var client = CreateBlockedDownloadClient(musicRoot);
         int port = GetFreeTcpPort();
         string url = $"http://127.0.0.1:{port}";
         await using var app = ServerHost.Build([], new ServerOptions
@@ -1282,8 +1286,8 @@ public class RemoteCliBackendTests
             {
                 MockFilesDir = musicRoot,
                 MockFilesReadTags = false,
-                MockFilesSlow = true,
             },
+            ClientFactory = _ => client,
             DefaultDownload = new DownloadSettings
             {
                 Output =
@@ -1547,7 +1551,7 @@ public class RemoteCliBackendTests
             if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
                 return;
 
-            await Task.Delay(50, CancellationToken.None);
+            await Task.Delay(5, CancellationToken.None);
         }
 
         Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'.");
@@ -1562,7 +1566,7 @@ public class RemoteCliBackendTests
             if (seenTypes.Contains(eventType))
                 return;
 
-            await Task.Delay(25, CancellationToken.None);
+            await Task.Delay(5, CancellationToken.None);
         }
 
         Assert.Fail($"Timed out waiting for event '{eventType}'. Seen: {string.Join(", ", seenTypes.Distinct().OrderBy(x => x))}");
@@ -1584,7 +1588,7 @@ public class RemoteCliBackendTests
                 return;
             }
 
-            await Task.Delay(25, CancellationToken.None);
+            await Task.Delay(5, CancellationToken.None);
         }
 
         var position = backend.ClientStore.GetPosition(StateStreamScopeDto.Workflow(workflowId));
@@ -1608,7 +1612,7 @@ public class RemoteCliBackendTests
             if (detail?.Summary.State == expectedState)
                 return;
 
-            await Task.Delay(50, CancellationToken.None);
+            await Task.Delay(5, CancellationToken.None);
         }
 
         var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
@@ -1685,6 +1689,14 @@ public class RemoteCliBackendTests
             new SubmitAlbumSearchJobRequestDto(
                 new AlbumQueryDto(artist, album, "", "", false)));
 
+    private static MockSoulseekClient CreateBlockedDownloadClient(string musicRoot)
+    {
+        var client = MockSoulseekClient.FromLocalPaths(useTags: false, musicRoot);
+        client.BeforeDownloadCompletesAsync = static (_, _, cancellationToken) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        return client;
+    }
+
     private static async Task<JobSummaryDto> StartFirstAlbumDownloadAsync(ICliBackend backend, Guid searchJobId)
     {
         var projection = await backend.GetFolderResultsAsync(searchJobId, includeFiles: false);
@@ -1707,7 +1719,7 @@ public class RemoteCliBackendTests
             if (await condition())
                 return;
 
-            await Task.Delay(50, CancellationToken.None);
+            await Task.Delay(5, CancellationToken.None);
         }
 
         Assert.Fail(failureMessage);

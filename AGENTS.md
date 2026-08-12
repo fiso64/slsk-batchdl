@@ -17,7 +17,8 @@ configured storage, and ordinary local administration are trusted.
   speculative configuration, and unnecessary compatibility layers.
 - Test observable behavior and failure isolation, not documentation wording.
 - The solution-wide `dotnet test --no-restore` must run in under 15 seconds; 
-  Remove waits, find tests that aren't useful, and optimize without reducing coverage.
-  Refactor the production code for testability when needed.
+  Remove waits, find tests that aren't useful, and optimize.
+  Refactor the production code for testability when needed, or even production code when obvious inefficiencies pop up (must be documented as separate work clearly).
+  Never compromise on coverage as long as it resonably tests behavior.
 
 Archived designs in docs/design/archive provide rationale and context but may contain superseded requirements.
