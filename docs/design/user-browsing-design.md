@@ -36,6 +36,11 @@ specified here; later sections explain how it works.
   it once at startup; removing the option advertises no picture.
 - `sockseek user shares <username>` performs or reuses one browse, reports live
   transfer/parse progress, and opens a filesystem-style share browser on a TTY.
+- When an `AlbumJob` retrieves a peer directory for folder completion, track-count
+  validation, or strict-quality validation, it reuses that peer's completed browse
+  response if it is less than five minutes old. Its browse is likewise reusable by
+  `sockseek user shares` and ordinary peer-directory retrieval, so these operations
+  do not independently browse the same peer while the shared response is fresh.
 - The share browser lists the current directory's child directories and files in
   one directory-first view. It does not project directories to albums or album
   aggregates. Three organizational roots therefore appear as three folders to
@@ -176,9 +181,10 @@ typed SockseekApiClient + SockseekLiveClient
         |
 Server endpoints ---- DaemonClientStore (small live projections)
         |                         |
-UserBrowsingService ------ UserBrowseArtifactStore
-        |                 (ephemeral SQLite artifacts)
-        |
+RemoteUserProfileService   PeerBrowseService ------ PeerBrowseArtifactStore
+                                  |                (ephemeral SQLite artifacts)
+Searcher.RetrieveDirectory -------+
+                                  |
 DaemonSoulseekRuntime
         |
 bounded profile calls + streaming browse ingress
@@ -208,13 +214,32 @@ server has resolved an exact file. Album orchestration and ordinary directory jo
 share directory lifecycle state while retaining different planners/finalizers.
 Album orchestration produces a `DirectoryTransferPlan` only after candidate
 selection; a browse submission produces one directly from leased artifact rows.
+`Searcher.RetrieveDirectory` and the public user browser share the same peer-browse
+acquisition and artifact. Retrieving a directory therefore reuses a completed
+artifact while it is fresh instead of issuing another whole-user browse.
 
 ### Ownership
 
 `DaemonSoulseekRuntime` continues to own the connected `SoulseekClientManager` and
-shared `PeerAccessPolicy`. A new daemon-lifetime `UserBrowsingService` coordinates
-profile calls, browse single-flight, cache/artifact lifetime, and cancellation. It
-MUST NOT create another Soulseek client or log in independently.
+shared `PeerAccessPolicy`. A daemon-lifetime `RemoteUserProfileService` coordinates
+the bounded profile subrequests and their short-lived caches. A daemon-lifetime
+`PeerBrowseService` is the sole owner of outbound whole-user browse acquisition,
+single-flight, artifact lifetime, and shared cancellation. Neither service creates
+another Soulseek client or logs in independently.
+
+`Searcher.RetrieveDirectory` MUST NOT call `ISoulseekClient.BrowseAsync` directly.
+It acquires the user's current generation from `PeerBrowseService`, queries the
+requested subtree through a short artifact lease, copies the exact results into an
+owned `PeerDirectorySnapshot`, and releases the lease. Public browsing, album
+folder completion, ordinary peer-directory downloads, and future explicit music
+actions therefore cannot grow separate whole-user browse caches or retrieve the
+same fresh shares independently.
+
+Every acquisition has the same generation, browse ID, lifecycle, and artifact
+regardless of whether an API request or a download job initiated it. An API request
+that joins job-initiated work receives that existing ID rather than a wrapper
+resource, and retained job-initiated generations may therefore appear in the
+bounded browse list.
 
 An immutable `LocalUserProfile` is loaded once from daemon settings and supplied
 to both the client manager's fallback user-info resolver and
@@ -228,7 +253,7 @@ transfer runners. It also owns the abstract `FileDownloadJob`/
 resources, live projections, artifact-to-plan resolution, and creation of jobs.
 API owns wire DTOs and clients. CLI owns presentation and interaction.
 
-`UserBrowseArtifactStore` is not a repository for domain history. Each successful
+`PeerBrowseArtifactStore` is not a repository for domain history. Each successful
 browse is an immutable SQLite file plus small metadata. A staging file is private
 to its writer, atomically promoted on success, and deleted on cancellation or
 failure. Completed artifacts are evicted by a fixed age and global byte budget;
@@ -237,11 +262,39 @@ defaults, not public configuration.
 
 ### Concurrency and reuse
 
-- At most one network browse per exact wire username runs at a time. Concurrent
-  callers receive the same browse ID.
-- A fresh completed artifact for that user is reused unless `refresh=true`.
-- A refresh creates a new immutable artifact. Existing readers may finish against
-  the previous one until their lease ends; new default lookups use the new one.
+The acquisition key is the configured local Soulseek account plus the peer's exact
+wire username, compared ordinally. A successful artifact is fresh for five minutes
+from completion: its age MUST be strictly less than `TimeSpan.FromMinutes(5)`, so
+it becomes stale at the exact five-minute boundary. Freshness controls automatic
+reuse; the longer fixed retention period controls how long a generation remains
+addressable by browse ID. A stale artifact may remain readable by its ID but is
+never returned by default acquisition.
+
+`refresh` means "do not satisfy this request from an already completed artifact."
+It does not demand a second browse after work already in flight. Acquisition follows
+this table:
+
+| State for the acquisition key | Ordinary request | `refresh=true` |
+|---|---|---|
+| No artifact, or only stale artifacts | Start a browse | Start a browse |
+| Fresh completed artifact | Return it immediately | Start a browse |
+| Browse queued or running | Join its browse ID | Join its browse ID |
+| Previous artifact exists while a refresh runs | Join the refresh | Join the refresh |
+| Previous refresh failed or was cancelled | Reuse the previous artifact only if still fresh; otherwise start | Start a browse |
+
+- At most one network browse per acquisition key runs at a time. Every concurrent
+  caller, including `RetrieveDirectory`, receives the same browse ID.
+- A refresh produces a new immutable generation. The previous artifact remains
+  readable by its existing ID while the refresh runs and afterward until ordinary
+  eviction. Only successful atomic promotion makes the new generation the default.
+- A caller joined to a failed or cancelled refresh observes that terminal result;
+  it is never silently redirected to older data. Failed and cancelled staging
+  artifacts are deleted and never replace the last successful generation.
+- Client and job cancellation detaches only that waiter. It does not cancel the
+  daemon-owned acquisition. The explicit browse-cancel operation is global and
+  cancels the shared acquisition for every waiter.
+- Page reads and download resolution hold short internal leases. Closing a GUI tab
+  merely unsubscribes, and no client owns a completed resource or must release it.
 - Global network-browse concurrency is deliberately small and fixed. Accepted
   browse resources wait in a compact FIFO coordination queue until a network slot
   is available; queue depth is not a validity rule and never rejects a browse.
@@ -250,8 +303,9 @@ defaults, not public configuration.
 - Soulseek reconnect/logoff cancels active profile calls and browses with a stable
   `connection-lost` failure. Completed artifacts remain readable until eviction,
   but starting downloads still requires a connected daemon.
-- Cache/single-flight keys include the configured local Soulseek account. Changing
-  accounts never reuses the previous account's profile or default browse artifact.
+- Profile cache keys and peer-browse acquisition keys include the configured local
+  Soulseek account. Changing accounts never reuses the previous account's profile
+  or default browse artifact.
 
 ## Identity and access policy
 
@@ -427,7 +481,6 @@ POST   /api/users/{username}/browses
 GET    /api/user-browses?username={username}&state={state}&cursor={cursor}&limit={limit}
 GET    /api/user-browses/{browseId}
 POST   /api/user-browses/{browseId}/cancel
-DELETE /api/user-browses/{browseId}
 
 GET    /api/user-browses/{browseId}/directories?parentId={id}&query={q}&recursive={bool}&cursor={cursor}&limit={limit}
 GET    /api/user-browses/{browseId}/directories/{directoryId}
@@ -439,13 +492,14 @@ POST   /api/user-browses/{browseId}/downloads
 
 `POST .../browses` accepts `{ "refresh": false }`. It returns `202` for queued or
 running work and `200` for a reusable completed resource. Joining a single-flight
-request returns the existing ID. `refresh=true` starts a new generation unless an
-identical refresh is already running.
+request returns the existing ID. `refresh=true` bypasses only a completed artifact;
+it joins any generation already queued or running for the acquisition key.
 
 The list endpoint is bounded and intended to restore a GUI's recent tabs. It is
-not durable browse history. `DELETE` releases the caller-visible browse and marks
-it eligible for physical eviction; leased readers and jobs already created are
-not invalidated. Cancel is idempotent and affects only running work.
+not durable browse history. Browse resources have no per-client ownership and are
+removed by ordinary retention/eviction rather than a client release operation.
+Cancel is idempotent, affects only running work, and is explicitly global because
+the acquisition may be shared by API clients and download jobs.
 
 Collection endpoints require a completed artifact and return
 `409 browse-not-ready` while it is active. An expired/removed ID returns
@@ -607,9 +661,17 @@ offers an equivalent streaming, cancellable browse response API. Until
 then, the adapter is isolated and accompanied by protocol fixture tests so a
 library update cannot silently restore full buffering.
 
-`GetDirectoryContentsAsync` MAY refresh a known selectable directory for a future
-feature, but cannot discover an unknown peer tree and is not a substitute for the
-initial streaming browse.
+`Searcher.RetrieveDirectory` acquires through `PeerBrowseService` with
+`refresh=false`, then performs an indexed subtree query against the artifact. Two
+directory retrievals, or a directory retrieval and public user browse, reuse the
+same successful generation during its five-minute freshness period. The returned
+`PeerDirectorySnapshot` owns its exact target data and has no lifetime dependency
+on the artifact. Cancelling the calling job stops its wait but leaves shared
+acquisition running.
+
+`GetDirectoryContentsAsync` MAY explicitly refresh a known selectable directory
+for a future feature, but cannot discover an unknown peer tree and is not a
+substitute for the initial streaming whole-user browse.
 
 ## Live state
 
@@ -811,9 +873,9 @@ sockseek user shares <username> [--refresh] [--filter <text>]
 The command posts the browse, subscribes to its live resource when available, and
 falls back to bounded HTTP polling with backoff. Ctrl+C during acquisition cancels
 the CLI wait and prints the browse ID; it does not cancel the shared daemon browse
-because another client may be observing the same single-flight resource. The
-explicit `shares-cancel` command cancels it. Once complete, the browser requests
-only visible directory and file pages.
+because another client or download job may be observing the same single-flight
+resource. The explicit `shares-cancel` command globally cancels it for every
+waiter. Once complete, the browser requests only visible directory and file pages.
 
 `InteractiveShareBrowser` is a new filesystem interaction, not an adapter over
 `InteractiveModeManager`. Its screen has a breadcrumb, a directory-first entry
@@ -864,7 +926,8 @@ the returned browse ID with `shares-page`, then submit stable IDs with
 `shares-download`. Omitting `--request-id` generates one for that invocation.
 Directory IDs always mean complete public subtrees. `--preview` returns only the
 resolution summary and does not require/generate a request ID.
-`shares-cancel` is idempotent and returns the resulting browse resource.
+`shares-cancel` is idempotent and returns the resulting browse resource. It is a
+global operation on shared acquisition, not a way to detach only the invoking CLI.
 
 Non-TTY invocation without `--json` or explicit selection/page arguments is a
 usage error, not an attempt to read interactive keys from redirected stdin.
@@ -981,6 +1044,12 @@ Per-row events and metrics are prohibited.
 
 - Atomic staging promotion, restart cleanup, age/byte eviction, reader leases, and
   reuse/refresh generations.
+- TimeProvider-driven boundary tests prove reuse one tick before five minutes from
+  successful completion and a new acquisition at the exact five-minute boundary.
+  Freshness and retention are tested independently.
+- The full acquisition state table is covered, including ordinary and refresh
+  callers joining the same in-flight generation, refresh failure preserving but
+  not silently substituting the previous generation, and account-key isolation.
 - Stable paging under concurrent clients; invalid and cross-generation cursors.
 - Directory/file counts, synthesized parents, filtering, locked visibility, and
   exact wire identity retained internally.
@@ -1006,9 +1075,13 @@ Per-row events and metrics are prohibited.
 - Preview creates no workflow; submission is one `JobList` with independent
   `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` children and nested
   `RemoteFileJob` leaves, with no browse/search afterward.
-- The resolved source cannot call directory retrieval, while a peer-directory
-  source fixture proves the shared subtype can retrieve exactly once for direct
-  links without weakening the browse invariant.
+- The resolved source cannot call directory retrieval. Peer-directory sources,
+  album folder completion, and the user-browser share `PeerBrowseService`: no
+  artifact causes one wire browse, concurrent callers single-flight, a fresh
+  artifact causes none, and explicit refresh causes one new generation.
+- Cancelling a directory or album job detaches its wait without cancelling an
+  acquisition observed by another job or API client; explicit browse cancellation
+  produces one shared terminal cancellation.
 - Artifact deletion immediately after submission does not affect downloads.
 - Root versus child cancellation, partial failure, retry, skip-existing, output
   tree preservation, sanitization, collision handling, and containment.
@@ -1058,8 +1131,9 @@ The feature MUST NOT ship until:
    payloads, and progressive directory execution.
 2. Add streaming browse ingress, protocol fixtures, artifact schema/store, and source
    patch deletion note. No public endpoint uses it until the memory gate passes.
-3. Add local profile loading, remote profile service, picture validation, browse
-   coordination, and artifact lifecycle.
+3. Add local profile loading, remote profile service, picture validation,
+   `PeerBrowseService`, and artifact lifecycle; route `Searcher.RetrieveDirectory`
+   through it and remove direct whole-user `BrowseAsync` acquisition elsewhere.
 4. Add API DTOs/endpoints/typed clients and live `UserBrowse` scope.
 5. Add browse selection resolution that materializes shared exact targets/plans,
    then submit `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` with
@@ -1083,6 +1157,8 @@ implementation claim. The completed prerequisite is marked separately.
 - [ ] Local pictures are normalized for peers; remote pictures are safely rendered.
 - [ ] Browse ingress streams to disk without aggregate size-based refusal.
 - [ ] Successful browses become immutable disposable SQLite artifacts.
+- [ ] Public browsing and directory retrieval share one five-minute-fresh
+  peer-browse acquisition and artifact path.
 - [ ] Browse lifecycle is durable for its short resource lifetime and live-visible.
 - [ ] Directories/files are paged; large collections never enter live deltas.
 - [ ] Multiple folder/file selections resolve from artifact IDs on the server.
