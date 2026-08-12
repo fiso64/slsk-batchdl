@@ -51,8 +51,6 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     public const int MaximumSearchTerms = 64;
     public const int MaximumSearchExclusions = 64;
     public const int MaximumSearchUtf8Bytes = 4_096;
-    public const int MaximumDirectoryFiles = 10_000;
-    public const int MaximumDirectoryEncodedBytes = 8 * 1_024 * 1_024;
     public const int MaximumExcludedPhraseCount = 256;
     public const int MaximumExcludedPhraseUtf8Bytes = 1_024;
     public const int MaximumExcludedPhraseSetUtf8Bytes = 64 * 1_024;
@@ -295,13 +293,9 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                 ShareCatalogBrowseDirectory? directory =
                     await lease.Reader.GetDirectoryAsync(
                         key,
-                        MaximumDirectoryFiles,
                         timeout.Token).ConfigureAwait(false);
-                if (directory is null
-                    || EstimateDirectoryBytes(directory) > MaximumDirectoryEncodedBytes)
-                {
+                if (directory is null)
                     return [];
-                }
                 return
                 [
                     new SlDirectory(
@@ -439,9 +433,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         try
         {
-            return Encoding.UTF8.GetByteCount(username)
-                       <= UploadCoordinator.MaximumUsernameUtf8Bytes
-                   && PeerUsername.Validate(username).Length > 0;
+            return PeerUsername.Validate(username).Length > 0;
         }
         catch
         {
@@ -450,9 +442,16 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     }
 
     private static bool IsValidRemotePath(string remotePath)
-        => !string.IsNullOrWhiteSpace(remotePath)
-           && Encoding.UTF8.GetByteCount(remotePath)
-           <= UploadCoordinator.MaximumRemotePathUtf8Bytes;
+    {
+        try
+        {
+            return RemotePathKey.Create(remotePath).Bytes.Length > 0;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     private static bool ContainsExcluded(string remotePath, IEnumerable<string> exclusions)
         => exclusions.Any(exclusion =>
@@ -484,20 +483,6 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         int separator = remotePath.LastIndexOf('\\');
         return separator < 0 ? remotePath : remotePath[(separator + 1)..];
-    }
-
-    private static long EstimateDirectoryBytes(ShareCatalogBrowseDirectory directory)
-    {
-        long total = Encoding.UTF8.GetByteCount(directory.Directory.RemotePath) + 32;
-        foreach (var file in directory.Files)
-        {
-            total = checked(total
-                            + Encoding.UTF8.GetByteCount(RemoteFileName(file.RemotePath))
-                            + Encoding.UTF8.GetByteCount(file.Extension)
-                            + 32L
-                            + file.Attributes.Count * 8L);
-        }
-        return total;
     }
 
     public void Dispose()

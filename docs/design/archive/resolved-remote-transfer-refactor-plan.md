@@ -29,13 +29,10 @@ Implementation progress (2026-08-12):
 - Search candidates now compose `FileMetadataDto`, including bit depth, instead
   of publishing flat duplicate file-fact fields. The future browse projection
   can reuse that leaf without reusing search identity or evidence.
-- The directory allocation benchmark measured approximately 1.21 KiB per
-  ordinary entry/child graph (122.25 KiB at 100, 1,207.65 KiB at 1,000, and
-  12,087.95 KiB at 10,000 on 64-bit .NET 10). Admission conservatively budgets
-  1.5 KiB plus strings/attributes per entry, with limits of 20,000 files, 2 TiB
-  known bytes, and 128 MiB estimated retained memory. The default policy is
-  applied when an attempt is created, before a pre-resolved job can be
-  registered or any child becomes visible.
+- Directory plans use compact immutable values and existing child scheduling.
+  The former allocation estimator and its file-count, byte, and retained-memory
+  refusal policy were removed: measurements may detect regressions but do not
+  decide whether a valid requested directory is downloadable.
 - Read-only `FileCandidate` convenience properties remain as projections of its
   single authoritative target/evidence composition; the obsolete constructor,
   duplicate transfer authority, old album booleans, and `PeerUsername.Normalize`
@@ -45,8 +42,8 @@ Implementation progress (2026-08-12):
   incompatible inherited formats fall back to empty ordinary placement only
   after a matching auto profile has had the opportunity to replace them.
 - Focused Core, Server, Persistence, OpenAPI, and CLI tests have been added. The
-  clean solution build and all four full test suites pass: Core 737,
-  Persistence 52, Server 125, and CLI 257 (1,171 total). `git diff --check` is
+  clean solution build and all four full test suites pass: Core 748,
+  Persistence 52, Server 126, and CLI 263 (1,189 total). `git diff --check` is
   clean.
 
 ## Intentional behavior and compatibility changes
@@ -59,7 +56,7 @@ semantics:
 | Input | Before this refactor | After this refactor |
 | --- | --- | --- |
 | `slsk://peer/path/file.ext` with no requested mode | A `SongJob` containing fabricated search objects | An exact `RemoteFileJob`; no search, music fallback, tag-derived naming, playlist/index work, or album handling |
-| `slsk://peer/path/folder/` with no requested mode | An `AlbumJob` | A `RemoteDirectoryJob` that retrieves the directory once, applies admission limits, and preserves the returned tree without inferring an album |
+| `slsk://peer/path/folder/` with no requested mode | An `AlbumJob` | A `RemoteDirectoryJob` that retrieves the directory once and preserves the returned tree without inferring an album or rejecting it by aggregate size |
 | File link with explicit `Song` intent (`--song`) | A preselected `SongJob` represented as a fake search result | A preselected `SongJob` with an exact target and no fake search evidence; music behavior remains enabled |
 | Directory link with explicit `Song` intent | The trailing slash won and produced an `AlbumJob` | Rejected because a directory cannot represent one music track |
 | Link with explicit `Album` intent (`--album`) | An `AlbumJob` using the supplied path as the selected directory | Still an `AlbumJob` using that path as the selected directory; album validation, naming, art, and finalization remain enabled |
@@ -389,8 +386,8 @@ detection. A plan:
   sanitization and collision suffixes to the selected placement planner;
 - owns copied values and remains usable after a search snapshot or browse artifact
   is evicted; and
-- is admitted against measured file-count, byte, and engine-memory limits before
-  any child job becomes visible.
+- is scheduled progressively through the existing engine without treating file
+  count, total bytes, or an estimated retained-memory value as job validity.
 
 `DisplayRoot` is presentation and logical tree intent, not protocol identity or a
 pre-approved local path. A synthetic browse root is valid because each entry still
@@ -798,7 +795,7 @@ end-to-end classes:
 - `Sockseek.Core.Tests/PeerFileTargetTests.cs` for exact identity, construction,
   copying, and adapter equivalence;
 - `Sockseek.Core.Tests/DirectoryTransferPlanTests.cs` for invariants, relative
-  structure, copying, and admission;
+  structure, copying, deduplication, and bad-entry isolation;
 - `Sockseek.Core.Tests/ExactFileTransferRunnerTests.cs` for shared network transfer
   outcomes and the resolved-song/remote-file parity matrix;
 - `Sockseek.Core.Tests/FileDownloadJobTests.cs` and
@@ -830,15 +827,15 @@ adapter tests should need Soulseek.NET response/file objects.
 - Assert target metadata changes do not change `PeerFileIdentity` equality or
   duplicate detection.
 - Preserve case, leading/trailing spaces, and NFC/NFD distinctions in valid
-  usernames and paths. Reject empty, control-containing, ill-formed, and
-  over-byte-limit identities without trimming or normalization.
+  usernames and paths. Reject empty, control-containing, and ill-formed identities
+  without trimming, normalization, or Sockseek-only byte ceilings.
 - Preserve unknown size/metadata without inventing search speeds, response counts,
   or free-slot values.
 - Prove copied attribute collections and transfer plans cannot change when their
   source lists mutate.
-- Reject a plan with mixed peers, duplicate exact targets, rooted relative paths,
-  empty or traversal components, or overflowed totals. Its
-  admission validator rejects more entries/bytes than policy allows.
+- Reject a plan with mixed peers or overflowed totals. Deduplicate exact targets
+  deterministically, and skip independently invalid rooted, empty, traversal, or
+  containment-escaping entries while retaining valid siblings.
 - Verify deterministic entry order. Separately verify the default placement
   planner's collision suffixes for case, separator, Unicode-normalization, and
   sanitized-name collisions.
@@ -913,10 +910,11 @@ adapter tests should need Soulseek.NET response/file objects.
   `generic-file`/`generic-directory` auto profile can override it with a structural
   format before fallback is evaluated.
 - Multiple files use existing concurrency limits; the directory does not create a
-  second queue or bypass transfer admission.
+  second queue or bypass ordinary transfer scheduling.
 - Cancelling the directory cancels unfinished children. Cancelling one file leaves
   siblings running. Partial failure produces the documented aggregate outcome.
-- File-count/byte/memory admission rejects atomically before workflow registration.
+- Large resolved plans register and execute without file-count, byte, or estimated
+  memory admission refusal.
 - A plan remains executable after its source search snapshot or browse artifact is
   deleted.
 - `RemoteDirectoryJob` does not apply music search, track filters, album images,
@@ -1010,16 +1008,15 @@ adapter tests should need Soulseek.NET response/file objects.
   adding a wrapper, and a mocked or variable peer transfer would measure the
   harness/network instead of the refactor. Future client-independent work inside
   the runner should add a microbenchmark at that seam.
-- Measure directory plan and child-job retained bytes at representative and
-  maximum admitted counts; use the measurement to set the fixed job-memory bound
-  consumed by user browsing.
-- Confirm progress/live events remain coalesced and bounded for a maximum admitted
-  directory job.
+- Measure directory plan and child-job retained bytes at representative increasing
+  counts to catch regressions without turning measurements into validity limits.
+- Confirm progress/live events remain coalesced and bounded for large directory
+  jobs.
 
 ### Verification results (2026-08-12)
 
 - `dotnet build Sockseek.sln --no-restore -v:q` succeeds with no errors.
-- Full suites pass: Core 735, Persistence 52, Server 122, and CLI 254 (1,163
+- Full suites pass: Core 748, Persistence 52, Server 126, and CLI 263 (1,189
   total). This includes the exact-runner failure/cancellation matrix, album
   retry/art/finalization regressions, remote settings/direct-link behavior,
   payload/OpenAPI contracts, persistence, and CLI parity/presentation.
@@ -1027,10 +1024,9 @@ adapter tests should need Soulseek.NET response/file objects.
   prefixes on neutral Core mechanisms, parallel directory source modes, and
   normalized exact identities. Production direct links contain no fabricated
   `SearchResponse` or `Soulseek.File` values.
-- The directory allocation benchmark reports 122.25 KiB at 100 entries,
-  1,207.65 KiB at 1,000, and 12,087.95 KiB at 10,000 on 64-bit .NET 10. The
-  estimator and admission policy deliberately remain conservative relative to
-  those measurements.
+- Directory execution uses the existing compact plan and child lifecycle and has
+  no estimator-derived admission policy; measurements are regression evidence,
+  not a reason to reject an otherwise valid transfer.
 - Directory progress is derived from owned children without a second plan graph;
   the existing coalescer, bounded live dispatcher, and non-blocking bounded
   persistence tests cover slow consumers independently of directory size.
@@ -1053,7 +1049,8 @@ The refactor is ready for user-browse download work only when:
    absent from remote jobs and remains present for song/album jobs.
 4. Username/path exactness tests pass across search, direct links, chat, peer
    policy, uploads, and the target factories used by future browsing.
-5. The directory job admission budget is based on measured retained memory.
+5. Directory jobs are best effort and are not rejected by estimated retained
+   memory, file count, or total byte size.
 6. Remote versus music settings applicability and direct-link interpretation are
    enforced by contract tests rather than undocumented ignored options.
 7. Remote name formatting supports shared placement variables through the shared

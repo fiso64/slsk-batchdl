@@ -26,17 +26,20 @@ public sealed class DirectoryTransferPlanTests
     }
 
     [TestMethod]
-    public void Plan_RejectsMixedPeersAndDuplicateExactTargets()
+    public void Plan_RejectsMixedPeersAndDeduplicatesExactTargets()
     {
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferPlan("Root", [
             Entry("Peer", @"Root\A.flac", 1),
             Entry("Other", @"Root\B.flac", 1),
         ]));
 
-        Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferPlan("Root", [
+        var deduplicated = new DirectoryTransferPlan("Root", [
             Entry("Peer", @"Root\A.flac", 1),
             Entry("Peer", @"Root\A.flac", 2),
-        ]));
+        ]);
+
+        Assert.AreEqual(1, deduplicated.Entries.Count);
+        Assert.AreEqual(1L, deduplicated.TotalKnownBytes);
     }
 
     [TestMethod]
@@ -49,48 +52,6 @@ public sealed class DirectoryTransferPlanTests
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A/B"]));
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A\\B"]));
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A\nB"]));
-    }
-
-    [TestMethod]
-    public void Admission_RejectsEachBoundBeforeExecution()
-    {
-        var plan = new DirectoryTransferPlan("Root", [
-            Entry("Peer", @"Root\A.flac", 10),
-            Entry("Peer", @"Root\B.flac", 20),
-        ]);
-
-        Assert.ThrowsExactly<DirectoryTransferAdmissionException>(() =>
-            new DirectoryTransferAdmissionPolicy(1, 100, 100).Validate(plan, 50));
-        Assert.ThrowsExactly<DirectoryTransferAdmissionException>(() =>
-            new DirectoryTransferAdmissionPolicy(10, 29, 100).Validate(plan, 50));
-        Assert.ThrowsExactly<DirectoryTransferAdmissionException>(() =>
-            new DirectoryTransferAdmissionPolicy(10, 100, 49).Validate(plan, 50));
-        new DirectoryTransferAdmissionPolicy(2, 30, 50).Validate(plan, 50);
-    }
-
-    [TestMethod]
-    public void MemoryEstimate_CoversPlanChildrenTextAndAttributesDeterministically()
-    {
-        var small = new DirectoryTransferPlan("Root", [
-            Entry("Peer", @"Root\A.flac", 10),
-        ]);
-        var larger = new DirectoryTransferPlan("Root", [
-            Entry("Peer", @"Root\A.flac", 10),
-            new DirectoryTransferEntry(
-                new PeerFileTarget(
-                    new PeerFileIdentity("Peer", @"Root\Long Folder\Long Name.flac"),
-                    20,
-                    ".flac",
-                    attributes: [new Sockseek.Core.Snapshots.FileAttributeSnapshot("Length", 30, 1)]),
-                ["Long Folder"]),
-        ]);
-
-        long first = DirectoryTransferMemoryEstimator.EstimatePlanAndChildren(small);
-        long second = DirectoryTransferMemoryEstimator.EstimatePlanAndChildren(larger);
-
-        Assert.IsTrue(first >= 1_536);
-        Assert.IsTrue(second > first);
-        Assert.AreEqual(second, DirectoryTransferMemoryEstimator.EstimatePlanAndChildren(larger));
     }
 
     [TestMethod]
@@ -120,6 +81,23 @@ public sealed class DirectoryTransferPlanTests
             isComplete: true);
 
         Assert.ThrowsExactly<ArgumentException>(() => DirectoryTransferPlanner.FromSnapshot(snapshot));
+    }
+
+    [TestMethod]
+    public void SnapshotPlanning_SkipsInvalidEntryWithoutRejectingValidSibling()
+    {
+        var snapshot = new PeerDirectorySnapshot(
+            new PeerDirectoryIdentity("Peer", @"Root\Selected"),
+            [
+                Target("Peer", @"Root\Selected\Good.flac", 1),
+                Target("Peer", @"Root\Other\Outside.flac", 2),
+            ],
+            isComplete: true);
+
+        var plan = DirectoryTransferPlanner.FromSnapshot(snapshot);
+
+        Assert.AreEqual(1, plan.Entries.Count);
+        Assert.AreEqual(@"Root\Selected\Good.flac", plan.Entries[0].Target.Filename);
     }
 
     private static DirectoryTransferEntry Entry(

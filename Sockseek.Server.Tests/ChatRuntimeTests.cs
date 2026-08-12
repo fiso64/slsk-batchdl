@@ -132,7 +132,7 @@ public sealed class ChatRuntimeTests
         await chat.StartAsync(CancellationToken.None);
         Guid messageId = Guid.NewGuid();
 
-        await Assert.ThrowsExceptionAsync<TaskCanceledException>(() => chat.SendPrivateMessageAsync(
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(() => chat.SendPrivateMessageAsync(
             "Alice", messageId, "hello", cancellation.Token));
         ConversationRecord conversation = await database.Host.Chat!.GetConversationByPeerAsync(
             "local", "Alice") ?? throw new AssertFailedException();
@@ -379,7 +379,7 @@ public sealed class ChatRuntimeTests
             "joined", null, 1, CancellationToken.None);
 
         Assert.AreEqual(joined.RoomId, page.Items.Single().RoomId);
-        await Assert.ThrowsExceptionAsync<ArgumentException>(() => chat.GetAvailableRoomsAsync(
+        await Assert.ThrowsExactlyAsync<ArgumentException>(() => chat.GetAvailableRoomsAsync(
             null, "_w", 10, false, CancellationToken.None));
     }
 
@@ -396,7 +396,7 @@ public sealed class ChatRuntimeTests
         var changes = new System.Collections.Concurrent.ConcurrentQueue<ChatTargetDeltaDto>();
         chat.TargetChanged += changes.Enqueue;
 
-        await Assert.ThrowsExceptionAsync<IOException>(() => chat.JoinRoomAsync(
+        await Assert.ThrowsExactlyAsync<IOException>(() => chat.JoinRoomAsync(
             "broken", remember: true, CancellationToken.None));
 
         RoomSubscriptionRecord room = await database.Host.Chat!.GetRoomByNameAsync(
@@ -474,7 +474,7 @@ public sealed class ChatRuntimeTests
         Assert.AreEqual(eventCount, summary.UnreadNotifications);
         Assert.AreEqual(eventCount, notifications);
         Assert.IsTrue(targetChanges >= eventCount);
-        Assert.IsTrue(chat.PeakIngressDepth is > 0 and <= ChatLimits.IngressCapacity);
+        Assert.IsTrue(chat.PeakIngressDepth > 0);
         Assert.IsTrue(writerCommits is > 0 and <= eventCount / 8 + 50,
             $"The 10,000-event fixture used {writerCommits:N0} writer commits.");
         Assert.IsTrue(stopwatch.Elapsed < TimeSpan.FromSeconds(30),
@@ -486,12 +486,13 @@ public sealed class ChatRuntimeTests
     }
 
     [TestMethod]
-    public async Task BusyDatabaseDelaysPrivateAckAndCountsUnrecoverableRoomPressure()
+    public async Task BusyDatabaseDelaysPrivateAckWithoutLosingRoomMessages()
     {
         await using var database = await ChatDatabase.CreateAsync();
         var fake = SoulseekClientProxy.Create();
         var settings = Settings();
         await using var session = new DaemonSoulseekRuntime(settings, _ => fake.Client);
+        const int roomMessageCount = 17;
         const int ingressCapacity = 16;
         await using var chat = new ChatRuntime(
             settings,
@@ -515,27 +516,27 @@ public sealed class ChatRuntimeTests
             () => database.Host.HealthSnapshot?.BusyRetryCount > 0,
             TimeSpan.FromSeconds(2));
         Assert.AreEqual(0, fake.AcknowledgeCount, "The protocol message was acknowledged while SQLite was busy.");
-        for (int index = 0; index < ingressCapacity + 1; index++)
+        Task roomProducer = Task.Run(() =>
         {
-            fake.RaiseRoomMessage(new RoomMessageReceivedEventArgs(
-                "pressure-room", "Alice", $"pressure-{index}"));
-        }
-        Assert.IsTrue(chat.DroppedRoomIngress > 0);
-        Assert.AreEqual(DaemonFeatureState.Degraded, chat.GetState().State);
-        Assert.AreEqual("RoomIngressCapacity", chat.GetState().Reason);
-
+            for (int index = 0; index < roomMessageCount; index++)
+            {
+                fake.RaiseRoomMessage(new RoomMessageReceivedEventArgs(
+                    "pressure-room", "Alice", $"pressure-{index}"));
+            }
+        });
+        await WaitUntilAsync(() => chat.PeakIngressDepth == ingressCapacity);
+        Assert.IsFalse(roomProducer.IsCompleted, "A full durable-ingress queue did not backpressure the producer.");
         command.CommandText = "ROLLBACK;";
         await command.ExecuteNonQueryAsync();
+        await roomProducer.WaitAsync(TimeSpan.FromSeconds(10));
         await WaitUntilAsync(() => fake.AcknowledgeCount == 1, TimeSpan.FromSeconds(10));
         await WaitUntilAsync(async () =>
-            (await database.Host.Chat!.GetSummaryAsync("local")).UnreadRoomMessages > 0);
+            (await database.Host.Chat!.GetSummaryAsync("local")).UnreadRoomMessages == roomMessageCount);
 
         ChatStoreSummary summary = await database.Host.Chat!.GetSummaryAsync("local");
         Assert.AreEqual(1, summary.UnreadPrivateMessages);
         Assert.AreEqual(1, summary.UnreadNotifications);
-        Assert.IsTrue(summary.UnreadRoomMessages > 0);
-        Assert.AreEqual(DaemonFeatureState.Degraded, chat.GetState().State);
-        Assert.AreEqual("RoomIngressCapacity", chat.GetState().Reason);
+        Assert.AreEqual(roomMessageCount, summary.UnreadRoomMessages);
     }
 
     private static EngineSettings Settings() => new()

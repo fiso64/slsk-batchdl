@@ -1,7 +1,7 @@
 # Resource-limit and failure-boundary audit
 
-Status: audit complete, 2026-08-12. This document records findings; it does not
-change the audited designs or authorize their implementation.
+Status: remediation complete, 2026-08-12. This document records the original
+findings and the code, test, and design changes that resolved them.
 
 ## Scope
 
@@ -29,8 +29,8 @@ Acceptable examples include:
 - paging an HTTP response while preserving access to the complete underlying data;
 - retaining only a bounded live projection when clients can detect gaps and
   rehydrate authoritative state;
-- rejecting malformed framing, traversal, decoder bombs, or values beyond a real
-  protocol representation;
+- rejecting malformed framing, traversal, optional-image decode bombs, or values
+  beyond a real protocol representation;
 - limiting diagnostic samples, previews, cached copies, or concurrent execution
   without rejecting the underlying work;
 - failing on actual exhaustion such as disk-full or an I/O error and cleaning up
@@ -53,9 +53,12 @@ and should not be presented as a fundamental validity rule.
 
 ## Findings
 
+The descriptions under each heading preserve what the audit found at the time.
+The status and `Resolution` paragraphs state the current result.
+
 ### 1. Directory-transfer admission rejects valid downloads
 
-Severity: critical. Status: active design and current implementation.
+Severity: critical. Status: resolved.
 
 The remote-transfer plan specifies limits of 20,000 files, 2 TiB of known file
 bytes, and 128 MiB of estimated retained memory. Current code implements those
@@ -77,7 +80,7 @@ Evidence:
   implementation summary and release gate 5
 - [`DirectoryTransferPlan.cs`](../../Sockseek.Core/Remote/DirectoryTransferPlan.cs),
   `DirectoryTransferAdmissionPolicy`
-- [`DirectoryTransferMemoryEstimator.cs`](../../Sockseek.Core/Remote/DirectoryTransferMemoryEstimator.cs)
+- the former `Sockseek.Core/Remote/DirectoryTransferMemoryEstimator.cs`
 - [`DirectoryDownloadJob.cs`](../../Sockseek.Core/Jobs/DirectoryDownloadJob.cs),
   `BeginDirectoryAttempt`
 - [`RemoteDirectoryDownloadExecutor.cs`](../../Sockseek.Core/Transfers/Downloads/DownloadExecutors/RemoteDirectoryDownloadExecutor.cs),
@@ -93,9 +96,15 @@ Required direction:
 - Preserve per-file progress and failure while allowing the rest of the directory
   to continue.
 
+Resolution: `DirectoryTransferMemoryEstimator`,
+`DirectoryTransferAdmissionPolicy`, their rejection exception/benchmark, and all
+construction/execution checks were removed. Large known-byte plans now have an
+acceptance regression test; directory children continue through ordinary bounded
+transfer concurrency.
+
 ### 2. User-browse ingestion proposes total-size rejection despite streaming
 
-Severity: critical. Status: active design; user browsing is not yet implemented.
+Severity: critical. Status: resolved in the pre-implementation design.
 
 The browse design correctly proposes streaming the peer response into a staging
 artifact, but then requires limits on total compressed and decompressed bytes,
@@ -126,9 +135,14 @@ Required direction:
 - Treat disk-full as an operational failure, not as proof that the peer's browse
   response was invalid.
 
+Resolution: the browse design now streams aggregate data to a disk-backed artifact
+without total compressed/decompressed byte, row, or staging-growth validity
+ceilings. Only actual framing/representation validation remains; large valid and
+high-compression fixtures must succeed.
+
 ### 3. User-browse download selection repeats directory admission
 
-Severity: critical. Status: active design; user browsing is not yet implemented.
+Severity: critical. Status: resolved in the pre-implementation design.
 
 The design expands selected folders, checks file/byte/job-graph bounds, and returns
 `413 selection-limit-exceeded` with advice to choose smaller subtrees. It separately
@@ -155,9 +169,13 @@ Required direction:
 - Deduplicate overlapping selections without materializing the complete runtime job
   graph merely to validate it.
 
+Resolution: expanded totals are now informational. The design retains compact
+selection roots, resolves indexed artifact rows progressively, and no longer
+defines `selection-limit-exceeded` or estimated job-memory admission.
+
 ### 4. Large shared directories silently produce an empty response
 
-Severity: high. Status: archived design and current implementation.
+Severity: high. Status: resolved.
 
 The sharing design says directory responses are bounded. Current code requests at
 most 10,000 catalog files and returns an empty directory response when that count is
@@ -180,9 +198,13 @@ Required direction:
   library boundary permits it.
 - Return empty only for genuine absence/denial, not internal capacity.
 
+Resolution: catalog directory lookup and the sharing adapter no longer cap file
+count or estimated encoded bytes. Persistence and adapter tests prove every file
+is returned beyond the former lookup boundary.
+
 ### 5. Upload queue capacity can reject a legitimate folder transfer
 
-Severity: high. Status: archived design and current implementation.
+Severity: high. Status: resolved.
 
 The scheduler rejects admission after 1,000 outstanding files for one normalized
 username or 100,000 queued files globally. A peer legitimately requesting a large
@@ -201,9 +223,13 @@ Evidence:
 - [`UploadScheduler.cs`](../../Sockseek.Core/Transfers/Uploads/UploadScheduler.cs),
   `MaximumQueuedUploads` and `MaximumQueuedUploadsPerUser`
 
+Resolution: both hidden ceilings and the scheduler capacity-rejection result were
+removed. The compact per-user FIFO/round-robin representation remains, with tests
+proving admission beyond the former per-user and global thresholds.
+
 ### 6. Chat's arbitrary message limit acknowledges and discards valid data
 
-Severity: high. Status: archived design and current implementation.
+Severity: high. Status: resolved.
 
 The chat design explicitly describes its 8 KiB UTF-8 message ceiling as an
 abuse/resource bound rather than Soulseek's theoretical maximum. Over-bound inbound
@@ -226,9 +252,13 @@ Required direction:
   truncate that projection and visibly mark it; do not acknowledge-and-discard the
   authoritative message.
 
+Resolution: the 8 KiB validator was removed. Message validation now rejects only
+blank, NUL-containing, or malformed UTF-16 text, and a large-message regression
+test proves the body is accepted.
+
 ### 7. Chat ingress capacity drops unreplayable room messages
 
-Severity: high. Status: archived design and current implementation.
+Severity: high. Status: resolved.
 
 Chat uses a 1,024-item callback-to-worker channel. When it is full, private messages
 remain replayable because they are not acknowledged, but room messages are dropped
@@ -244,13 +274,17 @@ Evidence:
 
 - [`archive/chats-design.md`](archive/chats-design.md), chat ingress pipeline and
   room-message handling
-- [`ChatContracts.cs`](../../Sockseek.Core/Chat/ChatContracts.cs), `IngressCapacity`
 - [`ChatRuntime.cs`](../../Sockseek.Server/ChatRuntime.cs), `TryWriteIngress` and
   room-message callback handling
 
+Resolution: ingress remains bounded, but a full channel now backpressures the
+protocol callback until the durable worker frees space. A SQLite-lock regression
+test fills the queue, proves the producer blocks, releases persistence, and proves
+all unreplayable room messages were stored.
+
 ### 8. Several failure boundaries reject more work than the bad entry requires
 
-Severity: medium. Status: active/archived designs and current implementation.
+Severity: medium. Status: resolved.
 
 These cases are not all resource estimators, but they express the same fail-closed
 instinct at an unnecessarily broad scope:
@@ -279,10 +313,15 @@ The exact remediation depends on where canonicalization belongs. Security-invali
 paths must still be isolated and never placed. The important requirement is that an
 unrelated valid entry/root not fail merely because it arrived in the same aggregate.
 
+Resolution: directory plans deterministically deduplicate exact targets; snapshot
+and album planners skip independently invalid logical entries while retaining valid
+siblings. Share scanning records/skips unavailable roots and catalog-entry
+collisions, allowing unrelated roots and files to publish. Focused tests cover all
+four sibling-survival cases.
+
 ### 9. Identity byte ceilings lack cited Soulseek constraints
 
-Severity: medium. Status: active design and current implementation; requires
-protocol verification before changing.
+Severity: medium. Status: resolved.
 
 Exact peer usernames and remote paths preserve wire spelling, which is correct, but
 the shared validators impose 1,024-byte usernames and 16 KiB remote paths. The
@@ -301,9 +340,14 @@ Evidence:
 - [`PeerFileTarget.cs`](../../Sockseek.Core/Remote/PeerFileTarget.cs),
   `PeerIdentityLimits`
 
+Resolution: the uncited 1,024-byte username and 16 KiB remote-path ceilings were
+removed from exact target, chat, upload, sharing-adapter, and remote-key validation.
+Structural, control-character, malformed-Unicode, and containment checks remain.
+Tests use identities beyond the former ceilings to prevent their reintroduction.
+
 ### 10. Browse concurrency exposes internal capacity as request refusal
 
-Severity: medium. Status: active design; user browsing is not yet implemented.
+Severity: medium. Status: resolved in the pre-implementation design.
 
 The user-browse design allows excess global browse work to receive
 `429 browse-capacity`. A retryable shared-daemon capacity response is less harmful
@@ -316,6 +360,10 @@ Evidence:
 
 - [`user-browsing-design.md`](user-browsing-design.md), “Concurrency and reuse” and
   the `browse-capacity` error contract
+
+Resolution: accepted browse resources now wait in a compact FIFO coordination
+queue for the fixed network-concurrency slots. Queue depth is not a validity rule,
+and the `429 browse-capacity` contract was removed.
 
 ## Reviewed limits that are not findings
 
@@ -347,18 +395,14 @@ The audit deliberately does not classify every bounded value as defective:
   fail-closed search readiness, and unmeasured extra gates. Its reasoning should be
   reused for the findings above.
 
-## Recommended order
+## Completed remediation order
 
-1. Remove `DirectoryTransferMemoryEstimator` and
-   `DirectoryTransferAdmissionPolicy`, then make directory execution progressively
-   scheduled and best effort.
-2. Rewrite browse-ingress and browse-selection admission in
-   `user-browsing-design.md` before implementation begins.
-3. Remove the 10,000-file/8 MiB directory-share response refusal and re-evaluate
-   upload scheduler capacity as explicit abuse/operator policy.
-4. Stop chat's 8 KiB acknowledge-and-discard behavior and provide a non-lossy path
-   for unreplayable room ingress.
-5. Narrow whole-plan and whole-scan failures to the smallest independently invalid
-   entry, root, or request.
-6. Verify identity bounds against the pinned Soulseek protocol/library and retain
-   only evidence-backed constraints.
+1. Removed directory memory estimation/admission and retained ordinary progressive
+   transfer scheduling.
+2. Rewrote browse ingress and selection before implementation begins.
+3. Removed directory-share and upload-queue capacity refusals.
+4. Removed chat's acknowledge-and-discard size bound and made bounded room ingress
+   non-lossy through backpressure.
+5. Narrowed whole-plan and whole-scan failures to independently invalid entries or
+   roots.
+6. Removed identity constraints that had no pinned protocol/library evidence.

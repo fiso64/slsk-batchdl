@@ -43,7 +43,6 @@ public enum UploadAdmissionRejection
     Denied,
     NotShared,
     Unavailable,
-    Capacity,
 }
 
 public sealed record UploadAttemptSnapshot(
@@ -139,12 +138,10 @@ public sealed class SoulseekUploadProtocolInvoker(
 
 /// <summary>
 /// Owns accepted upload lifecycle, stream validation, and the sole transition
-/// from Sockseek's bounded queue into Soulseek.NET.
+/// from Sockseek's queue into Soulseek.NET.
 /// </summary>
 public sealed class UploadCoordinator : IAsyncDisposable
 {
-    public const int MaximumUsernameUtf8Bytes = 1_024;
-    public const int MaximumRemotePathUtf8Bytes = RemotePathKey.MaximumEncodedBytes;
     public static readonly TimeSpan AdmissionDeadline = TimeSpan.FromSeconds(5);
 
     private readonly object sync = new();
@@ -200,8 +197,8 @@ public sealed class UploadCoordinator : IAsyncDisposable
         deadline.CancelAfter(AdmissionDeadline);
         try
         {
-            if (!IsBounded(username, MaximumUsernameUtf8Bytes)
-                || !IsBounded(remotePath, MaximumRemotePathUtf8Bytes))
+            if (string.IsNullOrWhiteSpace(username)
+                || string.IsNullOrWhiteSpace(remotePath))
             {
                 return Rejected(UploadAdmissionRejection.InvalidRequest);
             }
@@ -259,14 +256,6 @@ public sealed class UploadCoordinator : IAsyncDisposable
                     admitted.Entry!.TransferId,
                     UploadAdmissionRejection.None);
             }
-            if (admitted.Kind == UploadAdmissionResultKind.Rejected)
-            {
-                return Rejected(admitted.RejectionReason switch
-                {
-                    _ => UploadAdmissionRejection.Capacity,
-                });
-            }
-
             PublishQueueChanged();
             Publish(item);
             Dispatch(admitted.Grants);
@@ -738,10 +727,6 @@ public sealed class UploadCoordinator : IAsyncDisposable
                 item.FinishedAtUtc);
         }
     }
-
-    private static bool IsBounded(string? value, int maximumUtf8Bytes)
-        => !string.IsNullOrWhiteSpace(value)
-           && System.Text.Encoding.UTF8.GetByteCount(value) <= maximumUtf8Bytes;
 
     private static bool IsTerminal(UploadTransferState state)
         => state is UploadTransferState.Completed

@@ -98,12 +98,18 @@ public sealed class PeerFileTargetTests
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("peer\n", "file"));
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("peer", "file\0"));
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("\ud800", "file"));
-        Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity(
-            new string('x', PeerIdentityLimits.MaximumUsernameUtf8Bytes + 1),
-            "file"));
-        Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity(
-            "peer",
-            new string('x', PeerIdentityLimits.MaximumRemotePathUtf8Bytes + 1)));
+    }
+
+    [TestMethod]
+    public void Identity_DoesNotImposeSockseekOnlyByteCeilings()
+    {
+        string username = new('u', 2_048);
+        string remotePath = new('p', 32 * 1_024);
+
+        var identity = new PeerFileIdentity(username, remotePath);
+
+        Assert.AreEqual(username, identity.Username);
+        Assert.AreEqual(remotePath, identity.Filename);
     }
 
     [TestMethod]

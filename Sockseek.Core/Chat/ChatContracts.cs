@@ -6,14 +6,10 @@ namespace Sockseek.Core.Chat;
 
 public static class ChatLimits
 {
-    public const int MaximumUsernameUtf8Bytes = 1_024;
-    public const int MaximumRoomNameUtf8Bytes = 1_024;
-    public const int MaximumMessageUtf8Bytes = 8 * 1_024;
     public const int MaximumFailureReasonLength = 2_048;
     public const int MaximumPageSize = 200;
     public const int DefaultPageSize = 100;
     public const int LiveMessageTailSize = 100;
-    public const int IngressCapacity = 1_024;
     public const int MaximumDesiredRooms = 100;
     public const int MaximumRoomMembers = 20_000;
     public const int MaximumRoomOperators = 1_000;
@@ -162,11 +158,7 @@ public static class ChatIdentity
         => ValidateUsername(username);
 
     public static string ValidateUsername(string username)
-    {
-        string exact = PeerUsername.Validate(username);
-        EnsureUtf8Bound(exact, ChatLimits.MaximumUsernameUtf8Bytes, "username");
-        return exact;
-    }
+        => PeerUsername.Validate(username);
 
     public static string NormalizeRoom(string roomName)
     {
@@ -177,7 +169,6 @@ public static class ChatIdentity
         if (normalized.Any(char.IsControl))
             throw new ArgumentException("Input error: Room name cannot contain control characters.", nameof(roomName));
         EnsureWellFormedUtf16(normalized, nameof(roomName));
-        EnsureUtf8Bound(normalized, ChatLimits.MaximumRoomNameUtf8Bytes, "room name");
         return normalized;
     }
 
@@ -189,7 +180,6 @@ public static class ChatIdentity
         if (body.IndexOf('\0') >= 0)
             throw new ArgumentException("Input error: Message text cannot contain NUL.", nameof(body));
         EnsureWellFormedUtf16(body, nameof(body));
-        EnsureUtf8Bound(body, ChatLimits.MaximumMessageUtf8Bytes, "message text");
         return body;
     }
 
@@ -198,12 +188,6 @@ public static class ChatIdentity
         if (value is < 1 or > ChatLimits.MaximumPageSize)
             throw new ArgumentOutOfRangeException(nameof(value), $"Page size must be between 1 and {ChatLimits.MaximumPageSize}.");
         return value;
-    }
-
-    private static void EnsureUtf8Bound(string value, int maximum, string field)
-    {
-        if (Encoding.UTF8.GetByteCount(value) > maximum)
-            throw new ArgumentException($"Input error: {field} exceeds the {maximum}-byte UTF-8 limit.");
     }
 
     private static void EnsureWellFormedUtf16(string value, string parameterName)

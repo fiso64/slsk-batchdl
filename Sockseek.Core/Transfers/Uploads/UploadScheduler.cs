@@ -10,11 +10,6 @@ public enum UploadAdmissionResultKind
     Rejected,
 }
 
-public enum UploadAdmissionRejectionReason
-{
-    QueueCapacity,
-}
-
 public enum UploadSchedulerEntryState
 {
     Queued,
@@ -43,7 +38,6 @@ public sealed record UploadSchedulerGrant(UploadSchedulerEntrySnapshot Entry);
 public sealed record UploadAdmissionResult(
     UploadAdmissionResultKind Kind,
     UploadSchedulerEntrySnapshot? Entry,
-    UploadAdmissionRejectionReason? RejectionReason,
     IReadOnlyList<UploadSchedulerGrant> Grants);
 
 public sealed record UploadSchedulerMutationResult(
@@ -70,15 +64,12 @@ public sealed record UploadQueuePage(
     bool QueueChanged);
 
 /// <summary>
-/// Authoritative bounded upload scheduler. It creates no Tasks for waiting
+/// Authoritative compact upload scheduler. It creates no Tasks for waiting
 /// entries and grants work in strict round-robin order between users while
 /// retaining FIFO order within each user.
 /// </summary>
 public sealed class UploadScheduler
 {
-    public const int MaximumQueuedUploads = 100_000;
-    public const int MaximumQueuedUploadsPerUser = 1_000;
-
     private readonly object sync = new();
     private readonly int slots;
     private readonly Dictionary<Guid, Entry> entries = [];
@@ -120,7 +111,6 @@ public sealed class UploadScheduler
                 return new UploadAdmissionResult(
                     UploadAdmissionResultKind.Duplicate,
                     Snapshot(entries[duplicateId]),
-                    null,
                     []);
             }
 
@@ -128,18 +118,6 @@ public sealed class UploadScheduler
                 throw new InvalidOperationException($"Transfer {request.TransferId} already exists.");
 
             UserState user = GetOrCreateUser(username);
-            if (user.OutstandingFiles >= MaximumQueuedUploadsPerUser)
-            {
-                CleanupEmptyUser(user);
-                return Rejected(UploadAdmissionRejectionReason.QueueCapacity);
-            }
-
-            if (queuedFiles >= MaximumQueuedUploads)
-            {
-                CleanupEmptyUser(user);
-                return Rejected(UploadAdmissionRejectionReason.QueueCapacity);
-            }
-
             var entry = new Entry(
                 request.TransferId,
                 username,
@@ -163,7 +141,6 @@ public sealed class UploadScheduler
             return new UploadAdmissionResult(
                 UploadAdmissionResultKind.Accepted,
                 Snapshot(entry),
-                null,
                 grants);
         }
     }
@@ -245,7 +222,7 @@ public sealed class UploadScheduler
                 queuedBytes,
                 active.Count,
                 slots,
-                queuedFiles < MaximumQueuedUploads);
+                true);
         }
     }
 
@@ -454,9 +431,6 @@ public sealed class UploadScheduler
             users.Remove(user.Username);
         }
     }
-
-    private static UploadAdmissionResult Rejected(UploadAdmissionRejectionReason reason)
-        => new(UploadAdmissionResultKind.Rejected, null, reason, []);
 
     private static UploadSchedulerEntrySnapshot Snapshot(Entry entry)
         => new(

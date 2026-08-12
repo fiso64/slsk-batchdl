@@ -17,8 +17,7 @@ public sealed class SharingCatalogTests
             RemotePathKey.Create("music/artist/cafe\u0301 track.FLAC"));
         var search = await reader.SearchAsync("café track", 10);
         var directory = await reader.GetDirectoryAsync(
-            RemotePathKey.Create(@"MUSIC\ARTIST"),
-            10);
+            RemotePathKey.Create(@"MUSIC\ARTIST"));
         var browse = new List<ShareCatalogBrowseDirectory>();
         await foreach (var item in reader.EnumerateBrowseAsync())
             browse.Add(item);
@@ -69,15 +68,16 @@ public sealed class SharingCatalogTests
     }
 
     [TestMethod]
-    public async Task Catalog_DirectoryLimitFailsInsteadOfTruncating()
+    public async Task Catalog_DirectoryLookupReturnsEveryFile()
     {
         await using var fixture = await CatalogFixture.CreateAsync(addSecondFile: true);
         await using var reader = await SqliteShareCatalogReader.OpenAsync(fixture.DatabasePath);
 
-        await Assert.ThrowsExceptionAsync<ShareCatalogLimitExceededException>(
-            async () => _ = await reader.GetDirectoryAsync(
-                RemotePathKey.Create(@"Music\Artist"),
-                1));
+        var directory = await reader.GetDirectoryAsync(
+            RemotePathKey.Create(@"Music\Artist"));
+
+        Assert.IsNotNull(directory);
+        Assert.AreEqual(2, directory.Files.Count);
     }
 
     [TestMethod]

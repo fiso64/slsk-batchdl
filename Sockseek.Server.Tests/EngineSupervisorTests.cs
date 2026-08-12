@@ -26,7 +26,7 @@ public class EngineSupervisorTests
             var supervisor = CreateSupervisor(musicRoot, outputDir);
             var oversized = new string('x', JobRequestMapper.MaxSearchTextLength + 1);
 
-            await Assert.ThrowsExceptionAsync<ArgumentException>(() =>
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
                 supervisor.SubmitSearchJobAsync(new SubmitSearchJobRequestDto(oversized), CancellationToken.None));
 
             Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
@@ -1392,29 +1392,28 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
-    public async Task ResolvedDirectoryDraft_RejectsAdmissionBeforeWorkflowRegistration()
+    public async Task ResolvedDirectoryDraft_DoesNotRejectLargeKnownByteCount()
     {
         string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-directory-admission-" + Guid.NewGuid());
         Directory.CreateDirectory(root);
         try
         {
-            long oversized = DirectoryTransferAdmissionPolicy.Default.MaximumKnownBytes + 1;
+            const long largeKnownBytes = 3L * 1024 * 1024 * 1024 * 1024;
             var supervisor = CreateSupervisor(root, root);
             var plan = new DirectoryTransferPlanDto(
                 "Root",
                 [new DirectoryTransferEntryDto(
-                    new PeerFileTargetDto("Peer", @"Root\Huge.bin", oversized, ".bin"),
+                    new PeerFileTargetDto("Peer", @"Root\Huge.bin", largeKnownBytes, ".bin"),
                     [])],
-                oversized);
+                largeKnownBytes);
 
-            await Assert.ThrowsExactlyAsync<DirectoryTransferAdmissionException>(() =>
-                supervisor.SubmitJobListAsync(
-                    new SubmitJobListRequestDto(
-                        "too large",
-                        [new RemoteDirectoryJobDraftDto(Plan: plan)]),
-                    CancellationToken.None));
+            var submitted = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "large directory",
+                    [new RemoteDirectoryJobDraftDto(Plan: plan)]),
+                CancellationToken.None);
 
-            Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
+            Assert.AreNotEqual(Guid.Empty, submitted.JobId);
         }
         finally
         {

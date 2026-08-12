@@ -19,16 +19,26 @@ public static class DirectoryTransferPlanner
             string filename = Normalize(target.Filename);
             string prefix = root + "\\";
             if (!filename.StartsWith(prefix, StringComparison.Ordinal))
-                throw new ArgumentException("A retrieved file lies outside the selected directory.", nameof(snapshot));
+                continue;
 
             string relative = filename[prefix.Length..];
-            string[] components = relative.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            string[] components = relative.Split('\\', StringSplitOptions.None);
             if (components.Length == 0)
-                throw new ArgumentException("A retrieved file has no leaf name.", nameof(snapshot));
+                continue;
 
-            entries.Add(new DirectoryTransferEntry(target, components[..^1]));
+            try
+            {
+                entries.Add(new DirectoryTransferEntry(target, components[..^1]));
+            }
+            catch (ArgumentException)
+            {
+                // A malformed peer entry is local to that file. Other exact targets
+                // in the retrieved directory remain independently downloadable.
+            }
         }
 
+        if (entries.Count == 0)
+            throw new ArgumentException("The retrieved directory contains no valid downloadable files.", nameof(snapshot));
         return new DirectoryTransferPlan(displayRoot, entries);
     }
 

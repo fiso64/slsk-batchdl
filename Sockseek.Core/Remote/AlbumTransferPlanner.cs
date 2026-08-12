@@ -29,14 +29,24 @@ public static class AlbumTransferPlanner
             string filename = file.Candidate.Target.Filename.Replace('/', '\\');
             string prefix = root + "\\";
             if (!filename.StartsWith(prefix, StringComparison.Ordinal))
-                throw new ArgumentException("An album file lies outside the selected directory.", nameof(folder));
+                continue;
             string relative = filename[prefix.Length..];
-            string[] components = relative.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            string[] components = relative.Split('\\', StringSplitOptions.None);
             if (components.Length == 0)
-                throw new ArgumentException("An album file has no leaf name.", nameof(folder));
-            entries.Add(new DirectoryTransferEntry(file.Candidate.Target, components[..^1]));
+                continue;
+            try
+            {
+                entries.Add(new DirectoryTransferEntry(file.Candidate.Target, components[..^1]));
+            }
+            catch (ArgumentException)
+            {
+                // Preserve the rest of the selected album when one peer-provided
+                // logical path cannot be represented safely.
+            }
         }
 
+        if (entries.Count == 0)
+            throw new ArgumentException("The selected album contains no valid downloadable files.", nameof(folder));
         return new DirectoryTransferPlan(displayRoot, entries);
     }
 

@@ -246,8 +246,8 @@ would only forward calls without establishing a separate lifetime or invariant.
 - durable-before-ack prevents acknowledged private messages from disappearing
   in a crash;
 - a replay uniqueness key prevents duplicates and duplicate notifications;
-- a bounded callback-to-worker channel prevents database latency from blocking
-  the Soulseek server connection;
+- a bounded callback-to-worker channel applies backpressure instead of losing
+  unreplayable room messages when persistence cannot keep up;
 - an awaitable critical persistence lane avoids racing the current single SQLite
   writer;
 - local idempotency keys prevent an HTTP retry from intentionally sending the
@@ -297,7 +297,7 @@ this is not surprising.
 There is no chat-enabled switch, notification-delivery configuration, message
 tail knob, ingress capacity knob, page-size knob, or room-list cache knob.
 Chat is available when daemon persistence is enabled and started. Even while
-chat is disabled, the bounded protocol adapter remains attached so it can
+chat is disabled, the protocol adapter remains attached so it can
 acknowledge intentional blocked/invalid discards while leaving valid messages
 unacknowledged for later replay.
 
@@ -345,7 +345,6 @@ reordering or starving pagination.
 
 The implementation defines and tests fixed internal bounds for:
 
-- encoded username, room-name, and message sizes;
 - configured and simultaneously desired room counts;
 - available-room directory, roster, operator, and provisional-roster counts;
 - inbound event queue depth;
@@ -355,14 +354,11 @@ The implementation defines and tests fixed internal bounds for:
 - notification preview length; and
 - failure text retained in public state.
 
-The first implementation SHOULD reuse the existing 1,024-byte peer-username
-bound and use an 8 KiB UTF-8 message bound. These are abuse/resource bounds, not
-claims about the protocol's theoretical maximum. Values are constants and can
-be adjusted from interoperability evidence without creating public settings.
-
-Over-bound inbound messages are intentionally discarded and private messages
-are acknowledged so a poison message cannot replay forever. Logs and metrics do
-not contain the discarded body.
+Usernames, room names, and message bodies reject malformed Unicode and their
+documented semantic invalid forms, but do not acquire Sockseek-only byte ceilings.
+Any smaller interoperable limit must come from verified Soulseek framing or the
+pinned library and be enforced at that boundary, not by acknowledging and
+discarding an otherwise valid materialized message.
 
 ## 6. Private-message lifecycle
 
@@ -370,17 +366,19 @@ not contain the discarded body.
 
 ```text
 Soulseek.NET event
-  → copy and validate bounded fields
+  → copy and validate fields
   → exact username block check
-  → bounded ingress channel
+  → bounded ingress channel (wait for space rather than discard)
   → idempotent SQLite transaction
        message + conversation + optional notification
   → publish durable live changes if newly inserted
   → acknowledge protocol message ID
 ```
 
-The synchronous event handler only validates/copies fields and calls
-`TryWrite`. It catches every exception.
+The synchronous event handler validates/copies fields and writes to the bounded
+channel. It normally completes immediately; under sustained persistence pressure
+it blocks at this earliest safe boundary until the durable worker frees space.
+It catches every exception.
 
 For a valid, allowed message:
 
@@ -508,8 +506,8 @@ session action and must not be mislabeled as dropping private-room membership.
 Room-message events pass through the same bounded ingress coordinator and exact
 username block check as private messages. Accepted messages are persisted before
 live publication. Because the protocol supplies no message ID or timestamp,
-Sockseek assigns both locally. Room messages are not replayable; an event dropped
-under sustained persistence pressure is counted and cannot be recovered.
+Sockseek assigns both locally. Room messages are not replayable, so a full ingress
+channel backpressures the callback instead of dropping the event.
 
 Outgoing room rows are created before the send call. A subsequent room event
 whose username is the daemon's own username is treated as the server echo of
@@ -526,9 +524,10 @@ resume on different tasks.
 
 The roster is in-memory ephemeral state, not historical data. Updates replace
 immutable snapshots under the room owner; mutable lists inside a concurrent
-dictionary are prohibited. If a membership event cannot be admitted, the room
-is marked `RosterComplete = false` instead of presenting a knowingly stale list
-as authoritative. A later rejoin rebuilds it.
+dictionary are prohibited. Roster events use the same backpressure. If ingress is
+closed during shutdown or an invalid event cannot be represented, the room is
+marked `RosterComplete = false` instead of presenting knowingly stale state as
+authoritative. A later rejoin rebuilds it.
 
 Rosters and message histories are paged. A room live snapshot contains member
 count/revision and a bounded message tail, not every member of every room.
@@ -955,8 +954,8 @@ short feature overview and generated option/command reference.
 - Invalid/blocked private messages are acknowledged after deliberate discard.
 - A duplicate private-message replay triggers another ACK attempt but no second
   row, unread increment, notification, or live message.
-- Room messages lost to a full ingress channel increment a metric and degrade
-  chat health; the protocol cannot replay them.
+- A full ingress channel backpressures callbacks; it does not discard room
+  messages that the protocol cannot replay.
 - One room join/rejoin failure affects only that room.
 - Send persistence failure prevents the network send. Network send failure keeps
   a durable failed row. A crash with uncertain send becomes `Unknown` and is not
@@ -988,7 +987,7 @@ short feature overview and generated option/command reference.
 Initial metrics are compact and low-cardinality:
 
 - chat ingress queue depth;
-- accepted, duplicate, blocked, invalid, and dropped inbound message totals by
+- accepted, duplicate, blocked, and invalid inbound message totals by
   `direct|room`;
 - outbound messages by `direct|room` and `sent|failed|unknown`;
 - joined/desired room gauges;
@@ -1036,7 +1035,8 @@ Evidence updates section 3; it does not become a permanent capability matrix.
 
 ### Phase 2: private messages and notifications
 
-- Implement bounded ingress, durable-before-ACK, replay deduplication, blocked
+- Implement non-lossy bounded ingress with backpressure, durable-before-ACK,
+  replay deduplication, blocked
   discard ACK, outbound idempotency, read watermarks, archive/delete, and
   notification transaction.
 - Add conversation/message/notification HTTP APIs and Core/API contracts.
@@ -1072,9 +1072,9 @@ Evidence updates section 3; it does not become a permanent capability matrix.
 
 Core tests cover:
 
-- username/room/message validation, Unicode, bounds, mention boundaries, and
+- username/room/message validation, Unicode, mention boundaries, and
   exact username blocking;
-- callback containment and bounded ingress behavior;
+- callback containment and bounded non-lossy ingress behavior;
 - new, duplicate, blocked, invalid, and persistence-failed private messages;
 - commit-before-ACK and no duplicate notification/unread changes on replay;
 - outgoing idempotency, conflicting reuse, send success/failure, and no retry;
@@ -1109,11 +1109,11 @@ Use a reproducible homeserver-class fixture to record:
 
 1. A burst of at least 10,000 mixed direct/room events through validation,
    ingress, persistence, notification projection, and scoped live publication.
-   Record peak managed memory, queue depth, database growth, drops, and drain
+   Record peak managed memory, queue depth, database growth, producer backpressure, and drain
    time; do not invent universal latency ratios before measuring.
 2. Persistence busy/outage/recovery while direct and room messages arrive.
    Verify direct messages remain unacknowledged until durable, duplicate replay
-   is harmless, and any unrecoverable room loss is counted.
+   is harmless, and every accepted room message survives backpressure.
 3. Retention/deletion against a representative large history with concurrent
    reads and new messages.
 4. A stalled live transport scope alongside another active room; busy-room
@@ -1162,7 +1162,7 @@ credentials or message bodies in the repository.
 | `I-04` | List, join, exchange messages in, leave, reconnect, and automatically rejoin a public room. Joined state and roster changes agree with the independent client. |
 | `I-05` | From the independent client, create a private room and invite the Sockseek account. Sockseek lists and joins it as private, reports owner/operator metadata, exchanges messages, and adds a third test account when authorized. |
 | `I-06` | Send from Sockseek in a joined room and prove the local message appears once despite server echo. Exercise non-mention substrings and whole-token mentions; only the latter creates a notification, and the target read action clears it. |
-| `I-07` | Exercise Unicode and multiline bodies, reject an empty body locally, and send valid bodies near Sockseek's 8 KiB UTF-8 limit in both directions. Record any smaller server/client limit as an interoperability constraint rather than weakening local bounds silently. |
+| `I-07` | Exercise Unicode and multiline bodies, reject an empty body locally, and send large valid bodies in both directions. Record a verified smaller server/client limit as an interoperability constraint rather than inventing a Sockseek-only bound. |
 
 Run the Sockseek side through the documented daemon and remote CLI commands so
 the same HTTP/API path used by future GUI clients is covered. A qualification
@@ -1225,7 +1225,7 @@ boxes.
 
 - [x] **ARCH-01** A neutral daemon runtime, not `SharingRuntime`, owns the one
   Soulseek manager used by downloads, sharing, chat, and later user browsing.
-- [x] **ARCH-02** Chat has one bounded ingress owner and one state coordinator;
+- [x] **ARCH-02** Chat has one bounded, non-lossy ingress owner and one state coordinator;
   notification logic does not subscribe independently to protocol events.
 - [x] **ARCH-03** Chat uses the existing SQLite database/single writer and is
   explicitly disabled when daemon persistence is disabled.
@@ -1260,7 +1260,7 @@ boxes.
   and remains paged/outside daemon-wide replicated state; joined private-room
   detail preserves owner and operator metadata.
 - [x] **ROOM-04** Accepted room messages persist once, self sends appear once,
-  and unrecoverable ingress drops are measured.
+  and a full ingress channel backpressures without message loss.
 - [x] **ROOM-05** Private-room invitations are accepted, membership/moderation
   events refresh classifications, and a joined private room supports adding a
   member with server authorization.
@@ -1413,8 +1413,8 @@ parsing; a source-level architecture test rejects direct runner dispatch or a
 parallel configuration-loading path.
 
 The repeatable 10,000-event mixed direct/room fixture completed in 9.230 s with
-653 bounded writer commits, a peak ingress depth of 250/1,024, zero ingress
-drops, 9,710,496 bytes of peak managed-heap growth, and 12,318,744 bytes of
+653 bounded writer commits, a peak ingress depth of 250, zero ingress loss,
+9,710,496 bytes of peak managed-heap growth, and 12,318,744 bytes of
 SQLite plus WAL growth. All 5,000 direct messages were acknowledged after
 commit, all 10,000 messages and notifications were observed, and all target
 changes drained. The regression limits are 30 seconds, at most 1,300 writer

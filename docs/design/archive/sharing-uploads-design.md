@@ -181,14 +181,11 @@ sealed class PeerAccessSettings
 }
 ```
 
-Scan workers, callback concurrency, callback queue capacity, search result
-limits, and per-user admission bounds are safe internal constants. They are not
-CLI/config compatibility commitments. A tuning option MAY be added later when
-field evidence identifies a real need.
-
-The scheduler has a hard 100,000 queued-item ceiling and an internal 1,000
-outstanding-item ceiling per normalized username. Both reject with the same
-actionable capacity category; byte-based per-user policy is deferred.
+Scan workers, callback concurrency, and search result limits are safe internal
+constants. They are not CLI/config compatibility commitments. The compact upload
+scheduler has no hidden global or per-user queue-depth refusal; fair scheduling
+and one active upload per user control execution without redefining a valid folder
+request as invalid.
 
 ### 4.2 Root syntax
 
@@ -359,10 +356,10 @@ coalesce rather than queue multiple scans.
 - Zero-byte regular files are indexed and served.
 - Audio metadata failure records a sample but does not omit an otherwise
   readable file.
-- A root that cannot be opened is a scan failure; the previous generation stays
-  active.
-- A remote-key collision fails the staging generation rather than publishing
-  an ambiguous namespace.
+- A root that cannot be opened is recorded and skipped; unrelated valid roots are
+  still published.
+- A remote-key collision records and skips the colliding entry and any dependent
+  entries whose parent cannot be represented; unrelated entries still publish.
 
 This hidden-file policy is a simple privacy default, not a filesystem
 qualification scheme. An include-hidden option is deferred until operators ask
@@ -379,8 +376,8 @@ denied behavior.
 
 Small global callback gates bound executing plus waiting search, browse,
 directory, and upload-admission work. There is no keyed per-user callback gate.
-Duplicate detection and per-user capacity are atomic inside the scheduler, the
-actual owner of that state.
+Duplicate detection and per-user fair ordering are atomic inside the scheduler,
+the actual owner of that state.
 
 ### 7.2 Search
 
@@ -421,7 +418,9 @@ fail. It does not promise to cancel a write already stalled inside the library.
 Remove it when a pinned Soulseek.NET release disposes the stream reliably; do
 not grow it into a general network-timeout subsystem.
 
-Directory requests use exact catalog lookup and a bounded file/encoded response.
+Directory requests use exact catalog lookup and return every file in the requested
+catalog directory. They do not substitute an empty response merely because the
+directory contains many files or encodes to many bytes.
 User information reports description, slots, queue size, and current free-slot
 hint without exposing roots or policy contents.
 
@@ -436,11 +435,12 @@ remain ready while browse health is degraded.
 The enqueue callback returns only `Task`; it cannot return a transfer resource.
 Admission therefore behaves as follows:
 
-1. validate bounded username/path and exact peer policy;
+1. validate username/path structure and exact peer policy without Sockseek-only
+   byte ceilings;
 2. resolve the exact current catalog file;
 3. create an admission request with transfer ID, normalized username, path key,
    size, and admission time;
-4. under the scheduler lock, check duplicate and capacity indexes;
+4. under the scheduler lock, check duplicate indexes and enqueue compact state;
 5. create one queued transfer if accepted;
 6. complete a duplicate enqueue callback successfully without creating a
    transfer or changing counters; and
@@ -450,7 +450,7 @@ Admission therefore behaves as follows:
 best-effort position. Duplicate coalescing has a low-cardinality metric.
 
 Public admission categories are intentionally small: invalid request, denied,
-not shared, unavailable, and capacity. Diagnostic distinctions belong in logs.
+not shared, and unavailable. Diagnostic distinctions belong in logs.
 
 ### 8.2 Fair queue
 
@@ -617,9 +617,10 @@ control. A non-loopback unauthenticated daemon is explicitly insecure.
 
 - Invalid settings fail before sharing starts, without breaking ordinary CLI
   parsing or downloads.
-- Missing/inaccessible roots fail only their staging scan.
+- Missing/inaccessible roots are recorded and skipped while valid roots continue.
 - Per-entry I/O or metadata failures skip and record a bounded sample.
-- Regex timeout or remote-key collision fails the staging generation.
+- Regex timeout fails the staging generation; remote-key collisions skip only the
+  affected entries.
 - Disk full/write failure cleans staging and retains the old generation.
 - Lightweight startup corruption falls back once or requests a rebuild.
 - Invalid peer input produces an empty/denied callback response.
@@ -631,9 +632,9 @@ control. A non-loopback unauthenticated daemon is explicitly insecure.
 ### 10.2 Abuse resistance
 
 - No peer value becomes a local path lookup outside exact catalog resolution.
-- Usernames, paths, queries, exclusions, phrases, pages, cursors, response
-  sizes, regex execution, queue items, callback work, and error samples are
-  bounded.
+- Queries, exclusions, phrases, pages, cursors, regex execution, concurrent
+  callback work, and error samples are bounded. Exact usernames/paths and valid
+  directory responses are not rejected by guessed Sockseek byte or row ceilings.
 - SQL uses parameters and binary path keys.
 - Full browse and live/history collections are file-backed or paged.
 - Metrics never label usernames, paths, queries, or transfer IDs.
@@ -670,14 +671,15 @@ The maintained suite covers:
   exact peer identities, and `RemotePathKey` NFC/case/separator collisions;
 - portable .NET safe open, containment, link rejection, current metadata,
   exact-length streams, and zero-byte scan inclusion;
-- bounded scan behavior, hidden/system subtree policy, fatal root failure,
+- bounded scan work, hidden/system subtree policy, bad-root and collision
+  isolation,
   catalog lookup/search, generation publication/fallback, lease drain, and
   owner-only files;
 - empty and updated excluded phrase sets, invalid update retention, bounded
   callback gates, search filtering, and missing-listener behavior;
 - round-robin/FIFO scheduling, one active upload per user, duplicate
-  coalescing, internal capacity, cancellation, idempotent terminalization,
-  best-effort queue paging, and 100,000-entry stress;
+  coalescing, growth beyond the former capacity, cancellation, idempotent
+  terminalization, best-effort queue paging, and 100,000-entry stress;
 - zero/one attempt lifecycle, resume offsets, generation re-resolution,
   cancellation/shutdown, progress, and persistence non-interference;
 - compact state coalescing, reducer/client behavior, API/OpenAPI contracts,
@@ -815,14 +817,14 @@ manual release record.
   catalog leases and bounded results.
 - [x] **SERVE-04** Full browse is a streamed immutable artifact; the temporary
   Soulseek.NET disposal workaround has a narrow resource-release contract.
-- [x] **UP-01** Scheduler duplicate and capacity mutation is atomic without a
+- [x] **UP-01** Scheduler duplicate mutation is atomic without a
   keyed per-user callback gate.
 - [x] **UP-02** Duplicate enqueue completes successfully without a new transfer,
   counter mutation, or impossible callback response object.
 - [x] **UP-03** The scheduler is FIFO per user, round-robin between users, has
   one active upload per normalized user, and grants before calling the library.
-- [x] **UP-04** Queue capacity is hard-bounded globally and internally per user;
-  waiting entries allocate no task.
+- [x] **UP-04** Waiting entries use compact state without per-entry tasks and are
+  not refused by a hidden global or per-user queue ceiling.
 - [x] **UP-05** Queue position is nullable and best effort; live paging is
   mutation-tolerant keyset paging with validated unsigned cursors.
 - [x] **UP-06** Dispatch re-resolves the current catalog and validates accepted

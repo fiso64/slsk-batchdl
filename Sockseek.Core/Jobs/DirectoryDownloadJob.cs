@@ -100,7 +100,6 @@ public abstract class DirectoryDownloadJob : Job
     public DirectoryTransferAttempt BeginDirectoryAttempt(DirectoryTransferPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        DirectoryTransferAdmissionPolicy.Default.Validate(plan);
         if (directoryState is DirectoryExecutionState.Transferring
             && (activeAttempt == null || fileJobs.Any(child => !child.IsTerminal)))
         {

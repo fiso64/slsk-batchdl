@@ -69,9 +69,10 @@ public sealed record DirectoryTransferPlan
         string username = source[0].Target.Username;
         if (source.Any(entry => !StringComparer.Ordinal.Equals(entry.Target.Username, username)))
             throw new ArgumentException("A directory transfer plan cannot mix peers.", nameof(entries));
-        if (source.Select(entry => entry.Target.Identity).Distinct().Count() != source.Length)
-            throw new ArgumentException("A directory transfer plan cannot contain duplicate exact targets.", nameof(entries));
 
+        source = source
+            .DistinctBy(entry => entry.Target.Identity)
+            .ToArray();
         Array.Sort(source, DirectoryTransferEntryComparer.Instance);
         long knownBytes = 0;
         foreach (var entry in source)
@@ -121,34 +122,3 @@ public sealed record DirectoryTransferPlan
         }
     }
 }
-
-/// <summary>Fixed admission bounds applied before any child job is registered.</summary>
-public sealed record DirectoryTransferAdmissionPolicy(
-    int MaximumFileCount,
-    long MaximumKnownBytes,
-    long MaximumEstimatedRetainedBytes)
-{
-    public static DirectoryTransferAdmissionPolicy Default { get; } = new(
-        MaximumFileCount: 20_000,
-        MaximumKnownBytes: 2L * 1024 * 1024 * 1024 * 1024,
-        MaximumEstimatedRetainedBytes: 128L * 1024 * 1024);
-
-    public void Validate(DirectoryTransferPlan plan)
-        => Validate(plan, DirectoryTransferMemoryEstimator.EstimatePlanAndChildren(plan));
-
-    public void Validate(DirectoryTransferPlan plan, long estimatedRetainedBytes)
-    {
-        ArgumentNullException.ThrowIfNull(plan);
-        if (estimatedRetainedBytes < 0)
-            throw new ArgumentOutOfRangeException(nameof(estimatedRetainedBytes));
-        if (plan.Entries.Count > MaximumFileCount)
-            throw new DirectoryTransferAdmissionException("Directory transfer exceeds the file-count limit.");
-        if (plan.TotalKnownBytes > MaximumKnownBytes)
-            throw new DirectoryTransferAdmissionException("Directory transfer exceeds the known-byte limit.");
-        if (estimatedRetainedBytes > MaximumEstimatedRetainedBytes)
-            throw new DirectoryTransferAdmissionException("Directory transfer exceeds the retained-memory limit.");
-    }
-}
-
-public sealed class DirectoryTransferAdmissionException(string message)
-    : InvalidOperationException(message);

@@ -191,7 +191,7 @@ public sealed class ShareCatalogManagerTests
     }
 
     [TestMethod]
-    public async Task MissingRootFailsWithStableRedactedStateCode()
+    public async Task MissingRootPublishesEmptyGenerationWithRedactedEntryError()
     {
         await using var directory = new TemporaryDirectory();
         var settings = new SharingSettings
@@ -211,12 +211,16 @@ public sealed class ShareCatalogManagerTests
         await manager.InitializeAsync("settings");
         var coordinator = new ShareScanCoordinator(manager);
 
-        await Assert.ThrowsExceptionAsync<ShareScanRootException>(
-            () => coordinator.ScanAsync(settings, "settings").AsTask());
+        ShareScanResult result = await coordinator.ScanAsync(settings, "settings");
 
-        Assert.AreEqual(ShareScanPhase.Failed, coordinator.State.Phase);
-        Assert.AreEqual("RootUnavailable", coordinator.State.ErrorCode);
-        Assert.IsFalse(manager.IsReady);
+        Assert.AreEqual(ShareScanPhase.Completed, coordinator.State.Phase);
+        Assert.IsNull(coordinator.State.ErrorCode);
+        Assert.IsTrue(manager.IsReady);
+        Assert.AreEqual(0, result.FilesIndexed);
+        ShareScanError error = result.Errors.Single();
+        Assert.AreEqual("root-unavailable", error.Code);
+        Assert.AreEqual("Public", error.RelativePath);
+        Assert.IsFalse(error.Message.Contains(directory.Path, StringComparison.Ordinal));
     }
 
     private static async ValueTask<ShareCatalogPublication> CreatePublicationAsync(

@@ -18,7 +18,7 @@ public class JobRequestMapperTests
                 @"Artist\Album",
                 [FileDto(@"Artist\Other\01. Artist - Track.mp3")]));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.ThrowsExactly<ArgumentException>(() =>
             JobRequestMapper.ApplySelectedFolderSnapshot(ResolvedFolder(), request));
     }
 
@@ -31,7 +31,7 @@ public class JobRequestMapperTests
                 @"Artist\Album",
                 [FileDto(@"Artist\Album\01. Artist - Track.mp3", username: "other")]));
 
-        Assert.ThrowsException<ArgumentException>(() =>
+        Assert.ThrowsExactly<ArgumentException>(() =>
             JobRequestMapper.ApplySelectedFolderSnapshot(ResolvedFolder(), request));
     }
 
@@ -59,6 +59,30 @@ public class JobRequestMapperTests
 
         Assert.IsInstanceOfType<RemoteDirectorySource.PeerDirectory>(peer.Source);
         Assert.IsInstanceOfType<RemoteDirectorySource.Resolved>(resolved.Source);
+    }
+
+    [TestMethod]
+    public void RemoteDirectoryDraft_SkipsInvalidEntryAndKeepsValidSibling()
+    {
+        var plan = new DirectoryTransferPlanDto(
+            "Root",
+            [
+                new DirectoryTransferEntryDto(
+                    new PeerFileTargetDto("Peer", @"Root\bad.bin", 10, ".bin"),
+                    [".."]),
+                new DirectoryTransferEntryDto(
+                    new PeerFileTargetDto("Peer", @"Root\kept.bin", 20, ".bin"),
+                    []),
+            ],
+            30);
+
+        var job = (RemoteDirectoryJob)JobRequestMapper.CreateJob(
+            new RemoteDirectoryJobDraftDto(Plan: plan));
+        var source = (RemoteDirectorySource.Resolved)job.Source;
+
+        Assert.AreEqual(1, source.Plan.Entries.Count);
+        Assert.AreEqual(@"Root\kept.bin", source.Plan.Entries[0].Target.Filename);
+        Assert.AreEqual(20, source.Plan.TotalKnownBytes);
     }
 
     private static AlbumFolder ResolvedFolder()

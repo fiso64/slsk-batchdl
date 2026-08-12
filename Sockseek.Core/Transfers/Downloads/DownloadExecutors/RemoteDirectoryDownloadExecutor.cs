@@ -43,9 +43,7 @@ internal sealed class RemoteDirectoryDownloadExecutor
         catch (Exception ex)
         {
             return JobOutcome.Failed(
-                ex is DirectoryTransferAdmissionException
-                    ? JobFailureReason.Other
-                    : JobFailureReason.AllDownloadsFailed,
+                JobFailureReason.AllDownloadsFailed,
                 ex.Message,
                 SockseekLog.ExceptionDetail(ex));
         }

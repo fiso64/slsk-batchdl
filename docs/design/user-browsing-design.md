@@ -98,8 +98,8 @@ The implementation is complete only when:
    unbounded output, select several folders or file subsets, and start downloads.
 3. The same typed API is sufficient for a multi-panel GUI with multiple concurrent
    user tabs.
-4. Large valid browses remain usable through streaming and paging; only malformed
-   input or a hard safety-ceiling breach fails without exhausting daemon resources.
+4. Large valid browses remain usable through streaming, disk-backed artifacts, and
+   paging; size alone never makes an otherwise valid browse fail.
 5. All outbound user operations reuse the daemon's single Soulseek session and
    existing peer/operator policy seams.
 6. Browse-selected downloads materialize the shared `PeerFileIdentity`,
@@ -114,8 +114,9 @@ When implementation details are ambiguous, apply these rules in order:
 1. Keep one `DaemonSoulseekRuntime` and one underlying Soulseek connection.
 2. Treat every profile string, picture byte, browse count, directory, filename,
    attribute, and compressed byte as untrusted peer input.
-3. Bound input before retaining it. A limit failure MUST be local to the browse or
-   profile request and MUST leave the daemon usable.
+3. Validate framing and individual values before retaining them, and stream
+   aggregate browse data to disk. A malformed-input or operational failure MUST be
+   local to the browse or profile request and MUST leave the daemon usable.
 4. Keep small changing state live; keep large collections page-oriented.
 5. Use immutable IDs and opaque cursors at public boundaries. Never require a GUI
    to echo remote paths or an entire selected file list.
@@ -219,7 +220,7 @@ An immutable `LocalUserProfile` is loaded once from daemon settings and supplied
 to both the client manager's fallback user-info resolver and
 `SoulseekSharingAdapter`; neither reopens the configured picture per peer request.
 
-Core owns remote-path parsing, bounded browse decoding, artifact writing, shared
+Core owns remote-path parsing, streaming browse decoding, artifact writing, shared
 `PeerFileIdentity`/`PeerFileTarget`/`DirectoryTransferPlan` values, and exact
 transfer runners. It also owns the abstract `FileDownloadJob`/
 `DirectoryDownloadJob` lifecycle bases and concrete remote
@@ -241,8 +242,9 @@ defaults, not public configuration.
 - A fresh completed artifact for that user is reused unless `refresh=true`.
 - A refresh creates a new immutable artifact. Existing readers may finish against
   the previous one until their lease ends; new default lookups use the new one.
-- Global network-browse concurrency is deliberately small and fixed. Excess work
-  waits in a bounded queue or receives `429 capacity`, never an unbounded task.
+- Global network-browse concurrency is deliberately small and fixed. Accepted
+  browse resources wait in a compact FIFO coordination queue until a network slot
+  is available; queue depth is not a validity rule and never rejects a browse.
 - Profile subrequests use bounded single-flight caches with short fixed lifetimes.
   A profile refresh bypasses freshness but still joins an identical in-flight call.
 - Soulseek reconnect/logoff cancels active profile calls and browses with a stable
@@ -261,8 +263,8 @@ exact API/CLI spelling on every server and peer request and use
 correlation. Wrong case is a different/non-existent user; Sockseek never retries
 with guessed casing or aliases two spellings.
 
-The API boundary validates a non-empty, well-formed, byte-bounded Unicode scalar
-sequence and rejects control characters. It MUST NOT trim, case-fold, or apply
+The API boundary validates a non-empty, well-formed Unicode scalar sequence and
+rejects control characters. It MUST NOT trim, case-fold, or apply
 Unicode normalization; spaces and NFC/NFD distinctions are preserved. Display
 escaping is presentation only. Invalid input produces `400 invalid-username`
 before Soulseek is contacted.
@@ -545,7 +547,7 @@ parents whose descendants have both visibilities.
 Soulseek paths normally use backslashes, but peer input is not assumed to be a
 valid Windows path. Parsing therefore has two representations:
 
-- wire identity: the exact bounded string used to request/download from the peer;
+- wire identity: the exact validated string used to request/download from the peer;
 - display identity: normalized separators, NFC text, removed forbidden controls,
   and explicit replacement markers for unsafe display scalars.
 
@@ -560,7 +562,7 @@ Artifact aggregates are computed after ingestion in SQL and checked for overflow
 Filter queries are case-insensitive ordinal/display-normalized substring matches
 over directory name/path. Version one does not promise full-text ranking.
 
-## Bounded browse ingress
+## Streaming browse ingress
 
 This feature MUST NOT call Soulseek.NET `BrowseAsync` and then copy its complete
 `BrowseResponse` into an artifact. The pinned library's implementation first
@@ -581,30 +583,33 @@ is recorded beside the package pin.
 1. Only incoming browse-response framing is redirected to a streaming sink.
 2. The announced length, compressed bytes, elapsed receive time, and idle periods
    are checked while reading; data never accumulates in `List<byte>`.
-3. A streaming zlib decoder feeds a row parser. It enforces decompressed bytes,
-   directory/file rows, string bytes/scalars, attributes per file, and total
-   staging-disk growth before insertion.
+3. A streaming zlib decoder feeds a row parser. Framing lengths, counts, integer
+   arithmetic, string Unicode, and attributes are validated as they are read, but
+   total decompressed bytes, directory/file rows, and staging growth are not
+   treated as validity limits.
 4. Rows are inserted in bounded transactions into the private staging artifact.
    No in-memory directory graph or complete file list is constructed.
 5. The parser requires an exact end-of-message and rejects trailing, truncated,
-   malformed, overflowing, or limit-exceeding input with a stable failure.
+   malformed, or overflowing input with a stable failure. Disk-full and other
+   storage failures are operational failures of this browse, not evidence that the
+   peer's share was too large.
 6. Cancellation closes the peer operation, disposes streams/statements, and
    removes staging data.
 
-Bounds MUST be fixed, named, centrally documented constants with unit tests at
-`limit - 1`, `limit`, and `limit + 1`. They must cover both total resources and
-individual values. The implementation PR chooses their measured values and
-records the memory/disk envelope; this design intentionally does not fossilize
-guesses as user configuration.
+Representation bounds MUST come from the Soulseek frame or the receiving API and
+be tested at their actual boundary. Sockseek MUST NOT add guessed aggregate row,
+decompressed-byte, or staging-byte ceilings. Memory qualification measures that
+streaming memory stays bounded as a valid artifact grows; storage consumption is
+managed by artifact eviction and ordinary filesystem availability.
 
 The patch has a deletion condition: remove it when the pinned Soulseek.NET version
-offers an equivalent streaming, cancellable, bounded browse response API. Until
+offers an equivalent streaming, cancellable browse response API. Until
 then, the adapter is isolated and accompanied by protocol fixture tests so a
 library update cannot silently restore full buffering.
 
 `GetDirectoryContentsAsync` MAY refresh a known selectable directory for a future
 feature, but cannot discover an unknown peer tree and is not a substitute for the
-initial bounded browse.
+initial streaming browse.
 
 ## Live state
 
@@ -659,8 +664,7 @@ normal file browser and makes an organizational/synthetic root useful. Direct-on
 selection is expressed by selecting its individual files, not a subtle recursive
 flag. File selections are exact.
 
-The list, number of IDs, resolved rows, and total files/bytes are bounded. An empty
-request is invalid. All IDs must belong to the URL artifact; clients cannot supply
+An empty request is invalid. All IDs must belong to the URL artifact; clients cannot supply
 usernames, paths, sizes, speeds, or attributes. `RequestId` is an idempotency key:
 repeating the same authenticated request returns the same submitted workflow,
 while reusing it with different content returns `409 idempotency-conflict`.
@@ -682,15 +686,15 @@ execution.
 Before submission the server:
 
 1. leases the completed artifact and rechecks operator/peer policy and connection;
-2. resolves IDs in one bounded database operation;
+2. resolves compact IDs from the artifact with indexed, disk-backed queries;
 3. rejects missing/invalid IDs and direct selection of a locked directory/file;
 4. expands directory subtrees, including synthetic roots, while excluding locked
    branches and recording their count in the resolution summary;
 5. canonicalizes selections to an antichain: a selected ancestor directory covers
    selected descendants and files, and repeated IDs collapse;
 6. groups remaining standalone files by their actual containing directory;
-7. checks the expanded file/byte/job admission bounds before creating any job;
-8. copies exact immutable artifact values into shared `PeerFileIdentity` and
+7. enumerates expanded rows progressively and copies exact immutable artifact
+   values into shared `PeerFileIdentity` and
    `PeerFileTarget` instances, and server-derived relative path components into a
    `DirectoryTransferPlan`.
 
@@ -700,7 +704,7 @@ skipped. This summary is also computed for the CLI review screen before its fina
 confirmation by `POST .../downloads/preview`, which accepts the same selections
 and options without an idempotency key and creates no workflow. Because artifacts
 are immutable, a later identical submission resolves the same rows; policy,
-connection, capacity, and idempotency are still rechecked. The artifact lease can
+connection and idempotency are still rechecked. The artifact lease can
 end after job construction because the job owns its target data; eviction never
 changes an already submitted workflow.
 
@@ -767,10 +771,10 @@ ignored; unrelated music defaults inherited from a profile are not projected int
 the remote executor. CLI help states this instead of presenting music options as
 share behavior.
 
-The expanded job tree is admitted only within a measured fixed engine-memory
-budget. This is distinct from slskd's browser-storage limit: IDs stay compact at
-the API boundary, and rejection occurs atomically before workflow registration.
-The review response gives exact totals so users can choose smaller subtrees.
+Expanded rows are read progressively from the artifact and copied into the normal
+directory-job representation. IDs stay compact at the API boundary, and the
+review response gives exact totals for confirmation; those totals are
+informational, not admission limits.
 
 The existing search-scoped `StartFolderDownload` endpoint is not reused as the
 public contract: it requires a search job and accepts folder-shaped client data.
@@ -835,8 +839,8 @@ optional and must have regression tests if done.
 
 Before `D` submits, the CLI calls the preview endpoint and shows canonical
 roots/files/bytes, redundant entries, locked branches skipped, and the output
-root. If the request exceeds a server bound, it leaves the cart intact and shows
-the actionable limit error. On confirmation and success it prints the root
+root. If submission fails, it leaves the cart intact and shows the operational or
+validation error. On confirmation and success it prints the root
 workflow ID and returns; normal daemon monitoring owns subsequent progress.
 
 ### Scriptable shares
@@ -905,9 +909,6 @@ Errors use the existing `ApiErrorDto` envelope and add these stable codes:
 | 409 | `browse-not-ready` | Wait on the browse resource. |
 | 409 | `idempotency-conflict` | Use a new request ID for different content. |
 | 410 | `browse-expired` | Start/refresh the user's browse. |
-| 413 | `browse-limit-exceeded` | A hard safety ceiling was exceeded, not merely an ordinary large share. |
-| 413 | `selection-limit-exceeded` | Reduce selected folders/files. |
-| 429 | `browse-capacity` | Retry after the supplied delay. |
 | 502 | `peer-response-invalid` | Peer data was malformed; refresh may retry. |
 | 503 | `soulseek-unavailable` | Connect the daemon or retry after reconnect. |
 | 504 | `peer-timeout` | Peer did not respond within the bounded phase. |
@@ -962,14 +963,15 @@ Per-row events and metrics are prohibited.
 ### Core and protocol fixtures
 
 - Valid public/locked, empty, Unicode, mixed-separator, and missing-parent browses.
-- Truncated zlib, invalid lengths/counts, trailing bytes, integer overflow,
-  decompression bomb, excessive nesting/components, strings, attributes, rows,
-  and artifact bytes.
-- Every bound at one below, exactly at, and one above its value.
+- Truncated or invalid zlib, invalid lengths/counts, trailing bytes, integer
+  overflow, malformed Unicode, and invalid attributes.
+- Actual wire/representation bounds at one below, exactly at, and one above their
+  value; no tests encode guessed total-row or total-byte validity limits.
+- A highly compressed, very large valid browse succeeds and remains pageable.
 - Cancellation/timeout at framing, receive, decompression, parsing, transaction,
   indexing, and atomic promotion.
-- Assert bounded peak memory for a synthetic very-large browse; the threshold is
-  independent of total row count within allowed bounds.
+- Assert bounded peak memory for synthetic browses of increasing size; the
+  threshold is independent of total row count.
 - Assert no complete `BrowseResponse`, complete byte array, or directory graph is
   retained by the production path.
 - Library-upgrade compatibility fixtures captured without personally identifying
@@ -994,7 +996,7 @@ Per-row events and metrics are prohibited.
 ### Selection and jobs
 
 - Directory subtree, synthetic root, individual file, several branches, antichain
-  canonicalization, locked/stale IDs, and every request expansion bound.
+  canonicalization, locked/stale IDs, and large valid expansions.
 - Artifact rows map to the same `PeerFileIdentity` equality and `PeerFileTarget`
   metadata used by search/direct links, while `DirectoryTransferPlan` contains
   only exact targets plus server-derived logical relative components.
@@ -1053,8 +1055,8 @@ The feature MUST NOT ship until:
    [`resolved-remote-transfer-refactor-plan.md`](resolved-remote-transfer-refactor-plan.md),
    including exact identity, abstract lifecycle state, remote/music policy
    separation, album/direct-link regressions, shared runners, concrete job
-   payloads, and measured job-memory admission.
-2. Add bounded browse ingress, protocol fixtures, artifact schema/store, and source
+   payloads, and progressive directory execution.
+2. Add streaming browse ingress, protocol fixtures, artifact schema/store, and source
    patch deletion note. No public endpoint uses it until the memory gate passes.
 3. Add local profile loading, remote profile service, picture validation, browse
    coordination, and artifact lifecycle.
@@ -1079,7 +1081,7 @@ implementation claim. The completed prerequisite is marked separately.
 - [ ] One shared Soulseek runtime and peer policy are reused.
 - [ ] Profile data is composite, partial, bounded, and excludes peer endpoints.
 - [ ] Local pictures are normalized for peers; remote pictures are safely rendered.
-- [ ] Browse ingress is streaming and bounded before materialization.
+- [ ] Browse ingress streams to disk without aggregate size-based refusal.
 - [ ] Successful browses become immutable disposable SQLite artifacts.
 - [ ] Browse lifecycle is durable for its short resource lifetime and live-visible.
 - [ ] Directories/files are paged; large collections never enter live deltas.
@@ -1127,4 +1129,4 @@ The design was checked against:
   [`users.py`](https://github.com/nicotine-plus/nicotine-plus/blob/d08f755b749e781b087705ed61822f64531e5d8c/pynicotine/users.py) and [`userbrowse.py`](https://github.com/nicotine-plus/nicotine-plus/blob/d08f755b749e781b087705ed61822f64531e5d8c/pynicotine/userbrowse.py).
 
 These SHAs make the source claims reproducible. Re-check the integration points and
-the bounded-ingress deletion condition when either dependency is updated.
+the streaming-ingress deletion condition when either dependency is updated.

@@ -5,28 +5,18 @@ using Sockseek.Core.Snapshots;
 namespace Sockseek.Core.Models;
 
 /// <summary>
-/// Bounds used for exact Soulseek peer identity. Validation never changes the
-/// spelling that will be sent back to the peer.
-/// </summary>
-public static class PeerIdentityLimits
-{
-    public const int MaximumUsernameUtf8Bytes = 1_024;
-    public const int MaximumRemotePathUtf8Bytes = 16 * 1_024;
-}
-
-/// <summary>
 /// Validates exact outbound peer identity without trimming, case folding, or
 /// Unicode normalization.
 /// </summary>
 public static class PeerIdentityValidator
 {
     public static string ValidateUsername(string username)
-        => Validate(username, PeerIdentityLimits.MaximumUsernameUtf8Bytes, "Peer username");
+        => Validate(username, "Peer username");
 
     public static string ValidateRemotePath(string remotePath)
-        => Validate(remotePath, PeerIdentityLimits.MaximumRemotePathUtf8Bytes, "Remote path");
+        => Validate(remotePath, "Remote path");
 
-    private static string Validate(string value, int maximumUtf8Bytes, string label)
+    private static string Validate(string value, string label)
     {
         ArgumentNullException.ThrowIfNull(value);
         if (value.Length == 0)
@@ -42,9 +32,6 @@ public static class PeerIdentityValidator
                 throw Invalid($"{label} cannot contain control characters.");
             remaining = remaining[consumed..];
         }
-
-        if (Encoding.UTF8.GetByteCount(value) > maximumUtf8Bytes)
-            throw Invalid($"{label} exceeds the {maximumUtf8Bytes}-byte UTF-8 limit.");
 
         return value;
     }

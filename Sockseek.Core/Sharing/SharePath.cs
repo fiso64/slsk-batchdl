@@ -10,8 +10,6 @@ namespace Sockseek.Core.Sharing;
 /// </summary>
 public sealed class RemotePathKey : IEquatable<RemotePathKey>
 {
-    public const int MaximumEncodedBytes = 16 * 1_024;
-
     private readonly byte[] bytes;
     private readonly int hashCode;
 
@@ -45,17 +43,12 @@ public sealed class RemotePathKey : IEquatable<RemotePathKey>
 
         var normalizedSegments = rawSegments.Select(NormalizeSegment).ToArray();
         string normalizedPath = string.Join('\\', normalizedSegments);
-        if (Encoding.UTF8.GetByteCount(normalizedPath) > MaximumEncodedBytes)
-            throw Invalid($"Remote path exceeds {MaximumEncodedBytes} encoded bytes.");
         var folded = new StringBuilder(normalizedPath.Length);
 
         foreach (var rune in normalizedPath.EnumerateRunes())
             folded.Append(Rune.ToUpperInvariant(rune).ToString());
 
-        byte[] encodedKey = Encoding.UTF8.GetBytes(folded.ToString());
-        if (encodedKey.Length > MaximumEncodedBytes)
-            throw Invalid($"Remote path key exceeds {MaximumEncodedBytes} encoded bytes.");
-        return new RemotePathKey(encodedKey);
+        return new RemotePathKey(Encoding.UTF8.GetBytes(folded.ToString()));
     }
 
     public static RemotePathKey CreateAlias(string alias)

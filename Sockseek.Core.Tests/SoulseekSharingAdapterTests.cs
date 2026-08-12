@@ -120,7 +120,7 @@ public sealed class SoulseekSharingAdapterTests
             1,
             new SearchQuery("allowed")));
         Assert.AreEqual(0, reader.SearchCount);
-        await Assert.ThrowsExceptionAsync<DownloadEnqueueException>(
+        await Assert.ThrowsExactlyAsync<DownloadEnqueueException>(
             () => adapter.EnqueueUploadAsync(
                 "alice",
                 endpoint,
@@ -255,7 +255,6 @@ public sealed class SoulseekSharingAdapterTests
 
         public ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
             RemotePathKey remotePath,
-            int fileLimit,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<ShareCatalogBrowseDirectory?>(null);
 

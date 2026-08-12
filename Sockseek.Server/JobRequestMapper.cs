@@ -230,14 +230,24 @@ public static class JobRequestMapper
 
     private static DirectoryTransferPlan ToDirectoryTransferPlan(DirectoryTransferPlanDto plan)
     {
-        var result = new DirectoryTransferPlan(
-            plan.DisplayRoot,
-            plan.Entries.Select(entry => new DirectoryTransferEntry(
-                ToPeerFileTarget(entry.Target),
-                entry.RelativeDirectoryComponents)).ToList());
-        if (result.TotalKnownBytes != plan.TotalKnownBytes)
-            throw new ArgumentException("Resolved directory plan totalKnownBytes does not match its entries.");
-        return result;
+        var entries = new List<DirectoryTransferEntry>(plan.Entries.Count);
+        foreach (DirectoryTransferEntryDto entry in plan.Entries)
+        {
+            if (entry?.Target is null || entry.RelativeDirectoryComponents is null)
+                continue;
+            try
+            {
+                entries.Add(new DirectoryTransferEntry(
+                    ToPeerFileTarget(entry.Target),
+                    entry.RelativeDirectoryComponents));
+            }
+            catch (ArgumentException)
+            {
+                // A malformed resolved entry cannot escape placement validation,
+                // but it does not invalidate independently downloadable siblings.
+            }
+        }
+        return new DirectoryTransferPlan(plan.DisplayRoot, entries);
     }
 
     private static TJob ApplyProvenance<TJob>(TJob job, JobProvenanceDto? provenance)

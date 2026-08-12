@@ -14,13 +14,14 @@ namespace Sockseek.Server;
 
 /// <summary>
 /// Daemon-lifetime owner for chat ingestion, room session state, and durable chat actions.
-/// Protocol callbacks only validate/copy data and attempt a bounded channel write.
+/// Protocol callbacks validate/copy data and enqueue it for the single durable worker.
 /// </summary>
 public sealed class ChatRuntime : IAsyncDisposable
 {
     private static readonly TimeSpan RoomListLifetime = TimeSpan.FromSeconds(30);
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private const int MaximumAvailableRooms = 20_000;
+    internal const int IngressCapacity = 4_096;
     // Amortize SQLite commits while bounding transaction and private-message
     // acknowledgement latency on modest homeserver storage.
     private const int MaximumIngressPersistenceBatchSize = 16;
@@ -45,18 +46,16 @@ public sealed class ChatRuntime : IAsyncDisposable
         DaemonFeatureState.Starting, "Starting", 0, 0, 0, 0, 0);
     private NotificationSummaryDto notificationSummary = new(0, 0);
     private long revision;
-    private long droppedRoomIngress;
     private int peakIngressDepth;
     private int disposeState;
 
     internal int PeakIngressDepth => Volatile.Read(ref peakIngressDepth);
-    internal long DroppedRoomIngress => Interlocked.Read(ref droppedRoomIngress);
 
     public ChatRuntime(
         EngineSettings settings,
         DaemonSoulseekRuntime soulseek,
         ChatPersistenceStore store)
-        : this(settings, soulseek, store, ChatLimits.IngressCapacity)
+        : this(settings, soulseek, store, IngressCapacity)
     {
     }
 
@@ -75,9 +74,10 @@ public sealed class ChatRuntime : IAsyncDisposable
             .ToHashSet(StringComparer.Ordinal);
         ingress = Channel.CreateBounded<IngressItem>(new BoundedChannelOptions(ingressCapacity)
         {
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false,
-            FullMode = BoundedChannelFullMode.Wait,
+            AllowSynchronousContinuations = false,
         });
     }
 
@@ -663,12 +663,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             if (account is null)
                 return;
             if (!TryWriteIngress(new RoomMessage(account, e.RoomName, e.Username, e.Message)))
-            {
-                Interlocked.Increment(ref droppedRoomIngress);
-                ChatTelemetry.RecordInboundResult("room", "dropped");
-                ChatTelemetry.RecordDropped("room", "capacity");
-                SetHealth(DaemonFeatureState.Degraded, "RoomIngressCapacity");
-            }
+                throw new InvalidOperationException("Chat ingress closed while accepting a room message.");
         }
         catch (ArgumentException)
         {
@@ -745,7 +740,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             {
                 ChatTelemetry.RecordDropped("room", "metadata_capacity");
                 InvalidateAvailableRooms();
-                MarkRosterIncomplete(roomName, "IngressCapacity");
+                MarkRosterIncomplete(roomName, "IngressClosed");
             }
         }
         catch (Exception ex)
@@ -761,7 +756,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             if (!TryWriteIngress(item) && item is RoomNamed named)
             {
                 ChatTelemetry.RecordDropped("room", "roster_capacity");
-                MarkRosterIncomplete(named.RoomName, "IngressCapacity");
+                MarkRosterIncomplete(named.RoomName, "IngressClosed");
             }
         }
         catch (Exception ex)
@@ -788,6 +783,23 @@ public sealed class ChatRuntime : IAsyncDisposable
     private bool TryWriteIngress(IngressItem item)
     {
         bool written = ingress.Writer.TryWrite(item);
+        if (!written && !lifetime.IsCancellationRequested)
+        {
+            try
+            {
+                ingress.Writer.WriteAsync(item, lifetime.Token)
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+                written = true;
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+            }
+            catch (ChannelClosedException)
+            {
+            }
+        }
         if (written && ingress.Reader.CanCount)
         {
             int depth = ingress.Reader.Count;

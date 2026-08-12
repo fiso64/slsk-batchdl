@@ -106,20 +106,16 @@ public sealed class UploadSchedulerTests
     }
 
     [TestMethod]
-    public void InternalPerUserCapacity_IncludesActiveAndQueuedTransfers()
+    public void MoreThanFormerPerUserCeiling_RemainsAccepted()
     {
         var scheduler = CreateScheduler(slots: 1);
-        for (int index = 0; index < UploadScheduler.MaximumQueuedUploadsPerUser; index++)
+        for (int index = 0; index < 1_001; index++)
         {
             UploadAdmissionResult accepted = scheduler.Admit(
                 Request(Guid.NewGuid(), "Alice", $"file-{index}"));
             Assert.AreEqual(UploadAdmissionResultKind.Accepted, accepted.Kind);
         }
-
-        UploadAdmissionResult overflow = scheduler.Admit(
-            Request(Guid.NewGuid(), "Alice", "overflow"));
-        Assert.AreEqual(UploadAdmissionResultKind.Rejected, overflow.Kind);
-        Assert.AreEqual(UploadAdmissionRejectionReason.QueueCapacity, overflow.RejectionReason);
+        Assert.AreEqual(1_000, scheduler.GetRuntimeSnapshot().QueuedFiles);
     }
 
     [TestMethod]
@@ -206,7 +202,7 @@ public sealed class UploadSchedulerTests
 
     [TestMethod]
     [TestCategory("Load")]
-    public void Scheduler_HardCeilingAndIndexesHoldAtOneHundredThousandQueuedEntries()
+    public void Scheduler_IndexesRemainUsableBeyondFormerHundredThousandCeiling()
     {
         const int slots = 10;
         var scheduler = CreateScheduler(slots);
@@ -214,7 +210,7 @@ public sealed class UploadSchedulerTests
         Guid? deepQueued = null;
 
         for (int index = 0;
-             index < slots + UploadScheduler.MaximumQueuedUploads;
+             index < slots + 100_001;
              index++)
         {
             Guid id = Guid.NewGuid();
@@ -228,24 +224,17 @@ public sealed class UploadSchedulerTests
                 origin.AddTicks(index)));
             if (result.Kind != UploadAdmissionResultKind.Accepted)
                 Assert.Fail($"Admission {index} was unexpectedly {result.Kind}.");
-            if (index == slots + UploadScheduler.MaximumQueuedUploads - 1)
+            if (index == slots + 100_000)
                 deepQueued = id;
         }
 
         UploadQueueRuntimeSnapshot snapshot = scheduler.GetRuntimeSnapshot();
         Assert.AreEqual(slots, snapshot.ActiveSlots);
-        Assert.AreEqual(UploadScheduler.MaximumQueuedUploads, snapshot.QueuedFiles);
+        Assert.AreEqual(100_001, snapshot.QueuedFiles);
+        Assert.IsTrue(snapshot.AcceptingUploads);
         Assert.AreEqual(100, scheduler.GetPage(null, null, 100).Items.Count);
         Assert.IsTrue(scheduler.Estimate(deepQueued!.Value).AheadCount > 0);
 
-        UploadAdmissionResult overflow = scheduler.Admit(Request(
-            Guid.NewGuid(),
-            "overflow-user",
-            "overflow"));
-        Assert.AreEqual(UploadAdmissionResultKind.Rejected, overflow.Kind);
-        Assert.AreEqual(
-            UploadAdmissionRejectionReason.QueueCapacity,
-            overflow.RejectionReason);
     }
 
     private static UploadScheduler CreateScheduler(int slots)

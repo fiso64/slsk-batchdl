@@ -7,7 +7,7 @@ namespace Sockseek.Core.Tests;
 [TestClass]
 public sealed class ChatContractsTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("hello alice", "alice", true)]
     [DataRow("hello @Alice!", "alice", true)]
     [DataRow("malice", "alice", false)]
@@ -31,17 +31,17 @@ public sealed class ChatContractsTests
     public void MessageValidationPreservesWhitespaceButRejectsBlankAndNul()
     {
         Assert.AreEqual(" hello\n", ChatIdentity.ValidateMessage(" hello\n"));
-        Assert.ThrowsException<ArgumentException>(() => ChatIdentity.ValidateMessage(" \t"));
-        Assert.ThrowsException<ArgumentException>(() => ChatIdentity.ValidateMessage("hello\0world"));
+        Assert.ThrowsExactly<ArgumentException>(() => ChatIdentity.ValidateMessage(" \t"));
+        Assert.ThrowsExactly<ArgumentException>(() => ChatIdentity.ValidateMessage("hello\0world"));
     }
 
     [TestMethod]
-    public void ChatTextValidationUsesUtf8BoundsAndRejectsMalformedUtf16()
+    public void ChatTextValidationAcceptsLargeMessagesAndRejectsMalformedUtf16()
     {
-        Assert.ThrowsException<ArgumentException>(() => ChatIdentity.ValidateMessage(
-            new string('x', ChatLimits.MaximumMessageUtf8Bytes + 1)));
-        Assert.ThrowsException<ArgumentException>(() => ChatIdentity.ValidateMessage("hello\ud800"));
-        Assert.ThrowsException<ArgumentException>(() => ChatIdentity.NormalizeRoom("room\udc00"));
+        string large = new('x', 64 * 1_024);
+        Assert.AreSame(large, ChatIdentity.ValidateMessage(large));
+        Assert.ThrowsExactly<ArgumentException>(() => ChatIdentity.ValidateMessage("hello\ud800"));
+        Assert.ThrowsExactly<ArgumentException>(() => ChatIdentity.NormalizeRoom("room\udc00"));
     }
 
     [TestMethod]
