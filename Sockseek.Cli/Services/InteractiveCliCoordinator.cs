@@ -544,18 +544,20 @@ internal sealed class InteractiveCliCoordinator
     private static AlbumFile ToAlbumFile(FileCandidateDto file)
     {
         var candidate = new FileCandidate(
-            file.Username,
-            file.Filename,
-            file.Size,
-            file.BitRate,
-            bitDepth: null,
-            responseFileCount: 0,
-            file.SampleRate,
-            file.Length,
-            file.Extension ?? Path.GetExtension(file.Filename),
-            file.Peer.UploadSpeed,
-            file.Peer.HasFreeUploadSlot,
-            file.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList());
+            new PeerFileTarget(
+                new PeerFileIdentity(file.Username, file.Filename),
+                file.File.Size < 0 ? null : file.File.Size,
+                file.File.Extension ?? Path.GetExtension(file.Filename),
+                file.File.BitRate,
+                file.File.BitDepth,
+                file.File.SampleRate,
+                file.File.Length,
+                file.File.Attributes?.Select(x => new FileAttributeSnapshot(x.Type, x.Value)).ToList()),
+            new SearchPeerSnapshot(
+                file.Username,
+                responseFileCount: 0,
+                file.Peer.UploadSpeed,
+                file.Peer.HasFreeUploadSlot));
         return AlbumFile.WithLazyQuery(
             () => Searcher.InferSongQuery(candidate.Filename, new SongQuery()),
             candidate);
@@ -567,12 +569,15 @@ internal sealed class InteractiveCliCoordinator
             candidate.Username,
             candidate.Filename,
             new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
-            candidate.Size,
-            candidate.BitRate,
-            candidate.SampleRate,
-            candidate.Length,
-            candidate.Extension,
-            candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
+            new FileMetadataDto(
+                Utils.GetFileNameSlsk(candidate.Filename),
+                candidate.Size,
+                candidate.Extension,
+                candidate.BitRate,
+                candidate.BitDepth,
+                candidate.SampleRate,
+                candidate.Length,
+                candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList()));
 
     private static DownloadBehaviorPolicyDto InteractiveDownloadBehavior(DownloadBehaviorPolicyDto? existing)
         => existing == null

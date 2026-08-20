@@ -133,7 +133,8 @@ public sealed record DownloadStartedChange(
     : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange
 {
     public Guid TransferId => Transfer.Id;
-    public FileCandidateSnapshot Candidate => Transfer.Candidate!;
+    public PeerFileTargetSnapshot Target => Transfer.Target!;
+    public FileCandidateSnapshot? Candidate => Transfer.Candidate;
 }
 
 public sealed record DownloadProgressedChange(
@@ -177,7 +178,8 @@ public sealed record DownloadAttemptFailedChange(
     : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange
 {
     public Guid TransferId => Transfer.Id;
-    public FileCandidateSnapshot Candidate => Transfer.Candidate!;
+    public PeerFileTargetSnapshot Target => Transfer.Target!;
+    public FileCandidateSnapshot? Candidate => Transfer.Candidate;
 }
 
 public sealed record FallbackTransferStartedChange(

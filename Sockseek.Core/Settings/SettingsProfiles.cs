@@ -3,6 +3,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Sharing;
 using Sockseek.Core.Chat;
+using Sockseek.Core.Extractors;
 
 namespace Sockseek.Core.Settings;
 
@@ -228,6 +229,8 @@ public static class SettingsNormalizer
             engine.LogFilePath = Utils.GetFullPath(Utils.ExpandVariables(engine.LogFilePath, pathContext));
         if (engine.MockFilesDir != null)
             engine.MockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(engine.MockFilesDir, pathContext));
+        if (engine.UserPicturePath != null)
+            engine.UserPicturePath = Utils.GetFullPath(Utils.ExpandVariables(engine.UserPicturePath, pathContext));
 
         SharingSettingsValidator.NormalizeAndValidate(engine, pathContext);
         ChatSettingsValidator.NormalizeAndValidate(engine);
@@ -236,6 +239,9 @@ public static class SettingsNormalizer
 
 public static partial class ProfileConditionEvaluator
 {
+    private const string GenericFileMode = "generic-file";
+    private const string GenericDirectoryMode = "generic-directory";
+
     public static bool Satisfied(string cond, DownloadSettings settings, Job? job = null, ProfileContext? context = null)
     {
         var tokens = new Queue<string>(CondTokenRegex().Split(cond).Where(t => !string.IsNullOrWhiteSpace(t)));
@@ -286,11 +292,14 @@ public static partial class ProfileConditionEvaluator
                 if (tokens.Count == 0)
                     throw new Exception($"Input error: Missing comparison value after '{op}'");
                 string val = tokens.Dequeue().Trim('"').ToLower();
-                string cur = GetVarValue(tok, settings, job, context).ToString()!.ToLower();
+                string? cur = GetVarValue(tok, settings, job, context)?.ToString()?.ToLower();
                 return op == "==" ? cur == val : cur != val;
             }
 
-            return (bool)GetVarValue(tok, settings, job, context);
+            object? value = GetVarValue(tok, settings, job, context);
+            if (value is bool boolean)
+                return boolean;
+            throw new Exception($"Input error: Profile condition variable '{tok}' requires a comparison");
         }
 
         var result = ParseExpression();
@@ -299,31 +308,36 @@ public static partial class ProfileConditionEvaluator
         return result;
     }
 
-    private static object GetVarValue(string var, DownloadSettings settings, Job? job, ProfileContext? context)
+    private static object? GetVarValue(string var, DownloadSettings settings, Job? job, ProfileContext? context)
     {
-        static string ToKebab(string s) =>
-            string.Concat(s.Select((c, i) => char.IsUpper(c) && i > 0 ? "-" + char.ToLower(c) : char.ToLower(c).ToString()));
+        InputType inputType = EffectiveInputType(settings, job);
 
-        string mode = job switch
+        // download-mode describes a concrete semantic download shape. Internal orchestration
+        // job names and source-decided input before extraction are deliberately not modes.
+        string? mode = job switch
         {
+            ExtractJob extract when SoulseekExtractor.InputMatches(extract.Input) =>
+                SoulseekMode(
+                    extract.Input,
+                    extract.RequestedModeOverride ?? settings.Extraction.RequestedMode),
             SearchJob { DefaultFolderProjection: not null } => "album",
             SearchJob { DefaultFileProjection: not null } => "song",
             AlbumAggregateJob => "album-aggregate",
             AlbumJob => "album",
             AggregateJob => "aggregate",
             SongJob => "song",
-            _ when job != null => ToKebab(job.GetType().Name.Replace("Job", "")),
-            _ when SettingsMode(settings) == "album" && settings.Search.IsAggregate => "album-aggregate",
-            _ when SettingsMode(settings) == "song" && settings.Search.IsAggregate => "aggregate",
-            _ when SettingsMode(settings) == "album" => "album",
-            _ when SettingsMode(settings) == "song" => "song",
-            _ when settings.Search.IsAggregate => "aggregate",
-            _ => "normal",
+            RemoteFileJob => GenericFileMode,
+            RemoteDirectoryJob => GenericDirectoryMode,
+            ExtractJob extract => SettingsMode(settings, inputType, extract.RequestedModeOverride),
+            null when inputType == InputType.Soulseek
+                && SoulseekExtractor.InputMatches(settings.Extraction.Input ?? "") =>
+                SoulseekMode(settings.Extraction.Input!, settings.Extraction.RequestedMode),
+            _ => SettingsMode(settings, inputType),
         };
 
         return var switch
         {
-            "input-type" => settings.Extraction.InputType.ToString().ToLower(),
+            "input-type" => inputType.ToString().ToLower(),
             "download-mode" => mode,
             "album" => mode is "album" or "album-aggregate",
             "aggregate" => settings.Search.IsAggregate || mode is "aggregate" or "album-aggregate",
@@ -332,14 +346,53 @@ public static partial class ProfileConditionEvaluator
         };
     }
 
-    private static string SettingsMode(DownloadSettings settings)
-        => settings.Extraction.RequestedMode switch
+    private static InputType EffectiveInputType(DownloadSettings settings, Job? job)
+    {
+        string? input = settings.Extraction.Input;
+        InputType configured = settings.Extraction.InputType;
+        if (job is ExtractJob extract)
+        {
+            input = extract.Input;
+            if (extract.InputType is { } jobInputType && jobInputType != InputType.None)
+                configured = jobInputType;
+        }
+
+        return ExtractorRegistry.TryResolveInputType(input, configured, out InputType resolved)
+            ? resolved
+            : configured;
+    }
+
+    private static string SoulseekMode(string input, ExtractionMode? requestedMode)
+        => SoulseekExtractor.ClassifyLink(input, requestedMode) switch
+        {
+            SoulseekLinkInterpretation.RemoteFile => GenericFileMode,
+            SoulseekLinkInterpretation.RemoteDirectory => GenericDirectoryMode,
+            SoulseekLinkInterpretation.MusicTrack => "song",
+            SoulseekLinkInterpretation.MusicAlbum => "album",
+            _ => throw new ArgumentOutOfRangeException(),
+        };
+
+    private static string? SettingsMode(
+        DownloadSettings settings,
+        InputType inputType,
+        ExtractionMode? requestedModeOverride = null)
+    {
+        string? mode = (requestedModeOverride ?? settings.Extraction.RequestedMode) switch
         {
             ExtractionMode.Album => "album",
             ExtractionMode.Song => "song",
-            _ when settings.Extraction.InputType is InputType.String or InputType.List or InputType.None => "album",
-            _ => "normal",
+            _ when settings.Extraction.UpgradeToAlbum => "album",
+            _ when inputType is InputType.String or InputType.List => "album",
+            _ => null,
         };
+
+        return mode switch
+        {
+            "album" when settings.Search.IsAggregate => "album-aggregate",
+            "song" when settings.Search.IsAggregate => "aggregate",
+            _ => mode,
+        };
+    }
 
     [GeneratedRegex(@"(\s+|\(|\)|&&|\|\||==|!=|!|\"".*?\"")")]
     private static partial Regex CondTokenRegex();
@@ -356,6 +409,7 @@ public static class SettingsCloner
         ConnectTimeout = source.ConnectTimeout,
         AutoReconnectAfterKickedFromServer = source.AutoReconnectAfterKickedFromServer,
         UserDescription = source.UserDescription,
+        UserPicturePath = source.UserPicturePath,
         Sharing = new SharingSettings
         {
             Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings
@@ -443,7 +497,6 @@ public static class SettingsCloner
         PreferredFolderCond = new FolderConditions(source.PreferredFolderCond),
         StrictAlbumQuality = source.StrictAlbumQuality,
         SearchTimeout = source.SearchTimeout,
-        MaxStaleTime = source.MaxStaleTime,
         DownrankOn = source.DownrankOn,
         IgnoreOn = source.IgnoreOn,
         FastSearch = source.FastSearch,
@@ -503,6 +556,7 @@ public static class SettingsCloner
 
     public static TransferSettings Clone(TransferSettings source) => new()
     {
+        MaxStaleTime = source.MaxStaleTime,
         MaxDownloadRetries = source.MaxDownloadRetries,
         UnknownErrorRetries = source.UnknownErrorRetries,
         NoIncompleteExt = source.NoIncompleteExt,

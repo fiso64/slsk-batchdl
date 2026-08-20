@@ -185,32 +185,6 @@ public sealed class ShareScanCoordinator
             SharingTelemetry.RecordScanResult("cancelled");
             throw;
         }
-        catch (ShareScanRootException ex)
-        {
-            CleanupUnpublished(paths);
-            SetState(new(
-                generationId,
-                ShareScanPhase.Failed,
-                startedAt,
-                DateTimeOffset.UtcNow,
-                null,
-                ex.ErrorCode));
-            SharingTelemetry.RecordScanResult("failed");
-            throw;
-        }
-        catch (RemotePathCollisionException)
-        {
-            CleanupUnpublished(paths);
-            SetState(new(
-                generationId,
-                ShareScanPhase.Failed,
-                startedAt,
-                DateTimeOffset.UtcNow,
-                null,
-                "RemotePathCollision"));
-            SharingTelemetry.RecordScanResult("failed");
-            throw;
-        }
         catch (RegexMatchTimeoutException)
         {
             CleanupUnpublished(paths);

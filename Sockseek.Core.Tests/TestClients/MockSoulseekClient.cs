@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using Sockseek.Core.Services;
+using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 using Soulseek;
 
 namespace Tests.ClientTests
 {
-    public partial class MockSoulseekClient : ISoulseekClient
+    public partial class MockSoulseekClient : ISoulseekClient, IPeerDirectorySource
     {
         public IReadOnlyCollection<Transfer> Downloads => throw new NotImplementedException();
 
@@ -21,7 +23,7 @@ namespace Tests.ClientTests
         private List<Soulseek.SearchResponse> index;
         private readonly int searchDelayMs;
         private readonly HashSet<string> failingUsers;
-        private readonly HashSet<string> disconnectingUsers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> disconnectingUsers = new(StringComparer.Ordinal);
         private int disconnectingSearches;
         private int failingSearches;
 
@@ -36,6 +38,8 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
         public bool BrowseReturnsBasenames { get; set; }
+        public BrowseResponse? BrowseResponseOverride { get; set; }
+        public long? BrowseProgressSize { get; set; }
         public bool IsDisposed { get; private set; }
         public Exception? ConnectException { get; set; }
         public Action? Connecting { get; set; }
@@ -76,7 +80,7 @@ namespace Tests.ClientTests
         {
             this.index         = index;
             this.searchDelayMs = searchDelayMs;
-            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             State = initialState;
         }
 
@@ -189,6 +193,18 @@ namespace Tests.ClientTests
             await Task.Yield();
             ct.ThrowIfCancellationRequested();
 
+            if (BrowseProgressSize is long browseSize)
+            {
+                options?.ProgressUpdated?.Invoke((
+                    username,
+                    browseSize,
+                    0,
+                    100,
+                    browseSize));
+            }
+            if (BrowseResponseOverride is { } responseOverride)
+                return responseOverride;
+
             var user = index.FirstOrDefault(x => x.Username == username);
 
             if (user == null)
@@ -210,6 +226,16 @@ namespace Tests.ClientTests
                 ));
 
             return new BrowseResponse(directories);
+        }
+
+        public async Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+            PeerDirectoryIdentity directory,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await BrowseAsync(
+                directory.Username,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return PeerDirectorySnapshotFactory.FromBrowseResponse(directory, response);
         }
 
         public Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsync(SearchQuery query, SearchScope? scope = null, int? token = null, SearchOptions? options = null, CancellationToken? cancellationToken = null)
@@ -397,7 +423,7 @@ namespace Tests.ClientTests
                 }
 
                 // Find the file in the directories
-                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
+                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.Ordinal));
                 if (foundFile == null)
                 {
                     throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");

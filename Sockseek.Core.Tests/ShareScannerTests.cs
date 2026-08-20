@@ -51,21 +51,56 @@ public sealed class ShareScannerTests
     }
 
     [TestMethod]
-    public async Task ScanAsync_ConfiguredRootFailureIsFatalAndAliasSafe()
+    public async Task ScanAsync_UnavailableRootIsSkippedWithoutLosingValidRoot()
     {
         await using var fixture = new ScannerFixture(createRoot: false);
+        string validRoot = Path.Combine(Path.GetDirectoryName(fixture.RootPath)!, "valid-root");
+        Directory.CreateDirectory(validRoot);
+        await File.WriteAllTextAsync(Path.Combine(validRoot, "kept.txt"), "kept");
+        fixture.Settings.Roots.Add(new ShareRootSettings
+        {
+            LocalPath = validRoot,
+            Alias = "Valid",
+            EffectiveAlias = "Valid",
+        });
         var writer = new RecordingWriter(fixture.DatabasePath);
 
-        ShareScanRootException exception =
-            await Assert.ThrowsExceptionAsync<ShareScanRootException>(
-                async () => await new ShareScanner().ScanAsync(
-                    fixture.Settings,
-                    writer,
-                    Guid.NewGuid(),
-                    "settings"));
+        ShareScanResult result = await new ShareScanner().ScanAsync(
+            fixture.Settings,
+            writer,
+            Guid.NewGuid(),
+            "settings");
 
-        StringAssert.Contains(exception.Message, "'Music'");
-        Assert.IsFalse(exception.Message.Contains(fixture.RootPath, StringComparison.Ordinal));
+        Assert.AreEqual(1, result.FilesIndexed);
+        Assert.AreEqual(@"Valid\kept.txt", writer.Files.Single().RemotePath);
+        Assert.IsTrue(result.Errors.Any(error =>
+            error.Code == "root-unavailable" && error.RelativePath == "Music"));
+        Assert.IsFalse(result.Errors.Any(error =>
+            error.Message.Contains(fixture.RootPath, StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task ScanAsync_RemoteCollisionSkipsOnlyCollidingEntry()
+    {
+        await using var fixture = new ScannerFixture();
+        await File.WriteAllTextAsync(Path.Combine(fixture.RootPath, "collision.txt"), "bad");
+        await File.WriteAllTextAsync(Path.Combine(fixture.RootPath, "kept.txt"), "good");
+        var writer = new RecordingWriter(fixture.DatabasePath)
+        {
+            CollidingRemotePath = @"Music\collision.txt",
+        };
+
+        ShareScanResult result = await new ShareScanner().ScanAsync(
+            fixture.Settings,
+            writer,
+            Guid.NewGuid(),
+            "settings");
+
+        Assert.AreEqual(1, result.FilesIndexed);
+        Assert.AreEqual(@"Music\kept.txt", writer.Files.Single().RemotePath);
+        Assert.IsTrue(result.Errors.Any(error =>
+            error.Code == "remote-path-collision"
+            && error.RelativePath == "collision.txt"));
     }
 
     private sealed class RecordingWriter(string databasePath)
@@ -75,6 +110,7 @@ public sealed class ShareScannerTests
         public List<ShareCatalogRoot> Roots { get; } = [];
         public List<ShareCatalogDirectory> Directories { get; } = [];
         public List<ShareCatalogFile> Files { get; } = [];
+        public string? CollidingRemotePath { get; init; }
 
         public ValueTask AddRootAsync(
             ShareCatalogRoot root,
@@ -96,6 +132,12 @@ public sealed class ShareScannerTests
             ShareCatalogFile file,
             CancellationToken cancellationToken = default)
         {
+            if (file.RemotePath == CollidingRemotePath)
+            {
+                throw new ShareCatalogEntryCollisionException(
+                    "Synthetic collision.",
+                    new InvalidOperationException());
+            }
             Files.Add(file);
             return ValueTask.CompletedTask;
         }

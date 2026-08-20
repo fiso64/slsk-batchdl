@@ -185,8 +185,8 @@ internal static class JobPrintFormatter
                 break;
 
             case RetrieveFolderJob folder:
-                yield return $"  User:               {folder.TargetFolder.Username}";
-                yield return $"  Folder:             {folder.TargetFolder.FolderPath}";
+                yield return $"  User:               {folder.Directory.Username}";
+                yield return $"  Folder:             {folder.Directory.FolderPath}";
                 break;
 
             default:
@@ -349,9 +349,9 @@ internal static class ResultPrintFormatter
         }
         else if (printOption.HasFlag(PrintOption.Link))
         {
-            var first = aggregate.Songs.FirstOrDefault(s => s.ChosenCandidate != null);
-            if (first?.ChosenCandidate != null)
-                Printing.PrintLink(first.ChosenCandidate.Username, first.ChosenCandidate.Filename);
+            var first = aggregate.Songs.FirstOrDefault(s => s.ResolvedTarget != null);
+            if (first?.ResolvedTarget != null)
+                Printing.PrintLink(first.ResolvedTarget.Username, first.ResolvedTarget.Filename);
         }
         else
         {

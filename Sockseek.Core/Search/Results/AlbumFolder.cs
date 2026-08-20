@@ -6,14 +6,29 @@ namespace Sockseek.Core.Models;
         public string        Username   { get; }
         public string        FolderPath { get; }
         public List<AlbumFile> Files    => files.Value;
-        public int           SearchFileCount { get; }
-        public int           SearchAudioFileCount { get; }
-        public int[]         SearchSortedAudioLengths { get; }
-        public string?       SearchRepresentativeAudioFilename { get; }
-        public AlbumAudioQualityCoverage SearchAudioQualityCoverage { get; }
-        public bool          HasSearchMetadata { get; }
+        public int           SearchFileCount => Evidence.SearchFileCount;
+        public int           SearchAudioFileCount => Evidence.SearchAudioFileCount;
+        public int[]         SearchSortedAudioLengths => Evidence.SearchSortedAudioLengths.ToArray();
+        public string?       SearchRepresentativeAudioFilename => Evidence.SearchRepresentativeAudioFilename;
+        public AlbumAudioQualityCoverage SearchAudioQualityCoverage => Evidence.SearchAudioQualityCoverage;
+        public bool          HasSearchMetadata => Evidence.HasSearchMetadata;
         public bool          IsFullyRetrieved { get; set; }
-        internal ResultSorter.SortEntry? SearchAggregateSortEntry { get; }
+        internal ResultSorter.SortEntry? SearchAggregateSortEntry => Evidence.AggregateSortEntry;
+
+        public PeerDirectoryIdentity DirectoryIdentity => new(Username, FolderPath);
+
+        public PeerDirectorySnapshot Directory => new(
+            DirectoryIdentity,
+            Files.Select(file => file.Candidate.Target).ToArray(),
+            IsFullyRetrieved);
+
+        public AlbumSearchEvidence Evidence { get; }
+
+        public AlbumDirectoryCandidate ToDirectoryCandidate()
+            => new(
+                Directory,
+                Files.Select(file => file.Match).ToArray(),
+                Evidence);
 
         private readonly Lazy<List<AlbumFile>> files;
 
@@ -26,18 +41,22 @@ namespace Sockseek.Core.Models;
             var audioFiles = files
                 .Where(f => !f.IsNotAudio)
                 .ToList();
-            SearchFileCount = files.Count;
-            SearchAudioFileCount = audioFiles.Count;
-            SearchSortedAudioLengths = audioFiles
+            int searchFileCount = files.Count;
+            int searchAudioFileCount = audioFiles.Count;
+            int[] searchSortedAudioLengths = audioFiles
                 .Select(f => f.Candidate.Length ?? -1)
                 .OrderBy(x => x)
                 .ToArray();
-            SearchRepresentativeAudioFilename = audioFiles
+            string? searchRepresentativeAudioFilename = audioFiles
                 .FirstOrDefault()
                 ?.Filename;
-            SearchAudioQualityCoverage = AlbumAudioQualityCoverage.Inactive(SearchAudioFileCount);
-            HasSearchMetadata = true;
-            SearchAggregateSortEntry = null;
+            Evidence = new AlbumSearchEvidence(
+                searchFileCount,
+                searchAudioFileCount,
+                searchSortedAudioLengths,
+                searchRepresentativeAudioFilename,
+                AlbumAudioQualityCoverage.Inactive(searchAudioFileCount),
+                hasSearchMetadata: true);
         }
 
         public AlbumFolder(string username, string folderPath, Func<List<AlbumFile>> filesFactory)
@@ -97,12 +116,13 @@ namespace Sockseek.Core.Models;
             Username = username;
             FolderPath = folderPath;
             files = new Lazy<List<AlbumFile>>(filesFactory);
-            SearchFileCount = searchFileCount;
-            SearchAudioFileCount = searchAudioFileCount;
-            SearchSortedAudioLengths = searchSortedAudioLengths;
-            SearchRepresentativeAudioFilename = searchRepresentativeAudioFilename;
-            SearchAudioQualityCoverage = searchAudioQualityCoverage;
-            HasSearchMetadata = hasSearchMetadata;
-            SearchAggregateSortEntry = searchAggregateSortEntry;
+            Evidence = new AlbumSearchEvidence(
+                searchFileCount,
+                searchAudioFileCount,
+                searchSortedAudioLengths,
+                searchRepresentativeAudioFilename,
+                searchAudioQualityCoverage,
+                hasSearchMetadata,
+                searchAggregateSortEntry);
         }
     }

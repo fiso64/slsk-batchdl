@@ -43,7 +43,7 @@ namespace Sockseek.Core.Jobs;
     //
     // TODO [ARCHITECTURE]: Convert Job models to immutable types and implement Unidirectional Data Flow.
     // Jobs still act as globally mutable state containers. Properties like `BytesTransferred`
-    // and `DownloadPath` are mutated directly by Downloader/Searcher on background threads.
+    // and `DownloadPath` are mutated directly by transfer/search services on background threads.
     // Because INotifyPropertyChanged fires on the mutating thread, this forces the UI/CLI layers to use
     // liberal lock() statements to avoid race conditions and visual tearing.
     // Later refactor:

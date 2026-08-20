@@ -281,8 +281,8 @@ public sealed class ChatPersistenceStore(
         string body,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
-        string peerKey = ChatIdentity.NormalizeUsername(username);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
+        string peerKey = ChatIdentity.ValidateUsername(username);
         body = ChatIdentity.ValidateMessage(body);
         return await PrepareOutgoingAsync(
             accountKey, ChatTargetKind.Direct, peerKey, username.Trim(), messageId, body,
@@ -296,7 +296,7 @@ public sealed class ChatPersistenceStore(
         string body,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         body = ChatIdentity.ValidateMessage(body);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var room = await context.ChatRoomSubscriptions.AsNoTracking()
@@ -423,7 +423,7 @@ public sealed class ChatPersistenceStore(
         string? failureReason,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         failureReason = failureReason is null
             ? null
             : failureReason[..Math.Min(failureReason.Length, ChatLimits.MaximumFailureReasonLength)];
@@ -447,7 +447,7 @@ public sealed class ChatPersistenceStore(
         Guid conversationId,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.ChatConversations.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == conversationId && item.LocalAccountKey == accountKey, cancellationToken).ConfigureAwait(false);
@@ -459,8 +459,8 @@ public sealed class ChatPersistenceStore(
         string username,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
-        string peerKey = ChatIdentity.NormalizeUsername(username);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
+        string peerKey = ChatIdentity.ValidateUsername(username);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.ChatConversations.AsNoTracking().SingleOrDefaultAsync(
             item => item.LocalAccountKey == accountKey && item.PeerKey == peerKey, cancellationToken).ConfigureAwait(false);
@@ -475,7 +475,7 @@ public sealed class ChatPersistenceStore(
         int limit,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         limit = ChatIdentity.ValidatePageSize(limit);
         var position = DecodeSummaryCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -518,7 +518,7 @@ public sealed class ChatPersistenceStore(
         int limit,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         limit = ChatIdentity.ValidatePageSize(limit);
         long? before = DecodeSequenceCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -542,7 +542,7 @@ public sealed class ChatPersistenceStore(
         ChatRoomKind kind,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         string roomKey = ChatIdentity.NormalizeRoom(roomName);
         Guid roomId = await ExecuteAsync(async (context, ct) =>
         {
@@ -566,7 +566,7 @@ public sealed class ChatPersistenceStore(
         Guid roomId,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.ChatRoomSubscriptions.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == roomId && item.LocalAccountKey == accountKey, cancellationToken).ConfigureAwait(false);
@@ -578,7 +578,7 @@ public sealed class ChatPersistenceStore(
         string roomName,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         string roomKey = ChatIdentity.NormalizeRoom(roomName);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.ChatRoomSubscriptions.AsNoTracking().SingleOrDefaultAsync(
@@ -592,7 +592,7 @@ public sealed class ChatPersistenceStore(
         int limit,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         limit = ChatIdentity.ValidatePageSize(limit);
         var position = DecodeSummaryCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -651,7 +651,7 @@ public sealed class ChatPersistenceStore(
         string localAccount,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entities = await context.ChatRoomSubscriptions.AsNoTracking()
             .Where(item => item.LocalAccountKey == accountKey && item.RuntimeDesired)
@@ -677,7 +677,7 @@ public sealed class ChatPersistenceStore(
         ChatTargetKind kind,
         CancellationToken cancellationToken)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await ExecuteAsync(async (context, ct) =>
         {
             var through = await context.ChatMessages.SingleOrDefaultAsync(
@@ -725,7 +725,7 @@ public sealed class ChatPersistenceStore(
     public async Task ArchiveConversationAsync(
         string localAccount, Guid conversationId, bool archived, CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await ExecuteAsync(async (context, ct) =>
         {
             var conversation = await context.ChatConversations.SingleOrDefaultAsync(
@@ -744,7 +744,7 @@ public sealed class ChatPersistenceStore(
         ChatTargetKind kind,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await ExecuteAsync(async (context, ct) =>
         {
             var messages = await context.ChatMessages.Where(
@@ -782,7 +782,7 @@ public sealed class ChatPersistenceStore(
         int limit,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         limit = ChatIdentity.ValidatePageSize(limit);
         long? before = DecodeSequenceCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
@@ -810,7 +810,7 @@ public sealed class ChatPersistenceStore(
     public async Task<UserNotificationRecord?> GetNotificationAsync(
         string localAccount, Guid notificationId, CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var entity = await context.Notifications.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == notificationId && item.LocalAccountKey == accountKey, cancellationToken).ConfigureAwait(false);
@@ -823,7 +823,7 @@ public sealed class ChatPersistenceStore(
         IReadOnlyCollection<Guid>? ids,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         if ((throughSequence is null) == (ids is null))
             throw new ArgumentException("Specify either throughSequence or ids.");
         if (throughSequence < 0)
@@ -850,7 +850,7 @@ public sealed class ChatPersistenceStore(
         string localAccount,
         CancellationToken cancellationToken = default)
     {
-        string accountKey = ChatIdentity.NormalizeAccount(localAccount);
+        string accountKey = ChatIdentity.ValidateAccount(localAccount);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         int direct = await CountUnreadAsync(context, accountKey, ChatTargetKind.Direct, cancellationToken).ConfigureAwait(false);
         int room = await CountUnreadAsync(context, accountKey, ChatTargetKind.Room, cancellationToken).ConfigureAwait(false);
@@ -1206,17 +1206,17 @@ public sealed class ChatPersistenceStore(
         => message switch
         {
             PrivateChatInboundMessage direct => new NormalizedPrivateMessage(
-                ChatIdentity.NormalizeAccount(direct.LocalAccount),
-                ChatIdentity.NormalizeUsername(direct.Username),
+                ChatIdentity.ValidateAccount(direct.LocalAccount),
+                ChatIdentity.ValidateUsername(direct.Username),
                 direct.Username.Trim(),
                 ChatIdentity.ValidateMessage(direct.Body),
                 direct.ProtocolMessageId,
                 ToUnixMilliseconds(direct.ProtocolTimestamp)),
             RoomChatInboundMessage room => new NormalizedRoomMessage(
-                ChatIdentity.NormalizeAccount(room.LocalAccount),
+                ChatIdentity.ValidateAccount(room.LocalAccount),
                 ChatIdentity.NormalizeRoom(room.RoomName),
                 room.RoomName.Trim(),
-                ChatIdentity.NormalizeUsername(room.Username),
+                ChatIdentity.ValidateUsername(room.Username),
                 room.Username.Trim(),
                 ChatIdentity.ValidateMessage(room.Body),
                 room.CreateNotification),

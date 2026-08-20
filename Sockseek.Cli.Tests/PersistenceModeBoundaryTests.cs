@@ -5,7 +5,6 @@ using Sockseek.Core;
 namespace Tests.Cli;
 
 [TestClass]
-[DoNotParallelize]
 public sealed class PersistenceModeBoundaryTests
 {
     [TestMethod]

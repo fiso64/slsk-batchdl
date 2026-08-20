@@ -53,6 +53,21 @@ internal static class ConfiguredCommandDispatcher
                     cancellationToken).ConfigureAwait(false);
             }
 
+            if (command == "user")
+            {
+                if (HasHelp(args))
+                    return await UserCommandRunner.RunAsync(
+                        args, remote: null, profileNames: null, cancellationToken)
+                        .ConfigureAwait(false);
+                ConfiguredCommandInvocation invocation = ConfiguredCommandInvocation.Create(
+                    args, ConfiguredCommandOptions.Remote);
+                return await UserCommandRunner.RunAsync(
+                    invocation.CommandArguments,
+                    invocation.Remote.ServerUrl,
+                    ConfigManager.ExtractProfileName(args),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             if (command == "database")
             {
                 if (HasHelp(args))

@@ -100,7 +100,7 @@ public sealed class UploadCoordinatorTests
             @"Public\Track.bin");
         await protocol.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var duplicate = await coordinator.AdmitAsync(
-            "alice",
+            "Alice",
             null,
             @"public\track.BIN");
 
@@ -364,7 +364,6 @@ public sealed class UploadCoordinatorTests
 
         public ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
             RemotePathKey remotePath,
-            int fileLimit,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<ShareCatalogBrowseDirectory?>(null);
 

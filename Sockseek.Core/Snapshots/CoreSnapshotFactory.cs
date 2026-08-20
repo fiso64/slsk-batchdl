@@ -21,10 +21,39 @@ public static class CoreSnapshotFactory
                 candidate.UploadSpeed),
             candidate.Size,
             candidate.BitRate,
+            candidate.BitDepth,
             candidate.SampleRate,
             candidate.Length,
             candidate.Extension,
             candidate.Attributes);
+
+    public static PeerFileTargetSnapshot CreatePeerFileTarget(PeerFileTarget target)
+        => new(
+            new PeerFileIdentitySnapshot(target.Username, target.Filename),
+            target.Size,
+            target.Extension,
+            target.BitRate,
+            target.BitDepth,
+            target.SampleRate,
+            target.Length,
+            target.Attributes);
+
+    public static PeerDirectoryResultSnapshot CreatePeerDirectory(PeerDirectorySnapshot directory)
+        => new(
+            new PeerDirectoryIdentitySnapshot(
+                directory.Identity.Username,
+                directory.Identity.FolderPath),
+            SnapshotCollections.Freeze(directory.Files.Select(CreatePeerFileTarget)),
+            directory.IsComplete);
+
+    public static DirectoryTransferPlanSnapshot CreateDirectoryTransferPlan(DirectoryTransferPlan plan)
+        => new(
+            plan.DisplayRoot,
+            SnapshotCollections.Freeze(plan.Entries.Select(entry =>
+                new DirectoryTransferEntrySnapshot(
+                    CreatePeerFileTarget(entry.Target),
+                    SnapshotCollections.Freeze(entry.RelativeDirectoryComponents)))),
+            plan.TotalKnownBytes);
 
     public static SearchResultSnapshot CreateSearchResult(SearchRawResult result)
         => new(
@@ -71,8 +100,37 @@ public static class CoreSnapshotFactory
             BytesTransferred: bytesTransferred,
             TotalBytes: totalBytes,
             AttemptCount: attemptCount,
-            candidateSnapshot);
+            candidateSnapshot,
+            CreatePeerFileTarget(candidate.Target));
     }
+
+    public static TransferSnapshot CreateDownloadTransfer(
+        Guid transferId,
+        FileDownloadJob owner,
+        PeerFileTarget target,
+        string outputPath,
+        long revision,
+        string? state,
+        long bytesTransferred,
+        long totalBytes,
+        int attemptCount)
+        => new(
+            transferId,
+            TransferSnapshotDirection.Download,
+            TransferSnapshotSource.SoulseekPeer,
+            owner.Id,
+            owner.WorkflowId,
+            revision,
+            target.Username,
+            target.Filename,
+            outputPath,
+            CandidateKey(target.Identity),
+            State: state,
+            BytesTransferred: bytesTransferred,
+            TotalBytes: totalBytes,
+            AttemptCount: attemptCount,
+            Candidate: null,
+            Target: CreatePeerFileTarget(target));
 
     public static TransferSnapshot CreateFallbackTransfer(
         Guid transferId,
@@ -99,7 +157,8 @@ public static class CoreSnapshotFactory
             bytesTransferred,
             totalBytes,
             attemptCount,
-            Candidate: null);
+            Candidate: null,
+            Target: null);
 
     public static AlbumFolderSnapshot CreateAlbumFolder(AlbumFolder folder, bool includeFiles)
     {
@@ -208,17 +267,21 @@ public static class CoreSnapshotFactory
             SongJob song => new SongJobSnapshotPayload(
                 CreateSongQuery(song.Query),
                 song.Candidates?.Count,
-                song.DownloadPath,
                 song.ResolvedTarget == null ? null : CreateFileCandidate(song.ResolvedTarget),
-                song.BytesTransferred,
-                song.FileSize,
-                song.DownloadSource),
+                song.ExactTarget == null ? null : CreatePeerFileTarget(song.ExactTarget),
+                song.DownloadSource,
+                CreateFileDownloadState(song)),
             AlbumJob album => new AlbumJobSnapshotPayload(
                 CreateAlbumQuery(album.Query),
                 album.Results.Count,
-                album.DownloadPath,
                 album.ResolvedTarget == null ? null : CreateAlbumFolder(album.ResolvedTarget, includeFiles: false),
-                SnapshotCollections.Freeze(album.TrackJobs.Select(child => CreateJob(child, 0, visited)))),
+                SnapshotCollections.Freeze(album.TrackJobs.Select(child => CreateJob(child, 0, visited))),
+                CreateDirectoryDownloadState(album)),
+            RemoteFileJob remoteFile => new RemoteFileJobSnapshotPayload(
+                CreatePeerFileTarget(remoteFile.Target),
+                new RelativeOutputPathSnapshot(SnapshotCollections.Freeze(remoteFile.OutputPath.Components)),
+                CreateFileDownloadState(remoteFile)),
+            RemoteDirectoryJob remoteDirectory => CreateRemoteDirectoryPayload(remoteDirectory, visited),
             AggregateJob aggregate => new AggregateJobSnapshotPayload(
                 CreateSongQuery(aggregate.Query),
                 SnapshotCollections.Freeze(aggregate.Songs.Select(song => CreateJob(song, 0, visited)))),
@@ -229,12 +292,63 @@ public static class CoreSnapshotFactory
                 list.Count,
                 SnapshotCollections.Freeze(list.Jobs.Select(child => CreateJob(child, 0, visited)))),
             RetrieveFolderJob retrieve => new RetrieveFolderJobSnapshotPayload(
-                CreateAlbumFolder(retrieve.TargetFolder, includeFiles: true),
+                new PeerDirectoryIdentitySnapshot(
+                    retrieve.Directory.Username,
+                    retrieve.Directory.FolderPath),
+                retrieve.Result == null ? null : CreatePeerDirectory(retrieve.Result),
                 retrieve.NewFilesFoundCount,
                 retrieve.RetrievalOutcome,
                 retrieve.RetrievalCancelled),
             _ => new GenericJobSnapshotPayload(job.ToString(noInfo: true)),
         };
+
+    private static FileDownloadStateSnapshot CreateFileDownloadState(FileDownloadJob job)
+        => new(job.DownloadPath, job.BytesTransferred, job.FileSize);
+
+    private static DirectoryDownloadStateSnapshot CreateDirectoryDownloadState(DirectoryDownloadJob job)
+        => new(
+            job.DirectoryState switch
+            {
+                DirectoryExecutionState.Unresolved => "unresolved",
+                DirectoryExecutionState.Resolving => "resolving",
+                DirectoryExecutionState.Planned => "planned",
+                DirectoryExecutionState.Transferring => "transferring",
+                _ => "unknown",
+            },
+            job.ActiveAttempt?.AttemptNumber,
+            job.DownloadPath,
+            job.FileJobs.Count,
+            job.FileJobs.Count(child => child.IsTerminal),
+            job.FileJobs.Count(child => child.IsSuccessfulTerminal),
+            job.FileJobs.Count(child => child.IsUnsuccessfulTerminal),
+            job.BytesTransferred,
+            job.TotalKnownBytes);
+
+    private static RemoteDirectoryJobSnapshotPayload CreateRemoteDirectoryPayload(
+        RemoteDirectoryJob job,
+        HashSet<Guid> visited)
+    {
+        var sourceKind = job.Source is RemoteDirectorySource.PeerDirectory
+            ? RemoteDirectorySourceSnapshotKind.PeerDirectory
+            : RemoteDirectorySourceSnapshotKind.Resolved;
+        var directorySource = job.Source is RemoteDirectorySource.PeerDirectory peer
+            ? new PeerDirectoryIdentitySnapshot(peer.Directory.Username, peer.Directory.FolderPath)
+            : null;
+        var resolvedPlan = job.Source is RemoteDirectorySource.Resolved resolved
+            ? CreateDirectoryTransferPlan(resolved.Plan)
+            : null;
+
+        return new RemoteDirectoryJobSnapshotPayload(
+            sourceKind,
+            directorySource,
+            resolvedPlan,
+            job.ResolvedDirectory == null ? null : CreatePeerDirectory(job.ResolvedDirectory),
+            job.ActiveAttempt == null || sourceKind == RemoteDirectorySourceSnapshotKind.Resolved
+                ? null
+                : CreateDirectoryTransferPlan(job.ActiveAttempt.Plan),
+            SnapshotCollections.Freeze(job.FileJobs.Select(child => CreateJob(child, 0, visited))),
+            CreateDirectoryDownloadState(job));
+    }
 
     private static AlbumFileSnapshot CreateAlbumFile(AlbumFile file)
         => new(CreateSongQuery(file.Query), CreateFileCandidate(file.Candidate));
@@ -256,6 +370,8 @@ public static class CoreSnapshotFactory
             SearchJob => JobSnapshotKind.Search,
             SongJob => JobSnapshotKind.Song,
             AlbumJob => JobSnapshotKind.Album,
+            RemoteFileJob => JobSnapshotKind.RemoteFile,
+            RemoteDirectoryJob => JobSnapshotKind.RemoteDirectory,
             AggregateJob => JobSnapshotKind.Aggregate,
             AlbumAggregateJob => JobSnapshotKind.AlbumAggregate,
             JobList => JobSnapshotKind.JobList,
@@ -318,6 +434,22 @@ public static class CoreSnapshotFactory
                 CreateAlbumQuery(album.Query),
                 CreateDownloadBehaviorPolicy(album.DownloadBehaviorPolicy),
                 CreateProvenance(album)),
+            RemoteFileJob remoteFile => new RemoteFileJobDraftSnapshot(
+                CreatePeerFileTarget(remoteFile.Target),
+                new RelativeOutputPathSnapshot(SnapshotCollections.Freeze(remoteFile.OutputPath.Components)),
+                CreateProvenance(remoteFile)),
+            RemoteDirectoryJob remoteDirectory => remoteDirectory.Source switch
+            {
+                RemoteDirectorySource.PeerDirectory peer => new RemoteDirectoryJobDraftSnapshot(
+                    new PeerDirectoryIdentitySnapshot(peer.Directory.Username, peer.Directory.FolderPath),
+                    null,
+                    CreateProvenance(remoteDirectory)),
+                RemoteDirectorySource.Resolved resolved => new RemoteDirectoryJobDraftSnapshot(
+                    null,
+                    CreateDirectoryTransferPlan(resolved.Plan),
+                    CreateProvenance(remoteDirectory)),
+                _ => throw new InvalidOperationException("Unsupported remote directory source."),
+            },
             AggregateJob aggregate => new AggregateJobDraftSnapshot(
                 CreateSongQuery(aggregate.Query),
                 CreateDownloadBehaviorPolicy(aggregate.DownloadBehaviorPolicy),
@@ -353,5 +485,8 @@ public static class CoreSnapshotFactory
                 mutation.TrackUri);
 
     private static string CandidateKey(FileCandidateSnapshot candidate)
-        => string.Join('\0', candidate.Username, candidate.Filename, candidate.Size);
+        => CandidateKey(new PeerFileIdentity(candidate.Username, candidate.Filename));
+
+    private static string CandidateKey(PeerFileIdentity identity)
+        => string.Join('\0', identity.Username, identity.Filename);
 }

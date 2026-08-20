@@ -6,7 +6,7 @@
     - [x] Sharing / Uploads
     - [x] Chats (private DMs & public chatrooms, notification API;
       independent-client release qualification remains tracked in the design)
-    - User browsing (user description, profile picture, shares)
+    - [x] User browsing (user description, profile picture, shares)
 
 - Create a webui using the v4 live-state client
     - All the usual functions of a soulseek client

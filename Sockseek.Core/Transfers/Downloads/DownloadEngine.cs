@@ -17,6 +17,7 @@ using Sockseek.Core.Extractors;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.PeerBrowsing;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -79,7 +80,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         return job != null && TryNextCandidate(job.Id);
     }
 
-    // ── public state (read by Searcher / Downloader) ─────────────────────────
+    // ── public state (read by search and transfer services) ──────────────────
 
     public ISoulseekClient? Client => _clientManager.Client;
     public SoulseekClientStates ClientState => _clientManager.State;
@@ -217,7 +218,8 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         SoulseekClientManager clientManager,
         IJobSettingsResolver? jobSettingsResolver = null,
         ISongDownloadFallback? songDownloadFallback = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IPeerDirectorySource? directorySource = null)
     {
         engineSettings = settings;
         Events = new DownloadEvents(timeProvider);
@@ -235,7 +237,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             job => _executionContext!.RaiseBuildingMusicDirectoryIndex(job));
         if (settings.ConcurrentJobs <= 0)
             throw new ArgumentOutOfRangeException(nameof(settings.ConcurrentJobs), "ConcurrentJobs must be greater than zero.");
-        _runtime = new DownloadRunScope(settings, _clientManager, _activeDownloads, _downloadedFiles, _userSuccesses, Events, SearchEvents, _staleDownloadCoordinator, timeProvider);
+        _runtime = new DownloadRunScope(settings, _clientManager, _activeDownloads, _downloadedFiles, _userSuccesses, Events, SearchEvents, _staleDownloadCoordinator, timeProvider, directorySource);
         _executionContext = new DownloadExecutionContext(
             engineSettings,
             _clientManager,

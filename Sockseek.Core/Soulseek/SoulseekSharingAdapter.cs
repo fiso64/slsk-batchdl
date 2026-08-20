@@ -51,8 +51,6 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     public const int MaximumSearchTerms = 64;
     public const int MaximumSearchExclusions = 64;
     public const int MaximumSearchUtf8Bytes = 4_096;
-    public const int MaximumDirectoryFiles = 10_000;
-    public const int MaximumDirectoryEncodedBytes = 8 * 1_024 * 1_024;
     public const int MaximumExcludedPhraseCount = 256;
     public const int MaximumExcludedPhraseUtf8Bytes = 1_024;
     public const int MaximumExcludedPhraseSetUtf8Bytes = 64 * 1_024;
@@ -73,6 +71,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     private readonly UploadSettings uploadSettings;
     private readonly Func<ISoulseekClient?> clientProvider;
     private readonly string userDescription;
+    private readonly byte[]? userPicture;
     private readonly bool uploadServingEnabled;
     private readonly SemaphoreSlim searchConcurrency =
         new(IncomingSearchConcurrency, IncomingSearchConcurrency);
@@ -92,7 +91,8 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         UploadSettings uploadSettings,
         Func<ISoulseekClient?> clientProvider,
         string? userDescription = null,
-        bool uploadServingEnabled = true)
+        bool uploadServingEnabled = true,
+        byte[]? userPicture = null)
     {
         this.catalogs = catalogs ?? throw new ArgumentNullException(nameof(catalogs));
         this.uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
@@ -100,6 +100,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         this.uploadSettings = uploadSettings ?? throw new ArgumentNullException(nameof(uploadSettings));
         this.clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         this.userDescription = userDescription ?? "";
+        this.userPicture = userPicture?.ToArray();
         this.uploadServingEnabled = uploadServingEnabled;
     }
 
@@ -295,13 +296,9 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                 ShareCatalogBrowseDirectory? directory =
                     await lease.Reader.GetDirectoryAsync(
                         key,
-                        MaximumDirectoryFiles,
                         timeout.Token).ConfigureAwait(false);
-                if (directory is null
-                    || EstimateDirectoryBytes(directory) > MaximumDirectoryEncodedBytes)
-                {
+                if (directory is null)
                     return [];
-                }
                 return
                 [
                     new SlDirectory(
@@ -327,7 +324,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             return Task.FromResult(new UserInfo("", 0, 0, false));
         }
         if (!catalogs.TryAcquire(out IShareCatalogLease? lease) || lease is null)
-            return Task.FromResult(new UserInfo(userDescription, 0, 0, false));
+            return Task.FromResult(new UserInfo(userDescription, 0, 0, false, userPicture));
         lease.Dispose();
 
         UploadQueueRuntimeSnapshot capacity = uploads.GetQueueSnapshot();
@@ -335,7 +332,8 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             userDescription,
             uploadServingEnabled ? capacity.TotalSlots : 0,
             capacity.QueuedFiles,
-            uploadServingEnabled && uploads.CouldStartImmediately(username)));
+            uploadServingEnabled && uploads.CouldStartImmediately(username),
+            userPicture));
     }
 
     public async Task EnqueueUploadAsync(
@@ -363,10 +361,10 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                 throw new DownloadEnqueueException("File not shared");
             }
 
-            string normalizedUsername = PeerUsername.Normalize(username);
+            string exactUsername = PeerUsername.Validate(username);
 
             UploadCoordinatorAdmission result = await uploads.AdmitAsync(
-                normalizedUsername,
+                exactUsername,
                 endpoint,
                 remotePath,
                 timeout.Token).ConfigureAwait(false);
@@ -439,9 +437,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         try
         {
-            return Encoding.UTF8.GetByteCount(username)
-                       <= UploadCoordinator.MaximumUsernameUtf8Bytes
-                   && PeerUsername.Normalize(username).Length > 0;
+            return PeerUsername.Validate(username).Length > 0;
         }
         catch
         {
@@ -450,9 +446,16 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     }
 
     private static bool IsValidRemotePath(string remotePath)
-        => !string.IsNullOrWhiteSpace(remotePath)
-           && Encoding.UTF8.GetByteCount(remotePath)
-           <= UploadCoordinator.MaximumRemotePathUtf8Bytes;
+    {
+        try
+        {
+            return RemotePathKey.Create(remotePath).Bytes.Length > 0;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     private static bool ContainsExcluded(string remotePath, IEnumerable<string> exclusions)
         => exclusions.Any(exclusion =>
@@ -484,20 +487,6 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         int separator = remotePath.LastIndexOf('\\');
         return separator < 0 ? remotePath : remotePath[(separator + 1)..];
-    }
-
-    private static long EstimateDirectoryBytes(ShareCatalogBrowseDirectory directory)
-    {
-        long total = Encoding.UTF8.GetByteCount(directory.Directory.RemotePath) + 32;
-        foreach (var file in directory.Files)
-        {
-            total = checked(total
-                            + Encoding.UTF8.GetByteCount(RemoteFileName(file.RemotePath))
-                            + Encoding.UTF8.GetByteCount(file.Extension)
-                            + 32L
-                            + file.Attributes.Count * 8L);
-        }
-        return total;
     }
 
     public void Dispose()

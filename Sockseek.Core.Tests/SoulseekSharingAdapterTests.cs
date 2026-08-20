@@ -120,7 +120,7 @@ public sealed class SoulseekSharingAdapterTests
             1,
             new SearchQuery("allowed")));
         Assert.AreEqual(0, reader.SearchCount);
-        await Assert.ThrowsExceptionAsync<DownloadEnqueueException>(
+        await Assert.ThrowsExactlyAsync<DownloadEnqueueException>(
             () => adapter.EnqueueUploadAsync(
                 "alice",
                 endpoint,
@@ -132,6 +132,35 @@ public sealed class SoulseekSharingAdapterTests
         UserInfo info = await adapter.ResolveUserInfoAsync("alice", endpoint);
         Assert.AreEqual(0, info.UploadSlots);
         Assert.IsFalse(info.HasFreeUploadSlot);
+    }
+
+    [TestMethod]
+    public async Task UserInfoAdvertisesPictureOnlyToAllowedPeers()
+    {
+        var reader = new FakeCatalogReader([]);
+        await using var uploads = CreateUploads(reader);
+        byte[] picture = [0xff, 0xd8, 0xff, 0xd9];
+        using var adapter = new SoulseekSharingAdapter(
+            new FakeProvider(reader),
+            uploads,
+            new PeerAccessPolicy(new PeerAccessSettings
+            {
+                BlockedUsernames = ["blocked"],
+            }),
+            new UploadSettings { Slots = 1 },
+            () => null,
+            "hello",
+            userPicture: picture);
+        var endpoint = new IPEndPoint(IPAddress.Loopback, 1234);
+
+        UserInfo allowed = await adapter.ResolveUserInfoAsync("allowed", endpoint);
+        Assert.AreEqual("hello", allowed.Description);
+        Assert.IsTrue(allowed.HasPicture);
+        CollectionAssert.AreEqual(picture, allowed.Picture);
+
+        UserInfo blocked = await adapter.ResolveUserInfoAsync("blocked", endpoint);
+        Assert.AreEqual("", blocked.Description);
+        Assert.IsFalse(blocked.HasPicture);
     }
 
     [TestMethod]
@@ -255,7 +284,6 @@ public sealed class SoulseekSharingAdapterTests
 
         public ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
             RemotePathKey remotePath,
-            int fileLimit,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<ShareCatalogBrowseDirectory?>(null);
 

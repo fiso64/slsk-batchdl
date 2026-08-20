@@ -180,7 +180,7 @@ public static partial class ConfigManager
         };
     }
 
-    public static void ApplyAutoProfileCliSettings(ConfigFile file, DownloadSettings root, CliSettings cli, Job? job = null)
+    public static void ApplyAutoProfileCliSettings(ConfigFile file, DownloadSettings root, CliSettings cli)
     {
         // Client settings can themselves affect profile context, e.g. one profile
         // enables interactive mode and another condition depends on interactive.
@@ -195,7 +195,7 @@ public static partial class ConfigManager
             foreach (var profile in file.Profiles
                          .Where(x => x.Key != "default" && x.Value.Condition != null)
                          .Select(x => ToProfileEntry(x.Value))
-                         .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, root, job, context)))
+                         .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, root, job: null, context: context)))
             {
                 profile.Cli.ApplyTo(cli);
             }
@@ -589,6 +589,8 @@ public static partial class ConfigManager
                 Engine(e => e.ConnectTimeout = Int()); break;
             case "--user-description":
                 Engine(e => e.UserDescription = value); break;
+            case "--user-picture":
+                DaemonEngine(e => e.UserPicturePath = value); break;
             case "--share":
                 {
                     var operation = ListOperation();
@@ -889,7 +891,7 @@ public static partial class ConfigManager
             case "--st": case "--search-time": case "--search-timeout":
                 Download(d => d.Search.SearchTimeout = Int()); break;
             case "--Mst": case "--stale-time": case "--max-stale-time":
-                Download(d => d.Search.MaxStaleTime = Int()); break;
+                Download(d => d.Transfer.MaxStaleTime = Int()); break;
             case "--Mr": case "--retries": case "--max-retries":
                 Download(d => d.Transfer.MaxDownloadRetries = Int()); break;
             case "--uer": case "--unknown-error-retries":
@@ -1260,7 +1262,7 @@ public static partial class ConfigManager
             settings.Search.NecessaryFolderCond = SentinelFolderConditions(intSeed, stringSeed);
             settings.Search.PreferredFolderCond = SentinelFolderConditions(intSeed, stringSeed);
             settings.Search.SearchTimeout = intSeed;
-            settings.Search.MaxStaleTime = intSeed;
+            settings.Transfer.MaxStaleTime = intSeed;
             settings.Search.DownrankOn = intSeed;
             settings.Search.IgnoreOn = intSeed;
             settings.Search.FastSearch = boolSeed;

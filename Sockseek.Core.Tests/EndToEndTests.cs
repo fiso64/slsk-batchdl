@@ -611,6 +611,60 @@ namespace Tests.EndToEnd
         }
 
         [TestMethod]
+        public async Task AutoProfile_AutoDetectedInputTypeAndConcreteMode_MatchExtractedChild()
+        {
+            string csvPath = Path.Combine(Path.GetTempPath(), "slsk-auto-profile-input-type-" + Guid.NewGuid() + ".csv");
+            await File.WriteAllTextAsync(csvPath, "artist,title\nTest Artist,Test Track\n");
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Extraction.Input = csvPath;
+
+                var autoProfile = new SettingsProfile
+                {
+                    Name = "csv-song",
+                    Condition = "input-type == \"csv\" && download-mode == \"song\"",
+                    Download = new DownloadSettingsPatch(),
+                };
+                autoProfile.Download.Add(dl => dl.Transfer.MaxStaleTime = 4242);
+
+                var resolver = new ProfileJobSettingsResolver(
+                    rootSettings,
+                    defaultProfile: null,
+                    autoProfiles: [autoProfile],
+                    namedProfiles: [],
+                    cliProfile: null,
+                    normalize: SettingsNormalizer.Normalize);
+
+                var extract = new ExtractJob(csvPath, InputType.None);
+                var app = new DownloadEngine(
+                    eng,
+                    TestHelpers.CreateMockClientManager(new ClientTests.MockSoulseekClient([]), eng),
+                    resolver);
+                app.Enqueue(extract, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(InputType.CSV, extract.InputType);
+                Assert.AreEqual(InputType.CSV, extract.Config.Extraction.InputType);
+                Assert.IsNotNull(extract.Result);
+                var song = extract.Result is JobList list
+                    ? list.Jobs.OfType<SongJob>().Single()
+                    : (SongJob)extract.Result;
+                CollectionAssert.Contains(song.Config.AppliedAutoProfiles.ToList(), "csv-song");
+                Assert.AreEqual(4242, song.Config.Transfer.MaxStaleTime);
+            }
+            finally
+            {
+                if (File.Exists(csvPath))
+                    File.Delete(csvPath);
+            }
+        }
+
+        [TestMethod]
         public async Task AutoProfile_ListAlbumLines_LogsNewProfilesOnceAndDebugSummary()
         {
             var listPath = Path.Combine(Path.GetTempPath(), "slsk-auto-profile-list-" + Guid.NewGuid() + ".txt");
@@ -1461,7 +1515,7 @@ namespace Tests.EndToEnd
                 var concreteJob = new AlbumJob(new AlbumQuery { Artist = "Wrong Artist", Album = "Wrong Album" })
                 {
                     ResolvedTarget = selected,
-                    AllowBrowseResolvedTarget = false,
+                    DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot,
                     Results = [selected],
                 };
 

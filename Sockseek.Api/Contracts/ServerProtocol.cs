@@ -32,6 +32,12 @@ public enum ServerJobKind
     /// <summary>Folder-browse job used to fully load a search result folder.</summary>
     [JsonStringEnumMemberName(ServerProtocol.JobKinds.RetrieveFolder)]
     RetrieveFolder,
+    /// <summary>Ordinary exact peer-file download job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.RemoteFile)]
+    RemoteFile,
+    /// <summary>Ordinary peer-directory download job.</summary>
+    [JsonStringEnumMemberName(ServerProtocol.JobKinds.RemoteDirectory)]
+    RemoteDirectory,
     /// <summary>Fallback kind for unknown or unmapped core jobs.</summary>
     [JsonStringEnumMemberName(ServerProtocol.JobKinds.Generic)]
     Generic,
@@ -217,6 +223,8 @@ public static class ServerProtocol
         public const string AlbumAggregate = "album-aggregate";
         public const string JobList = "job-list";
         public const string RetrieveFolder = "retrieve-folder";
+        public const string RemoteFile = "remote-file";
+        public const string RemoteDirectory = "remote-directory";
         public const string Generic = "generic";
     }
 
@@ -242,6 +250,8 @@ public static class ServerProtocol
         public const string AlbumAggregate = "album-aggregate";
         /// <summary>Draft for a nested job list.</summary>
         public const string JobList = "job-list";
+        public const string RemoteFile = "remote-file";
+        public const string RemoteDirectory = "remote-directory";
     }
 
     /// <summary>
@@ -297,6 +307,8 @@ public static class ServerProtocolEnumExtensions
             ServerJobKind.AlbumAggregate => ServerProtocol.JobKinds.AlbumAggregate,
             ServerJobKind.JobList => ServerProtocol.JobKinds.JobList,
             ServerJobKind.RetrieveFolder => ServerProtocol.JobKinds.RetrieveFolder,
+            ServerJobKind.RemoteFile => ServerProtocol.JobKinds.RemoteFile,
+            ServerJobKind.RemoteDirectory => ServerProtocol.JobKinds.RemoteDirectory,
             ServerJobKind.Generic => ServerProtocol.JobKinds.Generic,
             _ => kind.ToString(),
         };

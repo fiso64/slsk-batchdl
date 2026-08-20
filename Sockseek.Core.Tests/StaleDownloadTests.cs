@@ -135,8 +135,8 @@ public class StaleDownloadTests
         var goodFile = TestHelpers.CreateSlFile(@"Shares\Test Artist - Test Song.mp3", size: 5000, length: 180);
         var staleResponse = CreateResponse("stale-user", staleFile);
         var goodResponse = CreateResponse("good-user", goodFile);
-        var staleCandidate = new FileCandidate(staleResponse, staleFile);
-        var goodCandidate = new FileCandidate(goodResponse, goodFile);
+        var staleCandidate = SoulseekSearchAdapter.ToFileCandidate(staleResponse, staleFile);
+        var goodCandidate = SoulseekSearchAdapter.ToFileCandidate(goodResponse, goodFile);
         var downloadGate = new TestHelpers.DownloadGate();
         var client = new ClientTests.MockSoulseekClient([staleResponse, goodResponse])
         {
@@ -158,7 +158,7 @@ public class StaleDownloadTests
         string? attemptExceptionType = null;
         engine.Events.DownloadAttemptFailed += change =>
         {
-            if (change.Candidate.Username == "stale-user")
+            if (change.Target.Identity.Username == "stale-user")
                 attemptExceptionType = change.Exception.Type;
         };
 
@@ -173,7 +173,7 @@ public class StaleDownloadTests
 
             await runTask.WaitAsync(SignalTimeout);
             Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
-            Assert.AreEqual("good-user", song.ChosenCandidate?.Username);
+            Assert.AreEqual("good-user", song.ResolvedTarget?.Username);
             Assert.AreEqual(nameof(StaleDownloadException), attemptExceptionType);
         }
         finally
@@ -204,7 +204,7 @@ public class StaleDownloadTests
         var downloadedFiles = new DownloadedFileCache();
         var events = new DownloadEvents();
         var staleDownloads = new StaleDownloadCoordinator(activeDownloads, clock);
-        var downloader = new Downloader(
+        var downloader = new ExactPeerFileTransferRunner(
             client,
             TestHelpers.CreateMockClientManager(client, engineSettings),
             activeDownloads,
@@ -222,11 +222,12 @@ public class StaleDownloadTests
 
         using var downloadCts = CancellationTokenSource.CreateLinkedTokenSource(song.Cts.Token);
         var downloadTask = Task.Run(() => downloader.DownloadFile(
-            candidate,
+            candidate.Target,
             outputPath,
             song,
             settings.Transfer,
             settings.Output.ParentDir,
+            settings.Transfer.MaxStaleTime,
             downloadCts.Token));
         try
         {
@@ -239,7 +240,7 @@ public class StaleDownloadTests
 
             releaseStarted.TrySetResult();
             var outcome = await downloadTask.WaitAsync(SignalTimeout);
-            Assert.AreEqual(FileDownloadStatus.Completed, outcome.Status);
+            Assert.AreEqual(ExactFileTransferStatus.Completed, outcome.Status);
         }
         finally
         {
@@ -305,8 +306,8 @@ public class StaleDownloadTests
         {
             ResolvedTarget = folder,
             Results = [folder],
-            AllowBrowseResolvedTarget = false,
-            SkipResolvedTargetTrackCountVerification = true,
+            DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot,
+            ValidationRequirement = AlbumValidationRequirement.UserAccepted,
         };
 
         var downloadGate = new TestHelpers.DownloadGate();
@@ -368,7 +369,7 @@ public class StaleDownloadTests
         var album = new AlbumJob(new AlbumQuery { Artist = "Test Artist", Album = "Test Album" })
         {
             Results = [staleFolder, goodFolder],
-            SkipResolvedTargetTrackCountVerification = true,
+            ValidationRequirement = AlbumValidationRequirement.UserAccepted,
         };
 
         var downloadGate = new TestHelpers.DownloadGate();
@@ -515,11 +516,11 @@ public class StaleDownloadTests
         var response = CreateResponse("single-slot-song-user", firstFile, secondFile);
         var firstSong = new SongJob(new SongQuery { Artist = "Test Artist", Title = "First Single" })
         {
-            ResolvedTarget = new FileCandidate(response, firstFile),
+            ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(response, firstFile),
         };
         var secondSong = new SongJob(new SongQuery { Artist = "Other Artist", Title = "Second Single" })
         {
-            ResolvedTarget = new FileCandidate(response, secondFile),
+            ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(response, secondFile),
         };
         var songList = new JobList("same-user songs", [firstSong, secondSong]);
 
@@ -576,8 +577,8 @@ public class StaleDownloadTests
         {
             ResolvedTarget = folder,
             Results = [folder],
-            AllowBrowseResolvedTarget = false,
-            SkipResolvedTargetTrackCountVerification = true,
+            DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot,
+            ValidationRequirement = AlbumValidationRequirement.UserAccepted,
         };
 
         var sameUserQueue = new SameUserQueuedSiblingProbe();
@@ -650,7 +651,7 @@ public class StaleDownloadTests
     {
         var settings = new DownloadSettings();
         settings.Output.ParentDir = outputDir;
-        settings.Search.MaxStaleTime = (int)MaxStaleTime.TotalMilliseconds;
+        settings.Transfer.MaxStaleTime = (int)MaxStaleTime.TotalMilliseconds;
         settings.Search.NoBrowseFolder = true;
         settings.Transfer.UnknownErrorRetries = 1;
         settings.Transfer.MaxDownloadRetries = 1;
@@ -665,7 +666,7 @@ public class StaleDownloadTests
     {
         var file = TestHelpers.CreateSlFile(filename, size: size, length: 180);
         var response = CreateResponse(username, file);
-        return (response, new FileCandidate(response, file));
+        return (response, SoulseekSearchAdapter.ToFileCandidate(response, file));
     }
 
     private static SearchResponse CreateResponse(string username, params Soulseek.File[] files)

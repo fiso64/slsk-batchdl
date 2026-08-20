@@ -39,6 +39,7 @@ public class CliExitCodeTests
     [DataRow("share", "status")]
     [DataRow("transfers", null)]
     [DataRow("transfer", "cancel")]
+    [DataRow("user", "profile")]
     public async Task DaemonResourceCommands_RequireRemote(
         string command,
         string? action)
@@ -66,11 +67,13 @@ public class CliExitCodeTests
     }
 
     [DataTestMethod]
-    [DataRow("chat", "status")]
-    [DataRow("share", "status")]
+    [DataRow("chat", "status", null)]
+    [DataRow("share", "status", null)]
+    [DataRow("user", "profile", "Peer")]
     public async Task ConfiguredResourceCommands_UseRemoteFromConfig(
         string command,
-        string action)
+        string action,
+        string? operand)
     {
         string root = Path.Combine(
             Path.GetTempPath(), "sockseek-configured-command-" + Guid.NewGuid().ToString("N"));
@@ -89,8 +92,10 @@ public class CliExitCodeTests
         {
             Console.SetError(stderr);
 
-            int exitCode = await Sockseek.Cli.Program.Main(
-                [command, action, "--config", configPath]);
+            string[] args = operand is null
+                ? [command, action, "--config", configPath]
+                : [command, action, operand, "--config", configPath];
+            int exitCode = await Sockseek.Cli.Program.Main(args);
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
             Assert.IsFalse(

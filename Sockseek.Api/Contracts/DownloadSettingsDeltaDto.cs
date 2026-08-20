@@ -106,7 +106,6 @@ public static class DownloadSettingsDeltaMapper
             case "Output.AlbumArtOption": settings.Output.AlbumArtOption = op.AlbumArtOptionValue ?? settings.Output.AlbumArtOption; break;
 
             case "Search.SearchTimeout": settings.Search.SearchTimeout = Int(op); break;
-            case "Search.MaxStaleTime": settings.Search.MaxStaleTime = Int(op); break;
             case "Search.DownrankOn": settings.Search.DownrankOn = Int(op); break;
             case "Search.IgnoreOn": settings.Search.IgnoreOn = Int(op); break;
             case "Search.FastSearch": settings.Search.FastSearch = Bool(op); break;
@@ -191,6 +190,7 @@ public static class DownloadSettingsDeltaMapper
             case "Transfer.UnknownErrorRetries": settings.Transfer.UnknownErrorRetries = Int(op); break;
             case "Transfer.NoIncompleteExt": settings.Transfer.NoIncompleteExt = Bool(op); break;
             case "Transfer.AlbumTrackCountMaxRetries": settings.Transfer.AlbumTrackCountMaxRetries = Int(op); break;
+            case "Transfer.MaxStaleTime": settings.Transfer.MaxStaleTime = Int(op); break;
 
             case "Spotify.ClientId": settings.Spotify.ClientId = op.StringValue; break;
             case "Spotify.ClientSecret": settings.Spotify.ClientSecret = op.StringValue; break;
@@ -242,7 +242,6 @@ public static class DownloadSettingsDeltaMapper
         AddFolderConditionDiffs(operations, "Search.NecessaryFolderCond", before.NecessaryFolderCond, after.NecessaryFolderCond);
         AddFolderConditionDiffs(operations, "Search.PreferredFolderCond", before.PreferredFolderCond, after.PreferredFolderCond);
         AddIntDiff(operations, "Search.SearchTimeout", before.SearchTimeout, after.SearchTimeout);
-        AddIntDiff(operations, "Search.MaxStaleTime", before.MaxStaleTime, after.MaxStaleTime);
         AddIntDiff(operations, "Search.DownrankOn", before.DownrankOn, after.DownrankOn);
         AddIntDiff(operations, "Search.IgnoreOn", before.IgnoreOn, after.IgnoreOn);
         AddBoolDiff(operations, "Search.FastSearch", before.FastSearch, after.FastSearch);
@@ -327,6 +326,7 @@ public static class DownloadSettingsDeltaMapper
         AddIntDiff(operations, "Transfer.UnknownErrorRetries", before.UnknownErrorRetries, after.UnknownErrorRetries);
         AddBoolDiff(operations, "Transfer.NoIncompleteExt", before.NoIncompleteExt, after.NoIncompleteExt);
         AddIntDiff(operations, "Transfer.AlbumTrackCountMaxRetries", before.AlbumTrackCountMaxRetries, after.AlbumTrackCountMaxRetries);
+        AddIntDiff(operations, "Transfer.MaxStaleTime", before.MaxStaleTime, after.MaxStaleTime);
     }
 
     private static void AddSpotifyDiffs(List<DownloadSettingOperationDto> operations, SpotifySettings before, SpotifySettings after)

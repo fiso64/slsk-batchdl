@@ -89,6 +89,14 @@ public sealed record ShareCatalogResolvedFile(
     ShareCatalogRoot Root,
     ShareCatalogFile File);
 
+/// <summary>
+/// Indicates that one catalog entry cannot be represented because its remote
+/// identity collides with an entry already written to the staging generation.
+/// Scanners may isolate this entry and continue with unrelated content.
+/// </summary>
+public class ShareCatalogEntryCollisionException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);
+
 public interface IShareCatalogReader : IAsyncDisposable
 {
     ShareCatalogMetadata Metadata { get; }
@@ -118,7 +126,6 @@ public interface IShareCatalogReader : IAsyncDisposable
 
     ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
         RemotePathKey remotePath,
-        int fileLimit,
         CancellationToken cancellationToken = default);
 
     IAsyncEnumerable<ShareCatalogBrowseDirectory> EnumerateBrowseAsync(

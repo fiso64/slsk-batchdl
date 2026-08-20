@@ -8,11 +8,8 @@ using Sockseek.Core.Sharing;
 
 namespace Sockseek.Persistence.Sharing;
 
-public sealed class ShareCatalogLimitExceededException(string message)
-    : InvalidOperationException(message);
-
 public sealed class RemotePathCollisionException(string message, Exception innerException)
-    : InvalidOperationException(message, innerException);
+    : ShareCatalogEntryCollisionException(message, innerException);
 
 public sealed class SqliteShareCatalogBuilder : IShareCatalogGenerationWriter
 {
@@ -391,7 +388,6 @@ public sealed partial class SqliteShareCatalogReader : IShareCatalogReader
     // only for deterministic over-fetch when exclusions remove top-ranked
     // candidates.
     private const int MaximumSearchLimit = 2_000;
-    private const int MaximumDirectoryLimit = 10_000;
     private readonly string connectionString;
     private bool disposed;
 
@@ -587,12 +583,8 @@ public sealed partial class SqliteShareCatalogReader : IShareCatalogReader
 
     public async ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
         RemotePathKey remotePath,
-        int fileLimit,
         CancellationToken cancellationToken = default)
     {
-        if (fileLimit is < 1 or > MaximumDirectoryLimit)
-            throw new ArgumentOutOfRangeException(nameof(fileLimit));
-
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         ShareCatalogDirectory? directory;
         await using (var command = connection.CreateCommand())
@@ -620,22 +612,13 @@ public sealed partial class SqliteShareCatalogReader : IShareCatalogReader
              SELECT {FileColumns("f")}
              FROM files f
              WHERE f.directory_id = $directory_id
-             ORDER BY f.remote_path
-             LIMIT $limit;
+             ORDER BY f.remote_path;
              """;
         filesCommand.Parameters.AddWithValue("$directory_id", directory.DirectoryId);
-        filesCommand.Parameters.AddWithValue("$limit", checked(fileLimit + 1));
-        var files = new List<ShareCatalogFile>(fileLimit);
+        var files = new List<ShareCatalogFile>();
         await using var filesReader = await filesCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await filesReader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (files.Count == fileLimit)
-            {
-                throw new ShareCatalogLimitExceededException(
-                    $"Directory '{directory.RemotePath}' exceeds the {fileLimit}-file response limit.");
-            }
             files.Add(ReadFile(filesReader, 0));
-        }
 
         return new ShareCatalogBrowseDirectory(directory, files);
     }

@@ -8,15 +8,6 @@ namespace Sockseek.Core.Sharing;
 
 public sealed record ShareScanError(string Code, string RelativePath, string Message);
 
-public sealed class ShareScanRootException(
-    string alias,
-    string errorCode = "RootUnavailable",
-    Exception? innerException = null)
-    : IOException($"Configured share root '{alias}' is unavailable or unsafe.", innerException)
-{
-    public string ErrorCode { get; } = errorCode;
-}
-
 public sealed record ShareScanProgress(
     long DirectoriesDiscovered,
     long FilesDiscovered,
@@ -87,7 +78,13 @@ public sealed class ShareScanner
         var errors = new ConcurrentQueue<ShareScanError>();
         var progressReporter = new ScanProgressReporter(counters, errors, progress);
 
-        Task writerTask = WriteRecordsAsync(writer, records.Reader, cancellationToken);
+        Task writerTask = WriteRecordsAsync(
+            writer,
+            records.Reader,
+            counters,
+            errors,
+            progressReporter,
+            cancellationToken);
         Task[] workers = Enumerable.Range(0, MetadataWorkerCount)
             .Select(_ => ReadMetadataAsync(
                 candidates.Reader,
@@ -185,18 +182,20 @@ public sealed class ShareScanner
                 if ((rootAttributes & FileAttributes.Directory) == 0
                     || (rootAttributes & FileAttributes.ReparsePoint) != 0)
                 {
-                    throw new ShareScanRootException(configured.EffectiveAlias);
+                    throw new IOException("The configured path is not a safe directory.");
                 }
-            }
-            catch (ShareScanRootException)
-            {
-                throw;
             }
             catch (Exception ex) when (IsExpectedIo(ex))
             {
-                throw new ShareScanRootException(
+                Interlocked.Increment(ref counters.IoFailures);
+                Interlocked.Increment(ref counters.EntriesSkipped);
+                Record(
+                    errors,
+                    "root-unavailable",
                     configured.EffectiveAlias,
-                    innerException: ex);
+                    $"Configured root could not be read ({ex.GetType().Name}).");
+                progress.Report();
+                continue;
             }
 
             var root = new ShareCatalogRoot(
@@ -240,10 +239,19 @@ public sealed class ShareScanner
                         stack.Pop();
                         frame.Dispose();
                         if (frame.RelativePath.Length == 0)
-                            throw new ShareScanRootException(
+                        {
+                            Interlocked.Increment(ref counters.IoFailures);
+                            Interlocked.Increment(ref counters.EntriesSkipped);
+                            Record(
+                                errors,
+                                "root-unavailable",
                                 configured.EffectiveAlias,
-                                innerException: ex);
-                        RecordIo(counters, errors, frame.RelativePath, ex);
+                                $"Configured root could not be enumerated ({ex.GetType().Name}).");
+                        }
+                        else
+                        {
+                            RecordIo(counters, errors, frame.RelativePath, ex);
+                        }
                         continue;
                     }
                     if (!hasEntry)
@@ -455,23 +463,56 @@ public sealed class ShareScanner
     private static async Task WriteRecordsAsync(
         IShareCatalogGenerationWriter writer,
         ChannelReader<CatalogRecord> records,
+        ScanCounters counters,
+        ConcurrentQueue<ShareScanError> errors,
+        ScanProgressReporter progress,
         CancellationToken cancellationToken)
     {
         await foreach (var record in records.ReadAllAsync(cancellationToken))
         {
-            switch (record)
+            try
             {
-                case RootRecord root:
-                    await writer.AddRootAsync(root.Value, cancellationToken).ConfigureAwait(false);
-                    break;
-                case DirectoryRecord directory:
-                    await writer.AddDirectoryAsync(
-                        directory.Value,
-                        cancellationToken).ConfigureAwait(false);
-                    break;
-                case FileRecord file:
-                    await writer.AddFileAsync(file.Value, cancellationToken).ConfigureAwait(false);
-                    break;
+                switch (record)
+                {
+                    case RootRecord root:
+                        await writer.AddRootAsync(root.Value, cancellationToken).ConfigureAwait(false);
+                        break;
+                    case DirectoryRecord directory:
+                        await writer.AddDirectoryAsync(
+                            directory.Value,
+                            cancellationToken).ConfigureAwait(false);
+                        break;
+                    case FileRecord file:
+                        await writer.AddFileAsync(file.Value, cancellationToken).ConfigureAwait(false);
+                        break;
+                }
+            }
+            catch (ShareCatalogEntryCollisionException ex)
+            {
+                Interlocked.Increment(ref counters.EntriesSkipped);
+                switch (record)
+                {
+                    case DirectoryRecord:
+                        Interlocked.Decrement(ref counters.DirectoriesVisited);
+                        break;
+                    case FileRecord file:
+                        Interlocked.Decrement(ref counters.FilesIndexed);
+                        Interlocked.Add(ref counters.BytesIndexed, -file.Value.SizeBytes);
+                        break;
+                }
+                string path = record switch
+                {
+                    RootRecord root => root.Value.Alias,
+                    DirectoryRecord directory => directory.Value.RelativePath,
+                    FileRecord file => file.Value.RelativePath,
+                    _ => "",
+                };
+                Record(
+                    errors,
+                    "remote-path-collision",
+                    path,
+                    $"Entry was skipped because its remote identity collides ({ex.GetType().Name}).");
+                progress.Report();
             }
         }
     }

@@ -27,11 +27,18 @@ public sealed record SearchProjectionInput(
     internal Soulseek.File? LiveFile { get; init; }
 
     public FileCandidate ToFileCandidate()
-        => LiveResponse != null && LiveFile != null
-            ? new FileCandidate(LiveResponse, LiveFile)
-            : new FileCandidate(
-                Username, Filename, Size, BitRate, BitDepth, ResponseFileCount, SampleRate, Length, Extension,
-                UploadSpeed, HasFreeUploadSlot, Attributes);
+        => new(
+            new PeerFileTarget(
+                new PeerFileIdentity(Username, Filename),
+                Size < 0 ? null : Size,
+                Extension,
+                BitRate,
+                BitDepth,
+                SampleRate,
+                Length,
+                Attributes),
+            new SearchPeerSnapshot(Username, ResponseFileCount, UploadSpeed, HasFreeUploadSlot),
+            new FileSearchEvidence(Sequence, Revision, ObservedAtUtc));
 
     internal static SearchProjectionInput FromLive(
         long sequence,

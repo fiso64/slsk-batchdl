@@ -15,6 +15,106 @@ namespace Tests.Cli;
 public class LocalCliBackendTests
 {
     [TestMethod]
+    public async Task LocalCliBackend_RemoteDraftRejectsMusicOnlyOverrideBeforeEnqueue()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-local-remote-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var engineSettings = new EngineSettings();
+            var settings = new DownloadSettings { Output = { ParentDir = root } };
+            var engine = new DownloadEngine(engineSettings, new SoulseekClientManager(engineSettings));
+            var backend = new LocalCliBackend(engine, settings);
+            var request = new SubmitJobListRequestDto(
+                "invalid remote settings",
+                [
+                    new RemoteFileJobDraftDto(
+                        new PeerFileTargetDto("Peer", @"Share\File.bin", 4, ".bin"),
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(WritePlaylist: true))),
+                ]);
+
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+                backend.SubmitJobListAsync(request));
+            Assert.AreEqual(0, engine.Queue.Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task LocalCliBackend_SoulseekDraftSettingsValidationUsesEffectiveInterpretation()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-local-slsk-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var engineSettings = new EngineSettings();
+            var settings = new DownloadSettings { Output = { ParentDir = root } };
+            var engine = new DownloadEngine(engineSettings, new SoulseekClientManager(engineSettings));
+            var backend = new LocalCliBackend(engine, settings);
+
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => backend.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "ordinary",
+                    [new ExtractJobDraftDto(
+                        "slsk://Peer/Share/File.bin",
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(WritePlaylist: true)))])));
+
+            JobSummaryDto accepted = await backend.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "music",
+                    [new ExtractJobDraftDto(
+                        "slsk://Peer/Share/File.mp3",
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(
+                                NameFormat: "{artist}/{title}",
+                                WritePlaylist: true),
+                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ExtractionMode.Song)))]));
+
+            Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
+            Assert.AreNotEqual(Guid.Empty, accepted.WorkflowId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task LocalCliBackend_ExplicitCliMusicNameFormatRejectsOrdinarySoulseekLink()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-local-slsk-name-format-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var engineSettings = new EngineSettings();
+            var settings = new DownloadSettings { Output = { ParentDir = root } };
+            var engine = new DownloadEngine(engineSettings, new SoulseekClientManager(engineSettings));
+            var explicitCliSettings = new DownloadSettingsPatchDto(
+                Output: new OutputSettingsPatchDto(NameFormat: "{artist}/{filename}"));
+            var backend = new LocalCliBackend(
+                engine,
+                settings,
+                explicitCliDownloadSettings: explicitCliSettings);
+
+            var exception = await Assert.ThrowsExactlyAsync<UnsupportedNameFormatVariableException>(() =>
+                backend.SubmitExtractJobAsync(
+                    new SubmitExtractJobRequestDto("slsk://Peer/Share/File.bin")));
+
+            Assert.AreEqual("artist", exception.Variable);
+            Assert.AreEqual(0, engine.Queue.Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task LocalCliBackend_ObservesSearchJobsThroughServerShapedModel()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-cli-backend-test-" + Guid.NewGuid());
@@ -612,7 +712,7 @@ public class LocalCliBackendTests
             if (condition())
                 return;
 
-            await Task.Delay(25);
+            await Task.Delay(5);
         }
 
         Assert.Fail(failureMessage);

@@ -1,0 +1,259 @@
+using System.Net;
+using System.Net.Sockets;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Sockseek.Api;
+using Sockseek.Core.Settings;
+
+namespace Sockseek.Server.Tests;
+
+[TestClass]
+public sealed class UserBrowseApiTests
+{
+    [TestMethod]
+    public async Task TypedApi_ReusesBrowsesAndPagesImmutableArtifact()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "sockseek-user-browse-api", Guid.NewGuid().ToString("N"));
+        string mockFiles = Path.Combine(root, "shares");
+        string data = Path.Combine(root, "data");
+        Directory.CreateDirectory(Path.Combine(mockFiles, "Alpha", "Disc"));
+        Directory.CreateDirectory(Path.Combine(mockFiles, "Beta"));
+        await File.WriteAllTextAsync(Path.Combine(mockFiles, "Alpha", "Disc", "two.flac"), "22");
+        await File.WriteAllTextAsync(Path.Combine(mockFiles, "Alpha", "Disc", "one.flac"), "1");
+        await File.WriteAllTextAsync(Path.Combine(mockFiles, "Beta", "other.mp3"), "333");
+
+        int port = GetFreeTcpPort();
+        string url = $"http://127.0.0.1:{port}";
+        await using var app = ServerHost.Build([], new ServerOptions
+        {
+            Engine = new EngineSettings { MockFilesDir = mockFiles },
+            Persistence = new ServerPersistenceOptions
+            {
+                Enabled = false,
+                DataDirectory = data,
+            },
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            using var http = new HttpClient { BaseAddress = new Uri(url) };
+            var api = new SockseekApiClient(http);
+            await WaitUntilAsync(() => app.Services.GetRequiredService<EngineSupervisor>().PeerBrowses is not null);
+
+            UserBrowseDto started = await api.StartUserBrowseAsync("local");
+            UserBrowseDto complete = await WaitForCompleteAsync(api, started.BrowseId);
+            Assert.AreEqual(3, complete.FileCount);
+
+            UserBrowseDto reused = await api.StartUserBrowseAsync("local");
+            Assert.AreEqual(complete.BrowseId, reused.BrowseId);
+            Assert.AreEqual(UserBrowseState.Complete, reused.State);
+
+            await using (var live = new SockseekLiveClient(url))
+            {
+                await live.StartUserBrowseAsync(complete.BrowseId);
+                Assert.AreEqual(complete, live.Store.GetUserBrowse(complete.BrowseId));
+                await live.StopUserBrowseAsync(complete.BrowseId);
+                Assert.IsNull(live.Store.GetUserBrowse(complete.BrowseId));
+            }
+
+            PageDto<BrowseDirectoryEntryDto> roots1 = await api.GetUserShareDirectoriesAsync(
+                complete.BrowseId, limit: 1);
+            PageDto<BrowseDirectoryEntryDto> roots2 = await api.GetUserShareDirectoriesAsync(
+                complete.BrowseId, cursor: roots1.NextCursor, limit: 1);
+            CollectionAssert.AreEqual(
+                new[] { "Alpha", "Beta" },
+                roots1.Items.Concat(roots2.Items).Select(item => item.Name).ToArray());
+
+            BrowseDirectoryEntryDto alpha = roots1.Items.Single();
+            SockseekApiRequestException invalidLimit =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.GetUserShareDirectoriesAsync(
+                        complete.BrowseId, cursor: roots1.NextCursor, limit: 0));
+            Assert.AreEqual("invalid-request", invalidLimit.Code);
+
+            SockseekApiRequestException invalidCursor =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.GetUserShareDirectoriesAsync(
+                        complete.BrowseId, cursor: " ", limit: 1));
+            Assert.AreEqual("invalid-cursor", invalidCursor.Code);
+
+            BrowseDirectoryEntryDto disc = (await api.GetUserShareDirectoriesAsync(
+                complete.BrowseId, parentId: alpha.DirectoryId)).Items.Single();
+            PageDto<BrowseFileEntryDto> files1 = await api.GetUserShareFilesAsync(
+                complete.BrowseId, disc.DirectoryId, limit: 1);
+            PageDto<BrowseFileEntryDto> files2 = await api.GetUserShareFilesAsync(
+                complete.BrowseId, disc.DirectoryId, cursor: files1.NextCursor, limit: 1);
+            CollectionAssert.AreEqual(
+                new[] { "one.flac", "two.flac" },
+                files1.Items.Concat(files2.Items).Select(item => item.File.Name).ToArray());
+
+            BrowseDirectoryEntryDto beta = roots2.Items.Single();
+            BrowseFileEntryDto betaFile = (await api.GetUserShareFilesAsync(
+                complete.BrowseId, beta.DirectoryId)).Items.Single();
+            string output = Path.Combine(root, "downloads");
+            string existingPath = Path.Combine(output, "Alpha", "Disc", "one.flac");
+            Directory.CreateDirectory(Path.GetDirectoryName(existingPath)!);
+            await File.WriteAllTextAsync(existingPath, "keep-existing");
+            UserShareSelectionDto[] selections =
+            [
+                new UserShareDirectorySelectionDto(alpha.DirectoryId),
+                new UserShareDirectorySelectionDto(disc.DirectoryId),
+                new UserShareFileSelectionDto(files1.Items[0].FileId),
+                new UserShareFileSelectionDto(betaFile.FileId),
+            ];
+            var submissionOptions = new SubmissionOptionsDto(OutputParentDir: output);
+            Guid requestId = Guid.NewGuid();
+            var downloadRequest = new StartUserShareDownloadsRequestDto(
+                requestId,
+                selections,
+                submissionOptions);
+            StartUserShareDownloadsResponseDto submitted = await api.StartUserShareDownloadsAsync(
+                complete.BrowseId,
+                downloadRequest);
+            StartUserShareDownloadsResponseDto repeated = await api.StartUserShareDownloadsAsync(
+                complete.BrowseId,
+                downloadRequest);
+            Assert.AreEqual(1, submitted.Resolution.CanonicalDirectoryRoots);
+            Assert.AreEqual(1, submitted.Resolution.StandaloneFiles);
+            Assert.AreEqual(3, submitted.Resolution.TotalPublicFiles);
+            Assert.AreEqual(6, submitted.Resolution.TotalPublicBytes);
+            Assert.AreEqual(2, submitted.Resolution.RedundantSelectionsRemoved);
+            Assert.AreEqual(Path.GetFullPath(output), submitted.Resolution.OutputParent);
+            Assert.AreEqual(submitted.Workflow.JobId, repeated.Workflow.JobId);
+            Assert.AreEqual(submitted.Resolution, repeated.Resolution);
+
+            SockseekApiRequestException idempotencyConflict =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.StartUserShareDownloadsAsync(
+                        complete.BrowseId,
+                        downloadRequest with
+                        {
+                            Selections = [new UserShareFileSelectionDto(betaFile.FileId)],
+                        }));
+            Assert.AreEqual(HttpStatusCode.Conflict, idempotencyConflict.StatusCode);
+            Assert.AreEqual("idempotency-conflict", idempotencyConflict.Code);
+
+            await WaitUntilAsync(() =>
+                File.Exists(Path.Combine(output, "Alpha", "Disc", "one.flac"))
+                && File.Exists(Path.Combine(output, "Alpha", "Disc", "two.flac"))
+                && File.Exists(Path.Combine(output, "Beta", "other.mp3")));
+            Assert.AreEqual("keep-existing", await File.ReadAllTextAsync(existingPath));
+
+            string overwriteOutput = Path.Combine(root, "overwrite-downloads");
+            string overwritePath = Path.Combine(overwriteOutput, "Beta", "other.mp3");
+            Directory.CreateDirectory(Path.GetDirectoryName(overwritePath)!);
+            await File.WriteAllTextAsync(overwritePath, "replace-me");
+            var overwriteOptions = new SubmissionOptionsDto(
+                OutputParentDir: overwriteOutput,
+                DownloadSettings: new DownloadSettingsPatchDto(
+                    Skip: new SkipSettingsPatchDto(SkipExisting: false)));
+            await api.StartUserShareDownloadsAsync(
+                complete.BrowseId,
+                new StartUserShareDownloadsRequestDto(
+                    Guid.NewGuid(),
+                    [new UserShareFileSelectionDto(betaFile.FileId)],
+                    overwriteOptions));
+            await WaitUntilAsync(() => TryReadAllText(overwritePath) == "333");
+
+            WorkflowTreeDto tree = (await api.GetWorkflowTreeAsync(
+                submitted.Workflow.WorkflowId))!;
+            Assert.AreEqual(
+                2,
+                tree.Jobs.SelectMany(Flatten)
+                    .Count(node => node.Summary.Kind == ServerJobKind.RemoteDirectory));
+
+            PageDto<UserBrowseDto> resources = await api.GetUserBrowsesAsync(
+                username: "local", state: UserBrowseState.Complete, limit: 1);
+            Assert.AreEqual(complete.BrowseId, resources.Items.Single().BrowseId);
+
+            UserBrowseDto refreshed = await api.StartUserBrowseAsync("local", refresh: true);
+            refreshed = await WaitForCompleteAsync(api, refreshed.BrowseId);
+            Assert.AreNotEqual(complete.BrowseId, refreshed.BrowseId);
+
+            SockseekApiRequestException crossBrowseIdempotency =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.StartUserShareDownloadsAsync(refreshed.BrowseId, downloadRequest));
+            Assert.AreEqual(HttpStatusCode.Conflict, crossBrowseIdempotency.StatusCode);
+            Assert.AreEqual("idempotency-conflict", crossBrowseIdempotency.Code);
+
+            SockseekApiRequestException crossGeneration =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.GetUserShareDirectoriesAsync(
+                        refreshed.BrowseId, cursor: roots1.NextCursor, limit: 1));
+            Assert.AreEqual(HttpStatusCode.BadRequest, crossGeneration.StatusCode);
+            Assert.AreEqual("invalid-cursor", crossGeneration.Code);
+        }
+        finally
+        {
+            await app.StopAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task<UserBrowseDto> WaitForCompleteAsync(
+        SockseekApiClient api,
+        Guid browseId)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        UserBrowseDto resource;
+        do
+        {
+            resource = await api.GetUserBrowseAsync(browseId);
+            if (resource.State == UserBrowseState.Complete)
+                return resource;
+            if (resource.State is UserBrowseState.Failed or UserBrowseState.Cancelled)
+                Assert.Fail($"Browse ended as {resource.State}: {resource.Failure?.Code} {resource.Failure?.Error}");
+            await Task.Delay(20);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+        Assert.Fail($"The browse did not complete; last state was {resource.State}/{resource.Phase} "
+                    + $"revision {resource.Revision}, failure {resource.Failure?.Code}: {resource.Failure?.Error}.");
+        throw new InvalidOperationException();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.IsTrue(condition(), "The daemon did not initialize peer browsing.");
+    }
+
+    private static string? TryReadAllText(string path)
+    {
+        try
+        {
+            return File.ReadAllText(path);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<WorkflowJobNodeDto> Flatten(WorkflowJobNodeDto node)
+    {
+        yield return node;
+        foreach (WorkflowJobNodeDto child in node.Children)
+        foreach (WorkflowJobNodeDto descendant in Flatten(child))
+            yield return descendant;
+    }
+
+    private static int GetFreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+}

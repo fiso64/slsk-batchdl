@@ -58,7 +58,7 @@ public static class SharingSettingsValidator
         }
         NormalizeExclusions(settings.Sharing, pathContext);
         NormalizeFilters(settings.Sharing.Filters);
-        NormalizePeerAccess(settings.PeerAccess);
+        ValidatePeerAccess(settings.PeerAccess);
         ValidateNumericSettings(settings.Sharing, settings.Uploads);
     }
 
@@ -94,7 +94,7 @@ public static class SharingSettingsValidator
                                           && PathsEqual(
                                               TrimEndingSeparators(configuredPath),
                                               TrimEndingSeparators(configuredRoot));
-            // The general path expander intentionally trims separators, which
+            // The shared path expander intentionally trims separators, which
             // would turn '/' into an empty string and 'C:\\' into 'C:'.
             string expanded = configuredAsVolumeRoot
                 ? configuredPath
@@ -185,12 +185,12 @@ public static class SharingSettingsValidator
         RejectDuplicates(filters, static filter => filter, "share filter");
     }
 
-    private static void NormalizePeerAccess(PeerAccessSettings settings)
+    private static void ValidatePeerAccess(PeerAccessSettings settings)
     {
         for (int i = 0; i < settings.BlockedUsernames.Count; i++)
         {
             ValidateEncodedValue(settings.BlockedUsernames[i], "Blocked username");
-            settings.BlockedUsernames[i] = PeerUsername.Normalize(settings.BlockedUsernames[i]);
+            settings.BlockedUsernames[i] = PeerUsername.Validate(settings.BlockedUsernames[i]);
         }
 
         RejectDuplicates(

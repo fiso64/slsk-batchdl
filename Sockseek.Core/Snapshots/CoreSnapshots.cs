@@ -14,6 +14,8 @@ public enum JobSnapshotKind
     AlbumAggregate,
     JobList,
     RetrieveFolder,
+    RemoteFile,
+    RemoteDirectory,
 }
 
 public sealed record DiscoverySnapshot(int RawResultCount, int LockedFileCount);
@@ -34,6 +36,36 @@ public sealed record AlbumQuerySnapshot(
     bool ArtistMaybeWrong);
 
 public sealed record FileAttributeSnapshot(string Type, int Value, int StableCode = 0);
+
+public sealed record PeerFileIdentitySnapshot(string Username, string Filename);
+
+public sealed record PeerFileTargetSnapshot(
+    PeerFileIdentitySnapshot Identity,
+    long? Size,
+    string? Extension,
+    int? BitRate,
+    int? BitDepth,
+    int? SampleRate,
+    int? Length,
+    IReadOnlyList<FileAttributeSnapshot>? Attributes);
+
+public sealed record PeerDirectoryIdentitySnapshot(string Username, string FolderPath);
+
+public sealed record PeerDirectoryResultSnapshot(
+    PeerDirectoryIdentitySnapshot Identity,
+    IReadOnlyList<PeerFileTargetSnapshot> Files,
+    bool IsComplete);
+
+public sealed record RelativeOutputPathSnapshot(IReadOnlyList<string> Components);
+
+public sealed record DirectoryTransferEntrySnapshot(
+    PeerFileTargetSnapshot Target,
+    IReadOnlyList<string> RelativeDirectoryComponents);
+
+public sealed record DirectoryTransferPlanSnapshot(
+    string DisplayRoot,
+    IReadOnlyList<DirectoryTransferEntrySnapshot> Entries,
+    long TotalKnownBytes);
 
 public sealed record PeerSnapshot(string Username, bool? HasFreeUploadSlot, int? UploadSpeed);
 
@@ -60,6 +92,7 @@ public sealed record FileCandidateSnapshot(
     PeerSnapshot Peer,
     long Size,
     int? BitRate,
+    int? BitDepth,
     int? SampleRate,
     int? Length,
     string Extension,
@@ -114,7 +147,8 @@ public sealed record TransferSnapshot(
     long BytesTransferred,
     long TotalBytes,
     int AttemptCount,
-    FileCandidateSnapshot? Candidate);
+    FileCandidateSnapshot? Candidate,
+    PeerFileTargetSnapshot? Target = null);
 
 public sealed record JobProvenanceSnapshot(
     int ItemNumber,
@@ -160,6 +194,16 @@ public sealed record AlbumJobDraftSnapshot(
     DownloadBehaviorPolicySnapshot? DownloadBehavior,
     JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
 
+public sealed record RemoteFileJobDraftSnapshot(
+    PeerFileTargetSnapshot Target,
+    RelativeOutputPathSnapshot OutputPath,
+    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
+
+public sealed record RemoteDirectoryJobDraftSnapshot(
+    PeerDirectoryIdentitySnapshot? Directory,
+    DirectoryTransferPlanSnapshot? Plan,
+    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
+
 public sealed record AggregateJobDraftSnapshot(
     SongQuerySnapshot SongQuery,
     DownloadBehaviorPolicySnapshot? DownloadBehavior,
@@ -176,6 +220,22 @@ public sealed record JobListDraftSnapshot(
     JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
 
 public abstract record JobSnapshotPayload;
+
+public sealed record FileDownloadStateSnapshot(
+    string? DownloadPath,
+    long BytesTransferred,
+    long? FileSize);
+
+public sealed record DirectoryDownloadStateSnapshot(
+    string Phase,
+    int? AttemptNumber,
+    string? DownloadPath,
+    int FileCount,
+    int TerminalFileCount,
+    int SuccessfulFileCount,
+    int FailedFileCount,
+    long BytesTransferred,
+    long TotalKnownBytes);
 
 public sealed record ExtractJobSnapshotPayload(
     string Input,
@@ -195,18 +255,37 @@ public sealed record SearchJobSnapshotPayload(
 public sealed record SongJobSnapshotPayload(
     SongQuerySnapshot Query,
     int? CandidateCount,
-    string? DownloadPath,
     FileCandidateSnapshot? ResolvedTarget,
-    long BytesTransferred,
-    long FileSize,
-    SongDownloadSource DownloadSource) : JobSnapshotPayload;
+    PeerFileTargetSnapshot? ExactTarget,
+    SongDownloadSource DownloadSource,
+    FileDownloadStateSnapshot File) : JobSnapshotPayload;
 
 public sealed record AlbumJobSnapshotPayload(
     AlbumQuerySnapshot Query,
     int ResultCount,
-    string? DownloadPath,
     AlbumFolderSnapshot? ResolvedTarget,
-    IReadOnlyList<JobSnapshot> TrackJobs) : JobSnapshotPayload;
+    IReadOnlyList<JobSnapshot> TrackJobs,
+    DirectoryDownloadStateSnapshot Directory) : JobSnapshotPayload;
+
+public sealed record RemoteFileJobSnapshotPayload(
+    PeerFileTargetSnapshot Target,
+    RelativeOutputPathSnapshot OutputPath,
+    FileDownloadStateSnapshot File) : JobSnapshotPayload;
+
+public enum RemoteDirectorySourceSnapshotKind
+{
+    PeerDirectory,
+    Resolved,
+}
+
+public sealed record RemoteDirectoryJobSnapshotPayload(
+    RemoteDirectorySourceSnapshotKind SourceKind,
+    PeerDirectoryIdentitySnapshot? DirectorySource,
+    DirectoryTransferPlanSnapshot? ResolvedPlanSource,
+    PeerDirectoryResultSnapshot? ResolvedDirectory,
+    DirectoryTransferPlanSnapshot? ActivePlan,
+    IReadOnlyList<JobSnapshot> FileJobs,
+    DirectoryDownloadStateSnapshot Directory) : JobSnapshotPayload;
 
 public sealed record AggregateJobSnapshotPayload(
     SongQuerySnapshot Query,
@@ -221,7 +300,8 @@ public sealed record JobListSnapshotPayload(
     IReadOnlyList<JobSnapshot> Jobs) : JobSnapshotPayload;
 
 public sealed record RetrieveFolderJobSnapshotPayload(
-    AlbumFolderSnapshot TargetFolder,
+    PeerDirectoryIdentitySnapshot Directory,
+    PeerDirectoryResultSnapshot? Result,
     int NewFilesFoundCount,
     FolderRetrievalOutcome RetrievalOutcome,
     bool RetrievalCancelled) : JobSnapshotPayload;

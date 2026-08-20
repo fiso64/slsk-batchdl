@@ -58,6 +58,8 @@ public class ArchitectureTests
         Path.Combine("Sockseek.Core", "Jobs", "Job.cs"),
         Path.Combine("Sockseek.Core", "Jobs", "SongJob.cs"),
         Path.Combine("Sockseek.Core", "Jobs", "AlbumJob.cs"),
+        Path.Combine("Sockseek.Core", "Jobs", "FileDownloadJob.cs"),
+        Path.Combine("Sockseek.Core", "Jobs", "DirectoryDownloadJob.cs"),
         Path.Combine("Sockseek.Core", "Transfers", "Downloads", "JobOrchestration", "JobOutcomeCommitter.cs"),
     ];
 
@@ -277,6 +279,154 @@ public class ArchitectureTests
 
         foreach (var contractType in contractTypes)
             AssertNoForbiddenPublicContractTypes(contractType, contractType.Name, []);
+    }
+
+    [TestMethod]
+    public void RemoteTransferValues_AreSockseekOwnedAndProtocolNeutral()
+    {
+        Type[] valueTypes =
+        [
+            typeof(PeerFileIdentity),
+            typeof(PeerFileTarget),
+            typeof(PeerDirectoryIdentity),
+            typeof(PeerDirectorySnapshot),
+            typeof(DirectoryTransferEntry),
+            typeof(DirectoryTransferPlan),
+        ];
+
+        foreach (Type valueType in valueTypes)
+        {
+            foreach (PropertyInfo property in valueType.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+            {
+                string typeName = property.PropertyType.FullName ?? property.PropertyType.Name;
+                Assert.IsFalse(typeName.Contains("Soulseek.", StringComparison.Ordinal),
+                    $"{valueType.Name}.{property.Name} exposes a Soulseek.NET type.");
+                Assert.IsFalse(typeName.Contains("Sockseek.Api", StringComparison.Ordinal),
+                    $"{valueType.Name}.{property.Name} exposes an API DTO.");
+                Assert.IsFalse(typeName.Contains("Sockseek.Server", StringComparison.Ordinal),
+                    $"{valueType.Name}.{property.Name} exposes a Server type.");
+            }
+        }
+    }
+
+    [TestMethod]
+    public void DownloadLifecycleBases_ContainStateButNoSemanticPolicy()
+    {
+        CollectionAssert.AreEquivalent(
+            new[] { "DownloadPath", "BytesTransferred", "FileSize", "Progress" },
+            typeof(FileDownloadJob)
+                .GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+                .Select(property => property.Name)
+                .ToArray());
+
+        string[] directoryProperties = typeof(DirectoryDownloadJob)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Select(property => property.Name)
+            .ToArray();
+        CollectionAssert.AreEquivalent(
+            new[]
+            {
+                "DirectoryState", "ActiveAttempt", "FileJobs", "BytesTransferred",
+                "TotalKnownBytes", "Progress", "DownloadPath",
+            },
+            directoryProperties);
+
+        foreach (MethodInfo method in typeof(FileDownloadJob).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Concat(typeof(DirectoryDownloadJob).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)))
+        {
+            Assert.IsFalse(method.Name.Contains("Resolve", StringComparison.Ordinal)
+                || method.Name.Contains("Plan", StringComparison.Ordinal)
+                || method.Name.Contains("Finalize", StringComparison.Ordinal),
+                $"Lifecycle base method {method.Name} embeds semantic orchestration.");
+        }
+    }
+
+    [TestMethod]
+    public void SemanticJobs_AreSiblingsAndFolderRetrievalIsNotAlbumShaped()
+    {
+        Assert.AreEqual(typeof(FileDownloadJob), typeof(SongJob).BaseType);
+        Assert.AreEqual(typeof(FileDownloadJob), typeof(RemoteFileJob).BaseType);
+        Assert.AreEqual(typeof(DirectoryDownloadJob), typeof(AlbumJob).BaseType);
+        Assert.AreEqual(typeof(DirectoryDownloadJob), typeof(RemoteDirectoryJob).BaseType);
+
+        Assert.IsTrue(typeof(RetrieveFolderJob).GetConstructors().All(constructor =>
+            constructor.GetParameters().All(parameter => parameter.ParameterType != typeof(AlbumFolder))));
+        Assert.IsTrue(typeof(RetrieveFolderJob).GetProperties().All(property =>
+            property.PropertyType != typeof(AlbumFolder)));
+    }
+
+    [TestMethod]
+    public void SharedTransferMechanics_DoNotDependOnConcreteSemanticJobsOrModeFlags()
+    {
+        string[] relativePaths =
+        [
+            Path.Combine("Sockseek.Core", "Transfers", "Downloads", "ExactPeerFileTransferRunner.cs"),
+            Path.Combine("Sockseek.Core", "Transfers", "Downloads", "DirectoryTransfers", "DirectoryTransferRunner.cs"),
+        ];
+        string[] forbidden =
+        [
+            nameof(SongJob),
+            nameof(AlbumJob),
+            nameof(RemoteFileJob),
+            nameof(RemoteDirectoryJob),
+            nameof(ExtractionMode),
+        ];
+
+        foreach (string relativePath in relativePaths)
+        {
+            string path = Path.Combine(FindRepositoryRoot(), relativePath);
+            SyntaxNode root = CSharpSyntaxTree.ParseText(File.ReadAllText(path), path: path).GetRoot();
+            var identifiers = root.DescendantNodes().OfType<IdentifierNameSyntax>()
+                .Select(identifier => identifier.Identifier.ValueText)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (string name in forbidden)
+                Assert.IsFalse(identifiers.Contains(name), $"{relativePath} depends on semantic type/mode {name}.");
+        }
+    }
+
+    [TestMethod]
+    public void RemoteJobs_HaveRequiredExactSourcesAndNoImplicitThirdDirectoryMode()
+    {
+        Assert.AreEqual(
+            2,
+            typeof(RemoteDirectorySource).GetNestedTypes(BindingFlags.Public).Length);
+        Assert.ThrowsExactly<ArgumentNullException>(() => new RemoteDirectoryJob(null!));
+        Assert.ThrowsExactly<ArgumentNullException>(() => new RemoteFileJob(null!));
+
+        string providerPath = Path.Combine(
+            FindRepositoryRoot(), "Sockseek.Core", "Files", "NameFormatVariableProvider.cs");
+        string providerSource = File.ReadAllText(providerPath);
+        foreach (string forbidden in new[] { "SongQuery", "TagLib", "AlbumJob", "SongJob" })
+            Assert.IsFalse(providerSource.Contains(forbidden, StringComparison.Ordinal),
+                $"The shared name-format provider depends on {forbidden}.");
+    }
+
+    [TestMethod]
+    public void RemoteTransferRefactor_DoesNotRegressToFlagsNormalizationOrGeneralPrefixes()
+    {
+        string[] forbiddenMembers =
+        [
+            "AllowBrowseResolvedTarget",
+            "SkipResolvedTargetTrackCountVerification",
+            "ResolvedTargetNeedsInitialFolderRetrieval",
+        ];
+
+        foreach (CoreSource source in LoadCoreSources())
+        {
+            string text = source.Root.ToFullString();
+            foreach (string member in forbiddenMembers)
+                Assert.IsFalse(text.Contains(member, StringComparison.Ordinal),
+                    $"{RelativePath(source.Path)} reintroduces {member}.");
+
+            foreach (BaseTypeDeclarationSyntax declaration in source.Root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+            {
+                Assert.IsFalse(declaration.Identifier.ValueText.StartsWith("General", StringComparison.Ordinal),
+                    $"{RelativePath(source.Path)} declares neutral/default type {declaration.Identifier.ValueText} with a General prefix.");
+            }
+
+            Assert.IsFalse(text.Contains("PeerUsername.Normalize", StringComparison.Ordinal),
+                $"{RelativePath(source.Path)} normalizes exact Soulseek usernames.");
+        }
     }
 
     private static void AssertNoForbiddenPublicContractTypes(Type type, string path, HashSet<Type> visited)

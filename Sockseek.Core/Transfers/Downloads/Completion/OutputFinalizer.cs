@@ -50,6 +50,20 @@ internal sealed class OutputFinalizer
         return new(stagingPath, PublishToDuplicateCache: false);
     }
 
+    public InitialDownloadTarget GetInitialDownloadTarget(
+        DownloadSettings config,
+        SongJob song,
+        FileManager organizer,
+        PeerFileTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(config.Output.NameFormat))
+            return new(organizer.GetSavePath(target.Filename), PublishToDuplicateCache: true);
+
+        var sourceFileName = Utils.GetFileNameSlsk(target.Filename).CleanPath(config.Output.InvalidReplaceStr);
+        var stagingPath = Path.Join(OutputStaging.Root(config.Output), song.Id.ToString("N"), sourceFileName);
+        return new(stagingPath, PublishToDuplicateCache: false);
+    }
+
     public OutputFinalizationResult FinalizeSongPlacement(
         SongJob song,
         Job parentJob,
@@ -130,7 +144,7 @@ internal sealed class OutputFinalizer
         if (song.TerminalOutcome != JobTerminalOutcome.Succeeded)
             return;
 
-        PublishDownloadedFileCache(song, JobOutcome.Done(song.DownloadPath, song.ChosenCandidate, song.DownloadSource));
+        PublishDownloadedFileCache(song, JobOutcome.Done(song.DownloadPath, song.ResolvedTarget, song.DownloadSource));
     }
 
     public void PublishDownloadedFileCache(SongJob song, JobOutcome outcome)
@@ -138,13 +152,13 @@ internal sealed class OutputFinalizer
         if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded)
             return;
 
-        var candidate = song.ChosenCandidate;
-        if (candidate == null || string.IsNullOrEmpty(song.DownloadPath))
+        var target = song.ResolvedPeerTarget;
+        if (target == null || string.IsNullOrEmpty(song.DownloadPath))
             return;
         if (song.Config != null && OutputStaging.Contains(song.DownloadPath, song.Config.Output))
             return;
 
-        downloadedFiles.Publish(song.DownloadPath, candidate);
+        downloadedFiles.Publish(song.DownloadPath, target);
     }
 
     public void PublishDownloadedFileCache(IEnumerable<SongJob>? songs)

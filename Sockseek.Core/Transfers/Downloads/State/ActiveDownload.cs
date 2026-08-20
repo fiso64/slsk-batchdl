@@ -10,8 +10,8 @@ namespace Sockseek.Core.Transfers.Downloads.State;
 internal sealed class ActiveDownload
 {
     public Guid TransferId { get; }
-    public SongJob Song { get; }
-    public FileCandidate Candidate { get; }
+    public FileDownloadJob Owner { get; }
+    public PeerFileTarget Target { get; }
     public string OutputPath { get; }
     public CancellationTokenSource Cts { get; }
     public Job? ParentJob { get; }
@@ -22,14 +22,31 @@ internal sealed class ActiveDownload
     public bool IsStaleCancelled => StaleMaxStaleTimeMs.HasValue;
     public int? StaleMaxStaleTimeMs { get; private set; }
 
-    public ActiveDownload(Guid transferId, SongJob song, FileCandidate candidate, string outputPath, CancellationTokenSource cts, Job? parentJob = null)
+    public ActiveDownload(
+        Guid transferId,
+        FileDownloadJob owner,
+        PeerFileTarget target,
+        string outputPath,
+        CancellationTokenSource cts,
+        Job? parentJob = null)
     {
         TransferId = transferId;
-        Song = song;
-        Candidate = candidate;
+        Owner = owner;
+        Target = target;
         OutputPath = outputPath;
         Cts = cts;
         ParentJob = parentJob;
+    }
+
+    public ActiveDownload(
+        Guid transferId,
+        SongJob song,
+        FileCandidate candidate,
+        string outputPath,
+        CancellationTokenSource cts,
+        Job? parentJob = null)
+        : this(transferId, song, candidate.Target, outputPath, cts, parentJob)
+    {
     }
 
     public void MarkStaleCancelled(int maxStaleTimeMs)

@@ -127,7 +127,6 @@ public sealed class SoulseekBrowseArtifactBuilderTests
 
         public ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
             RemotePathKey remotePath,
-            int fileLimit,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<ShareCatalogBrowseDirectory?>(null);
 

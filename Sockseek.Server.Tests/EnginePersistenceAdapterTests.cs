@@ -56,23 +56,39 @@ public sealed class EnginePersistenceAdapterTests
         var events = new DownloadEvents();
         var sink = new CapturingSink();
         new EnginePersistenceAdapter(Guid.NewGuid(), sink).Attach(events);
-        var retrieve = new RetrieveFolderJob(new AlbumFolder("peer", @"Music\Artist\Album", []))
+        var retrieve = new RetrieveFolderJob(new PeerDirectoryIdentity("peer", @"Music\Artist\Album"))
         {
             NewFilesFoundCount = 4,
             RetrievalOutcome = FolderRetrievalOutcome.Completed,
         };
+        var exactTarget = new PeerFileTarget(
+            new PeerFileIdentity("Exact Peer", @"Share\Folder\File.bin"),
+            42,
+            ".bin");
+        var exactSong = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" })
+        {
+            ExactTarget = exactTarget,
+        };
+        var remoteFile = new RemoteFileJob(exactTarget, new RelativeOutputPath(["Folder", "File.bin"]));
+        var resolvedPlan = new DirectoryTransferPlan("Selection", [
+            new DirectoryTransferEntry(exactTarget, ["Folder"]),
+        ]);
+        var remoteDirectory = new RemoteDirectoryJob(
+            new RemoteDirectorySource.Resolved(resolvedPlan));
         var jobs = new (Job Job, Type PayloadType)[]
         {
             (new GenericTestJob("generic text"), typeof(GenericJobPayloadDto)),
             (new ExtractJob("https://example.test/list"), typeof(ExtractJobPayloadDto)),
             (new SearchJob(new SongQuery { Artist = "Artist", Title = "Track" }), typeof(SearchJobPayloadDto)),
             (new SearchJob(new AlbumQuery { Artist = "Artist", Album = "Album" }), typeof(SearchJobPayloadDto)),
-            (new SongJob(new SongQuery { Artist = "Artist", Title = "Track" }), typeof(SongJobPayloadDto)),
+            (exactSong, typeof(SongJobPayloadDto)),
             (new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" }), typeof(AlbumJobPayloadDto)),
             (new AggregateJob(new SongQuery { Artist = "Artist", Title = "Track" }), typeof(AggregateJobPayloadDto)),
             (new AlbumAggregateJob(new AlbumQuery { Artist = "Artist", Album = "Album" }), typeof(AlbumAggregateJobPayloadDto)),
             (new JobList("list", [new SongJob(new SongQuery { Title = "child" })]), typeof(JobListPayloadDto)),
             (retrieve, typeof(RetrieveFolderJobPayloadDto)),
+            (remoteFile, typeof(RemoteFileJobPayloadDto)),
+            (remoteDirectory, typeof(RemoteDirectoryJobPayloadDto)),
         };
 
         foreach (var (job, _) in jobs)
@@ -106,6 +122,26 @@ public sealed class EnginePersistenceAdapterTests
             ToPersistedJob(mutations[albumSearch.Id]));
         Assert.IsNotNull(albumPayload.DefaultFolderProjection);
         Assert.AreEqual("Album", albumPayload.DefaultFolderProjection.AlbumQuery.Album);
+
+        var songPayload = (SongJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
+            ToPersistedJob(mutations[exactSong.Id]));
+        Assert.IsNotNull(songPayload.ExactTarget);
+        Assert.AreEqual("Exact Peer", songPayload.ExactTarget.Username);
+        Assert.AreEqual(@"Share\Folder\File.bin", songPayload.ExactTarget.Filename);
+        Assert.IsNull(songPayload.ResolvedUsername);
+
+        var filePayload = (RemoteFileJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
+            ToPersistedJob(mutations[remoteFile.Id]));
+        Assert.AreEqual("Exact Peer", filePayload.Target.Username);
+        CollectionAssert.AreEqual(new[] { "Folder", "File.bin" }, filePayload.OutputPathComponents.ToArray());
+
+        var directoryPayload = (RemoteDirectoryJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
+            ToPersistedJob(mutations[remoteDirectory.Id]));
+        Assert.AreEqual(RemoteDirectorySourceKindDto.Resolved, directoryPayload.SourceKind);
+        Assert.IsNotNull(directoryPayload.ResolvedPlanSource);
+        Assert.IsNull(directoryPayload.ActivePlan,
+            "A resolved source plan is the first active attempt and must not be serialized twice.");
+        Assert.AreEqual(1, directoryPayload.ResolvedPlanSource.Entries.Count);
     }
 
     [TestMethod]
@@ -118,14 +154,14 @@ public sealed class EnginePersistenceAdapterTests
         var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
         var file = new Soulseek.File(1, @"Music\Artist\Track.mp3", 100, ".mp3");
         var response = new SearchResponse("user", 1, true, 1_000, 0, [file]);
-        var candidate = new FileCandidate(response, file);
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
         Guid transferId = Guid.NewGuid();
         Guid attemptId = Guid.NewGuid();
 
-        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, "C:/downloads/Track.mp3");
-        Invoke(events, "RaiseTransferAttemptStarted", transferId, attemptId, 1, song, candidate, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete");
-        Invoke(events, "RaiseTransferAttemptCompleted", transferId, attemptId, 1, song, candidate, "C:/downloads/Track.mp3");
-        Invoke(events, "RaiseTransferCompleted", transferId, song, candidate, "C:/downloads/Track.mp3", 100L, 1);
+        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseTransferAttemptStarted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete");
+        Invoke(events, "RaiseTransferAttemptCompleted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 1);
 
         var terminal = sink.Mutations.OfType<TransferTerminalPersistenceMutation>().Single();
         Assert.AreEqual(transferId, terminal.Transfer.TransferId);
@@ -160,14 +196,14 @@ public sealed class EnginePersistenceAdapterTests
         var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
         var file = new Soulseek.File(1, @"Music\Artist\Track.mp3", 10_000, ".mp3");
         var response = new SearchResponse("user", 1, true, 1_000, 0, [file]);
-        var candidate = new FileCandidate(response, file);
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
         Guid transferId = Guid.NewGuid();
-        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
 
         for (int i = 1; i <= 10_000; i++)
         {
             song.BytesTransferred = i;
-            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, "C:/downloads/Track.mp3", (long)i, 10_000L);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, "C:/downloads/Track.mp3", (long)i, 10_000L);
         }
 
         Assert.AreEqual(10_000L, song.BytesTransferred);

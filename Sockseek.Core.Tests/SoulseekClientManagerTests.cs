@@ -4,6 +4,7 @@ using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Tests.ClientTests;
 using System.Net;
+using Sockseek.Core.UserProfiles;
 
 namespace Tests.Core;
 
@@ -73,6 +74,26 @@ public class SoulseekClientManagerTests
         Assert.IsNotNull(options.PlaceInQueueResolver);
         Assert.IsFalse(options.AutoAcknowledgePrivateMessages);
         Assert.IsTrue(options.AcceptPrivateRoomInvitations);
+    }
+
+    [TestMethod]
+    public async Task FallbackUserInfoUsesTheStartupLoadedLocalProfile()
+    {
+        byte[] bytes = [0xff, 0xd8, 0xff, 0xd9];
+        var profile = new LocalUserProfile(
+            "normalized",
+            new UserPicture(bytes, "image/jpeg", 1, 1, "\"etag\""));
+        SoulseekClientOptions options = SoulseekClientManager.CreateClientOptions(
+            new EngineSettings { UserDescription = "ignored" },
+            1,
+            localProfile: profile);
+
+        UserInfo info = await options.UserInfoResolver(
+            "peer",
+            new IPEndPoint(IPAddress.Loopback, 1234));
+
+        Assert.AreEqual("normalized", info.Description);
+        CollectionAssert.AreEqual(bytes, info.Picture);
     }
 
     [TestMethod]
@@ -155,6 +176,86 @@ public class SoulseekClientManagerTests
         {
             manager.Dispose();
         }
+    }
+
+    [TestMethod]
+    public async Task CreatedAlreadyConnectedClient_CompletesReadiness()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(), "sockseek-ready-local-client", Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(directory);
+        var settings = new EngineSettings { MockFilesDir = directory };
+        await using var manager = new SoulseekClientManager(settings);
+        try
+        {
+            await manager.EnsureConnectedAndLoggedInAsync(settings);
+            await manager.WaitUntilReadyAsync().WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.IsTrue(manager.IsConnectedAndLoggedIn);
+            Assert.AreEqual("local", manager.LoggedInUsername);
+        }
+        finally
+        {
+            if (System.IO.Directory.Exists(directory))
+                System.IO.Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task FatalLoginWithoutReadinessWaiter_DoesNotPublishUnobservedTaskException()
+    {
+        const string marker = "fatal-login-unobserved-regression";
+        var unobserved = new List<AggregateException>();
+        EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, args) =>
+        {
+            if (args.Exception.ToString().Contains(marker, StringComparison.Ordinal))
+            {
+                lock (unobserved)
+                    unobserved.Add(args.Exception);
+                args.SetObserved();
+            }
+        };
+
+        TaskScheduler.UnobservedTaskException += handler;
+        try
+        {
+            await CreateAndDisposeFatalManager(marker);
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await Task.Yield();
+            }
+
+            lock (unobserved)
+                Assert.AreEqual(0, unobserved.Count, "A handled fatal login must not leave a second faulted readiness task unobserved.");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= handler;
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async Task CreateAndDisposeFatalManager(string marker)
+    {
+        var settings = new EngineSettings
+        {
+            Username = "user",
+            Password = "pass",
+        };
+        var mockClient = new MockSoulseekClient(
+            new(),
+            initialState: SoulseekClientStates.None)
+        {
+            ConnectException = new InvalidOperationException(marker),
+        };
+        using var manager = new SoulseekClientManager(settings, mockClient);
+
+        await Assert.ThrowsExactlyAsync<SoulseekConnectionUnavailableException>(
+            () => manager.EnsureConnectedAndLoggedInAsync(settings));
     }
 
     [DataTestMethod]

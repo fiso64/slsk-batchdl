@@ -231,7 +231,7 @@ internal static class ChatCommandRunner
         {
             var page = await api.GetConversationsAsync(cursor: cursor, limit: 200, ct: ct);
             var match = page.Items.FirstOrDefault(item =>
-                string.Equals(item.Username, username, StringComparison.OrdinalIgnoreCase));
+                string.Equals(item.Username, username, StringComparison.Ordinal));
             if (match is not null)
                 return match;
             cursor = page.NextCursor;

@@ -358,6 +358,10 @@ public class EventTrafficProfilingTests
                 },
             },
             Profiles = ProfileCatalog.Empty,
+            Persistence = new ServerPersistenceOptions
+            {
+                DataDirectory = Path.Combine(musicRoot, ".sockseek-test-data"),
+            },
         });
 
         return new EngineSupervisor(options);

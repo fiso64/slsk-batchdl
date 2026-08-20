@@ -38,7 +38,7 @@ namespace Tests.Eventing
             song.EnsureDisplayId();
             var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", size: 10_000, length: 180);
             var response = new SearchResponse("user", 1, true, 100_000, 0, [file]);
-            var candidate = new FileCandidate(response, file);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
             var transferId = Guid.NewGuid();
             var outputPath = "C:/downloads/Track.mp3";
             var attemptOutputPath = outputPath + ".incomplete";
@@ -60,12 +60,12 @@ namespace Tests.Eventing
             events.DownloadAttemptFailed += change => failed = change;
             events.TransferCompleted += change => completed = change;
 
-            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, outputPath);
-            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, outputPath, 4096L, 10_000L);
-            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate, outputPath, TransferStates.InProgress, 4096L, 10_000L);
-            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate, outputPath, attemptOutputPath, 1, 3, new InvalidOperationException("boom"));
-            Invoke(events, "RaiseTransferCompleted", transferId, song, candidate, outputPath, 10_000L, 2);
-            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, outputPath, 9_000L, 10_000L);
+            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, outputPath);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, outputPath, 4096L, 10_000L);
+            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate.Target, outputPath, TransferStates.InProgress, 4096L, 10_000L);
+            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate.Target, outputPath, attemptOutputPath, 1, 3, new InvalidOperationException("boom"));
+            Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, outputPath, 10_000L, 2);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, outputPath, 9_000L, 10_000L);
 
             Assert.IsNotNull(started);
             Assert.IsNotNull(progressed);
@@ -116,7 +116,7 @@ namespace Tests.Eventing
             var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
             var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", size: 10_000, length: 180);
             var response = new SearchResponse("user", 1, true, 100_000, 0, [file]);
-            var candidate = new FileCandidate(response, file);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
             var transferId = Guid.NewGuid();
             var observedRevisions = new List<long>();
 
@@ -127,10 +127,10 @@ namespace Tests.Eventing
             events.DownloadAttemptFailed += change => observedRevisions.Add(change.Song.Revision);
 
             Invoke(events, "RaiseJobRegistered", song, null!, null!);
-            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate, "C:/downloads/Track.mp3");
-            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate, "C:/downloads/Track.mp3", 100L, 10_000L);
-            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate, "C:/downloads/Track.mp3", TransferStates.InProgress, 100L, 10_000L);
-            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete", 1, 3, new IOException("failed"));
+            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 10_000L);
+            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate.Target, "C:/downloads/Track.mp3", TransferStates.InProgress, 100L, 10_000L);
+            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate.Target, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete", 1, 3, new IOException("failed"));
 
             CollectionAssert.AreEqual(new long[] { 1, 1, 1, 1, 1 }, observedRevisions);
         }
@@ -1040,7 +1040,7 @@ namespace Tests.Eventing
             => await AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(postDownloadBrowse: false);
 
         [TestMethod]
-        public async Task AlbumFolderRetrievalAfterVisibleTrackDownload_SetsParentAlbumActivityWhileBrowsing()
+        public async Task AlbumFolderCompletionBeforeTransfer_SetsParentAlbumActivityWhileBrowsing()
             => await AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(postDownloadBrowse: true);
 
         private static async Task AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(bool postDownloadBrowse)
@@ -1072,7 +1072,7 @@ namespace Tests.Eventing
 
                 var client = new ClientTests.MockSoulseekClient([response]);
                 bool parentWasRetrievingAtBrowseStart = false;
-                int expectedDownloadsBeforeBrowse = postDownloadBrowse ? 1 : 0;
+                int expectedDownloadsBeforeBrowse = 0;
                 client.BrowseStarted = () =>
                     parentWasRetrievingAtBrowseStart =
                         client.DownloadCallCount == expectedDownloadsBeforeBrowse
@@ -1092,8 +1092,7 @@ namespace Tests.Eventing
 
                 await engine.RunAsync(CancellationToken.None);
 
-                var browseTiming = postDownloadBrowse ? "post-download" : "pre-download";
-                Assert.IsTrue(parentWasRetrievingAtBrowseStart, $"Album parent should expose RetrievingFolder while {browseTiming} folder browse is running.");
+                Assert.IsTrue(parentWasRetrievingAtBrowseStart, "Album parent should expose RetrievingFolder while its immutable transfer plan is being completed.");
                 Assert.IsTrue(albumActivityPhases.Contains(JobActivityPhase.RetrievingFolder), "Album parent should publish a RetrievingFolder activity change.");
                 Assert.AreEqual(2, client.DownloadCallCount, "Folder browse should discover and download the hidden track.");
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);

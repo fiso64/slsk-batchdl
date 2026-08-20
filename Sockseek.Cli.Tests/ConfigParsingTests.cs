@@ -280,7 +280,7 @@ namespace Tests.ConfigParsingTests
         public void MaxStaleTime_SetsValue()
         {
             var config = Cfg("--max-stale-time", "60000", "some input");
-            Assert.AreEqual(60000, config.Search.MaxStaleTime);
+            Assert.AreEqual(60000, config.Transfer.MaxStaleTime);
         }
 
         [TestMethod]

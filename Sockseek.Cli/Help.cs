@@ -12,11 +12,13 @@ public static partial class Help
             { "download-modes", downloadModesHelp },
             { "file-conditions", fileConditionsHelp },
             { "name-format", nameFormatHelp },
+            { "variables", variablesHelp },
             { "on-complete", onCompleteHelp },
             { "config", configHelp },
             { "shortcuts", shortcutsHelp },
             { "notes", notesAndTipsHelp },
             { "daemon", daemonHelp },
+            { "user", userHelp },
             { "database", databaseHelp },
         };
 

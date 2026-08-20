@@ -263,15 +263,36 @@ public sealed class EnginePersistenceAdapter
                 search.Revision,
                 search.IsComplete,
             },
-            SongJobSnapshotPayload song => new { song.Query, song.DownloadPath, song.DownloadSource },
-            AlbumJobSnapshotPayload album => new { album.Query, album.ResultCount, album.DownloadPath },
+            SongJobSnapshotPayload song => new
+            {
+                song.Query,
+                song.File,
+                song.DownloadSource,
+                song.ExactTarget,
+            },
+            AlbumJobSnapshotPayload album => new { album.Query, album.ResultCount, album.Directory },
+            RemoteFileJobSnapshotPayload remoteFile => new
+            {
+                remoteFile.Target,
+                remoteFile.OutputPath,
+                remoteFile.File,
+            },
+            RemoteDirectoryJobSnapshotPayload remoteDirectory => new
+            {
+                remoteDirectory.SourceKind,
+                remoteDirectory.DirectorySource,
+                remoteDirectory.ResolvedPlanSource,
+                remoteDirectory.ResolvedDirectory,
+                remoteDirectory.ActivePlan,
+                remoteDirectory.Directory,
+            },
             AggregateJobSnapshotPayload aggregate => new { aggregate.Query, SongCount = aggregate.Songs.Count },
             AlbumAggregateJobSnapshotPayload aggregate => new { aggregate.Query, aggregate.AlbumCount },
             JobListSnapshotPayload list => new { list.Count },
             RetrieveFolderJobSnapshotPayload retrieve => new
             {
-                retrieve.TargetFolder.Username,
-                retrieve.TargetFolder.FolderPath,
+                retrieve.Directory.Username,
+                retrieve.Directory.FolderPath,
                 retrieve.NewFilesFoundCount,
                 retrieve.RetrievalOutcome,
                 retrieve.RetrievalCancelled,

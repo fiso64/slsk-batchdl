@@ -141,7 +141,7 @@ internal sealed class SongDownloadFallbackRunner
             context.PendingTerminalTransfers[song.Id] = new PendingTerminalTransfer(
                 transferId.Value,
                 AttemptCount: 1,
-                Candidate: null,
+                Target: null,
                 SourceReference: descriptor.SourceReference,
                 InitialOutputPath: descriptor.OutputPathPrefix);
         }

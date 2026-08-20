@@ -12,6 +12,8 @@ using SlFile = Soulseek.File;
 using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
+using Sockseek.Core.Snapshots;
+using Sockseek.Core.PeerBrowsing;
 
 namespace Sockseek.Core.Services;
 
@@ -25,19 +27,24 @@ public partial class Searcher : IDisposable
     private readonly RateLimitedSemaphore rateSemaphore;
     private readonly SemaphoreSlim concurrencySemaphore;
     private readonly TimeProvider timeProvider;
+    private readonly IPeerDirectorySource directorySource;
 
     public Searcher(ISoulseekClient client,
                     IUserSuccessStats userStats,
                     DownloadEvents downloadEvents,
                     int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
                     SearchEvents? searchEvents = null,
-                    TimeProvider? timeProvider = null)
+                    TimeProvider? timeProvider = null,
+                    IPeerDirectorySource? directorySource = null)
     {
         this.client = client;
         this.userStats = userStats;
         this.downloadEvents = downloadEvents;
         this.searchEvents = searchEvents ?? new SearchEvents();
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.directorySource = directorySource
+            ?? client as IPeerDirectorySource
+            ?? MissingPeerDirectorySource.Instance;
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -170,7 +177,7 @@ public partial class Searcher : IDisposable
                 && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > search.DownrankOn)
             {
                 var f = r.Files.First();
-                var candidate = new FileCandidate(r, f);
+                var candidate = SoulseekSearchAdapter.ToFileCandidate(r, f);
                 if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= search.FastSearchMinUpSpeed
                     && ResultSorter.CheapBracketCheck(song.Query, f.Filename)
                     && ConditionSatisfactionPolicy.SearchFileSatisfies(search.PreferredCond, r, f, song.Query))
@@ -301,18 +308,18 @@ public partial class Searcher : IDisposable
 
     // ── folder browse ────────────────────────────────────────────────────────
 
-    public async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? ct = null)
+    /// <summary>
+    /// Retrieves one exact peer directory into a Sockseek-owned snapshot. This
+    /// boundary deliberately creates no album query or search response.
+    /// </summary>
+    public Task<PeerDirectorySnapshot> RetrieveDirectory(
+        PeerDirectoryIdentity directory,
+        CancellationToken? ct = null)
     {
-        var res = new List<(string dir, SlFile file)>();
-        folderPrefix = folderPrefix.Replace('/', '\\').TrimEnd('\\') + '\\';
-        var userFileList = await client.BrowseAsync(user, new BrowseOptions(), ct);
-        foreach (var dir in userFileList.Directories)
-        {
-            string dirname = dir.Name.Replace('/', '\\').TrimEnd('\\') + '\\';
-            if (dirname.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
-                res.AddRange(dir.Files.Select(x => (dir.Name, x)));
-        }
-        return res;
+        ArgumentNullException.ThrowIfNull(directory);
+        return directorySource.RetrieveDirectoryAsync(
+            directory,
+            ct ?? CancellationToken.None);
     }
 
     // Appends any new files found in the remote folder to folder.Files.
@@ -322,41 +329,15 @@ public partial class Searcher : IDisposable
         int newFiles = 0;
         try
         {
-            List<(string dir, SlFile file)> allFiles;
+            PeerDirectorySnapshot snapshot;
             try
             {
-                allFiles = await GetAllFilesInFolder(folder.Username, folder.FolderPath, ct);
+                snapshot = await RetrieveDirectory(folder.DirectoryIdentity, ct);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception e) { SockseekLog.Soulseek.Error($"Error getting all files in '{folder.FolderPath}': {e}"); return 0; }
 
-            var existing = folder.Files
-                .Select(f => f.Filename.Replace('/', '\\'))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Query ?? new SongQuery();
-            var representative = folder.Files.FirstOrDefault()?.Candidate;
-            var firstResp = new SearchResponse(
-                folder.Username,
-                representative?.UploadSpeed ?? -1,
-                representative?.HasFreeUploadSlot ?? false,
-                -1,
-                -1,
-                null);
-
-            foreach (var (dir, file) in allFiles)
-            {
-                string filename = GetBrowseFilePath(dir, file.Filename);
-                if (existing.Contains(filename)) continue;
-
-                var slFile = new SlFile(file.Code, filename, file.Size, file.Extension, file.Attributes);
-                var candidate = new FileCandidate(firstResp, slFile);
-                var info = InferSongQuery(filename, new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
-
-                newFiles++;
-                folder.Files.Add(new AlbumFile(info, candidate));
-            }
-
-            folder.IsFullyRetrieved = true;
+            newFiles = ApplyDirectorySnapshot(folder, snapshot);
         }
         catch (OperationCanceledException)
         {
@@ -369,12 +350,56 @@ public partial class Searcher : IDisposable
         return newFiles;
     }
 
+    /// <summary>
+    /// Associates a generic retrieval result back with an album candidate. The
+    /// retrieval snapshot itself remains free of album evidence.
+    /// </summary>
+    public static int ApplyDirectorySnapshot(
+        AlbumFolder folder,
+        PeerDirectorySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(folder);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (folder.DirectoryIdentity != snapshot.Identity)
+            throw new ArgumentException("Retrieved directory identity does not match the album candidate.", nameof(snapshot));
+
+        var existing = folder.Files
+            .Select(file => file.Filename.Replace('/', '\\'))
+            .ToHashSet(StringComparer.Ordinal);
+        var firstInfo = folder.Files.FirstOrDefault(file => !file.IsNotAudio)?.Query ?? new SongQuery();
+        var representative = folder.Files.FirstOrDefault()?.Candidate;
+        var peer = new SearchPeerSnapshot(
+            folder.Username,
+            snapshot.Files.Count,
+            representative?.UploadSpeed,
+            representative?.HasFreeUploadSlot);
+        int added = 0;
+
+        foreach (var target in snapshot.Files)
+        {
+            string filename = target.Filename;
+            if (existing.Contains(filename))
+                continue;
+
+            var candidate = new FileCandidate(target, peer);
+            var info = InferSongQuery(
+                filename,
+                new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
+            folder.Files.Add(new AlbumFile(info, candidate));
+            existing.Add(filename.Replace('/', '\\'));
+            added++;
+        }
+
+        folder.IsFullyRetrieved = snapshot.IsComplete;
+        return added;
+    }
+
     internal static string GetBrowseFilePath(string dir, string filename)
     {
         string normalizedDir = dir.Replace('/', '\\').TrimEnd('\\');
         string normalizedFilename = filename.Replace('/', '\\');
 
-        if (normalizedDir.Length == 0 || normalizedFilename.StartsWith(normalizedDir + "\\", StringComparison.OrdinalIgnoreCase))
+        if (normalizedDir.Length == 0 || normalizedFilename.StartsWith(normalizedDir + "\\", StringComparison.Ordinal))
             return normalizedFilename;
 
         return normalizedDir + "\\" + normalizedFilename.TrimStart('\\');
@@ -570,7 +595,7 @@ public partial class Searcher : IDisposable
                     int len = grp.FirstOrDefault(y => y.Item2.Length != null).Item2?.Length ?? -1;
                     inferQ = new SongQuery(inferQ) { Length = len };
                 }
-                return (inferQ, grp.Select(y => new FileCandidate(y.Item1, y.Item2)));
+                return (inferQ, grp.Select(y => SoulseekSearchAdapter.ToFileCandidate(y.Item1, y.Item2)));
             });
     }
 

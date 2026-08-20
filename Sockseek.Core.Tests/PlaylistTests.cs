@@ -99,12 +99,12 @@ namespace Tests.Playlist
             var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
             
             var audioSong = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
-            audioSong.ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 1, true, 100, 0, []), new Soulseek.File(1, "Track.mp3", 100, ".mp3"));
+            audioSong.ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(new Soulseek.SearchResponse("user", 1, true, 100, 0, []), new Soulseek.File(1, "Track.mp3", 100, ".mp3"));
             audioSong.SetDone();
             audioSong.DownloadPath = "Artist/Album/Track.mp3";
 
             var imageSong = new SongJob(new SongQuery());
-            imageSong.ResolvedTarget = new FileCandidate(new Soulseek.SearchResponse("user", 1, true, 100, 0, []), new Soulseek.File(2, "Cover.jpg", 100, ".jpg"));
+            imageSong.ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(new Soulseek.SearchResponse("user", 1, true, 100, 0, []), new Soulseek.File(2, "Cover.jpg", 100, ".jpg"));
             imageSong.SetDone();
             imageSong.DownloadPath = "Artist/Album/Cover.jpg";
 
@@ -134,7 +134,7 @@ namespace Tests.Playlist
 
             var aiff = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" })
             {
-                ResolvedTarget = new FileCandidate(response, TestHelpers.CreateSlFile(@"Music\Track.aiff")),
+                ResolvedTarget = SoulseekSearchAdapter.ToFileCandidate(response, TestHelpers.CreateSlFile(@"Music\Track.aiff")),
                 DownloadPath = "Music/Track.aiff",
             };
             aiff.SetDone();

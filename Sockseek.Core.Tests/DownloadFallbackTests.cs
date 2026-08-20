@@ -50,12 +50,12 @@ namespace Tests.Core
                 var songJob = app.Queue.AllSongs().FirstOrDefault();
                 Assert.IsNotNull(songJob);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, songJob.TerminalOutcome);
-                Assert.AreEqual("gooduser", songJob.ChosenCandidate?.Username, "SongJob should have fallen back to gooduser after failuser failed.");
+                Assert.AreEqual("gooduser", songJob.ResolvedTarget?.Username, "SongJob should have fallen back to gooduser after failuser failed.");
                 Assert.AreEqual(SongDownloadSource.Soulseek, songJob.DownloadSource);
                 Assert.AreEqual(2, transfersStarted.Count);
                 CollectionAssert.AreEqual(
                     new[] { "failuser", "gooduser" },
-                    transfersStarted.Select(change => change.Candidate.Username).ToArray());
+                    transfersStarted.Select(change => change.Target.Identity.Username).ToArray());
                 Assert.AreEqual(2, transfersStarted.Select(change => change.TransferId).Distinct().Count());
             }
             finally
@@ -123,7 +123,7 @@ namespace Tests.Core
                 Assert.AreEqual(JobActivityPhase.None, song.ActivityPhase);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
                 Assert.AreEqual(SongDownloadSource.Fallback, song.DownloadSource);
-                Assert.IsNull(song.ChosenCandidate);
+                Assert.IsNull(song.ResolvedTarget);
                 Assert.IsTrue(System.IO.File.Exists(song.DownloadPath), $"Expected fallback output at {song.DownloadPath}");
                 Assert.IsNotNull(transferStarted);
                 Assert.IsNotNull(transferCompleted);
@@ -247,7 +247,7 @@ namespace Tests.Core
                 var songJob = app.Queue.AllSongs().FirstOrDefault();
                 Assert.IsNotNull(songJob);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, songJob.TerminalOutcome);
-                Assert.AreEqual("flakyuser", songJob.ChosenCandidate?.Username);
+                Assert.AreEqual("flakyuser", songJob.ResolvedTarget?.Username);
                 Assert.IsTrue(testClient.DownloadCallCount >= 2, "Disconnect retry should attempt the same candidate again after reconnect.");
                 Assert.IsTrue(attemptsStarted.Count >= 2);
                 Assert.AreEqual(attemptsStarted.Count - 1, attemptsFailed.Count);
@@ -725,7 +725,7 @@ namespace Tests.Core
                 var song = aggJob.Songs.FirstOrDefault();
                 Assert.IsNotNull(song);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
-                Assert.AreEqual("gooduser", song.ChosenCandidate?.Username, "Aggregate song bucket should have fallen back to gooduser.");
+                Assert.AreEqual("gooduser", song.ResolvedTarget?.Username, "Aggregate song bucket should have fallen back to gooduser.");
             }
             finally
             {
@@ -963,7 +963,7 @@ namespace Tests.Core
                 var dl = new DownloadSettings();
                 dl.Output.ParentDir = outputDir;
                 dl.Output.NameFormat = "";
-                var candidate = new FileCandidate(
+                var candidate = SoulseekSearchAdapter.ToFileCandidate(
                     new SearchResponse("user1", 1, true, 100, 0, []),
                     TestHelpers.CreateSlFile(@"Music\Artist - Payload.xyz", size: 10_000));
                 var stagingPath = Path.Combine(outputDir, ".sockseek-staging", Guid.NewGuid().ToString("N"), "Artist - Payload.xyz");

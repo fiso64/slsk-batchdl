@@ -291,7 +291,8 @@ internal sealed class AlbumDownloadExecutor
     static AlbumCandidateSelection? SelectAlbumCandidate(AlbumJob job, AlbumAudioDownloadState state)
     {
         bool wasPreselected = job.ResolvedTarget != null;
-        bool retrieveCurrent = wasPreselected ? job.AllowBrowseResolvedTarget : true;
+        bool retrieveCurrent = !wasPreselected
+            || job.DirectoryResolutionPolicy == AlbumDirectoryResolutionPolicy.CompleteIfNeeded;
         state.Index = 0;
 
         if (wasPreselected)
@@ -321,7 +322,8 @@ internal sealed class AlbumDownloadExecutor
         var config = job.Config;
         var chosenFolder = selection.Folder;
         var folderCond = config.Search.NecessaryFolderCond;
-        bool verifyTrackCount = !selection.WasPreselected || !job.SkipResolvedTargetTrackCountVerification;
+        bool verifyTrackCount = !selection.WasPreselected
+            || job.ValidationRequirement == AlbumValidationRequirement.Standard;
         if (!verifyTrackCount
             || config.Transfer.AlbumTrackCountMaxRetries <= 0
             || !ConditionSatisfactionPolicy.HasAlbumTrackCountConditions(folderCond))
@@ -444,7 +446,21 @@ internal sealed class AlbumDownloadExecutor
         state.LastChosenFolder = chosenFolder;
         organizer.SetremoteBaseDir(chosenFolder.FolderPath);
         job.ResolvedTarget = chosenFolder;
-        job.EnsureTrackJobs(chosenFolder);
+
+        // Resolve optional full-folder contents before freezing this candidate's
+        // immutable transfer attempt. A failed retrieval leaves the known search
+        // selection intact and still exact.
+        if (!config.Search.NoBrowseFolder
+            && selection.RetrieveCurrent
+            && !chosenFolder.IsFullyRetrieved
+            && !state.RetrievedFolders.Contains(chosenFolder.FolderPath))
+        {
+            var retrieval = await jobs.ProcessFolderRetrieval(chosenFolder, job, consumeJobSlot: false);
+            if (retrieval.RetrievalCompleted)
+                state.RetrievedFolders.Add(chosenFolder.FolderPath);
+        }
+
+        job.BeginAlbumTransferAttempt(chosenFolder);
         job.UpdateActivity(JobActivityPhase.Downloading);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(job.Cts!.Token);
@@ -457,25 +473,6 @@ internal sealed class AlbumDownloadExecutor
             {
                 HandleIncompleteAlbumIfNeeded(job, chosenFolder, interruptedOutcome, config);
                 return new(false, new(false, interruptedOutcome, null, state.LastChosenFolder));
-            }
-
-            if (!config.Search.NoBrowseFolder
-                && selection.RetrieveCurrent
-                && !chosenFolder.IsFullyRetrieved
-                && !state.RetrievedFolders.Contains(chosenFolder.FolderPath))
-            {
-                var retrieval = await jobs.ProcessFolderRetrieval(chosenFolder, job, consumeJobSlot: false);
-                if (retrieval.RetrievalCompleted)
-                    state.RetrievedFolders.Add(chosenFolder.FolderPath);
-                if (retrieval.NewFilesFoundCount > 0)
-                {
-                    await RunAlbumDownloads(job, config, organizer, chosenFolder, cts);
-                    if (TryGetInterruptedAlbumOutcome(job, chosenFolder) is { } interruptedOutcomeAfterRetrieval)
-                    {
-                        HandleIncompleteAlbumIfNeeded(job, chosenFolder, interruptedOutcomeAfterRetrieval, config);
-                        return new(false, new(false, interruptedOutcomeAfterRetrieval, null, state.LastChosenFolder));
-                    }
-                }
             }
 
             job.ResolvedTarget = chosenFolder;
@@ -544,8 +541,8 @@ internal sealed class AlbumDownloadExecutor
             job.Results.RemoveAll(folder => SameAlbumFolder(folder, failedFolder));
 
         job.ResolvedTarget = null;
-        job.AllowBrowseResolvedTarget = true;
-        job.SkipResolvedTargetTrackCountVerification = false;
+        job.DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.CompleteIfNeeded;
+        job.ValidationRequirement = AlbumValidationRequirement.Standard;
         organizer.SetremoteBaseDir(null);
 
         if (job.Results.Count == 0)

@@ -1,75 +1,38 @@
-using Soulseek;
 using Sockseek.Core.Snapshots;
 
 namespace Sockseek.Core.Models;
     public class FileCandidate
     {
-        internal SearchResponse Response { get; }
-        internal Soulseek.File File { get; }
+        public PeerFileTarget Target { get; }
+        public SearchPeerSnapshot Peer { get; }
+        public FileSearchEvidence Evidence { get; }
 
-        public string Username => persistedUsername ?? Response.Username;
-        public string Filename => persistedFilename ?? File.Filename;
-        public long Size { get; }
-        public int? BitRate { get; }
-        public int? BitDepth { get; }
-        public int ResponseFileCount { get; }
-        public int? SampleRate { get; }
-        public int? Length { get; }
-        public string Extension { get; }
-        public int? UploadSpeed { get; }
-        public bool? HasFreeUploadSlot { get; }
-        public IReadOnlyList<FileAttributeSnapshot>? Attributes { get; }
-
-        private readonly string? persistedUsername;
-        private readonly string? persistedFilename;
-
-        internal FileCandidate(SearchResponse response, Soulseek.File file)
-        {
-            Response = response;
-            File = file;
-            Size = file.Size;
-            BitRate = file.BitRate;
-            BitDepth = file.BitDepth;
-            ResponseFileCount = response.Files.Count;
-            SampleRate = file.SampleRate;
-            Length = file.Length;
-            Extension = file.Extension;
-            UploadSpeed = response.UploadSpeed;
-            HasFreeUploadSlot = response.HasFreeUploadSlot;
-            Attributes = file.Attributes == null
-                ? null
-                : Array.AsReadOnly(file.Attributes.Select(attribute =>
-                    new FileAttributeSnapshot(attribute.Type.ToString(), attribute.Value, (int)attribute.Type)).ToArray());
-        }
+        public string Username => Target.Username;
+        public string Filename => Target.Filename;
+        public long Size => Target.Size ?? -1;
+        public int? BitRate => Target.BitRate;
+        public int? BitDepth => Target.BitDepth;
+        public int ResponseFileCount => Peer.ResponseFileCount;
+        public int? SampleRate => Target.SampleRate;
+        public int? Length => Target.Length;
+        public string Extension => Target.Extension ?? "";
+        public int? UploadSpeed => Peer.UploadSpeed;
+        public bool? HasFreeUploadSlot => Peer.HasFreeUploadSlot;
+        public IReadOnlyList<FileAttributeSnapshot>? Attributes => Target.Attributes;
 
         public FileCandidate(
-            string username,
-            string filename,
-            long size,
-            int? bitRate,
-            int? bitDepth,
-            int responseFileCount,
-            int? sampleRate,
-            int? length,
-            string extension,
-            int? uploadSpeed,
-            bool? hasFreeUploadSlot,
-            IReadOnlyList<FileAttributeSnapshot>? attributes)
+            PeerFileTarget target,
+            SearchPeerSnapshot peer,
+            FileSearchEvidence? evidence = null)
         {
-            persistedUsername = username;
-            persistedFilename = filename;
-            Response = null!;
-            File = null!;
-            Size = size;
-            BitRate = bitRate;
-            BitDepth = bitDepth;
-            ResponseFileCount = responseFileCount;
-            SampleRate = sampleRate;
-            Length = length;
-            Extension = extension;
-            UploadSpeed = uploadSpeed;
-            HasFreeUploadSlot = hasFreeUploadSlot;
-            Attributes = attributes;
+            ArgumentNullException.ThrowIfNull(target);
+            ArgumentNullException.ThrowIfNull(peer);
+            if (!StringComparer.Ordinal.Equals(target.Username, peer.Username))
+                throw new ArgumentException("Search peer username must exactly match the target username.", nameof(peer));
+
+            Target = target;
+            Peer = peer;
+            Evidence = evidence ?? FileSearchEvidence.Unspecified;
         }
 
         public SearchProjectionInput ToProjectionInput(

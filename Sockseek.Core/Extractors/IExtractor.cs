@@ -42,25 +42,53 @@ namespace Sockseek.Core.Extractors;
             new Entry<ListExtractor>       (InputType.List,        dl => new ListExtractor(dl.RuntimePathContext)), // never reached without inputType=List hint
         ];
 
+        public static bool TryResolveInputType(string? input, InputType inputType, out InputType resolved)
+        {
+            if (inputType != InputType.None)
+            {
+                if (extractors.Any(entry => entry.Type == inputType))
+                {
+                    resolved = inputType;
+                    return true;
+                }
+
+                resolved = InputType.None;
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(input))
+            {
+                var match = extractors.Find(entry => entry.InputMatches(input));
+                if (match != null)
+                {
+                    resolved = match.Type;
+                    return true;
+                }
+            }
+
+            resolved = InputType.None;
+            return false;
+        }
+
         public static (InputType, IExtractor) GetMatchingExtractor(string input, InputType inputType, DownloadSettings dl)
         {
             if (string.IsNullOrEmpty(input))
                 throw new ArgumentException("Input string can not be null or empty.");
 
-            if (inputType != InputType.None)
+            if (!TryResolveInputType(input, inputType, out InputType resolved))
             {
-                var entry = extractors.Find(e => e.Type == inputType);
-                if (entry != null)
-                    return (inputType, entry.Create(dl));
+                if (inputType != InputType.None)
+                {
+                    throw new ArgumentException($"No extractor for input type {inputType}");
+                }
+
+                throw new ArgumentException($"No matching extractor for input '{input}'");
+            }
+
+            var entry = extractors.Find(candidate => candidate.Type == resolved);
+            if (entry == null)
                 throw new ArgumentException($"No extractor for input type {inputType}");
-            }
 
-            foreach (var entry in extractors)
-            {
-                if (entry.InputMatches(input))
-                    return (entry.Type, entry.Create(dl));
-            }
-
-            throw new ArgumentException($"No matching extractor for input '{input}'");
+            return (resolved, entry.Create(dl));
         }
     }

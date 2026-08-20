@@ -119,7 +119,7 @@ namespace Tests.FastSearch
             var song = app.Queue.AllSongs().Single();
             Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome,
                 "Should fall back to full candidate list and succeed via gooduser");
-            Assert.AreEqual("gooduser", song.ChosenCandidate?.Username,
+            Assert.AreEqual("gooduser", song.ResolvedTarget?.Username,
                 "Should have downloaded from gooduser after fast-user failed");
         }
 

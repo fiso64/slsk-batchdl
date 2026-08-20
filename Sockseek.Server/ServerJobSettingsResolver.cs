@@ -37,6 +37,9 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
     public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
         => submissionOptions.SetJobOptions(jobId, options);
 
+    public void RemoveWorkflowOptions(Guid workflowId)
+        => submissionOptions.RemoveWorkflowOptions(workflowId);
+
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {
         if (inherited.PrintOption != PrintOption.None)
@@ -44,12 +47,17 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
 
         var options = submissionOptions.GetOptions(job);
         var context = ToProfileContext(options?.ProfileContext);
+        var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
+        var conditionSettings = SettingsCloner.Clone(inherited);
+        catalog.DefaultProfile?.Download.ApplyTo(conditionSettings);
+        foreach (var profile in namedProfiles)
+            profile.Download.ApplyTo(conditionSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(conditionSettings, launchDownloadSettings);
+        submissionOptions.ApplyTo(conditionSettings, options, job.Id);
 
         var matchingAutoProfiles = catalog.AutoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, inherited, job, context))
+            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, conditionSettings, job, context))
             .ToList();
-
-        var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
 
         var settings = SettingsCloner.Clone(baseDefaults);
         catalog.DefaultProfile?.Download.ApplyTo(settings);
@@ -71,11 +79,16 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
     public DownloadSettings ResolveFollowUp(Job job, SubmissionOptionsDto? options)
     {
         var context = ToProfileContext(options?.ProfileContext);
-        var matchingAutoProfiles = catalog.AutoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, baseDefaults, job, context))
-            .ToList();
-
         var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
+        var conditionSettings = SettingsCloner.Clone(baseDefaults);
+        catalog.DefaultProfile?.Download.ApplyTo(conditionSettings);
+        foreach (var profile in namedProfiles)
+            profile.Download.ApplyTo(conditionSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(conditionSettings, launchDownloadSettings);
+        submissionOptions.ApplyTo(conditionSettings, options, job.Id);
+        var matchingAutoProfiles = catalog.AutoProfiles
+            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, conditionSettings, job, context))
+            .ToList();
 
         var settings = SettingsCloner.Clone(baseDefaults);
         catalog.DefaultProfile?.Download.ApplyTo(settings);

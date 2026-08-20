@@ -115,6 +115,8 @@ public sealed record JobProvenanceDto(
 [JsonDerivedType(typeof(AggregateJobDraftDto), ServerProtocol.JobDraftKinds.Aggregate)]
 [JsonDerivedType(typeof(AlbumAggregateJobDraftDto), ServerProtocol.JobDraftKinds.AlbumAggregate)]
 [JsonDerivedType(typeof(JobListJobDraftDto), ServerProtocol.JobDraftKinds.JobList)]
+[JsonDerivedType(typeof(RemoteFileJobDraftDto), ServerProtocol.JobDraftKinds.RemoteFile)]
+[JsonDerivedType(typeof(RemoteDirectoryJobDraftDto), ServerProtocol.JobDraftKinds.RemoteDirectory)]
 public abstract record JobDraftDto;
 
 public sealed record ExtractJobDraftDto(
@@ -166,6 +168,19 @@ public sealed record JobListJobDraftDto(
     DownloadSettingsPatchDto? DownloadSettings = null,
     JobProvenanceDto? Provenance = null) : JobDraftDto;
 
+public sealed record RemoteFileJobDraftDto(
+    PeerFileTargetDto Target,
+    IReadOnlyList<string>? OutputPathComponents = null,
+    DownloadSettingsPatchDto? DownloadSettings = null,
+    JobProvenanceDto? Provenance = null) : JobDraftDto;
+
+public sealed record RemoteDirectoryJobDraftDto(
+    string? Username = null,
+    string? FolderPath = null,
+    DirectoryTransferPlanDto? Plan = null,
+    DownloadSettingsPatchDto? DownloadSettings = null,
+    JobProvenanceDto? Provenance = null) : JobDraftDto;
+
 /// <summary>
 /// Controls automatic versus caller-selected downloads for download-capable jobs.
 /// Automatic jobs continue into transfer. Manual jobs collect candidates and enter AwaitingSelection
@@ -201,7 +216,8 @@ public sealed record RetrieveFolderRequestDto(
 /// </summary>
 public sealed record StartFileDownloadsRequestDto(
     IReadOnlyList<FileCandidateRefDto> Files,
-    SubmissionOptionsDto? Options = null);
+    SubmissionOptionsDto? Options = null,
+    ExtractionMode? RequestedMode = null);
 
 /// <summary>
 /// Starts an album/folder download from a selected search result folder.
@@ -211,7 +227,8 @@ public sealed record StartFolderDownloadRequestDto(
     SubmissionOptionsDto? Options = null,
     AlbumQueryDto? AlbumQuery = null,
     AlbumFolderDownloadSelectionDto? Selection = null,
-    AlbumFolderDto? SelectedFolder = null);
+    AlbumFolderDto? SelectedFolder = null,
+    ExtractionMode? RequestedMode = null);
 
 /// <summary>
 /// Describes how a selected album/folder should be downloaded.

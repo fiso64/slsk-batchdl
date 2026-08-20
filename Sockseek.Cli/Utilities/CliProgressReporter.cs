@@ -431,7 +431,8 @@ public class CliProgressReporter
     private static bool IsContainerJobKind(ServerJobKind kind)
         => kind is ServerJobKind.JobList
             or ServerJobKind.Aggregate
-            or ServerJobKind.AlbumAggregate;
+            or ServerJobKind.AlbumAggregate
+            or ServerJobKind.RemoteDirectory;
 
     private static bool IsTransparentContainer(
         JobSummaryDto job,

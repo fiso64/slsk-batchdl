@@ -48,6 +48,9 @@ internal sealed class DiscoveryCoordinator
         }
 
         job.InputType = inputType;
+        // Preserve the resolved extractor identity in the inherited settings so input-type
+        // auto profiles continue to match jobs produced by this extraction.
+        job.Config.Extraction.InputType = inputType;
 
         Job extracted;
         try
@@ -295,10 +298,10 @@ internal sealed class DiscoveryCoordinator
         try
         {
             job.UpdateActivity(JobActivityPhase.RetrievingFolder);
-            int newFilesFound = await context.Runtime.Searcher.CompleteFolder(job.TargetFolder, job.Cts!.Token);
-            job.NewFilesFoundCount = newFilesFound;
+            job.Result = await context.Runtime.Searcher.RetrieveDirectory(job.Directory, job.Cts!.Token);
+            job.NewFilesFoundCount = job.ResultObserver?.Invoke(job.Result) ?? job.Result.Files.Count;
             job.RetrievalOutcome = FolderRetrievalOutcome.Completed;
-            job.Discovery = new DiscoverySummary { RawResultCount = newFilesFound, LockedFileCount = 0 };
+            job.Discovery = new DiscoverySummary { RawResultCount = job.NewFilesFoundCount, LockedFileCount = 0 };
             var outcome = JobOutcome.Done();
             JobOutcomeCommitter.Commit(job, outcome);
             return outcome;
@@ -333,7 +336,7 @@ internal sealed class DiscoveryCoordinator
             return outcome;
         }
 
-        if (job.DownloadBehavior != DownloadBehavior.Manual || job.ResolvedTarget != null)
+        if (job.DownloadBehavior != DownloadBehavior.Manual || job.ResolvedPeerTarget != null)
             return null;
 
         var responseData = new ResponseData();
@@ -368,10 +371,10 @@ internal sealed class DiscoveryCoordinator
             if (job.Results.Count == 0)
                 job.Results = [job.ResolvedTarget];
 
-            if (job.ResolvedTargetNeedsInitialFolderRetrieval)
+            if (job.DirectoryResolutionPolicy == AlbumDirectoryResolutionPolicy.RetrieveBeforeSelection)
             {
                 var retrieval = await ProcessFolderRetrieval(job.ResolvedTarget, job);
-                job.ResolvedTargetNeedsInitialFolderRetrieval = false;
+                job.DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot;
                 if (retrieval.RetrievalCancelled || job.ResolvedTarget.Files.Count == 0)
                     job.Results.Clear();
             }
@@ -618,16 +621,17 @@ internal sealed class DiscoveryCoordinator
         if (folder.IsFullyRetrieved)
         {
             SockseekLog.Jobs.Debug($"[{parentJob.DisplayId}] {DownloadExecutorCoordinator.JobLogKind(parentJob)}: folder already fully retrieved: {folder.FolderPath}");
-            var completedJob = new RetrieveFolderJob(folder)
+            var completedJob = new RetrieveFolderJob(folder.DirectoryIdentity)
             {
                 WorkflowId = parentJob.WorkflowId,
                 Config = parentJob.Config,
+                Result = folder.Directory,
                 RetrievalOutcome = FolderRetrievalOutcome.Completed,
             };
             return completedJob;
         }
 
-        var rfJob = new RetrieveFolderJob(folder) { WorkflowId = parentJob.WorkflowId, Config = parentJob.Config };
+        var rfJob = new RetrieveFolderJob(folder.DirectoryIdentity) { WorkflowId = parentJob.WorkflowId, Config = parentJob.Config };
         rfJob.Cts = CancellationTokenSource.CreateLinkedTokenSource(context.Runtime.Token, parentJob.Cts!.Token);
         context.RegisterJob(rfJob, parentJob);
         var parentActivityBeforeRetrieval = parentJob.ActivityPhase;
@@ -643,7 +647,9 @@ internal sealed class DiscoveryCoordinator
             async Task<int> CompleteFolder()
             {
                 rfJob.UpdateActivity(JobActivityPhase.RetrievingFolder);
-                return await context.Runtime.Searcher.CompleteFolder(rfJob.TargetFolder, rfJob.Cts.Token);
+                var snapshot = await context.Runtime.Searcher.RetrieveDirectory(rfJob.Directory, rfJob.Cts.Token);
+                rfJob.Result = snapshot;
+                return Searcher.ApplyDirectorySnapshot(folder, snapshot);
             }
 
             count = consumeJobSlot

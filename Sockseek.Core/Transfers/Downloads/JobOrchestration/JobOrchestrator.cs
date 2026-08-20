@@ -215,8 +215,8 @@ internal sealed class JobOrchestrator
                     yield return source;
                 break;
 
-            case AlbumJob album:
-                foreach (var source in album.TrackJobs.SelectMany(CancellationSourcesFromSubtree))
+            case DirectoryDownloadJob directory:
+                foreach (var source in directory.FileJobs.SelectMany(CancellationSourcesFromSubtree))
                     yield return source;
                 break;
 
@@ -457,7 +457,7 @@ internal sealed class JobOrchestrator
         return job switch
         {
             JobList list => list.Jobs.Any(IsSubtreeUnsuccessful),
-            AlbumJob album => album.TrackJobs.Any(IsSubtreeUnsuccessful),
+            DirectoryDownloadJob directory => directory.FileJobs.Any(IsSubtreeUnsuccessful),
             AggregateJob aggregate => aggregate.Songs.Any(IsSubtreeUnsuccessful),
             AlbumAggregateJob aggregate => aggregate.Albums.Any(IsSubtreeUnsuccessful),
             ExtractJob extract => extract.Result != null && IsSubtreeUnsuccessful(extract.Result),
@@ -477,7 +477,7 @@ internal sealed class JobOrchestrator
         return job switch
         {
             JobList list => list.Jobs.Any(HasCancelledDescendant),
-            AlbumJob album => album.TrackJobs.Any(song => song.FailureReason == JobFailureReason.Cancelled),
+            DirectoryDownloadJob directory => directory.FileJobs.Any(HasCancelledDescendant),
             AggregateJob aggregate => aggregate.Songs.Any(song => song.FailureReason == JobFailureReason.Cancelled),
             AlbumAggregateJob aggregate => aggregate.Albums.Any(HasCancelledDescendant),
             ExtractJob extract => extract.Result != null && HasCancelledDescendant(extract.Result),
@@ -558,7 +558,7 @@ internal sealed class JobOrchestrator
         // ── source search / download ──────────────────────────────────────────
         // Leaf jobs hold a single job slot for their entire lifetime (search + download combined).
         // Containers (AggregateJob, AlbumAggregateJob) don't hold a slot here; their children do.
-        if (job is SongJob or AlbumJob or SearchJob or RetrieveFolderJob)
+        if (job is FileDownloadJob or AlbumJob or SearchJob or RetrieveFolderJob)
             return await context.Runtime.WithJobSlot(job.Cts!.Token, () => ProcessLeafJobCore(job, ctx, parentToken, parentJob));
         else
             return await ProcessLeafJobCore(job, ctx, parentToken, parentJob);

@@ -18,7 +18,7 @@ public sealed class SharingSettingsTests
         CollectionAssert.AreEqual(composed.ToArray(), decomposed.ToArray());
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("")]
     [DataRow(@"\rooted")]
     [DataRow(@"Alias\\empty")]
@@ -27,23 +27,22 @@ public sealed class SharingSettingsTests
     [DataRow("Alias\0file")]
     public void RemotePathKey_RejectsAmbiguousOrUnsafePaths(string path)
     {
-        Assert.ThrowsException<ArgumentException>(() => RemotePathKey.Create(path));
+        Assert.ThrowsExactly<ArgumentException>(() => RemotePathKey.Create(path));
     }
 
     [TestMethod]
     public void RemotePathKey_RejectsInvalidUtf16()
     {
         string invalid = "Alias\\" + '\uD800';
-        Assert.ThrowsException<ArgumentException>(() => RemotePathKey.Create(invalid));
+        Assert.ThrowsExactly<ArgumentException>(() => RemotePathKey.Create(invalid));
     }
 
     [TestMethod]
-    public void RemotePathKey_RejectsUnrequestableEncodedLength()
+    public void RemotePathKey_DoesNotImposeSockseekOnlyEncodedLength()
     {
-        string oversized = "Alias\\" + new string('x', RemotePathKey.MaximumEncodedBytes);
+        string longPath = "Alias\\" + new string('x', 32 * 1_024);
 
-        Assert.ThrowsException<ArgumentException>(
-            () => RemotePathKey.Create(oversized));
+        Assert.IsNotNull(RemotePathKey.Create(longPath));
     }
 
     [TestMethod]
@@ -58,7 +57,7 @@ public sealed class SharingSettingsTests
         Assert.AreEqual(@"C:\media\music", derivedRoot.LocalPath);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("[]C:\\music")]
     [DataRow("[.]C:\\music")]
     [DataRow("[a/b]C:\\music")]
@@ -66,7 +65,7 @@ public sealed class SharingSettingsTests
     [DataRow("[alias]")]
     public void ShareRootParser_RejectsInvalidForms(string value)
     {
-        Assert.ThrowsException<ArgumentException>(() => ShareRootParser.Parse(value));
+        Assert.ThrowsExactly<ArgumentException>(() => ShareRootParser.Parse(value));
     }
 
     [TestMethod]
@@ -95,11 +94,12 @@ public sealed class SharingSettingsTests
         Assert.AreEqual("MUSIC", settings.Sharing.Roots[0].EffectiveAlias);
         Assert.AreEqual(Path.GetFullPath(rootPath), settings.Sharing.Roots[0].LocalPath);
         Assert.AreEqual(Path.GetFullPath(excludedPath), settings.Sharing.ExcludedDirectories[0]);
-        Assert.AreEqual("ALICE", settings.PeerAccess.BlockedUsernames[0]);
+        Assert.AreEqual(" Alice ", settings.PeerAccess.BlockedUsernames[0]);
         Assert.AreEqual("192.0.2.10", settings.PeerAccess.BlockedIpAddresses[0]);
 
         var policy = new PeerAccessPolicy(settings.PeerAccess);
-        Assert.IsTrue(policy.IsUsernameBlocked("alice"));
+        Assert.IsTrue(policy.IsUsernameBlocked(" Alice "));
+        Assert.IsFalse(policy.IsUsernameBlocked("alice"));
         Assert.IsTrue(policy.IsIpAddressBlocked(IPAddress.Parse("::ffff:192.0.2.10")));
         Assert.IsFalse(policy.IsUsernameBlocked("bob"));
     }
@@ -128,7 +128,7 @@ public sealed class SharingSettingsTests
             },
         };
 
-        Assert.ThrowsException<ArgumentException>(
+        Assert.ThrowsExactly<ArgumentException>(
             () => SharingSettingsValidator.NormalizeAndValidate(
                 settings,
                 PathVariableContext.Empty));
@@ -196,7 +196,7 @@ public sealed class SharingSettingsTests
             },
         };
 
-        Assert.ThrowsException<ArgumentException>(
+        Assert.ThrowsExactly<ArgumentException>(
             () => SharingSettingsValidator.NormalizeAndValidate(
                 settings,
                 PathVariableContext.Empty));
@@ -208,7 +208,7 @@ public sealed class SharingSettingsTests
         var regex = SharingSettingsValidator.CompileFilter(@"^(a+)+\1$");
 
         Assert.AreEqual(SharingSettingsValidator.RegexTimeout, regex.MatchTimeout);
-        Assert.ThrowsException<RegexParseException>(
+        Assert.ThrowsExactly<RegexParseException>(
             () => SharingSettingsValidator.CompileFilter("[invalid"));
     }
 
@@ -224,7 +224,7 @@ public sealed class SharingSettingsTests
             },
         };
 
-        Assert.ThrowsException<ArgumentException>(
+        Assert.ThrowsExactly<ArgumentException>(
             () => SharingSettingsValidator.NormalizeAndValidate(
                 settings,
                 PathVariableContext.Empty));

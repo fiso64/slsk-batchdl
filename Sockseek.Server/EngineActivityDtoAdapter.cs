@@ -63,8 +63,8 @@ public sealed class EngineActivityDtoAdapter
                 "download.attempt-failed",
                 new DownloadAttemptFailedActivityDto(
                     summary.DisplayId,
-                    change.Candidate.Username,
-                    change.Candidate.Filename,
+                    change.Target.Identity.Username,
+                    change.Target.Identity.Filename,
                     change.OutputPath,
                     change.Attempt,
                     change.MaxAttempts,

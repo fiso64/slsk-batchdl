@@ -53,7 +53,9 @@ public static class Printing
         string fileSize    = $"{file.Size / (float)(1024 * 1024):F1}MB";
         string user        = showUser && response?.Username != null ? response.Username + "\\" : "";
         string speed       = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
-        string fname       = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath);
+        string fname       = PeerIdentityValidator.ToDisplayText(fullpath
+            ? file.Filename
+            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath));
         string length      = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
         string displayText;
         if (!infoFirst)
@@ -87,9 +89,9 @@ public static class Printing
         string speed = showSpeed && candidate.UploadSpeed.HasValue
             ? $"({candidate.UploadSpeed.Value / 1024.0 / 1024.0:F2}MB/s) "
             : "";
-        string fname = fullpath
+        string fname = PeerIdentityValidator.ToDisplayText(fullpath
             ? candidate.Filename
-            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(candidate.Filename) : customPath);
+            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(candidate.Filename) : customPath));
         string length = Utils.IsMusicFile(candidate.Filename) ? (candidate.Length ?? -1) + "s" : "";
         string displayText;
         if (!infoFirst)
@@ -460,7 +462,7 @@ public static class Printing
         if (folderPath.Length == 0)
             return "";
 
-        return filename.StartsWith(folderPath + "\\", StringComparison.OrdinalIgnoreCase)
+        return filename.StartsWith(folderPath + "\\", StringComparison.Ordinal)
             ? filename[(folderPath.Length + 1)..]
             : Utils.GetFileNameSlsk(filename);
     }

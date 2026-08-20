@@ -246,6 +246,8 @@ __HELP_TEXT_MAIN__"";
     const string fileConditionsHelp = @""__HELP_TEXT_FILE_CONDITIONS__"";
 
     const string nameFormatHelp = @""__HELP_TEXT_NAME_FORMAT__"";
+
+    const string variablesHelp = @""__HELP_TEXT_VARIABLES__"";
     
     const string configHelp = @""__HELP_TEXT_CONFIG__"";
 
@@ -257,6 +259,8 @@ __HELP_TEXT_MAIN__"";
 
     const string daemonHelp = @""__HELP_TEXT_DAEMON__"";
 
+    const string userHelp = @""__HELP_TEXT_USER__"";
+
     const string databaseHelp = @""__HELP_TEXT_DATABASE__"";
 }
 ";
@@ -267,11 +271,13 @@ __HELP_TEXT_MAIN__"";
         .Replace("__HELP_TEXT_DOWNLOAD_MODES__", topics["download-modes"])
         .Replace("__HELP_TEXT_FILE_CONDITIONS__", topics["file-conditions"])
         .Replace("__HELP_TEXT_NAME_FORMAT__", topics["name-format"])
+        .Replace("__HELP_TEXT_VARIABLES__", topics["variables"])
         .Replace("__HELP_TEXT_CONFIG__", topics["config"])
         .Replace("__HELP_TEXT_ON_COMPLETE__", topics["on-complete"])
         .Replace("__HELP_TEXT_SHORTCUTS__", topics["shortcuts"])
         .Replace("__HELP_TEXT_NOTES_AND_TIPS__", topics["notes-and-tips"])
         .Replace("__HELP_TEXT_DAEMON__", topics["daemon"])
+        .Replace("__HELP_TEXT_USER__", topics["user"])
         .Replace("__HELP_TEXT_DATABASE__", topics["database"]);
     return content;
 }
