@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,11 +19,25 @@ namespace Tests.Cli;
 public class RemoteCliBackendTests
 {
     private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
+    private readonly List<string> serverDataDirectories = [];
 
     [TestCleanup]
-    public void Cleanup()
+    public async Task Cleanup()
     {
         SockseekLog.RemoveNonFileOutputs();
+        foreach (string directory in serverDataDirectories)
+            await DeleteDirectoryIfExistsWithRetryAsync(directory);
+    }
+
+    private WebApplication BuildServer(ServerOptions options, string? url = null)
+    {
+        string dataDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sockseek-remote-cli-data",
+            Guid.NewGuid().ToString("N"));
+        options.Persistence.DataDirectory = dataDirectory;
+        serverDataDirectories.Add(dataDirectory);
+        return Sockseek.Server.ServerHost.Build([], options, url);
     }
 
     [TestMethod]
@@ -63,7 +78,7 @@ public class RemoteCliBackendTests
     public async Task SockseekLiveClient_InitialSnapshotFailureCanBeRetried()
     {
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings(),
             DefaultDownload = new DownloadSettings(),
@@ -148,7 +163,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -233,7 +248,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "02. Artist - Track Two.mp3"), "b");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -316,7 +331,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "02. Track Two.mp3"), "b");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -402,7 +417,7 @@ public class RemoteCliBackendTests
         File.WriteAllLines(inputPath, ["a:\"Artist One - Album One\"", "a:\"Artist Two - Album Two\""]);
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -527,7 +542,7 @@ public class RemoteCliBackendTests
         File.WriteAllLines(inputPath, ["a:\"Album Name\"                 strict-album=true;format=flac"]);
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -622,7 +637,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(discoveryDir, "03. ELO - Last Train to London.mp3"), "e");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -725,7 +740,7 @@ public class RemoteCliBackendTests
 
         var client = CreateBlockedDownloadClient(musicRoot);
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -823,7 +838,7 @@ public class RemoteCliBackendTests
 
         var client = CreateBlockedDownloadClient(musicRoot);
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -904,7 +919,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -986,7 +1001,7 @@ public class RemoteCliBackendTests
         File.WriteAllLines(inputPath, ["s:\"Artist One - Track One\"", "a:\"Artist Two - Album Two\""]);
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings(),
             DefaultDownload = new DownloadSettings
@@ -1067,7 +1082,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -1121,7 +1136,7 @@ public class RemoteCliBackendTests
     public async Task RemoteCliBackend_DaemonAndWorkflowSubscriptionsCannotMix()
     {
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings(),
             DefaultDownload = new DownloadSettings(),
@@ -1165,7 +1180,7 @@ public class RemoteCliBackendTests
             DefaultDownload = new DownloadSettings(),
             Profiles = ProfileCatalog.Empty,
         };
-        var firstApp = ServerHost.Build([], options, url);
+        var firstApp = BuildServer(options, url);
         await firstApp.StartAsync();
 
         try
@@ -1177,7 +1192,7 @@ public class RemoteCliBackendTests
 
             await firstApp.DisposeAsync();
 
-            await using var secondApp = ServerHost.Build([], options, url);
+            await using var secondApp = BuildServer(options, url);
             await secondApp.StartAsync();
             try
             {
@@ -1220,7 +1235,7 @@ public class RemoteCliBackendTests
     {
         int port = GetFreeTcpPort();
         string url = $"http://127.0.0.1:{port}";
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings(),
             DefaultDownload = new DownloadSettings(),
@@ -1280,7 +1295,7 @@ public class RemoteCliBackendTests
         var client = CreateBlockedDownloadClient(musicRoot);
         int port = GetFreeTcpPort();
         string url = $"http://127.0.0.1:{port}";
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -1404,7 +1419,7 @@ public class RemoteCliBackendTests
 
         int port = GetFreeTcpPort();
         string url = $"http://127.0.0.1:{port}";
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {
@@ -1491,7 +1506,7 @@ public class RemoteCliBackendTests
         File.WriteAllText(Path.Combine(trackDir, "01. Artist - Track One.mp3"), "a");
 
         string url = DynamicLoopbackUrl;
-        await using var app = ServerHost.Build([], new ServerOptions
+        await using var app = BuildServer(new ServerOptions
         {
             Engine = new EngineSettings
             {

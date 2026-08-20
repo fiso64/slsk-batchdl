@@ -15,6 +15,11 @@ using Sockseek.Server.Persistence;
 using Sockseek.Core.Sharing;
 using Sockseek.Core.Transfers.Uploads;
 using Sockseek.Core.Chat;
+using Sockseek.Core.PeerBrowsing;
+using Sockseek.Persistence.PeerBrowsing;
+using Sockseek.Server.PeerBrowsing;
+using Sockseek.Core.UserProfiles;
+using Sockseek.Server.UserProfiles;
 
 namespace Sockseek.Server;
 
@@ -40,6 +45,8 @@ public sealed class EngineSupervisor
     public SharingRuntime? Sharing { get; private set; }
     public ChatRuntime? Chat { get; private set; }
     public DaemonSoulseekRuntime? SoulseekRuntime { get; private set; }
+    public PeerBrowseService? PeerBrowses { get; private set; }
+    public UserProfileService? UserProfiles { get; private set; }
     /// <summary>
     /// Neutral daemon-session seam for future chat and remote-user services.
     /// This is the same manager used by sharing and every download engine.
@@ -68,9 +75,13 @@ public sealed class EngineSupervisor
     {
         string dataDirectory = SockseekDataPaths.ResolveDataDirectory(
             options.Persistence.DataDirectory);
+        LocalUserProfile localProfile = await LocalUserProfile.LoadAsync(
+            engineSettings,
+            ct).ConfigureAwait(false);
         await using var soulseek = new DaemonSoulseekRuntime(
             engineSettings,
-            options.ClientFactory);
+            options.ClientFactory,
+            localProfile);
         await using var sharing = new SharingRuntime(
             engineSettings,
             dataDirectory,
@@ -85,10 +96,16 @@ public sealed class EngineSupervisor
         Chat = chat;
         SoulseekRuntime = soulseek;
         SoulseekSession = soulseek.ClientManager;
+        PeerBrowseService? peerBrowses = null;
+        UserProfileService? userProfiles = null;
         void OnClientStateChanged(SoulseekClientStates state)
-            => StateStore.UpdateDaemonRuntime(
+        {
+            StateStore.UpdateDaemonRuntime(
                 ToSoulseekClientStatusDto(state),
                 restartCount);
+            userProfiles?.OnSoulseekStateChanged(state);
+            peerBrowses?.OnSoulseekStateChanged(state);
+        }
         void OnSharingStateChanged(
             SharingStateDto sharingState,
             UploadRuntimeStateDto uploadState)
@@ -122,6 +139,10 @@ public sealed class EngineSupervisor
                 _ = RetireTerminalUploadAsync(transfer);
             }
         }
+        void OnPeerBrowseChanged(PeerBrowseResource resource)
+            => StateStore.UpdateUserBrowse(UserBrowseDtoMapper.ToDto(resource));
+        void OnPeerBrowseRemoved(Guid browseId)
+            => StateStore.RemoveUserBrowse(browseId);
         sharing.ClientManager.StateChanged += OnClientStateChanged;
         sharing.StateChanged += OnSharingStateChanged;
         if (chat is not null)
@@ -144,6 +165,30 @@ public sealed class EngineSupervisor
             // Chat attaches protocol callbacks before any sharing-triggered
             // login can release queued private messages from the server.
             await sharing.StartAsync(ct);
+            userProfiles = new UserProfileService(
+                new SoulseekUserProfileTransport(() => soulseek.ClientManager.Client),
+                soulseek.EnsureStartedAsync,
+                () => soulseek.ClientManager.LoggedInUsername
+                      ?? (!string.IsNullOrWhiteSpace(engineSettings.MockFilesDir) ? "local" : null)
+                      ?? (!engineSettings.UseRandomLogin ? engineSettings.Username : null),
+                soulseek.AccessPolicy);
+            userProfiles.OnSoulseekStateChanged(sharing.ClientManager.State);
+            UserProfiles = userProfiles;
+            var peerBrowseStore = new PeerBrowseArtifactStore(dataDirectory);
+            await peerBrowseStore.InitializeAsync(ct);
+            peerBrowses = new PeerBrowseService(
+                peerBrowseStore,
+                new SoulseekPeerBrowseTransport(
+                    soulseek.ClientManager,
+                    ensureSessionStarted: soulseek.EnsureStartedAsync),
+                () => soulseek.ClientManager.LoggedInUsername
+                      ?? (!string.IsNullOrWhiteSpace(engineSettings.MockFilesDir) ? "local" : null)
+                      ?? (!engineSettings.UseRandomLogin ? engineSettings.Username : null),
+                soulseek.AccessPolicy);
+            peerBrowses.OnSoulseekStateChanged(sharing.ClientManager.State);
+            peerBrowses.Changed += OnPeerBrowseChanged;
+            peerBrowses.Removed += OnPeerBrowseRemoved;
+            PeerBrowses = peerBrowses;
             while (!ct.IsCancellationRequested)
             {
                 var engine = CreateEngine(sharing.ClientManager);
@@ -202,6 +247,17 @@ public sealed class EngineSupervisor
         }
         finally
         {
+            UserProfiles = null;
+            if (userProfiles is not null)
+                await userProfiles.DisposeAsync();
+            userProfiles = null;
+            PeerBrowses = null;
+            if (peerBrowses is not null)
+            {
+                peerBrowses.Changed -= OnPeerBrowseChanged;
+                peerBrowses.Removed -= OnPeerBrowseRemoved;
+                await peerBrowses.DisposeAsync();
+            }
             sharing.ClientManager.StateChanged -= OnClientStateChanged;
             sharing.StateChanged -= OnSharingStateChanged;
             if (chat is not null)
@@ -427,6 +483,63 @@ public sealed class EngineSupervisor
         var job = JobRequestMapper.CreateJobList(request);
         ApplyDraftJobOptions(job, request.Jobs);
         return SubmitJobAsync(job, request.Options, ct, request.Jobs);
+    }
+
+    internal string ResolveUserShareOutputParent(
+        string username,
+        PeerBrowseDownloadResolution resolution,
+        SubmissionOptionsDto? options)
+    {
+        EnsureShareSubmissionConnection();
+        JobList workflow = CreateUserShareWorkflow(username, resolution);
+        JobRequestMapper.AssignWorkflowId(workflow, workflow.WorkflowId);
+        jobSettingsResolver.SetWorkflowOptions(workflow.WorkflowId, options);
+        try
+        {
+            DownloadSettings settings = jobSettingsResolver.Resolve(defaultDownloadSettings, workflow);
+            ValidateExplicitRemoteTransferOverrides(
+                workflow,
+                options?.DownloadSettings,
+                settings);
+            ValidateSubmissionSettings(workflow, settings);
+            return settings.Output.ParentDir
+                ?? throw new InvalidOperationException("The output parent was not resolved.");
+        }
+        finally
+        {
+            jobSettingsResolver.RemoveWorkflowOptions(workflow.WorkflowId);
+        }
+    }
+
+    public Task<JobSummaryDto> SubmitUserShareDownloadsAsync(
+        string username,
+        PeerBrowseDownloadResolution resolution,
+        SubmissionOptionsDto? options,
+        CancellationToken cancellationToken)
+    {
+        EnsureShareSubmissionConnection();
+        JobList workflow = CreateUserShareWorkflow(username, resolution);
+        return SubmitJobAsync(workflow, options, cancellationToken);
+    }
+
+    private static JobList CreateUserShareWorkflow(
+        string username,
+        PeerBrowseDownloadResolution resolution)
+    {
+        username = PeerUsername.Validate(username);
+        ArgumentNullException.ThrowIfNull(resolution);
+        if (resolution.Plans.Count == 0)
+            throw new PeerBrowseSelectionException("The selection contains no downloadable public files.");
+        return new JobList(
+            $"Shares from {username}",
+            resolution.Plans.Select(plan =>
+                (Job)new RemoteDirectoryJob(new RemoteDirectorySource.Resolved(plan))));
+    }
+
+    private void EnsureShareSubmissionConnection()
+    {
+        if (SoulseekSession?.IsConnectedAndLoggedIn != true)
+            throw new InvalidOperationException("Soulseek is not connected.");
     }
 
     private void ApplyDraftJobOptions(JobList jobList, IReadOnlyList<JobDraftDto> drafts)
@@ -1253,7 +1366,11 @@ public sealed class EngineSupervisor
 
     private DownloadEngine CreateEngine(SoulseekClientManager clientManager)
     {
-        var engine = new DownloadEngine(engineSettings, clientManager, jobSettingsResolver);
+        var engine = new DownloadEngine(
+            engineSettings,
+            clientManager,
+            jobSettingsResolver,
+            directorySource: PeerBrowses);
         persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
         lock (engineGate)

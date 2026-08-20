@@ -51,6 +51,7 @@ public sealed class StateUpdateCoalescer : IDisposable
             .OrderBy(batch => batch.Scope.Kind)
             .ThenBy(batch => batch.Scope.WorkflowId)
             .ThenBy(batch => batch.Scope.ChatTargetId)
+            .ThenBy(batch => batch.Scope.UserBrowseId)
             .Select(batch => batch.ToDto())
             .ToList();
         pending.Clear();
@@ -59,6 +60,9 @@ public sealed class StateUpdateCoalescer : IDisposable
 
     private static bool RequiresPromptFlush(StateDeltaDto state)
         => state.Notifications is { Count: > 0 }
+            || state.UserBrowse?.State is UserBrowseState.Complete
+                or UserBrowseState.Failed
+                or UserBrowseState.Cancelled
             || state.ChatTargets?.Any(target => target.Messages is { Count: > 0 }) == true
             || state.RemovedWorkflowIds.Count > 0
             || state.RemovedJobIds.Count > 0
@@ -177,7 +181,8 @@ public sealed class StateUpdateCoalescer : IDisposable
                 .Select(group => group.OrderByDescending(notification => notification.Sequence).First())
                 .OrderBy(notification => notification.Sequence)
                 .ToList(),
-            MergeChatTargets(first.ChatTargets ?? [], second.ChatTargets ?? []));
+            MergeChatTargets(first.ChatTargets ?? [], second.ChatTargets ?? []),
+            Latest(first.UserBrowse, second.UserBrowse));
     }
 
     private static IReadOnlyList<ChatTargetDeltaDto> MergeChatTargets(
@@ -266,6 +271,9 @@ public sealed class StateUpdateCoalescer : IDisposable
     }
 
     private static DaemonStateDto? Latest(DaemonStateDto? first, DaemonStateDto? second)
+        => second == null || first?.Revision > second.Revision ? first : second;
+
+    private static UserBrowseDto? Latest(UserBrowseDto? first, UserBrowseDto? second)
         => second == null || first?.Revision > second.Revision ? first : second;
 
     private static IReadOnlyList<Guid> Union(

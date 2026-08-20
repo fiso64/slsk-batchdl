@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text;
 using Sockseek.Core.Snapshots;
 
@@ -11,12 +12,44 @@ namespace Sockseek.Core.Models;
 public static class PeerIdentityValidator
 {
     public static string ValidateUsername(string username)
-        => Validate(username, "Peer username");
+        => Validate(username, "Peer username", allowControls: false);
 
     public static string ValidateRemotePath(string remotePath)
-        => Validate(remotePath, "Remote path");
+        => Validate(remotePath, "Remote path", allowControls: true);
 
-    private static string Validate(string value, string label)
+    /// <summary>
+    /// Projects exact peer-supplied text to a single-line, terminal-safe display
+    /// value without changing the wire identity retained by Sockseek.
+    /// </summary>
+    public static string ToDisplayText(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var result = new StringBuilder(value.Length);
+        foreach (Rune rune in value.EnumerateRunes())
+        {
+            UnicodeCategory category = Rune.GetUnicodeCategory(rune);
+            if (category is not (UnicodeCategory.Control
+                or UnicodeCategory.Format
+                or UnicodeCategory.LineSeparator
+                or UnicodeCategory.ParagraphSeparator))
+            {
+                result.Append(rune);
+                continue;
+            }
+
+            if (rune.Value <= 0x1f)
+                result.Append(new Rune(0x2400 + rune.Value));
+            else if (rune.Value == 0x7f)
+                result.Append(new Rune(0x2421));
+            else
+                result.Append(rune.Value <= 0xffff
+                    ? $"<U+{rune.Value:X4}>"
+                    : $"<U+{rune.Value:X8}>");
+        }
+        return result.ToString();
+    }
+
+    private static string Validate(string value, string label, bool allowControls)
     {
         ArgumentNullException.ThrowIfNull(value);
         if (value.Length == 0)
@@ -28,7 +61,7 @@ public static class PeerIdentityValidator
             var status = Rune.DecodeFromUtf16(remaining, out Rune rune, out int consumed);
             if (status != OperationStatus.Done)
                 throw Invalid($"{label} contains invalid Unicode.");
-            if (Rune.IsControl(rune))
+            if (!allowControls && Rune.IsControl(rune))
                 throw Invalid($"{label} cannot contain control characters.");
             remaining = remaining[consumed..];
         }

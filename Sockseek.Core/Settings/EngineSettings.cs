@@ -30,6 +30,12 @@ public class EngineSettings
 
     public string? UserDescription { get; set; }
 
+    /// <summary>
+    /// Path to the daemon-lifetime profile picture. The daemon normalizes the
+    /// image once at startup and never exposes the original bytes.
+    /// </summary>
+    public string? UserPicturePath { get; set; }
+
     public SharingSettings Sharing { get; set; } = new();
 
     public UploadSettings Uploads { get; set; } = new();

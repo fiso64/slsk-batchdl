@@ -9,7 +9,7 @@ public sealed class StaleDownloadException : TimeoutException
     public StaleDownloadException(PeerFileTarget target, int maxStaleTimeMs)
         : base(
             $"{MessagePrefix}{maxStaleTimeMs}ms without peer transfer activity: " +
-            $"{target.Username}\\{target.Filename}")
+            $"{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}")
     {
         Target = target;
         MaxStaleTimeMs = maxStaleTimeMs;

@@ -17,7 +17,17 @@ public static class RemoteTransferSettingsValidator
 
         var invalid = new List<string>();
         if (patch.Search != null) invalid.Add("Search");
-        if (patch.Skip != null) invalid.Add("Skip");
+        if (patch.Skip is { } skip)
+        {
+            // Exact remote jobs support only path-based skip-existing. The
+            // remaining options depend on music indexes, search, or tags.
+            if (skip.SkipNotFound != null) invalid.Add("Skip.SkipNotFound");
+            if (skip.SkipMode != null) invalid.Add("Skip.SkipMode");
+            if (skip.SkipMusicDir != null) invalid.Add("Skip.SkipMusicDir");
+            if (skip.SkipModeMusicDir != null) invalid.Add("Skip.SkipModeMusicDir");
+            if (skip.SkipCheckCond != null) invalid.Add("Skip.SkipCheckCond");
+            if (skip.SkipCheckPrefCond != null) invalid.Add("Skip.SkipCheckPrefCond");
+        }
         if (patch.Preprocess != null) invalid.Add("Preprocess");
         if (patch.Spotify != null) invalid.Add("Spotify");
         if (patch.YouTube != null) invalid.Add("YouTube");

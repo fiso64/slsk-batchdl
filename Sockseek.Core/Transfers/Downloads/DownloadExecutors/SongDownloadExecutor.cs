@@ -309,7 +309,9 @@ internal sealed class SongDownloadExecutor
                                 result.Target.Filename,
                                 result.OutputPath);
                         }
-                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: fast-search provisional download succeeded from {result.Target.Username}\\{result.Target.Filename}: {song}");
+                        SockseekLog.Jobs.Debug(
+                            $"[{song.DisplayId}] SongJob: fast-search provisional download succeeded from "
+                            + $"{result.Target.Username}\\{PeerIdentityValidator.ToDisplayText(result.Target.Filename)}: {song}");
                         return JobOutcome.Done(result.OutputPath, fastCandidate);
                     }
 
@@ -410,7 +412,10 @@ internal sealed class SongDownloadExecutor
                     result.Target.Filename,
                     result.OutputPath);
             }
-            SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: download succeeded from {result.Target.Username}\\{result.Target.Filename} to '{result.OutputPath}': {song}");
+            SockseekLog.Jobs.Debug(
+                $"[{song.DisplayId}] SongJob: download succeeded from "
+                + $"{result.Target.Username}\\{PeerIdentityValidator.ToDisplayText(result.Target.Filename)} "
+                + $"to '{result.OutputPath}': {song}");
             return JobOutcome.Done(result.OutputPath, candidate);
         }
 
@@ -449,7 +454,9 @@ internal sealed class SongDownloadExecutor
             return JobOutcome.Skipped(JobSkipReason.Manual);
 
         var result = download.Result
-            ?? throw new InvalidOperationException($"Completed exact download outcome missing result for '{target.Username}\\{target.Filename}'.");
+            ?? throw new InvalidOperationException(
+                $"Completed exact download outcome missing result for "
+                + $"'{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}'.");
         context.UserSuccesses.RecordSuccess(target.Username);
         if (result.TransferId is Guid transferId)
         {

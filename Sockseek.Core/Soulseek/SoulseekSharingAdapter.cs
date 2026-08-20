@@ -71,6 +71,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     private readonly UploadSettings uploadSettings;
     private readonly Func<ISoulseekClient?> clientProvider;
     private readonly string userDescription;
+    private readonly byte[]? userPicture;
     private readonly bool uploadServingEnabled;
     private readonly SemaphoreSlim searchConcurrency =
         new(IncomingSearchConcurrency, IncomingSearchConcurrency);
@@ -90,7 +91,8 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         UploadSettings uploadSettings,
         Func<ISoulseekClient?> clientProvider,
         string? userDescription = null,
-        bool uploadServingEnabled = true)
+        bool uploadServingEnabled = true,
+        byte[]? userPicture = null)
     {
         this.catalogs = catalogs ?? throw new ArgumentNullException(nameof(catalogs));
         this.uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
@@ -98,6 +100,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         this.uploadSettings = uploadSettings ?? throw new ArgumentNullException(nameof(uploadSettings));
         this.clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         this.userDescription = userDescription ?? "";
+        this.userPicture = userPicture?.ToArray();
         this.uploadServingEnabled = uploadServingEnabled;
     }
 
@@ -321,7 +324,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             return Task.FromResult(new UserInfo("", 0, 0, false));
         }
         if (!catalogs.TryAcquire(out IShareCatalogLease? lease) || lease is null)
-            return Task.FromResult(new UserInfo(userDescription, 0, 0, false));
+            return Task.FromResult(new UserInfo(userDescription, 0, 0, false, userPicture));
         lease.Dispose();
 
         UploadQueueRuntimeSnapshot capacity = uploads.GetQueueSnapshot();
@@ -329,7 +332,8 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             userDescription,
             uploadServingEnabled ? capacity.TotalSlots : 0,
             capacity.QueuedFiles,
-            uploadServingEnabled && uploads.CouldStartImmediately(username)));
+            uploadServingEnabled && uploads.CouldStartImmediately(username),
+            userPicture));
     }
 
     public async Task EnqueueUploadAsync(

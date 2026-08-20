@@ -13,6 +13,7 @@ using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, 
 using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
 using Sockseek.Core.Snapshots;
+using Sockseek.Core.PeerBrowsing;
 
 namespace Sockseek.Core.Services;
 
@@ -26,19 +27,24 @@ public partial class Searcher : IDisposable
     private readonly RateLimitedSemaphore rateSemaphore;
     private readonly SemaphoreSlim concurrencySemaphore;
     private readonly TimeProvider timeProvider;
+    private readonly IPeerDirectorySource directorySource;
 
     public Searcher(ISoulseekClient client,
                     IUserSuccessStats userStats,
                     DownloadEvents downloadEvents,
                     int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
                     SearchEvents? searchEvents = null,
-                    TimeProvider? timeProvider = null)
+                    TimeProvider? timeProvider = null,
+                    IPeerDirectorySource? directorySource = null)
     {
         this.client = client;
         this.userStats = userStats;
         this.downloadEvents = downloadEvents;
         this.searchEvents = searchEvents ?? new SearchEvents();
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.directorySource = directorySource
+            ?? client as IPeerDirectorySource
+            ?? MissingPeerDirectorySource.Instance;
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -302,53 +308,18 @@ public partial class Searcher : IDisposable
 
     // ── folder browse ────────────────────────────────────────────────────────
 
-    public async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? ct = null)
-    {
-        var res = new List<(string dir, SlFile file)>();
-        folderPrefix = folderPrefix.Replace('/', '\\').TrimEnd('\\') + '\\';
-        var userFileList = await client.BrowseAsync(user, new BrowseOptions(), ct);
-        foreach (var dir in userFileList.Directories)
-        {
-            string dirname = dir.Name.Replace('/', '\\').TrimEnd('\\') + '\\';
-            if (dirname.StartsWith(folderPrefix, StringComparison.Ordinal))
-                res.AddRange(dir.Files.Select(x => (dir.Name, x)));
-        }
-        return res;
-    }
-
     /// <summary>
     /// Retrieves one exact peer directory into a Sockseek-owned snapshot. This
     /// boundary deliberately creates no album query or search response.
     /// </summary>
-    public async Task<PeerDirectorySnapshot> RetrieveDirectory(
+    public Task<PeerDirectorySnapshot> RetrieveDirectory(
         PeerDirectoryIdentity directory,
         CancellationToken? ct = null)
     {
         ArgumentNullException.ThrowIfNull(directory);
-        var files = await GetAllFilesInFolder(directory.Username, directory.FolderPath, ct);
-        var targets = new List<PeerFileTarget>(files.Count);
-
-        foreach (var (remoteDirectory, file) in files)
-        {
-            string filename = GetBrowseFilePath(remoteDirectory, file.Filename);
-            var attributes = file.Attributes?
-                .Select(attribute => new FileAttributeSnapshot(
-                    attribute.Type.ToString(),
-                    attribute.Value,
-                    (int)attribute.Type))
-                .ToArray();
-            targets.Add(new PeerFileTarget(
-                new PeerFileIdentity(directory.Username, filename),
-                file.Size < 0 ? null : file.Size,
-                file.Extension,
-                file.BitRate,
-                file.BitDepth,
-                file.SampleRate,
-                file.Length,
-                attributes));
-        }
-
-        return new PeerDirectorySnapshot(directory, targets, isComplete: true);
+        return directorySource.RetrieveDirectoryAsync(
+            directory,
+            ct ?? CancellationToken.None);
     }
 
     // Appends any new files found in the remote folder to folder.Files.

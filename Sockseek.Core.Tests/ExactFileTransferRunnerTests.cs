@@ -18,7 +18,7 @@ public sealed class ExactFileTransferRunnerTests
     public async Task SongAndRemoteFile_UseTheSameExactWireIdentityAndOutcome()
     {
         const string username = " Peer Case ";
-        const string filename = "Share\\Cafe\u0301\\File.bin ";
+        const string filename = "Share\\Cafe\u0301\\File\u001B\n.bin ";
         var response = Response(username, filename);
         var client = new MockSoulseekClient([response]);
         var (runner, _, _) = CreateRunner(client);

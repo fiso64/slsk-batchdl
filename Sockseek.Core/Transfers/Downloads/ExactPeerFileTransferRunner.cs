@@ -84,7 +84,8 @@ public sealed class ExactPeerFileTransferRunner
             var outputFileInfo   = new FileInfo(outputPath);
             var existingFileInfo = new FileInfo(existingPath);
 
-            SockseekLog.Jobs.Debug($"File \"{target.Filename}\" already downloaded at {existingPath}");
+            SockseekLog.Jobs.Debug(
+                $"File \"{PeerIdentityValidator.ToDisplayText(target.Filename)}\" already downloaded at {existingPath}");
 
             if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
             {
@@ -104,7 +105,9 @@ public sealed class ExactPeerFileTransferRunner
         Guid currentAttemptId = Guid.Empty;
         long totalBytes = target.Size ?? 0;
 
-        SockseekLog.Soulseek.Debug($"Downloading: {owner} from '{target.Username}\\{target.Filename}' to '{incompleteOutputPath}'");
+        SockseekLog.Soulseek.Debug(
+            $"Downloading: {owner} from '{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}' "
+            + $"to '{incompleteOutputPath}'");
 
         StaleDownloadCoordinator.PeerTransferActivity? staleActivity = null;
         var transferOptions = new TransferOptions(
@@ -216,7 +219,8 @@ public sealed class ExactPeerFileTransferRunner
                         && attemptCount < maxRetries;
 
                     SockseekLog.Soulseek.Debug(
-                        $"Error while downloading '{target.Username}\\{target.Filename}' to '{incompleteOutputPath}' " +
+                        $"Error while downloading '{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}' "
+                        + $"to '{incompleteOutputPath}' " +
                         $"(attempt {attemptCount}/{maxRetries}): {SockseekLog.ExceptionSummary(e)}");
                     events.RaiseTransferAttemptFailed(
                         transferId,

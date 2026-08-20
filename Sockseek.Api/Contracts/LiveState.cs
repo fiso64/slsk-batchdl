@@ -8,7 +8,7 @@ namespace Sockseek.Api;
 /// <summary>The live replication protocol implemented by this API.</summary>
 public static class LiveProtocol
 {
-    public const int Version = 5;
+    public const int Version = 6;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<StateStreamScopeKind>))]
@@ -22,13 +22,16 @@ public enum StateStreamScopeKind
     ChatConversation,
     [JsonStringEnumMemberName("chatRoom")]
     ChatRoom,
+    [JsonStringEnumMemberName("userBrowse")]
+    UserBrowse,
 }
 
 /// <summary>A recoverable live stream with exactly one kind-specific target id.</summary>
 public sealed record StateStreamScopeDto(
     StateStreamScopeKind Kind,
     Guid? WorkflowId = null,
-    Guid? ChatTargetId = null)
+    Guid? ChatTargetId = null,
+    Guid? UserBrowseId = null)
 {
     public static StateStreamScopeDto Daemon { get; } = new(StateStreamScopeKind.Daemon);
 
@@ -41,18 +44,25 @@ public sealed record StateStreamScopeDto(
     public static StateStreamScopeDto ChatRoom(Guid roomId)
         => new(StateStreamScopeKind.ChatRoom, ChatTargetId: roomId);
 
+    public static StateStreamScopeDto UserBrowse(Guid browseId)
+        => new(StateStreamScopeKind.UserBrowse, UserBrowseId: browseId);
+
     public void Validate()
     {
         if (!Enum.IsDefined(Kind))
             throw new ArgumentException("The stream scope kind is invalid.");
-        if (Kind == StateStreamScopeKind.Daemon && (WorkflowId != null || ChatTargetId != null))
+        if (Kind == StateStreamScopeKind.Daemon
+            && (WorkflowId != null || ChatTargetId != null || UserBrowseId != null))
             throw new ArgumentException("A daemon stream scope cannot contain a target id.");
         if (Kind == StateStreamScopeKind.Workflow
-            && (WorkflowId is null || WorkflowId == Guid.Empty || ChatTargetId != null))
+            && (WorkflowId is null || WorkflowId == Guid.Empty || ChatTargetId != null || UserBrowseId != null))
             throw new ArgumentException("A workflow stream scope requires only a workflow id.");
         if (Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom
-            && (ChatTargetId is null || ChatTargetId == Guid.Empty || WorkflowId != null))
+            && (ChatTargetId is null || ChatTargetId == Guid.Empty || WorkflowId != null || UserBrowseId != null))
             throw new ArgumentException("A chat stream scope requires only a chat target id.");
+        if (Kind == StateStreamScopeKind.UserBrowse
+            && (UserBrowseId is null || UserBrowseId == Guid.Empty || WorkflowId != null || ChatTargetId != null))
+            throw new ArgumentException("A user-browse stream scope requires only a browse id.");
     }
 }
 
@@ -377,7 +387,8 @@ public sealed record StateDeltaDto(
     IReadOnlyList<Guid> RemovedSearchJobIds,
     IReadOnlyList<Guid> RemovedTransferIds,
     IReadOnlyList<UserNotificationDto>? Notifications = null,
-    IReadOnlyList<ChatTargetDeltaDto>? ChatTargets = null)
+    IReadOnlyList<ChatTargetDeltaDto>? ChatTargets = null,
+    UserBrowseDto? UserBrowse = null)
 {
     public static StateDeltaDto Empty { get; } = new(null, [], [], [], [], [], [], [], []);
 
@@ -393,7 +404,8 @@ public sealed record StateDeltaDto(
         && RemovedSearchJobIds.Count == 0
         && RemovedTransferIds.Count == 0
         && Notifications is null or { Count: 0 }
-        && ChatTargets is null or { Count: 0 };
+        && ChatTargets is null or { Count: 0 }
+        && UserBrowse is null;
 }
 
 public sealed record ChatTargetDeltaDto(
@@ -426,7 +438,8 @@ public sealed record StateSnapshotDto(
     IReadOnlyList<JobStateDto> Jobs,
     IReadOnlyList<SearchStateDto> Searches,
     IReadOnlyList<TransferStateDto> Transfers,
-    ChatTargetSnapshotDto? ChatTarget = null);
+    ChatTargetSnapshotDto? ChatTarget = null,
+    UserBrowseDto? UserBrowse = null);
 
 /// <summary>
 /// An ordered stream batch. State is applied before Activity. PreviousSequence permits

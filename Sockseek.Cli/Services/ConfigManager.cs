@@ -589,6 +589,8 @@ public static partial class ConfigManager
                 Engine(e => e.ConnectTimeout = Int()); break;
             case "--user-description":
                 Engine(e => e.UserDescription = value); break;
+            case "--user-picture":
+                DaemonEngine(e => e.UserPicturePath = value); break;
             case "--share":
                 {
                     var operation = ListOperation();

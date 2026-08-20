@@ -1,11 +1,11 @@
 # Sockseek v4 user browsing
 
-Status: design only; not implemented
+Status: implemented and release-gate verified
 
 Target: Sockseek v4
 Scope: remote user profiles, remote share browsing, and downloads selected from a browse
 
-Source review: 2026-08-11
+Source and implementation review: 2026-08-20
 
 This design adds the last user-browsing item in `TODO.md`: viewing a Soulseek
 user's description, picture, status, statistics, and shared files. It defines the
@@ -33,9 +33,11 @@ specified here; later sections explain how it works.
 - `user-picture = <path>` in the default daemon config, or
   `--user-picture <path>` at startup, sets the local Soulseek profile picture next
   to the existing `user-description` option. The daemon validates and normalizes
-  it once at startup; removing the option advertises no picture.
+  it once at startup. Missing or invalid images produce a warning and advertise no
+  picture without preventing daemon startup; removing the option also advertises
+  no picture.
 - `sockseek user shares <username>` performs or reuses one browse, reports live
-  transfer/parse progress, and opens a filesystem-style share browser on a TTY.
+  transfer/index progress, and opens a filesystem-style share browser on a TTY.
 - When an `AlbumJob` retrieves a peer directory for folder completion, track-count
   validation, or strict-quality validation, it reuses that peer's completed browse
   response if it is less than five minutes old. Its browse is likewise reusable by
@@ -62,6 +64,13 @@ specified here; later sections explain how it works.
   folder selection includes its complete public subtree. It accepts transfer,
   output-parent, and structural name-format options and prints the resulting workflow
   ID.
+- Browse-selected files follow the ordinary remote-transfer skip policy. An
+  existing planned destination is reported as already existing and preserved by
+  default; `--no-skip-existing` explicitly permits replacement.
+- Informational share and selection byte totals saturate at the public 64-bit
+  maximum if their exact mathematical sum is larger. Exact per-file sizes remain
+  unchanged, and aggregate overflow never rejects an otherwise valid browse or
+  directory download.
 - `sockseek user shares-cancel <browse-id>` explicitly cancels an active daemon
   browse. Interrupting a waiting CLI detaches by default because another client
   may have joined the same single-flight resource.
@@ -77,6 +86,12 @@ specified here; later sections explain how it works.
 
 ### Deliberately unchanged or deferred
 
+- Initial browse acquisition uses Soulseek.NET's ordinary materializing
+  `BrowseAsync`, matching slskd. Sockseek does not reject a valid browse because of
+  an estimated aggregate size, but a peer with an enormous share can temporarily
+  spike daemon memory or terminate the process before the disk-backed artifact is
+  available. A dependency-provided streaming API is deferred; Sockseek does not
+  carry a Soulseek.NET fork for it.
 - Local description/picture changes are daemon-lifetime configuration and require
   restart; a live profile-mutation API remains out of scope.
 - It does not add buddies, bookmarks, private user notes, or a durable history of
@@ -103,8 +118,9 @@ The implementation is complete only when:
    unbounded output, select several folders or file subsets, and start downloads.
 3. The same typed API is sufficient for a multi-panel GUI with multiple concurrent
    user tabs.
-4. Large valid browses remain usable through streaming, disk-backed artifacts, and
-   paging; size alone never makes an otherwise valid browse fail.
+4. After Soulseek.NET acquisition, browses use disk-backed artifacts and paging;
+   Sockseek never rejects an otherwise valid browse merely because of its estimated
+   aggregate size. Whole-response memory safety during acquisition is not promised.
 5. All outbound user operations reuse the daemon's single Soulseek session and
    existing peer/operator policy seams.
 6. Browse-selected downloads materialize the shared `PeerFileIdentity`,
@@ -119,9 +135,10 @@ When implementation details are ambiguous, apply these rules in order:
 1. Keep one `DaemonSoulseekRuntime` and one underlying Soulseek connection.
 2. Treat every profile string, picture byte, browse count, directory, filename,
    attribute, and compressed byte as untrusted peer input.
-3. Validate framing and individual values before retaining them, and stream
-   aggregate browse data to disk. A malformed-input or operational failure MUST be
-   local to the browse or profile request and MUST leave the daemon usable.
+3. Validate individual values before retaining them and write browse rows to disk.
+   A malformed-input or operational failure SHOULD remain local to the browse or
+   profile request. Soulseek.NET's whole-response materialization is the explicit
+   exception: process-wide memory exhaustion remains possible for an enormous peer.
 4. Keep small changing state live; keep large collections page-oriented.
 5. Use immutable IDs and opaque cursors at public boundaries. Never require a GUI
    to echo remote paths or an entire selected file list.
@@ -148,13 +165,14 @@ and negative guidance.
 - Browse acquisition needs an explicit progress resource rather than making a long
   request look frozen.
 
-### What not to copy
+### What to improve around
 
-- slskd's `/users/{username}/browse` returns a complete materialized
-  `BrowseResponse`. Its browser then creates the complete tree and historically
-  stored it in `localStorage`; it now uses IndexedDB and virtualized rendering.
-  Moving storage and windowing the DOM improves the UI, but it does not bound the
-  server's read, decompression, or object graph.
+- slskd's `/users/{username}/browse` calls Soulseek.NET `BrowseAsync` and returns a
+  complete materialized `BrowseResponse`. Sockseek deliberately matches that
+  acquisition behavior for now to avoid a dependency fork, while improving the
+  downstream boundary with a daemon-side disk artifact, paging, and compact
+  selection IDs. This does not bound Soulseek.NET's read, decompression, or object
+  graph.
 - slskd's status tracker is removed shortly after completion, while the browser
   polls it frequently. Reported failures include repeated `404` responses and a
   browse that appears stuck at zero.
@@ -166,8 +184,7 @@ and negative guidance.
   network coordinates public.
 - Soulseek.NET's current browse path buffers the framed message, decompresses into
   another byte array, and materializes lists of every directory and file. Reports
-  of large-peer memory spikes show why UI virtualization alone is not the safety
-  boundary.
+  of large-peer memory spikes describe the accepted acquisition risk.
 
 These lessons are evidence, not a compatibility target. Sockseek's resource and
 DTO shapes intentionally differ.
@@ -187,7 +204,7 @@ Searcher.RetrieveDirectory -------+
                                   |
 DaemonSoulseekRuntime
         |
-bounded profile calls + streaming browse ingress
+ordinary Soulseek.NET profile + materialized browse calls
         |
 one Soulseek.NET client/session
 
@@ -245,7 +262,7 @@ An immutable `LocalUserProfile` is loaded once from daemon settings and supplied
 to both the client manager's fallback user-info resolver and
 `SoulseekSharingAdapter`; neither reopens the configured picture per peer request.
 
-Core owns remote-path parsing, streaming browse decoding, artifact writing, shared
+Core owns remote-path parsing, materialized browse adaptation, artifact writing, shared
 `PeerFileIdentity`/`PeerFileTarget`/`DirectoryTransferPlan` values, and exact
 transfer runners. It also owns the abstract `FileDownloadJob`/
 `DirectoryDownloadJob` lifecycle bases and concrete remote
@@ -256,9 +273,17 @@ API owns wire DTOs and clients. CLI owns presentation and interaction.
 `PeerBrowseArtifactStore` is not a repository for domain history. Each successful
 browse is an immutable SQLite file plus small metadata. A staging file is private
 to its writer, atomically promoted on success, and deleted on cancellation or
-failure. Completed artifacts are evicted by a fixed age and global byte budget;
+failure. Terminal resources are evicted by a fixed age, terminal-resource count
+target, and global artifact byte budget;
 restart cleanup removes abandoned staging files. These values are internal safe
-defaults, not public configuration.
+defaults, not public configuration. The initial defaults are 24 hours, 4,096
+terminal resources, and 2 GiB. These are best-effort retention targets, never
+admission or browse-validity limits: active resources are never target-evicted,
+and a terminal transition preserves that generation while older terminal/unleased
+resources are considered for eviction. Cleanup failures are rate-limited and
+retried by later maintenance rather than failing otherwise valid work.
+Removing the registry resource also retires its small live-state projection and
+stream sequence, so daemon memory does not retain one entry per historical browse.
 
 ### Concurrency and reuse
 
@@ -300,9 +325,11 @@ this table:
   is available; queue depth is not a validity rule and never rejects a browse.
 - Profile subrequests use bounded single-flight caches with short fixed lifetimes.
   A profile refresh bypasses freshness but still joins an identical in-flight call.
-- Soulseek reconnect/logoff cancels active profile calls and browses with a stable
-  `connection-lost` failure. Completed artifacts remain readable until eviction,
-  but starting downloads still requires a connected daemon.
+- A transition away from an observed logged-in Soulseek session cancels active
+  profile calls and browses with a stable `connection-lost` failure. Normal
+  connecting and connected-before-login startup states do not cancel the request
+  that is establishing the session. Completed artifacts remain readable until
+  eviction, but starting downloads still requires a connected daemon.
 - Profile cache keys and peer-browse acquisition keys include the configured local
   Soulseek account. Changing accounts never reuses the previous account's profile
   or default browse artifact.
@@ -351,10 +378,11 @@ successful data from the others.
 ```csharp
 public sealed record UserProfileDto(
     string Username,
-    UserPresence Presence,
+    UserProfilePresence Presence,
     UserProfileSectionDto Status,
     UserProfileSectionDto Info,
     UserProfileSectionDto Statistics,
+    UserProfileSectionDto PictureSection,
     string? Description,
     long? SharedFileCount,
     long? SharedDirectoryCount,
@@ -377,7 +405,7 @@ public sealed record UserPictureRefDto(
     string ETag);
 ```
 
-`UserPresence` is `online`, `away`, `offline`, or `unknown`. `offline` is a valid
+`UserProfilePresence` is `online`, `away`, `offline`, or `unknown`. `offline` is a valid
 profile response. `unknown` means status could not be established. Numeric values
 MUST be range-checked; invalid peer values become `null`, not wrapped or negative
 public values.
@@ -391,7 +419,10 @@ the result; the WebUI will render it as text content.
 Picture bytes have a strict byte limit before retention. The server recognizes a
 small allow-list of formats by signature and structural probe, reports the real
 media type. Unknown, truncated, oversized, or absurd-dimension images make only
-`Picture` unavailable; the rest of the profile still succeeds.
+`PictureSection` unavailable and leave `Picture` null; the rest of the profile
+still succeeds. A peer with no configured picture has an available picture
+section and a null `Picture`, so absence is distinguishable from validation or
+transport failure.
 
 The outbound picture is configured alongside the existing description:
 
@@ -407,15 +438,15 @@ rules, requires a readable regular file, and reads through a byte-limited stream
 Core's bounded image decoder, which the CLI also uses, applies orientation and first
 frame, strips metadata, bounds dimensions/pixels/work, and encodes a static JPEG at
 a fixed internal size/quality for broad Soulseek-client compatibility. Original
-bytes are never advertised. Invalid or oversized input is a clear startup config
-error; null means no picture. Normalized bytes stay in memory until restart;
+bytes are never advertised. Missing, unreadable, invalid, oversized, or unsafe
+input is rejected with a clear startup warning while the daemon continues without
+a picture; null means no picture. Normalized bytes stay in memory until restart;
 allowed peers receive them in `UserInfo`, while denied peers receive no profile.
 
-Soulseek.NET currently materializes the complete user-info response, including its
-picture byte array. The narrow dependency patch required for browse framing MUST
-also cap user-info message, description, and picture lengths while framing/parsing,
-before allocating from peer-declared lengths. Post-parse validation alone is not a
-memory boundary.
+Soulseek.NET materializes the complete user-info response, including its picture
+byte array, before Sockseek's validation runs. Matching the no-fork browse decision,
+version one accepts that dependency-level allocation risk. Sockseek still validates
+and bounds pictures before caching, rendering, or returning them.
 
 The API does not put base64 into JSON:
 
@@ -435,9 +466,10 @@ prints a short `picture unavailable` note only when human-readable output was
 requested.
 
 For `pixels`, the renderer scales without upsampling to the terminal width and a
-fixed maximum height, composites transparency over the current background, and
-uses `▀` with foreground/background 24-bit color for two image rows per cell. It
-restores terminal attributes in `finally`. `sixel` is emitted only when explicitly
+fixed maximum height, leaves transparent pixels on the terminal's default colors,
+and uses `▀` with foreground/background 24-bit color for two image rows per cell.
+It restores terminal attributes in `finally`. `sixel` preserves transparent pixels
+instead of painting them. `sixel` is emitted only when explicitly
 selected or capability detection positively identifies support; `auto` falls back
 to pixels without blocking on an indefinite terminal probe.
 
@@ -454,7 +486,6 @@ public sealed record UserBrowseDto(
     UserBrowsePhase Phase,
     long CompressedBytesReceived,
     long? CompressedBytesExpected,
-    long DecompressedBytesRead,
     long DirectoryCount,
     long FileCount,
     long TotalFileBytes,
@@ -466,13 +497,16 @@ public sealed record UserBrowseDto(
 ```
 
 States are `queued`, `running`, `complete`, `failed`, and `cancelled`. Phases are
-`waiting-for-peer`, `receiving`, `decoding`, `indexing`, and `ready`. Progress is
+`waiting-for-peer`, `receiving`, `indexing`, and `ready`. Progress is
 monotonic within a phase. Soulseek often cannot supply a trustworthy total, so the
 expected byte count is nullable and clients MUST support indeterminate progress.
 
 The resource remains queryable through every terminal state until its fixed
-retention expires. A failed or cancelled refresh does not delete the user's prior
-successful artifact.
+retention expires or earlier count/disk-target eviction. At the expiry instant new reads
+return `browse-expired`, even if an existing reader lease temporarily postpones
+physical file deletion. Queued and running resources do not age out; their public
+`ExpiresAt` is null, and the terminal transition starts a fresh retention window.
+A failed or cancelled refresh does not delete the user's prior successful artifact.
 
 ### HTTP resources
 
@@ -480,13 +514,13 @@ successful artifact.
 POST   /api/users/{username}/browses
 GET    /api/user-browses?username={username}&state={state}&cursor={cursor}&limit={limit}
 GET    /api/user-browses/{browseId}
+GET    /api/user-browses/{browseId}/snapshot
 POST   /api/user-browses/{browseId}/cancel
 
 GET    /api/user-browses/{browseId}/directories?parentId={id}&query={q}&recursive={bool}&cursor={cursor}&limit={limit}
 GET    /api/user-browses/{browseId}/directories/{directoryId}
 GET    /api/user-browses/{browseId}/directories/{directoryId}/files?query={q}&cursor={cursor}&limit={limit}
 
-POST   /api/user-browses/{browseId}/downloads/preview
 POST   /api/user-browses/{browseId}/downloads
 ```
 
@@ -514,9 +548,11 @@ public sealed record PageDto<T>(
     string? NextCursor);
 ```
 
-The cursor encodes artifact generation, sort key, and last immutable ID and is
-authenticated by the server. It is invalid across artifacts and produces
-`400 invalid-cursor`, not a best-effort result from different data.
+The cursor authenticates the artifact generation, collection/filter identity, and
+last immutable ID. The daemon recovers the corresponding sort value from the
+immutable artifact instead of copying an arbitrarily long peer path into the HTTP
+cursor. A cursor is invalid across artifacts or filters and produces `400
+invalid-cursor`, not a best-effort result from different data.
 
 With neither `parentId` nor `query`, the directory endpoint returns roots. A
 `parentId` returns direct children. `query` filters that level by default;
@@ -557,6 +593,7 @@ public sealed record FileMetadataDto(
 public sealed record BrowseFileEntryDto(
     long FileId,
     long DirectoryId,
+    ShareVisibility Visibility,
     FileMetadataDto File);
 ```
 
@@ -567,7 +604,10 @@ their resource identities. Search candidates retain username/full-filename
 references and peer evidence; browse files retain artifact-local IDs and expose
 only a safe leaf name.
 
-Directory and file IDs are artifact-local immutable integers. Public APIs do not
+Directory and file IDs are artifact-local immutable integers. File visibility is
+carried on the file row itself rather than inferred from a possibly mixed
+synthetic directory, so clients can display locked files without making them
+selectable. Public APIs do not
 return the exact wire path because it is both untrusted and unnecessary for
 selection; the artifact retains it internally for protocol requests and job
 materialization.
@@ -578,8 +618,8 @@ The artifact minimally contains:
   completion marker;
 - `directories`: ID, parent ID, normalized display components, exact wire path,
   visibility, and direct/recursive aggregates;
-- `files`: ID, directory ID, safe display name, exact wire filename, size, and
-  validated Soulseek attributes;
+- `files`: ID, directory ID, visibility, safe display name, exact wire filename,
+  size, and validated Soulseek attributes;
 - indexes for parent/name traversal, directory filtering, and file paging.
 
 Each Soulseek directory is a first-class item. No album inference, similarity
@@ -599,11 +639,15 @@ parents whose descendants have both visibilities.
 ### Remote path rules
 
 Soulseek paths normally use backslashes, but peer input is not assumed to be a
-valid Windows path. Parsing therefore has two representations:
+valid Windows path. Parsing therefore has three representations:
 
-- wire identity: the exact validated string used to request/download from the peer;
-- display identity: normalized separators, NFC text, removed forbidden controls,
-  and explicit replacement markers for unsafe display scalars.
+- wire identity: the exact well-formed string used to request/download from the
+  peer, including control characters and the peer's original separator spelling;
+- tree identity: an ordinal, separator-normalized key used only to relate browse
+  rows; and
+- display identity: a terminal-safe projection which renders controls visibly
+  (C0 controls use Unicode control pictures and other unsafe display scalars use
+  `<U+...>` markers) without changing the retained wire identity.
 
 Empty components, `.`/`..`, separator-only paths, duplicate identities after
 normalization, and a filename outside its declared directory are rejected or
@@ -612,66 +656,65 @@ filesystem paths. Case is preserved; equality uses the protocol-compatible
 comparison already used by Sockseek remote candidates. Locked shares remain
 visible as locked but cannot be submitted for download.
 
-Artifact aggregates are computed after ingestion in SQL and checked for overflow.
+Soulseek.NET recognizes one historical Soulseek NS file-size encoding: a 32-bit
+unsigned size sign-extended into the 64-bit field. Sockseek consumes the library's
+decoded value; other negative sizes remain malformed at Sockseek's artifact
+boundary. This matches the package used by both Sockseek and the reviewed slskd
+version.
+
+String decoding likewise matches the pinned library: strict UTF-8 is attempted
+first, with ISO-8859-1 fallback for legacy peer bytes. The resulting text still
+passes Sockseek's well-formed-scalar and structural path validation before it
+becomes an artifact row. Control characters are retained in wire identity and
+escaped only at display or local-filesystem boundaries.
+
+Artifact aggregates are computed after ingestion in SQL. Counts remain exact;
+informational byte totals use saturating addition so aggregate overflow cannot
+invalidate otherwise valid rows.
 Filter queries are case-insensitive ordinal/display-normalized substring matches
 over directory name/path. Version one does not promise full-text ranking.
 
-## Streaming browse ingress
+## Materialized browse ingress
 
-This feature MUST NOT call Soulseek.NET `BrowseAsync` and then copy its complete
-`BrowseResponse` into an artifact. The pinned library's implementation first
-accumulates the peer message, creates byte-array copies during framing and zlib
-decompression, then creates lists and objects for all rows. That defeats every
-downstream paging guarantee.
+Sockseek uses the ordinary Soulseek.NET 10.0.2 package and calls `BrowseAsync`, as
+slskd does. The library receives, decompresses, and materializes the complete public
+and locked `BrowseResponse` before returning it. Sockseek accepts the resulting
+temporary memory spike and possible process termination for an enormous response
+rather than maintaining a private networking fork.
 
-The implementation therefore includes a narrow, reviewable compatibility patch
-at the pinned Soulseek.NET boundary:
+Sockseek adds no guessed aggregate row or byte admission limit. Once `BrowseAsync`
+returns, the adapter validates each retained path/file value and writes public and
+locked rows into the private SQLite staging artifact in bounded transactions.
+Disk-full, malformed retained values, and other artifact failures fail that browse;
+aggregate size by itself does not. On success the library object graph becomes
+collectable, while all clients page and select from the artifact instead of copying
+the complete graph into HTTP, live state, CLI state, or request JSON.
 
-Because the required framing and message-handler hooks are internal, the patch is
-carried as a commit-pinned Sockseek build of Soulseek.NET rather than reflection or
-a second peer socket. It preserves the existing public surface for all other
-operations, retains upstream license notices, and is proposed upstream. Dependency
-updates MUST rebase and rerun the protocol/memory fixtures; the exact fork commit
-is recorded beside the package pin.
+One directory path, filename, or extension is a retained API/storage value rather
+than aggregate browse data. Its encoded form is limited to 1 MiB at Sockseek's
+artifact boundary. This is an individual-value representation boundary, not an
+aggregate browse limit; the number of otherwise valid values remains unrestricted.
 
-1. Only incoming browse-response framing is redirected to a streaming sink.
-2. The announced length, compressed bytes, elapsed receive time, and idle periods
-   are checked while reading; data never accumulates in `List<byte>`.
-3. A streaming zlib decoder feeds a row parser. Framing lengths, counts, integer
-   arithmetic, string Unicode, and attributes are validated as they are read, but
-   total decompressed bytes, directory/file rows, and staging growth are not
-   treated as validity limits.
-4. Rows are inserted in bounded transactions into the private staging artifact.
-   No in-memory directory graph or complete file list is constructed.
-5. The parser requires an exact end-of-message and rejects trailing, truncated,
-   malformed, or overflowing input with a stable failure. Disk-full and other
-   storage failures are operational failures of this browse, not evidence that the
-   peer's share was too large.
-6. Cancellation closes the peer operation, disposes streams/statements, and
-   removes staging data.
+The adapter contains an explicit TODO to monitor Soulseek.NET and adopt a public,
+cancellable streaming browse API when upstream provides one. The intended upgrade
+removes whole-response materialization without introducing a Sockseek-owned fork.
 
-Representation bounds MUST come from the Soulseek frame or the receiving API and
-be tested at their actual boundary. Sockseek MUST NOT add guessed aggregate row,
-decompressed-byte, or staging-byte ceilings. Memory qualification measures that
-streaming memory stays bounded as a valid artifact grows; storage consumption is
-managed by artifact eviction and ordinary filesystem availability.
+The daemon injects `PeerBrowseService` into `Searcher.RetrieveDirectory`; it
+acquires with `refresh=false`, then performs an indexed subtree query against the
+artifact. Two directory retrievals, or a directory retrieval and public user
+browse, reuse the same successful generation during its five-minute freshness
+period. The returned `PeerDirectorySnapshot` owns its exact target data and has no
+lifetime dependency on the artifact. Cancelling the calling job stops its wait but
+leaves shared acquisition running.
 
-The patch has a deletion condition: remove it when the pinned Soulseek.NET version
-offers an equivalent streaming, cancellable browse response API. Until
-then, the adapter is isolated and accompanied by protocol fixture tests so a
-library update cannot silently restore full buffering.
-
-`Searcher.RetrieveDirectory` acquires through `PeerBrowseService` with
-`refresh=false`, then performs an indexed subtree query against the artifact. Two
-directory retrievals, or a directory retrieval and public user browse, reuse the
-same successful generation during its five-minute freshness period. The returned
-`PeerDirectorySnapshot` owns its exact target data and has no lifetime dependency
-on the artifact. Cancelling the calling job stops its wait but leaves shared
-acquisition running.
+One-shot execution has no daemon-lifetime cache to share. It uses
+`OneShotPeerDirectorySource`, which still causes Soulseek.NET to materialize the
+complete peer browse but retains only the requested public subtree after the call
+returns. Daemon execution should use the shared artifact-backed service instead.
 
 `GetDirectoryContentsAsync` MAY explicitly refresh a known selectable directory
 for a future feature, but cannot discover an unknown peer tree and is not a
-substitute for the initial streaming whole-user browse.
+substitute for the initial whole-user browse.
 
 ## Live state
 
@@ -730,6 +773,14 @@ An empty request is invalid. All IDs must belong to the URL artifact; clients ca
 usernames, paths, sizes, speeds, or attributes. `RequestId` is an idempotency key:
 repeating the same authenticated request returns the same submitted workflow,
 while reusing it with different content returns `409 idempotency-conflict`.
+The fingerprint includes the URL browse generation as well as the body, so the
+same key cannot alias selections from two artifacts.
+The daemon retains the most recent 4,096 completed keys for up to 24 hours;
+active submissions are never evicted. Retrying after that bounded window is a new
+submission, so durable automation should also retain the returned workflow ID.
+The idempotency lookup precedes artifact resolution: once a request succeeds, an
+identical retry returns its original response even if the ephemeral browse artifact
+has since expired or been evicted.
 
 This endpoint always selects ordinary remote interpretation in version one. Its
 `SubmissionOptionsDto` is projected to the refactor's typed remote-transfer policy:
@@ -762,13 +813,12 @@ Before submission the server:
 
 `UserShareResolutionSummaryDto` reports canonical directory roots, standalone
 files, total public files/bytes, redundant selections removed, and locked branches
-skipped. This summary is also computed for the CLI review screen before its final
-confirmation by `POST .../downloads/preview`, which accepts the same selections
-and options without an idempotency key and creates no workflow. Because artifacts
-are immutable, a later identical submission resolves the same rows; policy,
-connection and idempotency are still rechecked. The artifact lease can
-end after job construction because the job owns its target data; eviction never
-changes an already submitted workflow.
+skipped, and is returned with a successful submission. Before confirmation, the
+interactive CLI computes the directly observable file, byte, and locked-branch
+totals from the immutable row aggregates already loaded for its selection cart.
+The server's submission response remains authoritative for canonicalization and
+policy checks. The artifact lease can end after job construction because the job
+owns its target data; eviction never changes an already submitted workflow.
 
 ### Remote directory jobs over resolved plans
 
@@ -854,19 +904,22 @@ always use `SockseekApiClient`; they do not instantiate Soulseek.NET in the CLI.
 
 ```text
 sockseek user profile <username> [--refresh]
-    [--picture auto|sixel|pixels|none] [--image-width <cells>]
+    [--picture auto|sixel|pixels|none]
     [--remote <url>] [--json]
 ```
 
 Human output keeps unavailable fields compact and clearly separates `offline`
-from `unknown`. `--image-width` is capped by the renderer and affects only display.
-JSON is exactly `UserProfileDto`; picture content is represented by its URL and
-metadata and is never fetched merely to produce JSON.
+from `unknown`. In `auto` mode, the CLI actively queries terminal capabilities and
+uses sixel only when support is reported; it falls back to the portable pixel
+renderer when probing is unavailable or times out. `--picture sixel` remains an
+explicit override for terminals or intervening multiplexers that do not answer the
+probe. JSON is exactly `UserProfileDto`; picture content is represented by its URL
+and metadata and is never fetched merely to produce JSON.
 
 ### Interactive shares
 
 ```text
-sockseek user shares <username> [--refresh] [--filter <text>]
+sockseek user shares <username> [--refresh]
     [transfer/output-parent/profile options] [--remote <url>]
 ```
 
@@ -899,11 +952,12 @@ album-accept/reject semantics, `d:<indices>` grammar, or album renderer. Existin
 interactive search behavior is left unchanged; extracting a generic primitive is
 optional and must have regression tests if done.
 
-Before `D` submits, the CLI calls the preview endpoint and shows canonical
-roots/files/bytes, redundant entries, locked branches skipped, and the output
-root. If submission fails, it leaves the cart intact and shows the operational or
-validation error. On confirmation and success it prints the root
-workflow ID and returns; normal daemon monitoring owns subsequent progress.
+Before `D` submits, the CLI summarizes the cart's file and byte totals and locked
+branches skipped from the immutable browse data it has already loaded. If
+submission fails, it leaves the cart intact and shows the operational or validation
+error. On confirmation and success it prints the server's authoritative resolution
+summary and root workflow ID, then returns; normal daemon monitoring owns
+subsequent progress.
 
 ### Scriptable shares
 
@@ -914,7 +968,7 @@ sockseek user shares-page <browse-id>
 
 sockseek user shares-download <browse-id>
     (--folder <directory-id> | --file <file-id>)...
-    [--preview] [transfer/output-parent/profile options]
+    [transfer/output-parent/profile options]
     [--request-id <guid>] [--remote <url>] [--json]
 
 sockseek user shares-cancel <browse-id> [--remote <url>] [--json]
@@ -924,8 +978,7 @@ sockseek user shares-cancel <browse-id> [--remote <url>] [--json]
 only `UserBrowseDto`. It never silently changes into a full graph dump. Scripts use
 the returned browse ID with `shares-page`, then submit stable IDs with
 `shares-download`. Omitting `--request-id` generates one for that invocation.
-Directory IDs always mean complete public subtrees. `--preview` returns only the
-resolution summary and does not require/generate a request ID.
+Directory IDs always mean complete public subtrees.
 `shares-cancel` is idempotent and returns the resulting browse resource. It is a
 global operation on shared acquisition, not a way to detach only the invoking CLI.
 
@@ -943,12 +996,10 @@ Task<UserPictureResponse> GetUserPictureAsync(...);
 Task<UserBrowseDto> StartUserBrowseAsync(...);
 Task<PageDto<UserBrowseDto>> GetUserBrowsesAsync(...);
 Task<UserBrowseDto> GetUserBrowseAsync(...);
-Task CancelUserBrowseAsync(...);
-Task DeleteUserBrowseAsync(...);
+Task<UserBrowseDto> CancelUserBrowseAsync(...);
 Task<PageDto<BrowseDirectoryEntryDto>> GetUserShareDirectoriesAsync(...);
 Task<BrowseDirectoryEntryDto> GetUserShareDirectoryAsync(...);
 Task<PageDto<BrowseFileEntryDto>> GetUserShareFilesAsync(...);
-Task<UserShareResolutionSummaryDto> PreviewUserShareDownloadsAsync(...);
 Task<StartUserShareDownloadsResponseDto> StartUserShareDownloadsAsync(...);
 ```
 
@@ -961,20 +1012,26 @@ adds subscribe/unsubscribe and snapshot/delta types for `UserBrowse` only.
 
 Errors use the existing `ApiErrorDto` envelope and add these stable codes:
 
-| HTTP | Code | Meaning / client action |
+| HTTP/resource | Code | Meaning / client action |
 |---:|---|---|
 | 400 | `invalid-username` | Fix the username before retrying. |
+| 400 | `invalid-request` | Fix a page limit, query, or state filter. |
 | 400 | `invalid-selection` | Fix empty, mixed, or malformed selection IDs. |
 | 400 | `invalid-remote-transfer-option` | Remove music/search-only overrides from a share transfer submission. |
 | 400 | `invalid-name-format-variable` | Remove variables unavailable to remote downloads or choose music interpretation. |
 | 400 | `invalid-cursor` | Restart paging from the first page. |
 | 404 | `user-not-found` | User is inaccessible or denied by peer policy. |
+| 404 | `picture-unavailable` | The user has no valid, currently available profile picture. |
+| 404 | `directory-not-found` | Refresh navigation from a known directory page. |
 | 409 | `browse-not-ready` | Wait on the browse resource. |
 | 409 | `idempotency-conflict` | Use a new request ID for different content. |
 | 410 | `browse-expired` | Start/refresh the user's browse. |
 | 502 | `peer-response-invalid` | Peer data was malformed; refresh may retry. |
 | 503 | `soulseek-unavailable` | Connect the daemon or retry after reconnect. |
-| 504 | `peer-timeout` | Peer did not respond within the bounded phase. |
+| terminal browse | `peer-timeout` | The peer did not respond within a bounded transport phase. |
+| terminal browse | `connection-lost` | Reconnect, then start or refresh the browse. |
+| terminal browse | `browse-cancelled` | The shared browse was explicitly cancelled. |
+| terminal browse | `peer-io-failed` / `browse-failed` | Retry; the acquisition failed without publishing a partial artifact. |
 
 Profile section timeouts normally produce a partial `200` profile. A total service
 or policy failure uses the envelope. Browse failures are recorded on the resource
@@ -1025,24 +1082,25 @@ Per-row events and metrics are prohibited.
 
 ### Core and protocol fixtures
 
-- Valid public/locked, empty, Unicode, mixed-separator, and missing-parent browses.
-- Truncated or invalid zlib, invalid lengths/counts, trailing bytes, integer
-  overflow, malformed Unicode, and invalid attributes.
-- Actual wire/representation bounds at one below, exactly at, and one above their
-  value; no tests encode guessed total-row or total-byte validity limits.
-- A highly compressed, very large valid browse succeeds and remains pageable.
-- Cancellation/timeout at framing, receive, decompression, parsing, transaction,
-  indexing, and atomic promotion.
-- Assert bounded peak memory for synthetic browses of increasing size; the
-  threshold is independent of total row count.
-- Assert no complete `BrowseResponse`, complete byte array, or directory graph is
-  retained by the production path.
-- Library-upgrade compatibility fixtures captured without personally identifying
+- Verify the production adapter calls ordinary Soulseek.NET `BrowseAsync` and writes
+  both public and locked directories, files, and attributes to the row sink.
+- Valid empty, Unicode, mixed-separator, and missing-parent artifacts.
+- Structurally invalid path components, malformed Unicode, negative values,
+  duplicate identities, and invalid attributes fail at Sockseek's retained-value
+  boundary. Control-bearing paths remain browseable and downloadable with safe
+  display and local placement projections. No tests encode a guessed total-row or
+  total-byte validity limit.
+- A large materialized fixture remains pageable after acquisition. Peak-memory
+  growth during Soulseek.NET acquisition is an accepted limitation, not a release
+  gate.
+- Cancellation/timeout during package receive, artifact transactions, indexing,
+  and atomic promotion.
+- Library-upgrade interoperability fixtures captured without personally identifying
   real peer data.
 
 ### Artifact and API
 
-- Atomic staging promotion, restart cleanup, age/byte eviction, reader leases, and
+- Atomic staging promotion, restart cleanup, age/count/byte eviction, reader leases, and
   reuse/refresh generations.
 - TimeProvider-driven boundary tests prove reuse one tick before five minutes from
   successful completion and a new acquisition at the exact five-minute boundary.
@@ -1072,7 +1130,7 @@ Per-row events and metrics are prohibited.
 - Search and browse projections compose the same `FileMetadataDto` leaf facts;
   browse pages never expose the target username or exact wire filename.
 - Same idempotency key/same body returns one workflow; changed body conflicts.
-- Preview creates no workflow; submission is one `JobList` with independent
+- Submission returns its resolution summary and creates one `JobList` with independent
   `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` children and nested
   `RemoteFileJob` leaves, with no browse/search afterward.
 - The resolved source cannot call directory retrieval. Peer-directory sources,
@@ -1111,14 +1169,15 @@ The feature MUST NOT ship until:
 
 1. The resolved remote-transfer refactor passes its release gates; browse code has
    not introduced replacement target, plan, job, or runner types.
-2. The streaming ingress path has adversarial fixtures and measured peak-memory
-   evidence; calling materializing `BrowseAsync` is a release blocker.
+2. The production path uses the ordinary Soulseek.NET package and its materializing
+   `BrowseAsync`; no vendored fork or private protocol implementation remains.
 3. A large fixture can be paged and multi-selected without sending the whole graph
    through HTTP, live state, CLI memory, or request JSON.
 4. Existing workflow monitoring observes browse-selected downloads without a
    special compatibility path.
-5. slskd interoperability is smoke-tested against public and locked share shapes,
-   while failure behavior is tested with intentionally malformed local fixtures.
+5. A public/locked materialized response passes through the production adapter, and
+   retained-value/artifact failures are tested with intentionally malformed local
+   fixtures.
 6. Documentation and CLI help contain the user-facing commands above and explain
    that browse caches are ephemeral.
 
@@ -1129,11 +1188,11 @@ The feature MUST NOT ship until:
    including exact identity, abstract lifecycle state, remote/music policy
    separation, album/direct-link regressions, shared runners, concrete job
    payloads, and progressive directory execution.
-2. Add streaming browse ingress, protocol fixtures, artifact schema/store, and source
-   patch deletion note. No public endpoint uses it until the memory gate passes.
+2. Add materialized browse adaptation and the artifact schema/store; record the
+   accepted dependency memory tradeoff and upstream-streaming TODO.
 3. Add local profile loading, remote profile service, picture validation,
    `PeerBrowseService`, and artifact lifecycle; route `Searcher.RetrieveDirectory`
-   through it and remove direct whole-user `BrowseAsync` acquisition elsewhere.
+   through it and centralize whole-user `BrowseAsync` acquisition there.
 4. Add API DTOs/endpoints/typed clients and live `UserBrowse` scope.
 5. Add browse selection resolution that materializes shared exact targets/plans,
    then submit `RemoteDirectoryJob(RemoteDirectorySource.Resolved)` with
@@ -1149,25 +1208,24 @@ historical user data.
 
 ## Authoritative checklist
 
-Feature boxes remain unchecked because this file is a design, not an
-implementation claim. The completed prerequisite is marked separately.
-
-- [ ] One shared Soulseek runtime and peer policy are reused.
-- [ ] Profile data is composite, partial, bounded, and excludes peer endpoints.
-- [ ] Local pictures are normalized for peers; remote pictures are safely rendered.
-- [ ] Browse ingress streams to disk without aggregate size-based refusal.
-- [ ] Successful browses become immutable disposable SQLite artifacts.
-- [ ] Public browsing and directory retrieval share one five-minute-fresh
+- [x] One shared Soulseek runtime and peer policy are reused.
+- [x] Profile data is composite, partial, bounded, and excludes peer endpoints.
+- [x] Local pictures are normalized for peers; remote pictures are safely rendered.
+- [x] Browse ingress materializes through Soulseek.NET, then writes a disk artifact
+  without aggregate size-based refusal.
+- [x] Successful browses become immutable disposable SQLite artifacts.
+- [x] Public browsing and directory retrieval share one five-minute-fresh
   peer-browse acquisition and artifact path.
-- [ ] Browse lifecycle is durable for its short resource lifetime and live-visible.
-- [ ] Directories/files are paged; large collections never enter live deltas.
-- [ ] Multiple folder/file selections resolve from artifact IDs on the server.
+- [x] Browse lifecycle is durable for its short resource lifetime and live-visible.
+- [x] Directories/files are paged; large collections never enter live deltas.
+- [x] Multiple folder/file selections resolve from artifact IDs on the server.
 - [x] The resolved remote-transfer refactor and its regression gates are complete.
-- [ ] Downloads are `JobList`/`RemoteDirectoryJob` workflows with no
+- [x] Downloads are `JobList`/`RemoteDirectoryJob` workflows with no
   second browse or music-policy leakage.
-- [ ] The share UI is filesystem-shaped and album interactive behavior is unchanged.
-- [ ] Typed clients make the same surface usable by CLI and future WebUI.
-- [ ] Adversarial, memory, cancellation, policy, paging, and job tests pass.
+- [x] The share UI is filesystem-shaped and album interactive behavior is unchanged.
+- [x] Typed clients make the same surface usable by CLI and future WebUI.
+- [x] Retained-value, cancellation, policy, paging, and job tests pass; acquisition
+  memory growth is the documented dependency limitation.
 
 ## Source record
 
@@ -1184,6 +1242,8 @@ The design was checked against:
   [browse UI](https://github.com/slskd/slskd/blob/c80e3f45201d8095f8952786ee69009d2793d91f/src/web/src/components/Browse/Browse.jsx),
   [directory tree](https://github.com/slskd/slskd/blob/c80e3f45201d8095f8952786ee69009d2793d91f/src/web/src/components/Browse/DirectoryTree.jsx),
   [selection UI](https://github.com/slskd/slskd/blob/c80e3f45201d8095f8952786ee69009d2793d91f/src/web/src/components/Browse/Selection.jsx).
+  That revision references Soulseek.NET 10.0.2, the same ordinary package version
+  used by Sockseek.
 - slskd reports and changes:
   [large browse/localStorage failure #317](https://github.com/slskd/slskd/issues/317),
   [large browse rendering #1153](https://github.com/slskd/slskd/issues/1153),
@@ -1194,7 +1254,7 @@ The design was checked against:
   [username profile/browse actions #1298](https://github.com/slskd/slskd/pull/1298).
 - Soulseek.NET commit
   [`52fc3e4267114d8cd9492cb4d7438b3eca0267bf`](https://github.com/jpdillingham/Soulseek.NET/tree/52fc3e4267114d8cd9492cb4d7438b3eca0267bf),
-  the version pinned by Sockseek at review time, especially
+  the source corresponding to Sockseek's package version at review time, especially
   [`ISoulseekClient`](https://github.com/jpdillingham/Soulseek.NET/blob/52fc3e4267114d8cd9492cb4d7438b3eca0267bf/src/ISoulseekClient.cs),
   [`WaitKey`](https://github.com/jpdillingham/Soulseek.NET/blob/52fc3e4267114d8cd9492cb4d7438b3eca0267bf/src/Common/WaitKey.cs),
   [`BrowseResponseFactory`](https://github.com/jpdillingham/Soulseek.NET/blob/52fc3e4267114d8cd9492cb4d7438b3eca0267bf/src/Messaging/Messages/Peer/BrowseResponseFactory.cs),
@@ -1205,4 +1265,5 @@ The design was checked against:
   [`users.py`](https://github.com/nicotine-plus/nicotine-plus/blob/d08f755b749e781b087705ed61822f64531e5d8c/pynicotine/users.py) and [`userbrowse.py`](https://github.com/nicotine-plus/nicotine-plus/blob/d08f755b749e781b087705ed61822f64531e5d8c/pynicotine/userbrowse.py).
 
 These SHAs make the source claims reproducible. Re-check the integration points and
-the streaming-ingress deletion condition when either dependency is updated.
+whether upstream now provides a public streaming browse API when either dependency
+is updated.

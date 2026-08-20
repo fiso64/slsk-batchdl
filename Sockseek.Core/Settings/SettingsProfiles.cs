@@ -229,6 +229,8 @@ public static class SettingsNormalizer
             engine.LogFilePath = Utils.GetFullPath(Utils.ExpandVariables(engine.LogFilePath, pathContext));
         if (engine.MockFilesDir != null)
             engine.MockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(engine.MockFilesDir, pathContext));
+        if (engine.UserPicturePath != null)
+            engine.UserPicturePath = Utils.GetFullPath(Utils.ExpandVariables(engine.UserPicturePath, pathContext));
 
         SharingSettingsValidator.NormalizeAndValidate(engine, pathContext);
         ChatSettingsValidator.NormalizeAndValidate(engine);
@@ -407,6 +409,7 @@ public static class SettingsCloner
         ConnectTimeout = source.ConnectTimeout,
         AutoReconnectAfterKickedFromServer = source.AutoReconnectAfterKickedFromServer,
         UserDescription = source.UserDescription,
+        UserPicturePath = source.UserPicturePath,
         Sharing = new SharingSettings
         {
             Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings

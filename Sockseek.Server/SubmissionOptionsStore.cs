@@ -30,6 +30,9 @@ public sealed class SubmissionOptionsStore
     public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
         => jobOptions[jobId] = options ?? new SubmissionOptionsDto();
 
+    public void RemoveWorkflowOptions(Guid workflowId)
+        => workflowOptions.TryRemove(workflowId, out _);
+
     public void SetJobOutputParentDir(Guid jobId, string? outputParentDir)
     {
         if (!string.IsNullOrWhiteSpace(outputParentDir))

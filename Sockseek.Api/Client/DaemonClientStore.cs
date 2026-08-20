@@ -24,7 +24,8 @@ public sealed record DaemonClientUpdate(
     bool IsSnapshot = false,
     IReadOnlyList<WorkflowSummaryDto>? ChangedWorkflows = null,
     IReadOnlyList<JobSummaryDto>? ChangedJobs = null,
-    IReadOnlyList<TransferStateDto>? ChangedTransfers = null)
+    IReadOnlyList<TransferStateDto>? ChangedTransfers = null,
+    UserBrowseDto? ChangedUserBrowse = null)
 {
     public IReadOnlyList<WorkflowSummaryDto> ChangedWorkflows { get; init; } =
         ChangedWorkflows ?? [];
@@ -65,6 +66,7 @@ public sealed class DaemonClientStore
     private readonly Dictionary<Guid, JobSummaryDto> historyJobs = [];
     private readonly Dictionary<Guid, UserNotificationDto> liveNotifications = [];
     private readonly Dictionary<StateStreamScopeDto, ChatTargetSnapshotDto> liveChatTargets = [];
+    private readonly Dictionary<Guid, UserBrowseDto> liveUserBrowses = [];
     private readonly Dictionary<StateStreamScopeDto, StateStreamPositionDto> positions = [];
     private readonly HashSet<StateStreamScopeDto> staleScopes = [];
     private DaemonStateDto? daemon;
@@ -88,7 +90,8 @@ public sealed class DaemonClientStore
                 IsSnapshot: true,
                 ChangedWorkflows: snapshot.Workflows.Select(row => row.Summary).ToList(),
                 ChangedJobs: snapshot.Jobs.Select(row => row.ToSummary()).ToList(),
-                ChangedTransfers: snapshot.Transfers);
+                ChangedTransfers: snapshot.Transfers,
+                ChangedUserBrowse: snapshot.UserBrowse);
         }
     }
 
@@ -136,7 +139,8 @@ public sealed class DaemonClientStore
                 activity,
                 ChangedWorkflows: applied.Workflows,
                 ChangedJobs: applied.Jobs,
-                ChangedTransfers: applied.Transfers);
+                ChangedTransfers: applied.Transfers,
+                ChangedUserBrowse: applied.UserBrowse);
         }
     }
 
@@ -182,6 +186,23 @@ public sealed class DaemonClientStore
         scope.Validate();
         lock (gate)
             return liveChatTargets.GetValueOrDefault(scope);
+    }
+
+    public UserBrowseDto? GetUserBrowse(Guid browseId)
+    {
+        lock (gate)
+            return liveUserBrowses.GetValueOrDefault(browseId);
+    }
+
+    public void RemoveUserBrowse(Guid browseId)
+    {
+        var scope = StateStreamScopeDto.UserBrowse(browseId);
+        lock (gate)
+        {
+            liveUserBrowses.Remove(browseId);
+            positions.Remove(scope);
+            staleScopes.Remove(scope);
+        }
     }
 
     public void RemoveChatTarget(StateStreamScopeDto scope)
@@ -387,11 +408,17 @@ public sealed class DaemonClientStore
             RemoveWhere(liveSearches, pair => pair.Value.WorkflowId == workflowId);
             RemoveWhere(liveTransfers, pair => pair.Value.Identity.WorkflowId == workflowId);
         }
-        else
+        else if (snapshot.Scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom)
         {
             if (snapshot.ChatTarget is null)
                 throw new ArgumentException("A chat snapshot requires chat target state.");
             liveChatTargets[snapshot.Scope] = snapshot.ChatTarget;
+        }
+        else
+        {
+            if (snapshot.UserBrowse is null)
+                throw new ArgumentException("A user-browse snapshot requires its resource state.");
+            liveUserBrowses[snapshot.Scope.UserBrowseId!.Value] = snapshot.UserBrowse;
         }
 
         foreach (var workflow in snapshot.Workflows)
@@ -446,6 +473,14 @@ public sealed class DaemonClientStore
         }
         foreach (ChatTargetDeltaDto delta in state.ChatTargets ?? [])
             ApplyChatTarget(delta);
+        UserBrowseDto? changedUserBrowse = null;
+        if (state.UserBrowse is { } browse
+            && (!liveUserBrowses.TryGetValue(browse.BrowseId, out UserBrowseDto? currentBrowse)
+                || browse.Revision > currentBrowse.Revision))
+        {
+            liveUserBrowses[browse.BrowseId] = browse;
+            changedUserBrowse = browse;
+        }
 
         var changedWorkflows = state.Workflows
             .Select(workflow => liveWorkflows.GetValueOrDefault(workflow.Summary.WorkflowId)?.Summary)
@@ -478,7 +513,7 @@ public sealed class DaemonClientStore
             RemoveWhere(liveTransfers, pair => pair.Value.Identity.WorkflowId == id);
         }
 
-        return new AppliedState(changedWorkflows, changedJobs, changedTransfers);
+        return new AppliedState(changedWorkflows, changedJobs, changedTransfers, changedUserBrowse);
     }
 
     private void ApplyJob(JobDeltaDto delta)
@@ -591,6 +626,7 @@ public sealed class DaemonClientStore
             var workflowId = snapshot.Scope.WorkflowId!.Value;
             if (snapshot.Daemon != null
                 || snapshot.ChatTarget != null
+                || snapshot.UserBrowse != null
                 || snapshot.Workflows.Any(workflow => workflow.Summary.WorkflowId != workflowId)
                 || snapshot.Jobs.Any(job => job.Display.WorkflowId != workflowId)
                 || snapshot.Searches.Any(search => search.WorkflowId != workflowId)
@@ -607,6 +643,7 @@ public sealed class DaemonClientStore
                 ? Sockseek.Core.Chat.ChatTargetKind.Direct
                 : Sockseek.Core.Chat.ChatTargetKind.Room;
             if (snapshot.Daemon != null
+                || snapshot.UserBrowse != null
                 || snapshot.Workflows.Count != 0
                 || snapshot.Jobs.Count != 0
                 || snapshot.Searches.Count != 0
@@ -630,9 +667,23 @@ public sealed class DaemonClientStore
                 throw new ArgumentException("A chat snapshot may contain only its requested chat target.");
             }
         }
-        else if (snapshot.ChatTarget != null)
+        else if (snapshot.Scope.Kind == StateStreamScopeKind.UserBrowse)
         {
-            throw new ArgumentException("A daemon snapshot cannot contain a chat target.");
+            if (snapshot.Daemon != null
+                || snapshot.Workflows.Count != 0
+                || snapshot.Jobs.Count != 0
+                || snapshot.Searches.Count != 0
+                || snapshot.Transfers.Count != 0
+                || snapshot.ChatTarget != null
+                || snapshot.UserBrowse is not { } browse
+                || browse.BrowseId != snapshot.Scope.UserBrowseId)
+            {
+                throw new ArgumentException("A user-browse snapshot may contain only its requested resource.");
+            }
+        }
+        else if (snapshot.ChatTarget != null || snapshot.UserBrowse != null)
+        {
+            throw new ArgumentException("A daemon snapshot cannot contain a scoped resource.");
         }
     }
 
@@ -679,6 +730,30 @@ public sealed class DaemonClientStore
         {
             throw new ArgumentException("A daemon or workflow batch cannot contain chat-target state.");
         }
+        bool userBrowseScope = batch.Scope.Kind == StateStreamScopeKind.UserBrowse;
+        if (userBrowseScope)
+        {
+            if (batch.State.UserBrowse is not { } browse
+                || browse.BrowseId != batch.Scope.UserBrowseId
+                || batch.State.Daemon != null
+                || batch.State.Workflows.Count != 0
+                || batch.State.Jobs.Count != 0
+                || batch.State.Searches.Count != 0
+                || batch.State.Transfers.Count != 0
+                || batch.State.RemovedWorkflowIds.Count != 0
+                || batch.State.RemovedJobIds.Count != 0
+                || batch.State.RemovedSearchJobIds.Count != 0
+                || batch.State.RemovedTransferIds.Count != 0
+                || batch.State.Notifications is { Count: > 0 }
+                || batch.State.ChatTargets is { Count: > 0 })
+            {
+                throw new ArgumentException("A user-browse batch may contain only its requested resource.");
+            }
+        }
+        else if (batch.State.UserBrowse != null)
+        {
+            throw new ArgumentException("A non-user-browse batch cannot contain user-browse state.");
+        }
         if (batch.Scope.Kind != StateStreamScopeKind.Daemon
             && batch.State.Notifications is { Count: > 0 })
         {
@@ -689,5 +764,6 @@ public sealed class DaemonClientStore
     private sealed record AppliedState(
         IReadOnlyList<WorkflowSummaryDto> Workflows,
         IReadOnlyList<JobSummaryDto> Jobs,
-        IReadOnlyList<TransferStateDto> Transfers);
+        IReadOnlyList<TransferStateDto> Transfers,
+        UserBrowseDto? UserBrowse);
 }

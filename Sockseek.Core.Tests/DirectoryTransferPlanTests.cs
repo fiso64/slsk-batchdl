@@ -43,7 +43,7 @@ public sealed class DirectoryTransferPlanTests
     }
 
     [TestMethod]
-    public void Entry_RejectsRootedEmptyTraversalControlAndSeparatorComponents()
+    public void Entry_RejectsRootedEmptyTraversalAndSeparatorComponents()
     {
         var target = Target("Peer", @"Root\A.flac", 1);
 
@@ -51,7 +51,19 @@ public sealed class DirectoryTransferPlanTests
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, [".."]));
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A/B"]));
         Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A\\B"]));
-        Assert.ThrowsExactly<ArgumentException>(() => new DirectoryTransferEntry(target, ["A\nB"]));
+    }
+
+    [TestMethod]
+    public void Plan_PreservesControlBearingRemoteTreeComponents()
+    {
+        var entry = new DirectoryTransferEntry(
+            Target("Peer", "Root\\A\nB\\file\u001B.bin", 1),
+            ["A\nB"]);
+
+        var plan = new DirectoryTransferPlan("Root\t", [entry]);
+
+        Assert.AreEqual("Root\t", plan.DisplayRoot);
+        Assert.AreEqual("A\nB", plan.Entries.Single().RelativeDirectoryComponents.Single());
     }
 
     [TestMethod]

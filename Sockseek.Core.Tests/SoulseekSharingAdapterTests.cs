@@ -135,6 +135,35 @@ public sealed class SoulseekSharingAdapterTests
     }
 
     [TestMethod]
+    public async Task UserInfoAdvertisesPictureOnlyToAllowedPeers()
+    {
+        var reader = new FakeCatalogReader([]);
+        await using var uploads = CreateUploads(reader);
+        byte[] picture = [0xff, 0xd8, 0xff, 0xd9];
+        using var adapter = new SoulseekSharingAdapter(
+            new FakeProvider(reader),
+            uploads,
+            new PeerAccessPolicy(new PeerAccessSettings
+            {
+                BlockedUsernames = ["blocked"],
+            }),
+            new UploadSettings { Slots = 1 },
+            () => null,
+            "hello",
+            userPicture: picture);
+        var endpoint = new IPEndPoint(IPAddress.Loopback, 1234);
+
+        UserInfo allowed = await adapter.ResolveUserInfoAsync("allowed", endpoint);
+        Assert.AreEqual("hello", allowed.Description);
+        Assert.IsTrue(allowed.HasPicture);
+        CollectionAssert.AreEqual(picture, allowed.Picture);
+
+        UserInfo blocked = await adapter.ResolveUserInfoAsync("blocked", endpoint);
+        Assert.AreEqual("", blocked.Description);
+        Assert.IsFalse(blocked.HasPicture);
+    }
+
+    [TestMethod]
     public async Task BoundedCallbackGateRejectsWorkBeyondOutstandingCapacity()
     {
         var gate = new BoundedCallbackGate(concurrency: 1, capacity: 2);

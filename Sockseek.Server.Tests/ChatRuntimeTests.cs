@@ -631,6 +631,9 @@ public class SoulseekClientProxy : DispatchProxy
     public bool LastJoinWasPrivate { get; private set; }
     public RoomList Rooms { get; set; } = new([], [], [], []);
     public RoomData JoinedRoom { get; set; } = new("room", []);
+    public UserInfo ProfileInfo { get; set; } = new("", 0, 0, false);
+    public UserStatus ProfileStatus { get; set; } = new("peer", UserPresence.Online, false);
+    public UserStatistics ProfileStatistics { get; set; } = new("peer", 0, 0, 0, 0);
 
     public static SoulseekClientProxy Create()
     {
@@ -711,6 +714,9 @@ public class SoulseekClientProxy : DispatchProxy
             "AcknowledgePrivateMessageAsync" => AcknowledgeAsync((int)args[0]!),
             "SendPrivateMessageAsync" => SendPrivateAsync((CancellationToken)args[^1]!),
             "GetRoomListAsync" => Task.FromResult(Rooms),
+            "GetUserInfoAsync" => Task.FromResult(ProfileInfo),
+            "GetUserStatusAsync" => Task.FromResult(ProfileStatus),
+            "GetUserStatisticsAsync" => Task.FromResult(ProfileStatistics),
             "JoinRoomAsync" => JoinRoom((bool)args[1]!),
             "LeaveRoomAsync" => RoomLeave?.Invoke() ?? Task.CompletedTask,
             "SendRoomMessageAsync" => SendRoom(),

@@ -55,5 +55,20 @@ public sealed class OperatorMutationPolicyTests
                 $"Missing operator policy on {endpoint.RoutePattern.RawText}.");
             Assert.AreEqual(OperatorMutationPolicy.Name, metadata.PolicyName);
         }
+
+        var userBrowseEndpoints = endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint =>
+                endpoint.RoutePattern.RawText?.StartsWith("/api/user-browses", StringComparison.Ordinal) == true
+                || endpoint.RoutePattern.RawText?.StartsWith("/api/users/{username}/", StringComparison.Ordinal) == true)
+            .ToArray();
+        Assert.IsTrue(userBrowseEndpoints.Length > 0);
+        foreach (RouteEndpoint endpoint in userBrowseEndpoints)
+        {
+            OperatorMutationMetadata? metadata = endpoint.Metadata
+                .GetMetadata<OperatorMutationMetadata>();
+            Assert.IsNotNull(metadata, $"Missing operator policy on {endpoint.RoutePattern.RawText}.");
+            Assert.AreEqual(OperatorMutationPolicy.Name, metadata.PolicyName);
+        }
     }
 }

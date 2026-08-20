@@ -1,4 +1,5 @@
 using Sockseek.Api;
+using Sockseek.Core.Models;
 using Sockseek.Server;
 using Soulseek;
 
@@ -75,7 +76,7 @@ internal static class JobInfoPrinter
         if (p.ResolvedUsername != null)
             Field("From", p.ResolvedUsername, ConsoleColor.DarkCyan);
         if (p.ResolvedFilename != null)
-            Field("Remote path", p.ResolvedFilename);
+            Field("Remote path", PeerIdentityValidator.ToDisplayText(p.ResolvedFilename));
         if (p.File.DownloadPath != null)
             Field("Saved to", p.File.DownloadPath);
 
@@ -106,7 +107,7 @@ internal static class JobInfoPrinter
         if (p.ResolvedFolderUsername != null)
             Field("From", p.ResolvedFolderUsername, ConsoleColor.DarkCyan);
         if (p.ResolvedFolderPath != null)
-            Field("Remote path", p.ResolvedFolderPath);
+            Field("Remote path", PeerIdentityValidator.ToDisplayText(p.ResolvedFolderPath));
         if (p.Directory.DownloadPath != null)
             Field("Saved to", p.Directory.DownloadPath);
 
@@ -187,7 +188,7 @@ internal static class JobInfoPrinter
     private static void PrintRetrieveFolder(RetrieveFolderJobPayloadDto p)
     {
         Field("Username", p.Username, ConsoleColor.DarkCyan);
-        Field("Folder", p.FolderPath);
+        Field("Folder", PeerIdentityValidator.ToDisplayText(p.FolderPath));
         Field("New files", $"{p.NewFilesFoundCount} found");
         Field("Outcome", p.RetrievalOutcome.ToString());
         if (p.RetrievalCancelled)
@@ -197,7 +198,7 @@ internal static class JobInfoPrinter
     private static void PrintRemoteFile(RemoteFileJobPayloadDto p)
     {
         Field("From", p.Target.Username, ConsoleColor.DarkCyan);
-        Field("Remote path", p.Target.Filename);
+        Field("Remote path", PeerIdentityValidator.ToDisplayText(p.Target.Filename));
         if (p.File.DownloadPath != null)
             Field("Saved to", p.File.DownloadPath);
         if (p.File.FileSize > 0)
@@ -214,7 +215,7 @@ internal static class JobInfoPrinter
         if (p.SourceUsername != null)
             Field("From", p.SourceUsername, ConsoleColor.DarkCyan);
         if (p.SourceFolderPath != null)
-            Field("Remote path", p.SourceFolderPath);
+            Field("Remote path", PeerIdentityValidator.ToDisplayText(p.SourceFolderPath));
         if (p.Directory.DownloadPath != null)
             Field("Saved to", p.Directory.DownloadPath);
         Field("Directory phase", p.Directory.Phase);
@@ -248,7 +249,7 @@ internal static class JobInfoPrinter
             Printing.Write($"    ", force: true);
         Printing.Write($"{status.Label,-18}", status.Color, force: true);
         Printing.Write(": ", ConsoleColor.DarkGray, force: true);
-        Printing.Write(name, ConsoleColor.White, force: true);
+        Printing.Write(PeerIdentityValidator.ToDisplayText(name), ConsoleColor.White, force: true);
         if (meta != null)
         {
             Printing.Write("  ", ConsoleColor.DarkGray, force: true);

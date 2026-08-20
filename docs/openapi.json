@@ -6,6 +6,960 @@
     "version": "4.0.0"
   },
   "paths": {
+    "/api/users/{username}/profile": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets a composite remote Soulseek user profile.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{username}/picture": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets a validated remote Soulseek user profile picture.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{username}/browses": {
+      "post": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Starts, joins, or reuses a remote user's share browse.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartUserBrowseRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBrowseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBrowseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Lists recent remote-user browse resources.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageDtoOfUserBrowseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets one remote-user browse resource.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBrowseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/snapshot": {
+      "get": {
+        "tags": [
+          "Live State"
+        ],
+        "summary": "Gets one user-browse replication snapshot and stream position.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StateSnapshotDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/cancel": {
+      "post": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Globally cancels a shared browse acquisition.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBrowseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/directories": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets a stable page of share directories.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "parentId",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recursive",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageDtoOfBrowseDirectoryEntryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/directories/{directoryId}": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets one share directory.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "directoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowseDirectoryEntryDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/directories/{directoryId}/files": {
+      "get": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Gets a stable page of files in one share directory.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "directoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageDtoOfBrowseFileEntryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user-browses/{browseId}/downloads": {
+      "post": {
+        "tags": [
+          "User Browsing"
+        ],
+        "summary": "Starts ordinary remote downloads from a browse selection.",
+        "parameters": [
+          {
+            "name": "browseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartUserShareDownloadsRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartUserShareDownloadsResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/info": {
       "get": {
         "tags": [
@@ -5195,6 +6149,130 @@
           }
         }
       },
+      "BrowseDirectoryEntryDto": {
+        "required": [
+          "directoryId",
+          "parentId",
+          "name",
+          "displayPath",
+          "visibility",
+          "isSynthetic",
+          "directDirectoryCount",
+          "directFileCount",
+          "recursiveFileCount",
+          "recursiveFileBytes",
+          "lockedDescendantCount",
+          "hasChildren"
+        ],
+        "type": "object",
+        "properties": {
+          "directoryId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "parentId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "displayPath": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ShareVisibility"
+          },
+          "isSynthetic": {
+            "type": "boolean"
+          },
+          "directDirectoryCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "directFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "recursiveFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "recursiveFileBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "lockedDescendantCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "hasChildren": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BrowseFileEntryDto": {
+        "required": [
+          "fileId",
+          "directoryId",
+          "visibility",
+          "file"
+        ],
+        "type": "object",
+        "properties": {
+          "fileId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "directoryId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ShareVisibility"
+          },
+          "file": {
+            "$ref": "#/components/schemas/FileMetadataDto"
+          }
+        }
+      },
       "CancelJobsResponseDto": {
         "required": [
           "cancelled"
@@ -6217,7 +7295,26 @@
           }
         }
       },
-      "FileAttributeDto": { },
+      "FileAttributeDto": {
+        "required": [
+          "type",
+          "value"
+        ],
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "value": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "FileCandidateDto": {
         "required": [
           "ref",
@@ -8475,6 +9572,69 @@
           }
         }
       },
+      "PageDtoOfBrowseDirectoryEntryDto": {
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseDirectoryEntryDto"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PageDtoOfBrowseFileEntryDto": {
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrowseFileEntryDto"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PageDtoOfUserBrowseDto": {
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserBrowseDto"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "PeerFileTargetDto": { },
       "PeerInfoDto": {
         "required": [
@@ -9200,6 +10360,13 @@
             "type": "string"
           }
         }
+      },
+      "ResourceSectionState": {
+        "enum": [
+          "available",
+          "unavailable",
+          "timed-out"
+        ]
       },
       "RetrieveFolderRequestDto": {
         "required": [
@@ -10147,6 +11314,13 @@
           }
         }
       },
+      "ShareVisibility": {
+        "enum": [
+          "public",
+          "locked",
+          "mixed"
+        ]
+      },
       "SharingStateDto": {
         "required": [
           "state",
@@ -10711,6 +11885,59 @@
           "AlreadyRunning"
         ]
       },
+      "StartUserBrowseRequestDto": {
+        "type": "object",
+        "properties": {
+          "refresh": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "StartUserShareDownloadsRequestDto": {
+        "required": [
+          "requestId",
+          "selections"
+        ],
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "selections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserShareSelectionDto"
+            }
+          },
+          "options": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SubmissionOptionsDto"
+              }
+            ]
+          }
+        }
+      },
+      "StartUserShareDownloadsResponseDto": {
+        "required": [
+          "workflow",
+          "resolution"
+        ],
+        "type": "object",
+        "properties": {
+          "workflow": {
+            "$ref": "#/components/schemas/JobSummaryDto"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/UserShareResolutionSummaryDto"
+          }
+        }
+      },
       "StateSnapshotDto": {
         "required": [
           "scope",
@@ -10777,6 +12004,16 @@
                 "$ref": "#/components/schemas/ChatTargetSnapshotDto"
               }
             ]
+          },
+          "userBrowse": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserBrowseDto"
+              }
+            ]
           }
         }
       },
@@ -10823,6 +12060,13 @@
               "string"
             ],
             "format": "uuid"
+          },
+          "userBrowseId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
           }
         }
       },
@@ -10831,7 +12075,8 @@
           "daemon",
           "workflow",
           "chatConversation",
-          "chatRoom"
+          "chatRoom",
+          "userBrowse"
         ]
       },
       "SubmissionOptionsDto": {
@@ -11811,6 +13056,131 @@
           }
         }
       },
+      "UserBrowseDto": {
+        "required": [
+          "browseId",
+          "username",
+          "state",
+          "phase",
+          "compressedBytesReceived",
+          "compressedBytesExpected",
+          "directoryCount",
+          "fileCount",
+          "totalFileBytes",
+          "createdAt",
+          "updatedAt",
+          "expiresAt",
+          "failure",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "browseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/UserBrowseState"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/UserBrowsePhase"
+          },
+          "compressedBytesReceived": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "compressedBytesExpected": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "directoryCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "fileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "totalFileBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "failure": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ApiErrorDto"
+              }
+            ]
+          },
+          "revision": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "UserBrowsePhase": {
+        "enum": [
+          "waiting-for-peer",
+          "receiving",
+          "indexing",
+          "ready"
+        ]
+      },
+      "UserBrowseState": {
+        "enum": [
+          "queued",
+          "running",
+          "complete",
+          "failed",
+          "cancelled"
+        ]
+      },
       "UserNotificationDto": {
         "required": [
           "notificationId",
@@ -11884,6 +13254,309 @@
           "PrivateMessage",
           "RoomMention"
         ]
+      },
+      "UserPictureRefDto": {
+        "required": [
+          "url",
+          "mediaType",
+          "byteLength",
+          "eTag"
+        ],
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "byteLength": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "eTag": {
+            "type": "string"
+          }
+        }
+      },
+      "UserProfileDto": {
+        "required": [
+          "username",
+          "presence",
+          "status",
+          "info",
+          "statistics",
+          "pictureSection",
+          "description",
+          "sharedFileCount",
+          "sharedDirectoryCount",
+          "averageUploadSpeed",
+          "uploadCount",
+          "uploadSlots",
+          "queueLength",
+          "hasFreeUploadSlot",
+          "picture",
+          "observedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "presence": {
+            "$ref": "#/components/schemas/UserProfilePresence"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UserProfileSectionDto"
+          },
+          "info": {
+            "$ref": "#/components/schemas/UserProfileSectionDto"
+          },
+          "statistics": {
+            "$ref": "#/components/schemas/UserProfileSectionDto"
+          },
+          "pictureSection": {
+            "$ref": "#/components/schemas/UserProfileSectionDto"
+          },
+          "description": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sharedFileCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "sharedDirectoryCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "averageUploadSpeed": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "uploadCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "uploadSlots": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "queueLength": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "hasFreeUploadSlot": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "picture": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/UserPictureRefDto"
+              }
+            ]
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UserProfilePresence": {
+        "enum": [
+          "online",
+          "away",
+          "offline",
+          "unknown"
+        ]
+      },
+      "UserProfileSectionDto": {
+        "required": [
+          "state",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/ResourceSectionState"
+          },
+          "reason": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "UserShareResolutionSummaryDto": {
+        "required": [
+          "canonicalDirectoryRoots",
+          "standaloneFiles",
+          "totalPublicFiles",
+          "totalPublicBytes",
+          "redundantSelectionsRemoved",
+          "lockedBranchesSkipped",
+          "outputParent"
+        ],
+        "type": "object",
+        "properties": {
+          "canonicalDirectoryRoots": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "standaloneFiles": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "totalPublicFiles": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "totalPublicBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "redundantSelectionsRemoved": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "lockedBranchesSkipped": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "outputParent": {
+            "type": "string"
+          }
+        }
+      },
+      "UserShareSelectionDto": {
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/UserShareSelectionDtoUserShareDirectorySelectionDto"
+          },
+          {
+            "$ref": "#/components/schemas/UserShareSelectionDtoUserShareFileSelectionDto"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "directory": "#/components/schemas/UserShareSelectionDtoUserShareDirectorySelectionDto",
+            "file": "#/components/schemas/UserShareSelectionDtoUserShareFileSelectionDto"
+          }
+        }
+      },
+      "UserShareSelectionDtoUserShareDirectorySelectionDto": {
+        "required": [
+          "directoryId"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "directory"
+            ],
+            "type": "string"
+          },
+          "directoryId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "UserShareSelectionDtoUserShareFileSelectionDto": {
+        "required": [
+          "fileId"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "file"
+            ],
+            "type": "string"
+          },
+          "fileId": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
       },
       "WorkflowDetailDto": {
         "required": [
@@ -12058,10 +13731,13 @@
   },
   "tags": [
     {
-      "name": "Server"
+      "name": "User Browsing"
     },
     {
       "name": "Live State"
+    },
+    {
+      "name": "Server"
     },
     {
       "name": "Persistence"

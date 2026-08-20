@@ -2,6 +2,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Transfers.Downloads.State;
+using Sockseek.Core.PeerBrowsing;
 
 namespace Sockseek.Core.Transfers.Downloads.Runtime;
 
@@ -16,6 +17,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
     private readonly SearchEvents searchEvents;
     private readonly StaleDownloadCoordinator staleDownloads;
     private readonly TimeProvider timeProvider;
+    private readonly IPeerDirectorySource? directorySource;
     private readonly CancellationTokenSource appCts = new();
     private readonly SemaphoreSlim jobSemaphore;
     private readonly SemaphoreSlim extractorSemaphore;
@@ -34,7 +36,8 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         DownloadEvents events,
         SearchEvents searchEvents,
         StaleDownloadCoordinator staleDownloads,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IPeerDirectorySource? directorySource = null)
     {
         this.settings = settings;
         this.clientManager = clientManager;
@@ -45,6 +48,7 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         this.searchEvents = searchEvents;
         this.staleDownloads = staleDownloads;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.directorySource = directorySource;
         jobSemaphore = new SemaphoreSlim(settings.ConcurrentJobs);
         extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
     }
@@ -79,7 +83,10 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
 
         await clientManager.WaitUntilReadyAsync(ct);
         var client = clientManager.Client ?? throw new InvalidOperationException("Soulseek client is not available after login.");
-        searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents, timeProvider);
+        IPeerDirectorySource effectiveDirectorySource = directorySource
+            ?? client as IPeerDirectorySource
+            ?? new OneShotPeerDirectorySource(new SoulseekPeerBrowseTransport(clientManager));
+        searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents, timeProvider, effectiveDirectorySource);
         exactFileTransfers = new ExactPeerFileTransferRunner(client, clientManager, activeDownloads, downloadedFiles, events, staleDownloads);
 
         if (automaticStaleChecksEnabled)

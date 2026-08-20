@@ -71,6 +71,12 @@ internal sealed class DirectoryTransferRunner
         {
             await context.Runtime.WithJobSlot(child.Cts.Token, async () =>
             {
+                if (config.Skip.SkipExisting && File.Exists(item.OutputPath))
+                {
+                    JobOutcomeCommitter.Commit(child, JobOutcome.AlreadyExists(item.OutputPath));
+                    return;
+                }
+
                 child.UpdateActivity(JobActivityPhase.Downloading);
                 var transfer = await context.Runtime.ExactFileTransfers.DownloadFile(
                     item.Target,

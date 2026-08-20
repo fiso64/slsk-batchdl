@@ -53,7 +53,7 @@ public static partial class Help
     --no-incomplete-ext             Save files with their final name instead of a temporary
                                     `.incomplete` extension.
 
-    --no-skip-existing              Do not skip downloaded tracks
+    --no-skip-existing              Download items even when index/file checks find an existing match
     --skip-mode-output-dir <mode>   How to match files in the output dir: name|tag|index
                                     (default: index)
     --skip-check-cond               Check file conditions when skipping existing files. If the
@@ -69,7 +69,8 @@ public static partial class Help
     --listen-port <port>            Port for incoming connections (default: 49998)
     --no-listen                     Disable the incoming connection listener
     --connect-timeout <ms>          Timeout used when logging in to Soulseek (default: 20000ms)
-    --user-description <desc>       Optional description text for your Soulseek account
+    --user-description <desc>       Soulseek profile description
+    --user-picture <path>           Daemon profile picture
 
     --on-complete <command>         Run a command when a download completes. See `--help
                                     on-complete`
@@ -271,6 +272,36 @@ public static partial class Help
                                     Private-message retention (default: forever)
     --room-message-retention-days <days|forever>
                                     Room-message retention (default: 30)
+
+  Remote User Commands
+
+    sockseek user profile <username>  Show a peer's profile and sharing statistics
+      --refresh                       Fetch new profile data
+      --picture <mode>                Picture mode: auto|sixel|pixels|none; auto probes
+                                      terminal support (default: auto)
+
+    sockseek user shares <username>   Browse/select files; remote transfer/output/profile options apply
+      --refresh                       Fetch new shares instead of using a recent browse
+
+    sockseek user shares-page <browse-id>
+                                      List one page of browse results
+      --parent <directory-id>         List child directories (omit for roots)
+      --files <directory-id>          List files instead; mutually exclusive with --parent
+      --query <text>                  Filter the requested page
+      --cursor <cursor>               Continue from an earlier page
+      --limit <1..500>                Maximum results (default: 100)
+
+    sockseek user shares-download <browse-id>
+                                      Download selections; remote transfer/output/profile options apply
+      --folder <directory-id>         Select a complete public subtree; repeatable
+      --file <file-id>                Select one file; repeatable
+      --request-id <uuid>             Retry key for idempotent submission
+
+    sockseek user shares-cancel <browse-id>
+                                      Cancel an active browse for all waiting clients
+
+    --remote <url>                    Daemon URL; required unless configured
+    --json                            Emit JSON instead of pictures or interactive browsing
 
   Sockseek Database
 
@@ -805,6 +836,37 @@ Daemon / remote mode
   endpoint is http://127.0.0.1:5030.
   See daemon setup and remote commands for monitoring, sharing, chat, notifications, history,
   backup, and security guidance. For application integration, see the API guide.";
+
+    const string userHelp = @"
+Remote User Commands
+
+  sockseek user profile <username>  Show a peer's profile and sharing statistics
+    --refresh                       Fetch new profile data
+    --picture <mode>                Picture mode: auto|sixel|pixels|none; auto probes
+                                    terminal support (default: auto)
+
+  sockseek user shares <username>   Browse/select files; remote transfer/output/profile options apply
+    --refresh                       Fetch new shares instead of using a recent browse
+
+  sockseek user shares-page <browse-id>
+                                    List one page of browse results
+    --parent <directory-id>         List child directories (omit for roots)
+    --files <directory-id>          List files instead; mutually exclusive with --parent
+    --query <text>                  Filter the requested page
+    --cursor <cursor>               Continue from an earlier page
+    --limit <1..500>                Maximum results (default: 100)
+
+  sockseek user shares-download <browse-id>
+                                    Download selections; remote transfer/output/profile options apply
+    --folder <directory-id>         Select a complete public subtree; repeatable
+    --file <file-id>                Select one file; repeatable
+    --request-id <uuid>             Retry key for idempotent submission
+
+  sockseek user shares-cancel <browse-id>
+                                    Cancel an active browse for all waiting clients
+
+  --remote <url>                    Daemon URL; required unless configured
+  --json                            Emit JSON instead of pictures or interactive browsing";
 
     const string databaseHelp = @"
 Sockseek Database

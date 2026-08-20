@@ -8,6 +8,29 @@ public sealed record CursorPage<T>(IReadOnlyList<T> Items, string? NextCursor);
 public sealed record SequencePage<T>(IReadOnlyList<T> Items, long? NextSequence);
 public sealed record AttemptPage<T>(IReadOnlyList<T> Items, int? NextAttemptNumber);
 
+/// <summary>
+/// Owns a streamed picture response. Reading the body is explicit; disposing
+/// this value releases the HTTP response and any unread network content.
+/// </summary>
+public sealed class UserPictureResponse : IDisposable
+{
+    private readonly HttpResponseMessage response;
+
+    internal UserPictureResponse(HttpResponseMessage response)
+        => this.response = response;
+
+    public bool NotModified => response.StatusCode == HttpStatusCode.NotModified;
+    public string? MediaType => response.Content.Headers.ContentType?.MediaType;
+    public long? ContentLength => response.Content.Headers.ContentLength;
+    public string? ETag => response.Headers.ETag?.ToString();
+    public HttpResponseMessage HttpResponse => response;
+
+    public Task<Stream> OpenReadAsync(CancellationToken cancellationToken = default)
+        => response.Content.ReadAsStreamAsync(cancellationToken);
+
+    public void Dispose() => response.Dispose();
+}
+
 public sealed record TransferHistoryFilter(
     Guid? JobId = null,
     Guid? WorkflowId = null,
@@ -531,6 +554,149 @@ public sealed class SockseekApiClient
         return await ReadRequiredAsync<ChatRuntimeStateDto>(response, ct);
     }
 
+    public async Task<UserProfileDto> GetUserProfileAsync(
+        string username,
+        bool refresh = false,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync(
+            $"api/users/{Uri.EscapeDataString(username)}/profile?refresh={refresh.ToString().ToLowerInvariant()}",
+            ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<UserProfileDto>(response, ct);
+    }
+
+    public async Task<UserPictureResponse> GetUserPictureAsync(
+        string username,
+        string? ifNoneMatch = null,
+        CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"api/users/{Uri.EscapeDataString(username)}/picture");
+        if (!string.IsNullOrEmpty(ifNoneMatch))
+            request.Headers.TryAddWithoutValidation("If-None-Match", ifNoneMatch);
+
+        HttpResponseMessage response = await http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotModified)
+            return new UserPictureResponse(response);
+        try
+        {
+            await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+            return new UserPictureResponse(response);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
+    public Task<UserBrowseDto> StartUserBrowseAsync(
+        string username,
+        bool refresh = false,
+        CancellationToken ct = default)
+        => PostRequiredAsync<UserBrowseDto, StartUserBrowseRequestDto>(
+            $"api/users/{Uri.EscapeDataString(username)}/browses",
+            new StartUserBrowseRequestDto(refresh),
+            ct);
+
+    public async Task<PageDto<UserBrowseDto>> GetUserBrowsesAsync(
+        string? username = null,
+        UserBrowseState? state = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/user-browses?limit={limit}"
+            + QueryPart("username", username)
+            + QueryPart("state", state is null ? null : UserBrowseStateWire(state.Value))
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<PageDto<UserBrowseDto>>(response, ct);
+    }
+
+    public async Task<UserBrowseDto> GetUserBrowseAsync(
+        Guid browseId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/user-browses/{browseId}", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<UserBrowseDto>(response, ct);
+    }
+
+    public async Task<StateSnapshotDto> GetUserBrowseSnapshotAsync(
+        Guid browseId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync($"api/user-browses/{browseId}/snapshot", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
+    }
+
+    public Task<UserBrowseDto> CancelUserBrowseAsync(
+        Guid browseId,
+        CancellationToken ct = default)
+        => PostWithoutBodyAsync<UserBrowseDto>($"api/user-browses/{browseId}/cancel", ct);
+
+    public async Task<PageDto<BrowseDirectoryEntryDto>> GetUserShareDirectoriesAsync(
+        Guid browseId,
+        long? parentId = null,
+        string? query = null,
+        bool recursive = false,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/user-browses/{browseId}/directories?limit={limit}&recursive={recursive.ToString().ToLowerInvariant()}"
+            + QueryPart("parentId", parentId?.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            + QueryPart("query", query)
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<PageDto<BrowseDirectoryEntryDto>>(response, ct);
+    }
+
+    public async Task<BrowseDirectoryEntryDto> GetUserShareDirectoryAsync(
+        Guid browseId,
+        long directoryId,
+        CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync(
+            $"api/user-browses/{browseId}/directories/{directoryId}", ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<BrowseDirectoryEntryDto>(response, ct);
+    }
+
+    public async Task<PageDto<BrowseFileEntryDto>> GetUserShareFilesAsync(
+        Guid browseId,
+        long directoryId,
+        string? query = null,
+        string? cursor = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        string url = $"api/user-browses/{browseId}/directories/{directoryId}/files?limit={limit}"
+            + QueryPart("query", query)
+            + QueryPart("cursor", cursor);
+        using var response = await http.GetAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<PageDto<BrowseFileEntryDto>>(response, ct);
+    }
+
+    public Task<StartUserShareDownloadsResponseDto> StartUserShareDownloadsAsync(
+        Guid browseId,
+        StartUserShareDownloadsRequestDto request,
+        CancellationToken ct = default)
+        => PostRequiredAsync<StartUserShareDownloadsResponseDto, StartUserShareDownloadsRequestDto>(
+            $"api/user-browses/{browseId}/downloads",
+            request,
+            ct);
+
     public async Task<ConversationPageDto> GetConversationsAsync(
         bool? unread = null,
         bool? archived = null,
@@ -822,7 +988,7 @@ public sealed class SockseekApiClient
     }
 
     private static string QueryPart(string name, string? value)
-        => string.IsNullOrWhiteSpace(value) ? "" : $"&{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
+        => string.IsNullOrEmpty(value) ? "" : $"&{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
 
     private static string? Header(HttpResponseMessage response, string name)
         => response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
@@ -835,4 +1001,15 @@ public sealed class SockseekApiClient
 
     private static bool IsActiveLifecycle(ServerJobLifecycleState state)
         => state != ServerJobLifecycleState.Terminal;
+
+    private static string UserBrowseStateWire(UserBrowseState state)
+        => state switch
+        {
+            UserBrowseState.Queued => "queued",
+            UserBrowseState.Running => "running",
+            UserBrowseState.Complete => "complete",
+            UserBrowseState.Failed => "failed",
+            UserBrowseState.Cancelled => "cancelled",
+            _ => throw new ArgumentOutOfRangeException(nameof(state)),
+        };
 }

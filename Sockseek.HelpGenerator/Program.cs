@@ -259,6 +259,8 @@ __HELP_TEXT_MAIN__"";
 
     const string daemonHelp = @""__HELP_TEXT_DAEMON__"";
 
+    const string userHelp = @""__HELP_TEXT_USER__"";
+
     const string databaseHelp = @""__HELP_TEXT_DATABASE__"";
 }
 ";
@@ -275,6 +277,7 @@ __HELP_TEXT_MAIN__"";
         .Replace("__HELP_TEXT_SHORTCUTS__", topics["shortcuts"])
         .Replace("__HELP_TEXT_NOTES_AND_TIPS__", topics["notes-and-tips"])
         .Replace("__HELP_TEXT_DAEMON__", topics["daemon"])
+        .Replace("__HELP_TEXT_USER__", topics["user"])
         .Replace("__HELP_TEXT_DATABASE__", topics["database"]);
     return content;
 }

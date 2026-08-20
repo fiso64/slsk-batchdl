@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using Sockseek.Core.Services;
+using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 using Soulseek;
 
 namespace Tests.ClientTests
 {
-    public partial class MockSoulseekClient : ISoulseekClient
+    public partial class MockSoulseekClient : ISoulseekClient, IPeerDirectorySource
     {
         public IReadOnlyCollection<Transfer> Downloads => throw new NotImplementedException();
 
@@ -36,6 +38,8 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
         public bool BrowseReturnsBasenames { get; set; }
+        public BrowseResponse? BrowseResponseOverride { get; set; }
+        public long? BrowseProgressSize { get; set; }
         public bool IsDisposed { get; private set; }
         public Exception? ConnectException { get; set; }
         public Action? Connecting { get; set; }
@@ -189,6 +193,18 @@ namespace Tests.ClientTests
             await Task.Yield();
             ct.ThrowIfCancellationRequested();
 
+            if (BrowseProgressSize is long browseSize)
+            {
+                options?.ProgressUpdated?.Invoke((
+                    username,
+                    browseSize,
+                    0,
+                    100,
+                    browseSize));
+            }
+            if (BrowseResponseOverride is { } responseOverride)
+                return responseOverride;
+
             var user = index.FirstOrDefault(x => x.Username == username);
 
             if (user == null)
@@ -210,6 +226,16 @@ namespace Tests.ClientTests
                 ));
 
             return new BrowseResponse(directories);
+        }
+
+        public async Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+            PeerDirectoryIdentity directory,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await BrowseAsync(
+                directory.Username,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return PeerDirectorySnapshotFactory.FromBrowseResponse(directory, response);
         }
 
         public Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsync(SearchQuery query, SearchScope? scope = null, int? token = null, SearchOptions? options = null, CancellationToken? cancellationToken = null)

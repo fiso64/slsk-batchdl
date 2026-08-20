@@ -2,6 +2,7 @@ using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Sharing;
 using Soulseek;
+using Sockseek.Core.UserProfiles;
 
 namespace Sockseek.Server;
 
@@ -15,20 +16,26 @@ public sealed class DaemonSoulseekRuntime : IAsyncDisposable
 
     public DaemonSoulseekRuntime(
         EngineSettings settings,
-        Func<EngineSettings, ISoulseekClient>? clientFactory = null)
+        Func<EngineSettings, ISoulseekClient>? clientFactory = null,
+        LocalUserProfile? localProfile = null)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         InboundRequests = new SoulseekInboundRequestRouter();
         AccessPolicy = new PeerAccessPolicy(settings.PeerAccess);
+        LocalProfile = localProfile ?? new LocalUserProfile(
+            UserProfileText.NormalizeDescription(settings.UserDescription),
+            null);
         ClientManager = new SoulseekClientManager(
             settings,
             clientFactory?.Invoke(settings),
-            InboundRequests);
+            InboundRequests,
+            LocalProfile);
     }
 
     public SoulseekClientManager ClientManager { get; }
     public SoulseekInboundRequestRouter InboundRequests { get; }
     public PeerAccessPolicy AccessPolicy { get; }
+    public LocalUserProfile LocalProfile { get; }
 
     public Task EnsureStartedAsync(CancellationToken cancellationToken = default)
     {
@@ -36,6 +43,11 @@ public sealed class DaemonSoulseekRuntime : IAsyncDisposable
         {
             if (startupTask is { IsFaulted: true } or { IsCanceled: true })
                 startupTask = null;
+            if (startupTask?.IsCompleted == true
+                && !ClientManager.IsConnectedAndLoggedIn)
+            {
+                startupTask = null;
+            }
             return startupTask ??= StartCoreAsync(cancellationToken);
         }
     }

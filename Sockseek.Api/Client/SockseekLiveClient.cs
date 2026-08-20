@@ -147,6 +147,65 @@ public sealed class SockseekLiveClient : IAsyncDisposable
     public Task StartRoomAsync(Guid roomId, CancellationToken ct = default)
         => StartChatAsync(StateStreamScopeDto.ChatRoom(roomId), ct);
 
+    public async Task StartUserBrowseAsync(Guid browseId, CancellationToken ct = default)
+    {
+        var scope = StateStreamScopeDto.UserBrowse(browseId);
+        await lifecycleGate.WaitAsync(ct);
+        try
+        {
+            ThrowIfDisposed();
+            if (Mode == LiveSubscriptionMode.Workflow)
+                throw new InvalidOperationException("Cannot mix user-browse and workflow subscriptions on one live client.");
+            await EnsureConnectedAsync(ct);
+            Mode = Mode == LiveSubscriptionMode.Daemon
+                ? LiveSubscriptionMode.DaemonAndChat
+                : Mode == LiveSubscriptionMode.None
+                    ? LiveSubscriptionMode.Chat
+                    : Mode;
+            if (sessions.ContainsKey(scope))
+                return;
+            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
+            bool subscribed = false;
+            try
+            {
+                session.BeginBuffering();
+                await connection.InvokeAsync("SubscribeUserBrowse", browseId, ct);
+                subscribed = true;
+                await RecoverScopeAsync(scope, ct);
+            }
+            catch
+            {
+                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
+                throw;
+            }
+        }
+        finally
+        {
+            lifecycleGate.Release();
+        }
+    }
+
+    public async Task StopUserBrowseAsync(Guid browseId, CancellationToken ct = default)
+    {
+        var scope = StateStreamScopeDto.UserBrowse(browseId);
+        await lifecycleGate.WaitAsync(ct);
+        try
+        {
+            if (sessions.TryRemove(scope, out ScopeSession? session))
+            {
+                if (connection.State == HubConnectionState.Connected)
+                    await connection.InvokeAsync("UnsubscribeUserBrowse", browseId, ct);
+                session.Dispose();
+                Store.RemoveUserBrowse(browseId);
+            }
+            RecomputeMode();
+        }
+        finally
+        {
+            lifecycleGate.Release();
+        }
+    }
+
     private async Task StartChatAsync(StateStreamScopeDto scope, CancellationToken ct)
     {
         await lifecycleGate.WaitAsync(ct);
@@ -199,8 +258,9 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                 Store.RemoveChatTarget(scope);
             }
             bool hasDaemon = sessions.ContainsKey(StateStreamScopeDto.Daemon);
-            bool hasChat = sessions.Keys.Any(item => item.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom);
-            Mode = (hasDaemon, hasChat) switch
+            bool hasAuxiliary = sessions.Keys.Any(item => item.Kind is
+                StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom or StateStreamScopeKind.UserBrowse);
+            Mode = (hasDaemon, hasAuxiliary) switch
             {
                 (true, true) => LiveSubscriptionMode.DaemonAndChat,
                 (true, false) => LiveSubscriptionMode.Daemon,
@@ -335,6 +395,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         {
             foreach (var scope in scopes.Where(scope => scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom))
                 await connection.InvokeAsync("SubscribeChat", scope);
+            foreach (var scope in scopes.Where(scope => scope.Kind == StateStreamScopeKind.UserBrowse))
+                await connection.InvokeAsync("SubscribeUserBrowse", scope.UserBrowseId!.Value);
         }
 
         await Task.WhenAll(scopes.Select(RecoverScopeSafelyAsync));
@@ -408,6 +470,7 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                     StateStreamScopeKind.Workflow => await api.GetWorkflowSnapshotAsync(scope.WorkflowId!.Value, recoveryToken),
                     StateStreamScopeKind.ChatConversation => await api.GetConversationSnapshotAsync(scope.ChatTargetId!.Value, recoveryToken),
                     StateStreamScopeKind.ChatRoom => await api.GetRoomSnapshotAsync(scope.ChatTargetId!.Value, recoveryToken),
+                    StateStreamScopeKind.UserBrowse => await api.GetUserBrowseSnapshotAsync(scope.UserBrowseId!.Value, recoveryToken),
                     _ => throw new ArgumentOutOfRangeException(),
                 };
 
@@ -468,6 +531,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
                     await connection.InvokeAsync("UnsubscribeAll");
                 else if (scope.Kind == StateStreamScopeKind.Workflow)
                     await connection.InvokeAsync("UnsubscribeWorkflow", scope.WorkflowId!.Value);
+                else if (scope.Kind == StateStreamScopeKind.UserBrowse)
+                    await connection.InvokeAsync("UnsubscribeUserBrowse", scope.UserBrowseId!.Value);
                 else
                     await connection.InvokeAsync("UnsubscribeChat", scope);
             }
@@ -483,6 +548,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             session.Dispose();
         if (scope.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom)
             Store.RemoveChatTarget(scope);
+        else if (scope.Kind == StateStreamScopeKind.UserBrowse)
+            Store.RemoveUserBrowse(scope.UserBrowseId!.Value);
 
         RecomputeMode();
         if (!sessions.IsEmpty)
@@ -512,7 +579,8 @@ public sealed class SockseekLiveClient : IAsyncDisposable
     {
         bool hasDaemon = sessions.ContainsKey(StateStreamScopeDto.Daemon);
         bool hasWorkflow = sessions.Keys.Any(item => item.Kind == StateStreamScopeKind.Workflow);
-        bool hasChat = sessions.Keys.Any(item => item.Kind is StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom);
+        bool hasChat = sessions.Keys.Any(item => item.Kind is
+            StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom or StateStreamScopeKind.UserBrowse);
         Mode = hasWorkflow
             ? LiveSubscriptionMode.Workflow
             : (hasDaemon, hasChat) switch

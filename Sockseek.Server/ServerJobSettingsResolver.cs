@@ -37,6 +37,9 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
     public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
         => submissionOptions.SetJobOptions(jobId, options);
 
+    public void RemoveWorkflowOptions(Guid workflowId)
+        => submissionOptions.RemoveWorkflowOptions(workflowId);
+
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {
         if (inherited.PrintOption != PrintOption.None)

@@ -35,6 +35,8 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, WorkflowStateDto> projectedWorkflows = [];
     private readonly Dictionary<Guid, long> workflowStreamSequences = [];
     private readonly Dictionary<StateStreamScopeDto, long> chatStreamSequences = [];
+    private readonly Dictionary<Guid, long> userBrowseStreamSequences = [];
+    private readonly Dictionary<Guid, UserBrowseDto> userBrowses = [];
     private readonly HashSet<Guid> daemonLiveWorkflowIds = [];
     private readonly Guid streamEpoch = Guid.NewGuid();
     private long daemonStreamSequence;
@@ -545,6 +547,76 @@ public sealed class EngineStateStore
             ];
         }
         PublishStateBatches(batches);
+    }
+
+    public StateSnapshotDto GetUserBrowseSnapshot(UserBrowseDto resource)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        lock (gate)
+        {
+            if (!userBrowses.TryGetValue(resource.BrowseId, out UserBrowseDto? current)
+                || resource.Revision >= current.Revision)
+            {
+                userBrowses[resource.BrowseId] = resource;
+            }
+            else
+            {
+                resource = current;
+            }
+            return new StateSnapshotDto(
+                StateStreamScopeDto.UserBrowse(resource.BrowseId),
+                new StateStreamPositionDto(
+                    streamEpoch,
+                    userBrowseStreamSequences.GetValueOrDefault(resource.BrowseId)),
+                DateTimeOffset.UtcNow,
+                null,
+                [],
+                [],
+                [],
+                [],
+                UserBrowse: resource);
+        }
+    }
+
+    public void UpdateUserBrowse(UserBrowseDto resource)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        StateUpdateBatchDto batch;
+        lock (gate)
+        {
+            if (userBrowses.TryGetValue(resource.BrowseId, out UserBrowseDto? current)
+                && resource.Revision <= current.Revision)
+            {
+                return;
+            }
+            userBrowses[resource.BrowseId] = resource;
+            long previous = userBrowseStreamSequences.GetValueOrDefault(resource.BrowseId);
+            long sequence = previous + 1;
+            userBrowseStreamSequences[resource.BrowseId] = sequence;
+            batch = new StateUpdateBatchDto(
+                StateStreamScopeDto.UserBrowse(resource.BrowseId),
+                streamEpoch,
+                previous,
+                sequence,
+                resource.UpdatedAt,
+                StateDeltaDto.Empty with { UserBrowse = resource },
+                []);
+        }
+        PublishStateBatches([batch]);
+    }
+
+    /// <summary>
+    /// Drops the live projection after its backing ephemeral resource has been
+    /// removed. There is no removal delta because future snapshots already return
+    /// 410 before entering the live-state store.
+    /// </summary>
+    public void RemoveUserBrowse(Guid browseId)
+    {
+        lock (gate)
+        {
+            userBrowses.Remove(browseId);
+            userBrowseStreamSequences.Remove(browseId);
+        }
     }
 
     /// <summary>

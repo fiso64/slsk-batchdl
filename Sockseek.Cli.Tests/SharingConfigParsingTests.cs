@@ -17,6 +17,17 @@ public sealed class SharingConfigParsingTests
         Assert.IsNull(settings.Sharing.RescanInterval);
         Assert.AreEqual(10, settings.Uploads.Slots);
         Assert.IsNull(settings.Uploads.SpeedLimitKiBPerSecond);
+        Assert.IsNull(settings.UserPicturePath);
+    }
+
+    [TestMethod]
+    public void UserPicturePath_IsAPathNormalizedDaemonSetting()
+    {
+        string relative = Path.Combine("profile", "picture.png");
+
+        EngineSettings settings = Bind("--user-picture", relative);
+
+        Assert.AreEqual(Path.GetFullPath(relative), settings.UserPicturePath);
     }
 
     [TestMethod]
@@ -124,6 +135,27 @@ public sealed class SharingConfigParsingTests
         try
         {
             var ex = Assert.ThrowsException<ArgumentException>(() => ConfigManager.Load(path));
+            StringAssert.Contains(ex.Message, "not allowed in named or automatic profile");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [TestMethod]
+    [DataRow("[named]\nuser-picture = picture.png")]
+    [DataRow("[auto]\nprofile-cond = interactive\nuser-picture = picture.png")]
+    public void UserPicture_IsRejectedInDownloadProfiles(string contents)
+    {
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            $"sockseek-picture-profile-{Guid.NewGuid():N}.conf");
+        File.WriteAllText(path, contents);
+
+        try
+        {
+            var ex = Assert.ThrowsExactly<ArgumentException>(() => ConfigManager.Load(path));
             StringAssert.Contains(ex.Message, "not allowed in named or automatic profile");
         }
         finally

@@ -146,6 +146,24 @@ public sealed class PlacementPlannerTests
     }
 
     [TestMethod]
+    public void ControlBearingRemoteTree_IsSanitizedOnlyAtLocalPlacement()
+    {
+        string parent = TestParent();
+        var plan = new DirectoryTransferPlan("Ro\not", [
+            Entry("Root\\Di\tsc\\track\u001B.txt", ["Di\tsc"]),
+        ]);
+
+        FilePlacement placement = new PlacementPlanner().PlanDirectory(
+            plan,
+            new OutputSettings { ParentDir = parent, InvalidReplaceStr = "_" }).Single();
+
+        CollectionAssert.AreEqual(
+            new[] { "Ro_ot", "Di_sc", "track_.txt" },
+            placement.RelativePath.Components.ToArray());
+        Assert.AreEqual("Root\\Di\tsc\\track\u001B.txt", placement.Target.Filename);
+    }
+
+    [TestMethod]
     public void MusicOnlyVariable_IsRejectedBeforePlacement()
     {
         var output = new OutputSettings

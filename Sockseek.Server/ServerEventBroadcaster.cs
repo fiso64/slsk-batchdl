@@ -66,6 +66,8 @@ public sealed class ServerEventBroadcaster : IDisposable, IAsyncDisposable
                 ServerEventHub.WorkflowGroupName(batch.Scope.WorkflowId!.Value)),
             StateStreamScopeKind.ChatConversation or StateStreamScopeKind.ChatRoom
                 => hubContext.Clients.Group(ServerEventHub.ChatGroupName(batch.Scope)),
+            StateStreamScopeKind.UserBrowse => hubContext.Clients.Group(
+                ServerEventHub.UserBrowseGroupName(batch.Scope.UserBrowseId!.Value)),
             _ => throw new ArgumentOutOfRangeException(),
         };
         await clients.SendAsync(

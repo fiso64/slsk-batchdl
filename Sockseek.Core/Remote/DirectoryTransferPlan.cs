@@ -37,11 +37,9 @@ public sealed record DirectoryTransferEntry
         ReadOnlySpan<char> remaining = component.AsSpan();
         while (!remaining.IsEmpty)
         {
-            var status = Rune.DecodeFromUtf16(remaining, out Rune rune, out int consumed);
+            var status = Rune.DecodeFromUtf16(remaining, out _, out int consumed);
             if (status != OperationStatus.Done)
                 throw new ArgumentException("Logical path components contain invalid Unicode.", parameterName);
-            if (Rune.IsControl(rune))
-                throw new ArgumentException("Logical path components cannot contain controls.", parameterName);
             remaining = remaining[consumed..];
         }
     }
@@ -76,7 +74,7 @@ public sealed record DirectoryTransferPlan
         Array.Sort(source, DirectoryTransferEntryComparer.Instance);
         long knownBytes = 0;
         foreach (var entry in source)
-            knownBytes = checked(knownBytes + (entry.Target.Size ?? 0));
+            knownBytes = SaturatingAdd(knownBytes, entry.Target.Size ?? 0);
 
         DisplayRoot = displayRoot;
         Entries = Array.AsReadOnly(source);
@@ -88,6 +86,9 @@ public sealed record DirectoryTransferPlan
     public string Username { get; }
     public IReadOnlyList<DirectoryTransferEntry> Entries { get; }
     public long TotalKnownBytes { get; }
+
+    private static long SaturatingAdd(long left, long right)
+        => left > long.MaxValue - right ? long.MaxValue : left + right;
 
     private sealed class DirectoryTransferEntryComparer : IComparer<DirectoryTransferEntry>
     {

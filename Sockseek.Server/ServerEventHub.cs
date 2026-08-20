@@ -124,6 +124,43 @@ public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorize
         }
     }
 
+    public async Task SubscribeUserBrowse(Guid browseId)
+    {
+        var scope = StateStreamScopeDto.UserBrowse(browseId);
+        scope.Validate();
+        if (Context.Items.TryGetValue(ModeKey, out var mode) && Equals(mode, WorkflowMode))
+            throw new HubException("Cannot mix user-browse and workflow subscriptions on one connection.");
+        await RequireOperatorAsync();
+        Context.Items[ModeKey] = Equals(mode, DaemonMode) || Equals(mode, DaemonChatMode)
+            ? DaemonChatMode
+            : ChatMode;
+        await Groups.AddToGroupAsync(Context.ConnectionId, UserBrowseGroupName(browseId));
+        var scopes = ChatScopes();
+        lock (scopes)
+            scopes.Add(scope);
+    }
+
+    public async Task UnsubscribeUserBrowse(Guid browseId)
+    {
+        var scope = StateStreamScopeDto.UserBrowse(browseId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, UserBrowseGroupName(browseId));
+        var scopes = ChatScopes();
+        bool hasAuxiliary;
+        lock (scopes)
+        {
+            scopes.Remove(scope);
+            hasAuxiliary = scopes.Count > 0;
+        }
+        if (!hasAuxiliary)
+        {
+            if (Context.Items.TryGetValue(ModeKey, out object? mode)
+                && Equals(mode, DaemonChatMode))
+                Context.Items[ModeKey] = DaemonMode;
+            else if (Equals(mode, ChatMode))
+                Context.Items.Remove(ModeKey);
+        }
+    }
+
     private async Task RequireOperatorAsync()
     {
         HttpContext context = Context.GetHttpContext()
@@ -156,6 +193,9 @@ public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorize
             StateStreamScopeKind.ChatRoom => $"chat:room:{scope.ChatTargetId!.Value:N}",
             _ => throw new ArgumentException("The scope is not a chat scope.", nameof(scope)),
         };
+
+    internal static string UserBrowseGroupName(Guid browseId)
+        => $"user-browse:{browseId:N}";
 
     internal static string AllEventsGroup => AllEventsGroupName;
 }

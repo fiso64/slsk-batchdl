@@ -18,6 +18,7 @@ public static partial class Help
             { "shortcuts", shortcutsHelp },
             { "notes", notesAndTipsHelp },
             { "daemon", daemonHelp },
+            { "user", userHelp },
             { "database", databaseHelp },
         };
 

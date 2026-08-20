@@ -8,6 +8,8 @@ using Sockseek.Api;
 using Sockseek.Core.Chat;
 using Sockseek.Core.Services;
 using Sockseek.Server.Persistence;
+using Sockseek.Server.PeerBrowsing;
+using Sockseek.Server.UserProfiles;
 
 namespace Sockseek.Server;
 
@@ -82,6 +84,8 @@ public static class ServerHost
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<HistoricalQueryFacade>();
         builder.Services.AddSingleton<LiveTransferCursorCodec>();
+        builder.Services.AddSingleton<PeerBrowseCursorCodec>();
+        builder.Services.AddSingleton<UserShareSubmissionStore>();
         builder.Services.AddSingleton<IOperatorMutationAuthorizer,
             CurrentTrustDomainOperatorAuthorizer>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
@@ -108,6 +112,8 @@ public static class ServerHost
 
     private static void MapEndpoints(WebApplication app)
     {
+        UserProfileEndpoints.Map(app);
+        UserBrowseEndpoints.Map(app);
         app.MapGet("/", () => Results.Redirect("/api/server/info"))
             .ExcludeFromDescription();
 

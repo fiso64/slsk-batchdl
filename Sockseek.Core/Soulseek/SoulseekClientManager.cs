@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Net.Sockets;
 using Sockseek.Core.Settings;
 using System.ComponentModel;
+using Sockseek.Core.UserProfiles;
 
 namespace Sockseek.Core.Services;
 
@@ -32,6 +33,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
     private readonly EngineSettings _initialSettings;
     private readonly ISoulseekInboundRequestRouter? inboundRouter;
+    private readonly LocalUserProfile? localProfile;
     private readonly Func<TimeSpan, CancellationToken, Task> monitorDelay;
     private ISoulseekClient? _client;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
@@ -91,8 +93,9 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     public SoulseekClientManager(
         EngineSettings initialSettings,
         ISoulseekClient? client = null,
-        ISoulseekInboundRequestRouter? inboundRouter = null)
-        : this(initialSettings, client, inboundRouter, Task.Delay)
+        ISoulseekInboundRequestRouter? inboundRouter = null,
+        LocalUserProfile? localProfile = null)
+        : this(initialSettings, client, inboundRouter, Task.Delay, localProfile)
     {
     }
 
@@ -100,11 +103,13 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         EngineSettings initialSettings,
         ISoulseekClient? client,
         ISoulseekInboundRequestRouter? inboundRouter,
-        Func<TimeSpan, CancellationToken, Task> monitorDelay)
+        Func<TimeSpan, CancellationToken, Task> monitorDelay,
+        LocalUserProfile? localProfile = null)
     {
         _initialSettings = initialSettings ?? throw new ArgumentNullException(nameof(initialSettings));
         this.monitorDelay = monitorDelay ?? throw new ArgumentNullException(nameof(monitorDelay));
         this.inboundRouter = inboundRouter;
+        this.localProfile = localProfile;
         if (client != null)
         {
             _client = client;
@@ -258,16 +263,24 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 PublishClientCreated(_client);
             }
 
-            if (!IsConnectedAndLoggedIn)
+            // Some daemon-owned clients (notably mock-file mode) are already
+            // connected when created and therefore never enter LoginInternalAsync.
+            // They must still complete the shared readiness signal.
+            if (IsConnectedAndLoggedIn)
             {
-                var missingCredentialMessage = GetMissingCredentialMessage(loginSettings);
-                if (missingCredentialMessage != null)
-                    throw new InvalidOperationException(missingCredentialMessage);
-
-                await LoginInternalAsync(_client, loginSettings, cancellationToken);
+                CaptureExistingLogin(loginSettings);
                 _readyTcs.TrySetResult();
                 StartMonitoring();
+                return;
             }
+
+            var missingCredentialMessage = GetMissingCredentialMessage(loginSettings);
+            if (missingCredentialMessage != null)
+                throw new InvalidOperationException(missingCredentialMessage);
+
+            await LoginInternalAsync(_client, loginSettings, cancellationToken);
+            _readyTcs.TrySetResult();
+            StartMonitoring();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -435,7 +448,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             SockseekLog.Soulseek.Debug($"Using Soulseek client starting token {startingToken}.");
             return new SoulseekClient(
                 SockseekSoulseekClientIdentity.MinorVersion,
-                CreateClientOptions(settings, startingToken, inboundRouter));
+                CreateClientOptions(settings, startingToken, inboundRouter, localProfile));
         }
     }
 
@@ -445,7 +458,8 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     internal static SoulseekClientOptions CreateClientOptions(
         EngineSettings settings,
         int startingToken,
-        ISoulseekInboundRequestRouter? inboundRouter = null)
+        ISoulseekInboundRequestRouter? inboundRouter = null,
+        LocalUserProfile? localProfile = null)
     {
         var serverConnectionOptions = new ConnectionOptions(
             connectTimeout: settings.ConnectTimeout,
@@ -468,10 +482,12 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             });
 
         Task<UserInfo> userInfoResolver(string username, System.Net.IPEndPoint ip) => Task.FromResult(new UserInfo(
-            description: settings.UserDescription ?? "",
+            description: localProfile?.Description
+                ?? UserProfileText.NormalizeDescription(settings.UserDescription),
             uploadSlots: 1,
             queueLength: 0,
-            hasFreeUploadSlot: true
+            hasFreeUploadSlot: true,
+            picture: localProfile?.Picture?.Bytes
         ));
 
         int maximumUploadSpeed = settings.Uploads.SpeedLimitKiBPerSecond is { } kib

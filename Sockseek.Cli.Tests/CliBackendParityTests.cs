@@ -1,12 +1,13 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Sockseek.Cli;
 using Sockseek.Core;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Server;
 using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Sockets;
 using Sockseek.Api;
 using Tests.ClientTests;
 
@@ -15,6 +16,8 @@ namespace Tests.Cli;
 [TestClass]
 public class CliBackendParityTests
 {
+    private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
+
     [TestMethod]
     public async Task CliBackendParity_DaemonWideStores_ProjectEquivalentState()
     {
@@ -592,16 +595,20 @@ public class CliBackendParityTests
             string outputDir = CreateTempDir("Sockseek-cli-parity-remote-out-");
             seedMusic(musicRoot);
 
-            int port = GetFreeTcpPort();
-            string url = $"http://127.0.0.1:{port}";
             var app = ServerHost.Build([], new ServerOptions
             {
                 Engine = CreateEngineSettings(musicRoot),
                 DefaultDownload = CreateDownloadSettings(outputDir),
                 Profiles = profiles ?? ProfileCatalog.Empty,
-            }, url);
+                Persistence = new ServerPersistenceOptions
+                {
+                    Enabled = false,
+                    DataDirectory = Path.Combine(outputDir, ".server-data"),
+                },
+            }, DynamicLoopbackUrl);
 
             await app.StartAsync();
+            string url = GetBoundUrl(app);
             var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -620,8 +627,6 @@ public class CliBackendParityTests
             string musicRoot = CreateTempDir("Sockseek-cli-parity-remote-music-");
             string outputDir = CreateTempDir("Sockseek-cli-parity-remote-out-");
 
-            int port = GetFreeTcpPort();
-            string url = $"http://127.0.0.1:{port}";
             var downloadSettings = CreateDownloadSettings(outputDir);
             downloadSettings.Output.NameFormat = "{filename}";
             var app = ServerHost.Build([], new ServerOptions
@@ -630,9 +635,15 @@ public class CliBackendParityTests
                 DefaultDownload = downloadSettings,
                 Profiles = ProfileCatalog.Empty,
                 ClientFactory = _ => client,
-            }, url);
+                Persistence = new ServerPersistenceOptions
+                {
+                    Enabled = false,
+                    DataDirectory = Path.Combine(outputDir, ".server-data"),
+                },
+            }, DynamicLoopbackUrl);
 
             await app.StartAsync();
+            string url = GetBoundUrl(app);
             var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -650,6 +661,7 @@ public class CliBackendParityTests
         public string[] DownloadedRelativePaths()
             => Directory.GetFiles(OutputDir, "*", SearchOption.AllDirectories)
                 .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}failed{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.server-data{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
                 .Select(path => Path.GetRelativePath(OutputDir, path).Replace(Path.DirectorySeparatorChar, '/'))
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToArray();
@@ -667,10 +679,11 @@ public class CliBackendParityTests
                         engineCompleted = true;
                     }
 
-                    var completed = await Task.WhenAny(engineTask, Task.Delay(TimeSpan.FromSeconds(5)));
-                    if (completed != engineTask)
-                        cts.Cancel();
-
+                    // Assertions have already observed the terminal workflow.
+                    // Cancellation is the test harness's prompt teardown signal;
+                    // waiting for the production idle loop adds seconds of
+                    // contention across the parallel parity fixtures.
+                    cts.Cancel();
                     try { await engineTask; }
                     catch (OperationCanceledException) { }
                 }
@@ -859,12 +872,14 @@ public class CliBackendParityTests
             Directory.Delete(path, recursive: true);
     }
 
-    private static int GetFreeTcpPort()
+    private static string GetBoundUrl(Microsoft.AspNetCore.Builder.WebApplication app)
     {
-        TcpListener listener = new(IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        var addresses = app.Services
+            .GetRequiredService<IServer>()
+            .Features
+            .Get<IServerAddressesFeature>()?
+            .Addresses;
+        return addresses?.SingleOrDefault(address => address.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The test server did not publish its bound HTTP address.");
     }
 }

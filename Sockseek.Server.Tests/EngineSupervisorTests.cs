@@ -163,7 +163,10 @@ public class EngineSupervisorTests
                 .Select(Path.GetFileName)
                 .OrderBy(x => x)
                 .ToArray();
-            CollectionAssert.AreEqual(new[] { "01. Track One.mp3", "02. Track Two.mp3" }, downloaded);
+            CollectionAssert.AreEqual(
+                new[] { "01. Track One.mp3", "02. Track Two.mp3" },
+                downloaded,
+                "Actual output files: " + string.Join(", ", downloaded));
 
             cts.Cancel();
             await runTask;
@@ -627,7 +630,10 @@ public class EngineSupervisorTests
             Assert.IsNotNull(retrieveDetail);
             var payload = retrieveDetail.Payload as RetrieveFolderJobPayloadDto;
             Assert.IsNotNull(payload);
-            Assert.AreEqual(1, payload.NewFilesFoundCount);
+            Assert.AreEqual(
+                1,
+                payload.NewFilesFoundCount,
+                "Retrieved folder files: " + string.Join(", ", payload.Folder?.Files?.Select(file => file.Filename) ?? []));
 
             var workflowTree = supervisor.StateStore.GetWorkflowTree(searchSummary.WorkflowId);
             Assert.IsNotNull(workflowTree);
@@ -1224,6 +1230,41 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
+    public async Task SubmitJobListAsync_RemoteDraftAllowsPathBasedSkipExistingOnly()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-remote-skip-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+            var target = new PeerFileTargetDto("Peer", @"Share\File.bin", 4, ".bin");
+
+            JobSummaryDto accepted = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "valid remote settings",
+                    [new RemoteFileJobDraftDto(
+                        target,
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Skip: new SkipSettingsPatchDto(SkipExisting: false)))]),
+                CancellationToken.None);
+
+            Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "invalid remote settings",
+                    [new RemoteFileJobDraftDto(
+                        target,
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Skip: new SkipSettingsPatchDto(SkipMode: SkipMode.Name)))]),
+                CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task SoulseekDraftSettingsValidation_UsesTheEffectiveInterpretation()
     {
         string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-slsk-settings-" + Guid.NewGuid());
@@ -1483,6 +1524,10 @@ public class EngineSupervisorTests
             DefaultDownload = defaultDownload,
             LaunchDownloadSettings = launchDownloadSettings,
             Profiles = profiles ?? ProfileCatalog.Empty,
+            Persistence = new ServerPersistenceOptions
+            {
+                DataDirectory = Path.Combine(musicRoot, ".sockseek-test-data"),
+            },
         });
 
         return new EngineSupervisor(options);
@@ -1526,7 +1571,7 @@ public class EngineSupervisorTests
 
         var last = lastSummary == null
             ? "<missing>"
-            : $"{ProjectState(lastSummary)} lifecycle={lastSummary.LifecycleState} activity={lastSummary.ActivityPhase} outcome={lastSummary.TerminalOutcome} skip={lastSummary.SkipReason} failure={lastSummary.FailureReason}";
+            : $"{ProjectState(lastSummary)} lifecycle={lastSummary.LifecycleState} activity={lastSummary.ActivityPhase} outcome={lastSummary.TerminalOutcome} skip={lastSummary.SkipReason} failure={lastSummary.FailureReason} message={lastSummary.FailureMessage} detail={lastSummary.FailureDetail}";
         Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'. Last summary: {last}.");
     }
 

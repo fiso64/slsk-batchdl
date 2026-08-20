@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using Soulseek;
+using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 
 #pragma warning disable CS8618, CS8625, CS8600, CS8632, CS0067
 
 namespace Sockseek.Core.Services
 {
-    public partial class LocalFilesSoulseekClient : ISoulseekClient
+    public partial class LocalFilesSoulseekClient : ISoulseekClient, IPeerDirectorySource
     {
         public IReadOnlyCollection<Transfer> Downloads => throw new NotImplementedException();
 
@@ -166,6 +168,16 @@ namespace Sockseek.Core.Services
                 ));
 
             return new BrowseResponse(directories);
+        }
+
+        public async Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+            PeerDirectoryIdentity directory,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await BrowseAsync(
+                directory.Username,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return PeerDirectorySnapshotFactory.FromBrowseResponse(directory, response);
         }
 
         public Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsync(SearchQuery query, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)

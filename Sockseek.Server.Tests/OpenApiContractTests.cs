@@ -15,150 +15,162 @@ namespace Tests.Server;
 public class OpenApiContractTests
 {
     [TestMethod]
-    public async Task OpenApiDocument_ContainsCoreServerContractSchemas()
+    public void OpenApiDocument_ContainsCoreServerContractSchemas()
     {
-        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-openapi-test-" + Guid.NewGuid());
-        string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-openapi-out-" + Guid.NewGuid());
-        Directory.CreateDirectory(musicRoot);
-        Directory.CreateDirectory(outputDir);
+        string documentPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "docs", "openapi.json"));
+        Assert.IsTrue(File.Exists(documentPath), $"Generated OpenAPI document was not found at {documentPath}.");
+        using FileStream stream = File.OpenRead(documentPath);
+        using JsonDocument document = JsonDocument.Parse(stream);
+        var json = document.RootElement.GetRawText();
 
-        int port = GetFreeTcpPort();
-        string url = $"http://127.0.0.1:{port}";
-        await using var app = ServerHost.Build([], new ServerOptions
+        var version = document.RootElement
+            .GetProperty("info")
+            .GetProperty("version")
+            .GetString();
+
+        Assert.AreEqual(ExpectedOpenApiVersion(), version);
+
+        StringAssert.Contains(json, nameof(JobSummaryDto));
+        StringAssert.Contains(json, nameof(SubmitAlbumJobRequestDto));
+        StringAssert.Contains(json, nameof(AlbumJobPayloadDto));
+        StringAssert.Contains(json, nameof(RemoteFileJobPayloadDto));
+        StringAssert.Contains(json, nameof(RemoteDirectoryJobPayloadDto));
+        StringAssert.Contains(json, nameof(PeerFileTargetDto));
+        StringAssert.Contains(json, nameof(DirectoryTransferPlanDto));
+        StringAssert.Contains(json, nameof(FileCandidateDto));
+        StringAssert.Contains(json, nameof(FileMetadataDto));
+        StringAssert.Contains(json, nameof(WorkflowTreeDto));
+        StringAssert.Contains(json, nameof(StateSnapshotDto));
+        StringAssert.Contains(json, nameof(ApiErrorDto));
+        StringAssert.Contains(json, nameof(SharingStateDto));
+        StringAssert.Contains(json, nameof(UploadRuntimeStateDto));
+        StringAssert.Contains(json, nameof(LiveTransferPageDto));
+        StringAssert.Contains(json, nameof(TransferDetailDto));
+        StringAssert.Contains(json, nameof(ChatMessageDto));
+        StringAssert.Contains(json, nameof(ConversationPageDto));
+        StringAssert.Contains(json, nameof(ChatRoomDetailDto));
+        StringAssert.Contains(json, nameof(NotificationPageDto));
+        StringAssert.Contains(json, nameof(UserProfileDto));
+        StringAssert.Contains(json, nameof(UserBrowseDto));
+        StringAssert.Contains(json, nameof(BrowseDirectoryEntryDto));
+        StringAssert.Contains(json, nameof(BrowseFileEntryDto));
+        StringAssert.Contains(json, nameof(StartUserShareDownloadsRequestDto));
+        StringAssert.Contains(json, "lifecycleState");
+        StringAssert.Contains(json, "activityPhase");
+        StringAssert.Contains(json, "terminalOutcome");
+        StringAssert.Contains(json, "discriminator");
+        StringAssert.Contains(json, "kind");
+        StringAssert.Contains(json, "requestedMode");
+        StringAssert.Contains(json, "exactTarget");
+        StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteFile);
+        StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteDirectory);
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/daemon/snapshot", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/workflows/{workflowId}/snapshot", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/jobs/cancel-all", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/sharing", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/sharing/scans", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/transfers/live", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/transfers/{transferId}/cancel", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/chat/conversations", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/chat/private-messages", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/chat/rooms/{roomId}/members", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/notifications/read", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/users/{username}/profile", out _));
+        JsonElement refreshParameter = document.RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/users/{username}/profile")
+            .GetProperty("get")
+            .GetProperty("parameters")
+            .EnumerateArray()
+            .Single(parameter => parameter.GetProperty("name").GetString() == "refresh");
+        Assert.IsTrue(
+            !refreshParameter.TryGetProperty("required", out JsonElement required)
+            || !required.GetBoolean());
+        Assert.IsFalse(refreshParameter
+            .GetProperty("schema")
+            .GetProperty("default")
+            .GetBoolean());
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/users/{username}/picture", out _));
+        string[] pictureContentTypes = document.RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/users/{username}/picture")
+            .GetProperty("get")
+            .GetProperty("responses")
+            .GetProperty("200")
+            .GetProperty("content")
+            .EnumerateObject()
+            .Select(content => content.Name)
+            .ToArray();
+        CollectionAssert.AreEquivalent(
+            new[] { "image/jpeg", "image/png", "image/gif", "image/webp" },
+            pictureContentTypes);
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/users/{username}/browses", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/user-browses/{browseId}/directories", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/user-browses/{browseId}/downloads", out _));
+        foreach (JsonProperty path in document.RootElement.GetProperty("paths").EnumerateObject()
+                     .Where(item => item.Name.StartsWith("/api/chat", StringComparison.Ordinal)
+                                    || item.Name.StartsWith("/api/notifications", StringComparison.Ordinal)))
         {
-            Engine = new EngineSettings
+            foreach (JsonProperty operation in path.Value.EnumerateObject()
+                         .Where(item => item.Name is "get" or "post" or "delete" or "put" or "patch"))
             {
-                MockFilesDir = musicRoot,
-                MockFilesReadTags = false,
-            },
-            DefaultDownload = new DownloadSettings
-            {
-                Output =
-                {
-                    ParentDir = outputDir,
-                },
-            },
-            Profiles = ProfileCatalog.Empty,
-        }, url);
-
-        try
-        {
-            await app.StartAsync();
-            using var http = new HttpClient { BaseAddress = new Uri(url) };
-            using var response = await http.GetAsync("/api/openapi.json");
-
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var document = await JsonDocument.ParseAsync(stream);
-            var json = document.RootElement.GetRawText();
-
-            var version = document.RootElement
-                .GetProperty("info")
-                .GetProperty("version")
-                .GetString();
-
-            Assert.AreEqual(ExpectedOpenApiVersion(), version);
-
-            StringAssert.Contains(json, nameof(JobSummaryDto));
-            StringAssert.Contains(json, nameof(SubmitAlbumJobRequestDto));
-            StringAssert.Contains(json, nameof(AlbumJobPayloadDto));
-            StringAssert.Contains(json, nameof(RemoteFileJobPayloadDto));
-            StringAssert.Contains(json, nameof(RemoteDirectoryJobPayloadDto));
-            StringAssert.Contains(json, nameof(PeerFileTargetDto));
-            StringAssert.Contains(json, nameof(DirectoryTransferPlanDto));
-            StringAssert.Contains(json, nameof(FileCandidateDto));
-            StringAssert.Contains(json, nameof(FileMetadataDto));
-            StringAssert.Contains(json, nameof(WorkflowTreeDto));
-            StringAssert.Contains(json, nameof(StateSnapshotDto));
-            StringAssert.Contains(json, nameof(ApiErrorDto));
-            StringAssert.Contains(json, nameof(SharingStateDto));
-            StringAssert.Contains(json, nameof(UploadRuntimeStateDto));
-            StringAssert.Contains(json, nameof(LiveTransferPageDto));
-            StringAssert.Contains(json, nameof(TransferDetailDto));
-            StringAssert.Contains(json, nameof(ChatMessageDto));
-            StringAssert.Contains(json, nameof(ConversationPageDto));
-            StringAssert.Contains(json, nameof(ChatRoomDetailDto));
-            StringAssert.Contains(json, nameof(NotificationPageDto));
-            StringAssert.Contains(json, "lifecycleState");
-            StringAssert.Contains(json, "activityPhase");
-            StringAssert.Contains(json, "terminalOutcome");
-            StringAssert.Contains(json, "discriminator");
-            StringAssert.Contains(json, "kind");
-            StringAssert.Contains(json, "requestedMode");
-            StringAssert.Contains(json, "exactTarget");
-            StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteFile);
-            StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteDirectory);
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/daemon/snapshot", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/workflows/{workflowId}/snapshot", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/jobs/cancel-all", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/sharing", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/sharing/scans", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/transfers/live", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/transfers/{transferId}/cancel", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/chat/conversations", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/chat/private-messages", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/chat/rooms/{roomId}/members", out _));
-            Assert.IsTrue(document.RootElement
-                .GetProperty("paths")
-                .TryGetProperty("/api/notifications/read", out _));
-            foreach (JsonProperty path in document.RootElement.GetProperty("paths").EnumerateObject()
-                         .Where(item => item.Name.StartsWith("/api/chat", StringComparison.Ordinal)
-                                        || item.Name.StartsWith("/api/notifications", StringComparison.Ordinal)))
-            {
-                foreach (JsonProperty operation in path.Value.EnumerateObject()
-                             .Where(item => item.Name is "get" or "post" or "delete" or "put" or "patch"))
-                {
-                    string[] responses = operation.Value.GetProperty("responses")
-                        .EnumerateObject().Select(item => item.Name).ToArray();
-                    Assert.IsTrue(
-                        responses.Any(code => code.StartsWith('2')),
-                        $"{operation.Name.ToUpperInvariant()} {path.Name} has no documented success response.");
-                    foreach (string code in new[] { "400", "403", "404", "409", "429", "503" })
-                        CollectionAssert.Contains(responses, code, $"{operation.Name.ToUpperInvariant()} {path.Name}");
-                }
+                string[] responses = operation.Value.GetProperty("responses")
+                    .EnumerateObject().Select(item => item.Name).ToArray();
+                Assert.IsTrue(
+                    responses.Any(code => code.StartsWith('2')),
+                    $"{operation.Name.ToUpperInvariant()} {path.Name} has no documented success response.");
+                foreach (string code in new[] { "400", "403", "404", "409", "429", "503" })
+                    CollectionAssert.Contains(responses, code, $"{operation.Name.ToUpperInvariant()} {path.Name}");
             }
-            Assert.IsFalse(json.Contains("ServerEventEnvelopeDto", StringComparison.Ordinal));
+        }
+        Assert.IsFalse(json.Contains("ServerEventEnvelopeDto", StringComparison.Ordinal));
 
-            var jobListParameterNames = document.RootElement
-                .GetProperty("paths")
-                .GetProperty("/api/jobs")
-                .GetProperty("get")
-                .GetProperty("parameters")
-                .EnumerateArray()
-                .Select(parameter => parameter.GetProperty("name").GetString())
-                .ToList();
-            CollectionAssert.Contains(jobListParameterNames, "lifecycleState");
-            CollectionAssert.Contains(jobListParameterNames, "terminalOutcome");
-            Assert.IsFalse(jobListParameterNames.Contains("state"), "/api/jobs should not expose the old flattened state filter.");
-        }
-        finally
-        {
-            await app.StopAsync();
-            if (Directory.Exists(musicRoot))
-                Directory.Delete(musicRoot, recursive: true);
-            if (Directory.Exists(outputDir))
-                Directory.Delete(outputDir, recursive: true);
-        }
+        var jobListParameterNames = document.RootElement
+            .GetProperty("paths")
+            .GetProperty("/api/jobs")
+            .GetProperty("get")
+            .GetProperty("parameters")
+            .EnumerateArray()
+            .Select(parameter => parameter.GetProperty("name").GetString())
+            .ToList();
+        CollectionAssert.Contains(jobListParameterNames, "lifecycleState");
+        CollectionAssert.Contains(jobListParameterNames, "terminalOutcome");
+        Assert.IsFalse(jobListParameterNames.Contains("state"), "/api/jobs should not expose the old flattened state filter.");
     }
 
     [TestMethod]

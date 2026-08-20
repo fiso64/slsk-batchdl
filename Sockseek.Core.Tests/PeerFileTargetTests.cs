@@ -56,12 +56,12 @@ public sealed class PeerFileTargetTests
     public void FileCandidate_LiveAndPersistedAdaptersCreateEquivalentTargets()
     {
         var attribute = new Soulseek.FileAttribute(Soulseek.FileAttributeType.Length, 123);
-        var file = new Soulseek.File(1, @"Music\Track.flac", 42, ".flac", [attribute]);
+        var file = new Soulseek.File(1, "Music\\Track\u001B.flac", 42, ".flac", [attribute]);
         var response = new Soulseek.SearchResponse("Peer", 7, true, 1000, 0, [file]);
         var live = SoulseekSearchAdapter.ToFileCandidate(response, file);
         var persisted = new FileCandidate(
             new PeerFileTarget(
-                new PeerFileIdentity("Peer", @"Music\Track.flac"),
+                new PeerFileIdentity("Peer", "Music\\Track\u001B.flac"),
                 42,
                 ".flac",
                 file.BitRate,
@@ -92,12 +92,24 @@ public sealed class PeerFileTargetTests
     }
 
     [TestMethod]
-    public void Identity_RejectsEmptyControlInvalidUnicodeAndOversizeValues()
+    public void Identity_RejectsInvalidLocalInputButAllowsExactRemoteControls()
     {
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("", "file"));
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("peer\n", "file"));
-        Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("peer", "file\0"));
         Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("\ud800", "file"));
+        Assert.ThrowsExactly<ArgumentException>(() => new PeerFileIdentity("peer", "file\ud800"));
+
+        var identity = new PeerFileIdentity("peer", "file\0\u001B\n.bin");
+
+        Assert.AreEqual("file\0\u001B\n.bin", identity.Filename);
+    }
+
+    [TestMethod]
+    public void RemoteDisplayText_MakesControlsAndBidiFormattingVisible()
+    {
+        string display = PeerIdentityValidator.ToDisplayText("a\0\t\n\u001B\u007F\u0085\u202Eb");
+
+        Assert.AreEqual("a␀␉␊␛␡<U+0085><U+202E>b", display);
     }
 
     [TestMethod]

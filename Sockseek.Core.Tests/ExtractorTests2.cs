@@ -210,6 +210,20 @@ namespace Tests.ExtractorTests2
             Assert.AreEqual(@"Music\folder\track.mp3", remote.Target.Filename);
         }
 
+        [TestMethod]
+        public async Task GetTracks_EncodedControlInRemotePath_PreservesExactDecodedIdentity()
+        {
+            var extractor = new SoulseekExtractor();
+            var config = TestHelpers.CreateDefaultSettings().Download;
+
+            Job result = await extractor.GetTracks(
+                "slsk://myuser/Music/folder/track%1B%0A.mp3",
+                config.Extraction);
+
+            var remote = (RemoteFileJob)result;
+            Assert.AreEqual("Music\\folder\\track\u001B\n.mp3", remote.Target.Filename);
+        }
+
         [DataTestMethod]
         [DataRow("slsk:///bad")]
         [DataRow("slsk://local/")]
