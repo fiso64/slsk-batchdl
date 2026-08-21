@@ -1,20 +1,35 @@
 <script lang="ts">
   import type { SearchDraft } from '../prototype/search';
+  import type { UserBrowseDraft } from '../prototype/users';
   import {
     cloneSearchConditions,
     createPrototypeSearchConditions,
+    hasAppliedConditions,
     type PrototypeSearchConditions,
   } from '../prototype/search-config';
   import SearchConditionPills from './SearchConditionPills.svelte';
+  import Icon from './Icon.svelte';
   import SearchConfigPanel from './SearchConfigPanel.svelte';
 
   interface Props {
+    variant?: 'content' | 'user';
     value: SearchDraft;
+    userValue: UserBrowseDraft;
     onchange: (value: SearchDraft) => void;
     onsubmit: (value: SearchDraft, conditions: PrototypeSearchConditions) => void;
+    onuserchange: (value: UserBrowseDraft) => void;
+    onusersubmit: (value: UserBrowseDraft) => void;
   }
 
-  let { value, onchange, onsubmit }: Props = $props();
+  let {
+    variant = 'content',
+    value,
+    userValue,
+    onchange,
+    onsubmit,
+    onuserchange,
+    onusersubmit,
+  }: Props = $props();
   let suppressAutoSplit = $state(false);
   let settingsOpen = $state(false);
   let searchEngaged = $state(false);
@@ -41,6 +56,14 @@
 
   function toggleResultMode(): void {
     onchange({ ...value, resultMode: value.resultMode === 'album' ? 'track' : 'album' });
+  }
+
+  function toggleUserBrowseMode(): void {
+    onuserchange({ ...userValue, mode: userValue.mode === 'user' ? 'shares' : 'user' });
+  }
+
+  function setUserQuery(query: string): void {
+    onuserchange({ ...userValue, query });
   }
 
   function toggleSettings(): void {
@@ -100,6 +123,10 @@
     if (event.key === 'Enter') onsubmit(value, cloneSearchConditions(conditions));
   }
 
+  function submitUserOnEnter(event: KeyboardEvent): void {
+    if (event.key === 'Enter') onusersubmit(userValue);
+  }
+
   function focusSearch(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
     const editing = target?.matches('input, textarea, select, [contenteditable="true"]');
@@ -110,29 +137,16 @@
     }
     if (event.key !== '/' || editing) return;
     event.preventDefault();
+    if (variant === 'user') {
+      document.querySelector<HTMLInputElement>('#global-user-search')?.focus();
+      return;
+    }
     document.querySelector<HTMLInputElement>(value.mode === 'split' ? '#global-search-artist' : '#global-search-simple')?.focus();
   }
 
-  let hasAppliedConditions = $derived.by(() => Boolean(
-    conditions.common.formats.length
-      || conditions.common.minBitrate
-      || conditions.common.maxBitrate
-      || conditions.common.sampleRate
-      || conditions.common.bitDepth
-      || conditions.common.strictArtist
-      || conditions.common.rejectUnknownMetadata
-      || conditions.common.allowedUsers.trim()
-      || conditions.common.bannedUsers.trim()
-      || (value.resultMode === 'track'
-        ? conditions.track.strictTitle || conditions.track.expectedLength
-        : conditions.album.strictAlbum
-          || conditions.album.minTrackCount
-          || conditions.album.maxTrackCount
-          || conditions.album.requiredTrackTitles.length
-          || conditions.album.strictAlbumQuality),
-  ));
+  let hasNecessaryConditions = $derived(hasAppliedConditions(value.resultMode, conditions));
 
-  let conditionOverlayVisible = $derived((searchEngaged || settingsOpen) && hasAppliedConditions);
+  let conditionOverlayVisible = $derived(variant === 'content' && (searchEngaged || settingsOpen) && hasNecessaryConditions);
 
   function handleWindowPointerDown(event: PointerEvent): void {
     if (!searchEngaged && !settingsOpen) return;
@@ -155,78 +169,106 @@
 
 <svelte:window onkeydown={focusSearch} onpointerdown={handleWindowPointerDown} />
 
-<div class="global-search" aria-label="Global Sockseek search" bind:this={searchRoot}>
+<div class="global-search" aria-label={variant === 'user' ? 'Browse Soulseek user' : 'Global Sockseek search'} bind:this={searchRoot}>
   <div class="search-controls-row" bind:this={searchControlsRow}>
-    <div class="search-entry" onfocusin={() => (searchEngaged = true)}>
-      {#if value.mode === 'simple'}
-        <div class="search-bar simple">
-          <span class="search-glyph" aria-hidden="true">⌕</span>
+    {#if variant === 'user'}
+      <div class="search-entry">
+        <div class="search-bar simple user-browser-global-search">
+          <span class="search-glyph" aria-hidden="true"><Icon name="user" /></span>
           <input
-            id="global-search-simple"
-            value={value.query}
-            placeholder="Search Soulseek…"
+            id="global-user-search"
+            value={userValue.query}
+            placeholder="Browse username…"
             autocomplete="off"
             spellcheck="false"
-            aria-label="Search Soulseek"
-            oninput={handleSimpleInput}
-            onkeydown={submitOnEnter}
+            aria-label="Browse Soulseek username"
+            oninput={(event) => setUserQuery((event.currentTarget as HTMLInputElement).value)}
+            onkeydown={submitUserOnEnter}
           />
           <span class="search-shortcut" aria-hidden="true">/</span>
-          <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
         </div>
-      {:else}
-        <div class="search-bar split">
-          <label class="search-field">
-            <span>artist</span>
-            <input
-              id="global-search-artist"
-              value={value.artist}
-              placeholder="artist…"
-              autocomplete="off"
-              spellcheck="false"
-              oninput={(event) => setSplit((event.currentTarget as HTMLInputElement).value, value.title)}
-              onkeydown={(event) => { handleArtistKeydown(event); submitOnEnter(event); }}
-            />
-          </label>
-          <span class="search-divider" aria-hidden="true"></span>
-          <label class="search-field">
-            <span>{value.resultMode === 'album' ? 'album' : 'track'}</span>
-            <input
-              id="global-search-title"
-              value={value.title}
-              placeholder={value.resultMode === 'album' ? 'album…' : 'track…'}
-              autocomplete="off"
-              spellcheck="false"
-              oninput={(event) => setSplit(value.artist, (event.currentTarget as HTMLInputElement).value)}
-              onkeydown={(event) => { handleTitleKeydown(event); submitOnEnter(event); }}
-            />
-          </label>
-          <button type="button" class="search-mode-button" onclick={merge}>merge</button>
-        </div>
-      {/if}
+      </div>
 
-      {#if conditionOverlayVisible}
-        <section class="search-focus-overlay" aria-label="Applied search conditions" bind:clientHeight={conditionOverlayHeight}>
-          <div class="search-condition-pills">
-            <SearchConditionPills mode={value.resultMode} bind:conditions />
+      <button
+        type="button"
+        class="search-result-mode-button user-browse-mode-button"
+        aria-label={`Switch browse request to ${userValue.mode === 'user' ? 'shares' : 'user'}`}
+        onclick={toggleUserBrowseMode}
+      >
+        {userValue.mode === 'user' ? 'User' : 'Shares'}
+      </button>
+    {:else}
+      <div class="search-entry" onfocusin={() => (searchEngaged = true)}>
+        {#if value.mode === 'simple'}
+          <div class="search-bar simple">
+            <span class="search-glyph" aria-hidden="true"><Icon name="search" /></span>
+            <input
+              id="global-search-simple"
+              value={value.query}
+              placeholder="Search Soulseek…"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Search Soulseek"
+              oninput={handleSimpleInput}
+              onkeydown={submitOnEnter}
+            />
+            <span class="search-shortcut" aria-hidden="true">/</span>
+            <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
           </div>
-          <!-- Future online metadata suggestions render here beneath condition pills. -->
-        </section>
-      {/if}
-    </div>
+        {:else}
+          <div class="search-bar split">
+            <label class="search-field">
+              <span>artist</span>
+              <input
+                id="global-search-artist"
+                value={value.artist}
+                placeholder="artist…"
+                autocomplete="off"
+                spellcheck="false"
+                oninput={(event) => setSplit((event.currentTarget as HTMLInputElement).value, value.title)}
+                onkeydown={(event) => { handleArtistKeydown(event); submitOnEnter(event); }}
+              />
+            </label>
+            <span class="search-divider" aria-hidden="true"></span>
+            <label class="search-field">
+              <span>{value.resultMode === 'album' ? 'album' : 'track'}</span>
+              <input
+                id="global-search-title"
+                value={value.title}
+                placeholder={value.resultMode === 'album' ? 'album…' : 'track…'}
+                autocomplete="off"
+                spellcheck="false"
+                oninput={(event) => setSplit(value.artist, (event.currentTarget as HTMLInputElement).value)}
+                onkeydown={(event) => { handleTitleKeydown(event); submitOnEnter(event); }}
+              />
+            </label>
+            <button type="button" class="search-mode-button" onclick={merge}>merge</button>
+          </div>
+        {/if}
 
-    <button type="button" class="search-result-mode-button" aria-label={`Switch to ${value.resultMode === 'album' ? 'track' : 'album'} search`} onclick={toggleResultMode}>
-      {value.resultMode === 'album' ? 'Album' : 'Track'}
-    </button>
+        {#if conditionOverlayVisible}
+          <section class="search-focus-overlay" aria-label="Applied search conditions" bind:clientHeight={conditionOverlayHeight}>
+            <div class="search-condition-pills">
+              <SearchConditionPills mode={value.resultMode} bind:conditions />
+            </div>
+            <!-- Future online metadata suggestions render here beneath condition pills. -->
+          </section>
+        {/if}
+      </div>
 
-    <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}>•••</button>
+      <button type="button" class="search-result-mode-button" aria-label={`Switch to ${value.resultMode === 'album' ? 'track' : 'album'} search`} onclick={toggleResultMode}>
+        {value.resultMode === 'album' ? 'Album' : 'Track'}
+      </button>
+
+      <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}>•••</button>
+    {/if}
   </div>
 
-  {#if conditionOverlayVisible || settingsOpen}
+  {#if variant === 'content' && (conditionOverlayVisible || settingsOpen)}
     <button class="search-focus-backdrop" type="button" tabindex="-1" aria-label="Close focused search" onclick={dismissFocusedSearch}></button>
   {/if}
 
-  {#if settingsOpen}
+  {#if variant === 'content' && settingsOpen}
     <section class="search-config-popover" aria-label="Search configuration" style={`top: ${54 + 8 + (conditionOverlayVisible ? conditionOverlayHeight + 8 : 0)}px`}>
       <SearchConfigPanel mode={value.resultMode} bind:conditions onclose={() => (settingsOpen = false)} />
     </section>

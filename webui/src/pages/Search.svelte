@@ -1,7 +1,15 @@
 <script lang="ts">
   import SearchConditionPills from '../components/SearchConditionPills.svelte';
+  import ResultFilterControl from '../components/ResultFilterControl.svelte';
+  import SelectionToolbar from '../components/SelectionToolbar.svelte';
+  import FileItemCard from '../components/items/FileItemCard.svelte';
+  import FolderItemCard from '../components/items/FolderItemCard.svelte';
+  import PeerItemGroup from '../components/items/PeerItemGroup.svelte';
   import SearchConfigPanel from '../components/SearchConfigPanel.svelte';
-  import type { PrototypeSearchConditions } from '../prototype/search-config';
+  import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
+  import Icon from '../components/Icon.svelte';
+  import { groupAdjacentBy } from '../prototype/grouping';
+  import { basename, extension } from '../prototype/items';
   import type { SearchDraft } from '../prototype/search';
   import {
     albumResults,
@@ -23,6 +31,7 @@
     view: SearchView;
     activeSearchId: string | null;
     onusequery: (search: SearchDraft) => void;
+    onopenuser: (username: string) => void;
   }
 
   let {
@@ -31,13 +40,13 @@
     view = $bindable(),
     activeSearchId = $bindable(),
     onusequery,
+    onopenuser,
   }: Props = $props();
 
   let filterText = $state('');
   let sort = $state<SearchSort>('relevance');
   let sizeDirection = $state<SizeSortDirection>('desc');
   let selected = $state<Set<string>>(new Set());
-  let collapsedPeers = $state<Set<string>>(new Set());
   let conditionsOpen = $state(false);
 
   let activeRecord = $derived(searches.find((item) => item.id === activeSearchId) ?? null);
@@ -49,7 +58,6 @@
     filterText = '';
     sort = 'relevance';
     selected = new Set();
-    collapsedPeers = new Set();
     conditionsOpen = false;
     onusequery(record.draft);
   }
@@ -65,41 +73,6 @@
     if (status === 'searching') return 'Searching';
     if (status === 'receiving') return 'Receiving';
     return 'Complete';
-  }
-
-  function basename(path: string): string {
-    return path.split('/').at(-1) ?? path;
-  }
-
-  function extension(path: string): string {
-    const name = basename(path);
-    const dot = name.lastIndexOf('.');
-    return dot >= 0 ? name.slice(dot + 1).toUpperCase() : '';
-  }
-
-  function formatBytes(bytes: number): string {
-    if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
-    return `${(bytes / 1_000_000).toFixed(bytes >= 100_000_000 ? 0 : 1)} MB`;
-  }
-
-  function formatLength(seconds?: number): string {
-    if (seconds === undefined) return '—';
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
-  }
-
-  function sampleRateLabel(hz?: number): string {
-    if (!hz) return '—';
-    return hz % 1000 === 0 ? `${hz / 1000} kHz` : `${(hz / 1000).toFixed(1)} kHz`;
-  }
-
-  function audioSummary(audio?: AudioAttributes): string {
-    if (!audio) return '—';
-    const parts: string[] = [];
-    if (audio.bitDepth) parts.push(`${audio.bitDepth}-bit`);
-    if (audio.sampleRateHz) parts.push(sampleRateLabel(audio.sampleRateHz));
-    if (audio.bitrateKbps) parts.push(`${audio.bitrateKbps} kbps`);
-    return parts.length ? parts.join(' · ') : '—';
   }
 
   function csv(value: string): string[] {
@@ -192,16 +165,16 @@
   }
 
   function groupAdjacent(results: ProjectedSearchResult[]): PeerGroup[] {
-    const groups: PeerGroup[] = [];
-    for (const result of results) {
-      const previous = groups.at(-1);
-      if (previous && previous.peer.username === result.peer.username && (sort !== 'relevance' || previous.preferred === result.preferred)) {
-        previous.items.push(result);
-      } else {
-        groups.push({ key: `${result.preferred ? 'preferred' : 'other'}-${result.peer.username}-${groups.length}`, peer: result.peer, preferred: result.preferred, items: [result] });
-      }
-    }
-    return groups;
+    return groupAdjacentBy(
+      results,
+      (result) => `${sort === 'relevance' ? (result.preferred ? 'preferred' : 'other') : 'all'}:${result.peer.username}`,
+      `${activeSearchId ?? 'search'}:`,
+    ).map((group) => ({
+      key: group.key,
+      peer: group.items[0]!.peer,
+      preferred: group.items[0]!.preferred,
+      items: group.items,
+    }));
   }
 
   function selectedKey(result: TrackSearchResult): string {
@@ -221,6 +194,10 @@
     return count > 0 && count < album.files.length;
   }
 
+
+  function selectedFileIdsForAlbum(album: AlbumSearchResult): Set<string> {
+    return new Set(album.files.filter((file) => selected.has(selectedAlbumFileKey(album, file))).map((file) => file.id));
+  }
   function indeterminate(node: HTMLInputElement, value: boolean) {
     node.indeterminate = value;
     return {
@@ -267,17 +244,6 @@
       else next.delete(key);
     }
     selected = next;
-  }
-
-  function togglePeer(key: string): void {
-    const next = new Set(collapsedPeers);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    collapsedPeers = next;
-  }
-
-  function peerGroupFileCount(group: PeerGroup): number {
-    return group.items.reduce((total, item) => total + (item.kind === 'album' ? item.files.length : 1), 0);
   }
 
   function tierGroups(groups: PeerGroup[], preferred: boolean): PeerGroup[] {
@@ -346,78 +312,59 @@
         <span>{activeRecord.lockedFiles} locked</span>
         <span>{activeRecord.distinctPeers} peers</span>
       </div>
+      <button type="button" class="delete-search-button" aria-label={`Delete ${activeRecord.displayQuery}`} title="Delete search" onclick={() => removeSearch(activeRecord.id)}>
+        <Icon name="trash" />
+        <span>Delete</span>
+      </button>
     </header>
 
-    <div class="result-refine-row">
-      <label class="result-filter-control">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="4.5"/><path d="M12 12l4 4"/></svg>
-        <input bind:value={filterText} placeholder="Filter results…" aria-label="Filter search results" />
-        {#if filterText}
-          <button type="button" aria-label="Clear result filter" onclick={() => (filterText = '')}>×</button>
-        {/if}
-      </label>
+    <div class="result-refine-wrap">
+      <div class="result-refine-row">
+        <ResultFilterControl bind:value={filterText} placeholder="Filter results…" ariaLabel="Filter search results" />
 
-      <div class="result-sort-control">
-        <label for="result-sort">Sort</label>
-        <select id="result-sort" bind:value={sort}>
-          <option value="relevance">Relevance</option>
-          <option value="speed">Upload speed</option>
-          <option value="queue">Queue depth</option>
-          <option value="size">Item size</option>
-        </select>
-        {#if sort === 'size'}
-          <button type="button" class="size-direction-button" aria-label="Reverse item size sort" onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
-            <svg class:ascending={sizeDirection === 'asc'} viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M6 8l4-4 4 4" /></svg>
-          </button>
-        {/if}
-      </div>
-    </div>
-
-    <div class="result-conditions-wrap">
-      <div class="result-conditions-bar">
-        <span class="result-conditions-label">Conditions</span>
-        <div class="result-condition-pills">
-          <SearchConditionPills mode={activeMode} bind:conditions={activeRecord.conditions} />
+        <div class="result-sort-control">
+          <label for="result-sort">Sort</label>
+          <select id="result-sort" bind:value={sort}>
+            <option value="relevance">Relevance</option>
+            <option value="speed">Upload speed</option>
+            <option value="queue">Queue depth</option>
+            <option value="size">Item size</option>
+          </select>
+          {#if sort === 'size'}
+            <button type="button" class="size-direction-button" aria-label="Reverse item size sort" onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
+              <svg class:ascending={sizeDirection === 'asc'} viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M6 8l4-4 4 4" /></svg>
+            </button>
+          {/if}
         </div>
+
         <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
-          Edit
+          Conditions
         </button>
       </div>
 
+      {#if hasAppliedConditions(activeMode, activeRecord.conditions)}
+        <div class="result-condition-pills">
+          <SearchConditionPills mode={activeMode} bind:conditions={activeRecord.conditions} />
+        </div>
+      {/if}
+
       {#if conditionsOpen}
         <button type="button" class="results-config-backdrop" aria-label="Close search configuration" onclick={() => (conditionsOpen = false)}></button>
-        <section class="search-config-popover results-config-popover" aria-label="Result conditions">
-          <SearchConfigPanel mode={activeMode} bind:conditions={activeRecord.conditions} title="Result conditions" onclose={() => (conditionsOpen = false)} />
+        <section class="search-config-popover results-config-popover" aria-label="Result search configuration">
+          <SearchConfigPanel mode={activeMode} bind:conditions={activeRecord.conditions} title="Search configuration" initialTab="conditions" onclose={() => (conditionsOpen = false)} />
         </section>
       {/if}
     </div>
 
-    <div class="results-list-toolbar">
-      <label class="select-visible-control">
-        <input
-          type="checkbox"
-          checked={allVisibleSelected(visibleResults)}
-          onchange={(event) => toggleVisible(visibleResults, (event.currentTarget as HTMLInputElement).checked)}
-        />
-        <span>{visibleResults.length} visible</span>
-      </label>
-
-      {#if selected.size}
-        <div class="selection-actions">
-          <strong>{selected.size} selected</strong>
-          <button type="button" class="primary-selection-action">
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9M6.5 8.5L10 12l3.5-3.5M4 15.5h12" /></svg>
-            Download selected
-          </button>
-          <button type="button" class="icon-button" aria-label="Clear selection" onclick={() => (selected = new Set())}>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
-          </button>
-        </div>
-      {:else}
-        <button type="button" class="quiet-action" onclick={() => selectVisible(visibleResults)}>Select visible</button>
-      {/if}
-    </div>
+    <SelectionToolbar
+      visibleLabel={`${visibleResults.length} visible`}
+      selectedCount={selected.size}
+      allVisibleSelected={allVisibleSelected(visibleResults)}
+      ontogglevisible={(checked) => toggleVisible(visibleResults, checked)}
+      onselectvisible={() => selectVisible(visibleResults)}
+      onclear={() => (selected = new Set())}
+    />
 
     {#if visibleResults.length === 0}
       <div class="search-results-empty">
@@ -456,78 +403,39 @@
         {/each}
       </div>
     {/if}
+
   {/if}
 </section>
 
 {#snippet peerGroup(group: PeerGroup)}
-  <section class:preferred={group.preferred && sort === 'relevance'} class="result-peer-group">
-    <button type="button" class="result-peer-header" aria-expanded={!collapsedPeers.has(group.key)} onclick={() => togglePeer(group.key)}>
-      <svg class:collapsed={collapsedPeers.has(group.key)} class="peer-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l6 5-6 5" /></svg>
-      <span class="peer-identity">
-        <strong>{group.peer.username}</strong>
-        <span class:available={group.peer.freeUploadSlot} class="peer-slot"><i></i>{group.peer.freeUploadSlot ? 'Free slot' : 'No free slot'}</span>
-      </span>
-      <span class="peer-stat peer-upload-stat"><b>{group.peer.uploadSpeedMbps.toFixed(1)} MB/s</b><small>upload</small></span>
-      <span class="peer-stat"><b>{group.peer.queueLength}</b><small>queued</small></span>
-      <span class="peer-stat peer-count-stat"><b>{peerGroupFileCount(group)}</b><small>{peerGroupFileCount(group) === 1 ? 'file' : 'files'}</small></span>
-    </button>
-
-    {#if !collapsedPeers.has(group.key)}
-      <div class="result-peer-items">
-        {#each group.items as result (result.id)}
-          {#if result.kind === 'track'}
-            <label class:locked={result.locked} class="track-result-row">
-              <input type="checkbox" checked={selected.has(selectedKey(result))} onchange={(event) => toggleSelection(selectedKey(result), (event.currentTarget as HTMLInputElement).checked)} aria-label={`Select ${basename(result.path)}`} />
-              <div class="result-path-block">
-                <div class="result-name-line">
-                  <strong>{basename(result.path)}</strong>
-                  {#if result.locked}<span class="locked-badge"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="9" width="10" height="8" rx="2"/><path d="M7 9V7a3 3 0 016 0v2"/></svg>Locked</span>{/if}
-                </div>
-                <small>{result.path}</small>
-              </div>
-              <div class="result-detail"><strong>{formatBytes(result.sizeBytes)}</strong></div>
-              <div class="result-detail audio-detail"><strong>{audioSummary(result.audio)}</strong></div>
-              <div class="result-detail"><strong>{formatLength(result.audio?.lengthSeconds)}</strong></div>
-            </label>
-          {:else}
-            <div class:locked={result.locked} class="album-result-block">
-              <label class="album-result-summary">
-                <input
-                  type="checkbox"
-                  checked={isAlbumFullySelected(result)}
-                  aria-label={`Select all files in ${basename(result.path)}`}
-                  use:indeterminate={isAlbumPartiallySelected(result)}
-                  onchange={(event) => toggleAlbum(result, (event.currentTarget as HTMLInputElement).checked)}
-                />
-                <div class="result-path-block">
-                  <div class="result-name-line">
-                    <strong>{basename(result.path)}</strong>
-                    {#if result.locked}<span class="locked-badge"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="9" width="10" height="8" rx="2"/><path d="M7 9V7a3 3 0 016 0v2"/></svg>Locked</span>{/if}
-                  </div>
-                  <small>{result.path}</small>
-                </div>
-                <div class="album-summary-stat"><strong>{result.files.length}</strong><small>files</small></div>
-                <div class="album-summary-stat"><strong>{formatBytes(result.sizeBytes)}</strong><small>total</small></div>
-              </label>
-
-              <div class="album-files-table">
-                {#each result.files as file (file.id)}
-                  <label class:locked={file.locked} class="album-file-row">
-                    <input type="checkbox" checked={selected.has(selectedAlbumFileKey(result, file))} onchange={(event) => toggleSelection(selectedAlbumFileKey(result, file), (event.currentTarget as HTMLInputElement).checked)} />
-                    <span class="album-file-path">
-                      <strong>{file.relativePath}</strong>
-                      {#if file.locked}<small>Locked</small>{/if}
-                    </span>
-                    <span class="album-file-audio">{audioSummary(file.audio)}</span>
-                    <span>{formatBytes(file.sizeBytes)}</span>
-                    <span>{formatLength(file.audio?.lengthSeconds)}</span>
-                  </label>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        {/each}
-      </div>
-    {/if}
-  </section>
+  <PeerItemGroup peer={group.peer} itemCount={group.items.length} {onopenuser}>
+    {#each group.items as result (result.id)}
+      {#if result.kind === 'track'}
+        <FileItemCard
+          path={result.path}
+          sizeBytes={result.sizeBytes}
+          audio={result.audio}
+          locked={result.locked}
+          selected={selected.has(selectedKey(result))}
+          preferred={group.preferred && sort === 'relevance'}
+          selectable
+          onselect={(checked) => toggleSelection(selectedKey(result), checked)}
+        />
+      {:else}
+        <FolderItemCard
+          path={result.path}
+          sizeBytes={result.sizeBytes}
+          files={result.files}
+          locked={result.locked}
+          selected={isAlbumFullySelected(result)}
+          partial={isAlbumPartiallySelected(result)}
+          preferred={group.preferred && sort === 'relevance'}
+          selectable
+          selectedFileIds={selectedFileIdsForAlbum(result)}
+          onselectall={(checked) => toggleAlbum(result, checked)}
+          onselectfile={(file, checked) => { const original = result.files.find((candidate) => candidate.id === file.id); if (original) toggleSelection(selectedAlbumFileKey(result, original), checked); }}
+        />
+      {/if}
+    {/each}
+  </PeerItemGroup>
 {/snippet}

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import UsernameLink from '../components/UsernameLink.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import { dashboardData, dashboardRangeIds, type DashboardRangeId } from '../prototype/dashboard';
 
-  interface Props { scenario: PrototypeScenario; }
-  let { scenario }: Props = $props();
+  interface Props { scenario: PrototypeScenario; onopenuser: (username: string) => void; }
+  let { scenario, onopenuser }: Props = $props();
 
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'peers' | 'content' | 'errors'>('peers');
@@ -156,7 +157,7 @@
           <div class="dashboard-ranking-table peers-table">
             <div class="dashboard-ranking-row heading"><span>#</span><span>Peer</span><span>Transferred</span><span>Files</span></div>
             {#each data.peers as peer, index}
-              <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={peer.peer}>{peer.peer}</span><span>{peer.transferred}</span><span>{peer.files}</span></div>
+              <div class="dashboard-ranking-row"><span>{index + 1}</span><span class="dashboard-peer-name"><UsernameLink username={peer.peer} {onopenuser} /></span><span>{peer.transferred}</span><span>{peer.files}</span></div>
             {/each}
           </div>
         {:else if rankingTab === 'content'}
@@ -192,9 +193,9 @@
       <section class="dashboard-panel recent-activity-panel">
         <div class="dashboard-panel-heading compact"><div><h2>Recent activity</h2><p>What the daemon has been doing</p></div><span class="live-indicator"><i></i>Live</span></div>
         <div class="activity-feed">
-          <div><i class="feed-icon download">↓</i><p><strong>Music Is Math.flac</strong><span>downloaded from nightshift</span></p><small>2m</small></div>
-          <div><i class="feed-icon upload">↑</i><p><strong>27 files uploaded</strong><span>to cassetteculture</span></p><small>8m</small></div>
-          <div><i class="feed-icon chat">○</i><p><strong>New message</strong><span>from tape_loop</span></p><small>14m</small></div>
+          <div><i class="feed-icon download">↓</i><p><strong>Music Is Math.flac</strong><span>downloaded from <UsernameLink username="nightshift" {onopenuser} /></span></p><small>2m</small></div>
+          <div><i class="feed-icon upload">↑</i><p><strong>27 files uploaded</strong><span>to <UsernameLink username="cassetteculture" {onopenuser} /></span></p><small>8m</small></div>
+          <div><i class="feed-icon chat">○</i><p><strong>New message</strong><span>from <UsernameLink username="tape_loop" {onopenuser} /></span></p><small>14m</small></div>
           <div><i class="feed-icon download">↓</i><p><strong>Xtal.flac</strong><span>download completed</span></p><small>31m</small></div>
         </div>
       </section>

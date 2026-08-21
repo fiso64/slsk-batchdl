@@ -1,5 +1,6 @@
 <script lang="ts">
   import { navigationItems, type PageId } from '../prototype/navigation';
+  import Icon from './Icon.svelte';
 
   interface Props {
     activePage: PageId;
@@ -29,7 +30,7 @@
       aria-current={item.id === activePage ? 'page' : undefined}
       onclick={() => onnavigate(item.id)}
     >
-      <span class="nav-icon" aria-hidden="true">{item.icon}</span>
+      <span class="nav-icon" aria-hidden="true"><Icon name={item.icon} /></span>
       <span class="nav-label">{item.label}</span>
       {#if count !== null && count > 0}
         <span class:unread={item.id === 'chat'} class="nav-count">{count}</span>

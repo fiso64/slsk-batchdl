@@ -28,19 +28,55 @@ export interface AlbumSearchConditions {
   strictAlbumQuality: boolean;
 }
 
+export interface CommonSearchRanking {
+  formats: string[];
+  minBitrate: string;
+  maxBitrate: string;
+  minSampleRate: string;
+  maxSampleRate: string;
+  minBitDepth: string;
+  maxBitDepth: string;
+  strictArtist: boolean;
+  allowedUsers: string;
+  bannedUsers: string;
+}
+
+export interface TrackSearchRanking {
+  strictTitle: boolean;
+  lengthTolerance: string;
+}
+
+export interface AlbumSearchRanking {
+  strictAlbum: boolean;
+}
+
+export interface SearchRankingPreferences {
+  common: CommonSearchRanking;
+  track: TrackSearchRanking;
+  album: AlbumSearchRanking;
+}
+
 export interface PrototypeSearchConditions {
   common: CommonSearchConditions;
   track: TrackSearchConditions;
   album: AlbumSearchConditions;
+  ranking: SearchRankingPreferences;
 }
 
 export function createPrototypeSearchConditions(): PrototypeSearchConditions {
-  // Keep the global search's initial pills visible without narrowing the mock
-  // result fixtures. These are the audio formats represented by the prototype
-  // data, so a fresh search still shows the complete fixture set.
-  const conditions = createEmptySearchConditions();
-  conditions.common.formats = ['FLAC', 'MP3', 'M4A', 'WAV'];
-  return conditions;
+  // Required conditions intentionally begin unrestricted. The explicit `All`
+  // format state communicates this in the UI without manufacturing a no-op pill.
+  // Ranking defaults mirror the documented pref-* defaults where they are useful
+  // to expose in the prototype, but ranking never filters results out.
+  const config = createEmptySearchConditions();
+  config.ranking.common.formats = ['MP3'];
+  config.ranking.common.minBitrate = '200';
+  config.ranking.common.maxBitrate = '2500';
+  config.ranking.common.maxSampleRate = '48000';
+  config.ranking.track.lengthTolerance = '3';
+  config.ranking.track.strictTitle = true;
+  config.ranking.album.strictAlbum = true;
+  return config;
 }
 
 export function createEmptySearchConditions(): PrototypeSearchConditions {
@@ -69,6 +105,31 @@ export function createEmptySearchConditions(): PrototypeSearchConditions {
       requiredTrackTitles: [],
       strictAlbumQuality: false,
     },
+    ranking: createEmptySearchRanking(),
+  };
+}
+
+export function createEmptySearchRanking(): SearchRankingPreferences {
+  return {
+    common: {
+      formats: [],
+      minBitrate: '',
+      maxBitrate: '',
+      minSampleRate: '',
+      maxSampleRate: '',
+      minBitDepth: '',
+      maxBitDepth: '',
+      strictArtist: false,
+      allowedUsers: '',
+      bannedUsers: '',
+    },
+    track: {
+      strictTitle: false,
+      lengthTolerance: '',
+    },
+    album: {
+      strictAlbum: false,
+    },
   };
 }
 
@@ -85,9 +146,16 @@ function csv(value: string): string[] {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function collectionOrNull(values: string[]): { replace: string[] } | null {
+  return values.length ? { replace: values } : null;
+}
+
 /**
- * Prototype seam showing how the user-facing controls can map onto the daemon API.
- * Exact sample rate / bit depth intentionally map to both min and max fields.
+ * Prototype seam showing how user-facing Conditions and Ranking controls map
+ * onto the daemon API. The Ranking tab intentionally follows the documented
+ * explicit pref-* help surface: album track-count / required-track-title / strict
+ * album-quality controls remain Conditions-only here even though the raw API has
+ * a generic preferredFolderCond patch seam.
  */
 export function toNecessarySearchPatch(
   resultMode: SearchResultMode,
@@ -108,25 +176,64 @@ export function toNecessarySearchPatch(
     strictArtist: conditions.common.strictArtist || null,
     strictTitle: resultMode === 'track' ? conditions.track.strictTitle || null : null,
     strictAlbum: resultMode === 'album' ? conditions.album.strictAlbum || null : null,
-    formats: conditions.common.formats.length ? { replace: conditions.common.formats } : null,
-    allowedUsers: allowedUsers.length ? { replace: allowedUsers } : null,
-    bannedUsers: bannedUsers.length ? { replace: bannedUsers } : null,
+    formats: collectionOrNull(conditions.common.formats),
+    allowedUsers: collectionOrNull(allowedUsers),
+    bannedUsers: collectionOrNull(bannedUsers),
     acceptNoLength: resultMode === 'track' ? conditions.track.acceptNoLength : null,
     acceptMissingProps: conditions.common.rejectUnknownMetadata ? false : null,
     lengthTolerance: resultMode === 'track' ? numberOrNull(conditions.track.lengthTolerance) : null,
   };
 
+  const ranking = conditions.ranking;
+  const preferredAllowedUsers = csv(ranking.common.allowedUsers);
+  const preferredBannedUsers = csv(ranking.common.bannedUsers);
+  const preferredCond: FileConditionsPatchDto = {
+    minBitrate: numberOrNull(ranking.common.minBitrate),
+    maxBitrate: numberOrNull(ranking.common.maxBitrate),
+    minSampleRate: numberOrNull(ranking.common.minSampleRate),
+    maxSampleRate: numberOrNull(ranking.common.maxSampleRate),
+    minBitDepth: numberOrNull(ranking.common.minBitDepth),
+    maxBitDepth: numberOrNull(ranking.common.maxBitDepth),
+    strictArtist: ranking.common.strictArtist || null,
+    strictTitle: resultMode === 'track' ? ranking.track.strictTitle || null : null,
+    strictAlbum: resultMode === 'album' ? ranking.album.strictAlbum || null : null,
+    formats: collectionOrNull(ranking.common.formats),
+    allowedUsers: collectionOrNull(preferredAllowedUsers),
+    bannedUsers: collectionOrNull(preferredBannedUsers),
+    lengthTolerance: resultMode === 'track' ? numberOrNull(ranking.track.lengthTolerance) : null,
+  };
+
   return {
     necessaryCond,
+    preferredCond,
     necessaryFolderCond: resultMode === 'album' ? {
       minTrackCount: numberOrNull(conditions.album.minTrackCount),
       maxTrackCount: numberOrNull(conditions.album.maxTrackCount),
-      requiredTrackTitles: conditions.album.requiredTrackTitles.length
-        ? { replace: conditions.album.requiredTrackTitles }
-        : null,
+      requiredTrackTitles: collectionOrNull(conditions.album.requiredTrackTitles),
     } : null,
     strictAlbumQuality: resultMode === 'album' ? conditions.album.strictAlbumQuality || null : null,
   };
+}
+
+export function hasAppliedConditions(mode: SearchResultMode, conditions: PrototypeSearchConditions): boolean {
+  return Boolean(
+    conditions.common.formats.length
+      || conditions.common.minBitrate
+      || conditions.common.maxBitrate
+      || conditions.common.sampleRate
+      || conditions.common.bitDepth
+      || conditions.common.strictArtist
+      || conditions.common.rejectUnknownMetadata
+      || conditions.common.allowedUsers.trim()
+      || conditions.common.bannedUsers.trim()
+      || (mode === 'track'
+        ? conditions.track.strictTitle || conditions.track.expectedLength
+        : conditions.album.strictAlbum
+          || conditions.album.minTrackCount
+          || conditions.album.maxTrackCount
+          || conditions.album.requiredTrackTitles.length
+          || conditions.album.strictAlbumQuality),
+  );
 }
 
 export function cloneSearchConditions(conditions: PrototypeSearchConditions): PrototypeSearchConditions {
@@ -139,6 +246,14 @@ export function cloneSearchConditions(conditions: PrototypeSearchConditions): Pr
     album: {
       ...conditions.album,
       requiredTrackTitles: [...conditions.album.requiredTrackTitles],
+    },
+    ranking: {
+      common: {
+        ...conditions.ranking.common,
+        formats: [...conditions.ranking.common.formats],
+      },
+      track: { ...conditions.ranking.track },
+      album: { ...conditions.ranking.album },
     },
   };
 }

@@ -13,10 +13,12 @@ interface TransferFixtureOptions {
   terminalOutcome?: 'Succeeded' | 'Cancelled' | 'Failed' | 'Interrupted';
   failureReason?: 'FileUnavailable' | 'FileNoLongerShared' | 'FileChanged' | 'InvalidOffset' | 'Denied' | 'PeerDisconnected' | 'ConnectionFailed' | 'TransferTimedOut' | 'Unknown';
   attemptCount?: number;
+  requestedAtUtc?: string;
+  startedAtUtc?: string;
 }
 
-const requestedAtUtc = '2026-08-07T08:00:00.000Z';
-const startedAtUtc = '2026-08-07T08:00:05.000Z';
+const defaultRequestedAtUtc = '2026-08-07T08:00:00.000Z';
+const defaultStartedAtUtc = '2026-08-07T08:00:05.000Z';
 
 export function transferFixture(options: TransferFixtureOptions): TransferStateDto {
   const isTerminal = options.terminalOutcome !== undefined;
@@ -40,16 +42,19 @@ export function transferFixture(options: TransferFixtureOptions): TransferStateD
       isTerminal,
       ...(options.terminalOutcome ? { terminalOutcome: options.terminalOutcome } : {}),
       ...(options.failureReason ? { failureReason: options.failureReason } : {}),
+      availableActions: options.direction === 'upload' && !isTerminal
+        ? [{ kind: 'cancel', method: 'POST', href: `/api/transfers/${options.id}/cancel` }]
+        : [],
     },
     progress: {
       bytesTransferred: options.transferredBytes,
       totalBytes: options.totalBytes,
       bytesPerSecond: options.bytesPerSecond ?? null,
-      lastProgressAtUtc: options.bytesPerSecond ? '2026-08-07T08:10:00.000Z' : null,
+      lastProgressAtUtc: options.bytesPerSecond ? '2026-08-07T08:14:40.000Z' : null,
     },
     scheduling: {
-      requestedAtUtc,
-      startedAtUtc: options.state === 'Queued' ? null : startedAtUtc,
+      requestedAtUtc: options.requestedAtUtc ?? defaultRequestedAtUtc,
+      startedAtUtc: options.state === 'Queued' ? null : options.startedAtUtc ?? defaultStartedAtUtc,
     },
   };
 }
@@ -94,8 +99,12 @@ export const normalTransfers = [
     failureReason: 'PeerDisconnected',
     attemptCount: 3,
   }),
+
+  // Uploads intentionally model chronological request bursts so the WebUI can
+  // project adjacent requests from one peer/folder into a folder card without
+  // inventing a daemon-side folder or album transfer object.
   transferFixture({
-    id: '10000000-0000-4000-8000-000000000005',
+    id: '10000000-0000-4000-8000-000000000105',
     username: 'silvermachine',
     remotePath: 'Music\\Boards of Canada\\Music Has the Right to Children\\04 - Roygbiv.flac',
     localPath: '/shares/Boards of Canada/Music Has the Right to Children/04 - Roygbiv.flac',
@@ -104,17 +113,85 @@ export const normalTransfers = [
     transferredBytes: 18_500_000,
     totalBytes: 30_300_000,
     bytesPerSecond: 820_000,
+    requestedAtUtc: '2026-08-07T08:14:30.000Z',
+    startedAtUtc: '2026-08-07T08:14:33.000Z',
   }),
   transferFixture({
-    id: '10000000-0000-4000-8000-000000000006',
-    username: 'tape_loop',
-    remotePath: 'Music\\Boards of Canada\\Music Has the Right to Children\\06 - Turquoise Hexagon Sun.flac',
-    localPath: '/shares/Boards of Canada/Music Has the Right to Children/06 - Turquoise Hexagon Sun.flac',
+    id: '10000000-0000-4000-8000-000000000106',
+    username: 'silvermachine',
+    remotePath: 'Music\\Boards of Canada\\Music Has the Right to Children\\05 - Aquarius.flac',
+    localPath: '/shares/Boards of Canada/Music Has the Right to Children/05 - Aquarius.flac',
+    direction: 'upload',
+    state: 'Queued',
+    transferredBytes: 0,
+    totalBytes: 35_600_000,
+    requestedAtUtc: '2026-08-07T08:14:12.000Z',
+  }),
+  transferFixture({
+    id: '10000000-0000-4000-8000-000000000107',
+    username: 'silvermachine',
+    remotePath: 'Music\\Boards of Canada\\Music Has the Right to Children\\03 - Telephasic Workshop.flac',
+    localPath: '/shares/Boards of Canada/Music Has the Right to Children/03 - Telephasic Workshop.flac',
     direction: 'upload',
     state: 'Completed',
-    transferredBytes: 28_800_000,
-    totalBytes: 28_800_000,
+    transferredBytes: 44_200_000,
+    totalBytes: 44_200_000,
     terminalOutcome: 'Succeeded',
+    requestedAtUtc: '2026-08-07T08:13:51.000Z',
+    startedAtUtc: '2026-08-07T08:13:54.000Z',
+  }),
+  transferFixture({
+    id: '10000000-0000-4000-8000-000000000108',
+    username: 'silvermachine',
+    remotePath: 'Documents\\setlist.txt',
+    localPath: '/shares/Documents/setlist.txt',
+    direction: 'upload',
+    state: 'Completed',
+    transferredBytes: 84_000,
+    totalBytes: 84_000,
+    terminalOutcome: 'Succeeded',
+    requestedAtUtc: '2026-08-07T08:13:10.000Z',
+    startedAtUtc: '2026-08-07T08:13:11.000Z',
+  }),
+  transferFixture({
+    id: '10000000-0000-4000-8000-000000000109',
+    username: 'tape_loop',
+    remotePath: 'Music\\Autechre\\Tri Repetae\\01 - Dael.flac',
+    localPath: '/shares/Autechre/Tri Repetae/01 - Dael.flac',
+    direction: 'upload',
+    state: 'Transferring',
+    transferredBytes: 11_600_000,
+    totalBytes: 37_900_000,
+    bytesPerSecond: 1_250_000,
+    requestedAtUtc: '2026-08-07T08:12:42.000Z',
+    startedAtUtc: '2026-08-07T08:12:45.000Z',
+  }),
+  transferFixture({
+    id: '10000000-0000-4000-8000-000000000110',
+    username: 'tape_loop',
+    remotePath: 'Music\\Autechre\\Tri Repetae\\02 - Clipper.flac',
+    localPath: '/shares/Autechre/Tri Repetae/02 - Clipper.flac',
+    direction: 'upload',
+    state: 'Failed',
+    transferredBytes: 9_100_000,
+    totalBytes: 43_100_000,
+    terminalOutcome: 'Failed',
+    failureReason: 'PeerDisconnected',
+    requestedAtUtc: '2026-08-07T08:12:21.000Z',
+    startedAtUtc: '2026-08-07T08:12:24.000Z',
+  }),
+  transferFixture({
+    id: '10000000-0000-4000-8000-000000000111',
+    username: 'silvermachine',
+    remotePath: 'Music\\Boards of Canada\\Geogaddi\\02 - Music Is Math.flac',
+    localPath: '/shares/Boards of Canada/Geogaddi/02 - Music Is Math.flac',
+    direction: 'upload',
+    state: 'Completed',
+    transferredBytes: 41_900_000,
+    totalBytes: 41_900_000,
+    terminalOutcome: 'Succeeded',
+    requestedAtUtc: '2026-08-07T08:10:55.000Z',
+    startedAtUtc: '2026-08-07T08:10:59.000Z',
   }),
 ] satisfies TransferStateDto[];
 
@@ -130,6 +207,7 @@ export const busyTransfers = [
       transferredBytes: index % 4 === 0 ? 0 : (index + 2) * 1_900_000,
       totalBytes: 42_000_000 + index * 750_000,
       bytesPerSecond: index % 4 === 0 ? null : 480_000 + index * 125_000,
+      requestedAtUtc: new Date(Date.parse('2026-08-07T08:09:00.000Z') - index * 25_000).toISOString(),
     }),
   ),
 ] satisfies TransferStateDto[];
@@ -150,5 +228,6 @@ export const stressTransfers = Array.from({ length: 80 }, (_, index) => {
     transferredBytes,
     totalBytes,
     bytesPerSecond: queued ? null : 80_000 + (index % 15) * 620_000,
+    requestedAtUtc: new Date(Date.parse('2026-08-07T08:14:50.000Z') - index * 8_000).toISOString(),
   });
 }) satisfies TransferStateDto[];
