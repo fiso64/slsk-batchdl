@@ -57,10 +57,13 @@ jobs:
       run: dotnet build --no-restore --configuration Release
 
     - name: Test Project
-      run: dotnet test --no-build --configuration Release --verbosity normal
+      # Each assembly already parallelizes internally. Running all four test
+      # hosts concurrently oversubscribes hosted runners and starves async
+      # continuations, producing unrelated five-second timeout failures.
+      run: dotnet test --no-build --configuration Release --verbosity normal --maxcpucount:1
 
     - name: Run Load Qualifications
-      run: dotnet test --no-build --configuration Release --filter TestCategory=Load --verbosity normal
+      run: dotnet test --no-build --configuration Release --filter TestCategory=Load --verbosity normal --maxcpucount:1
 
   format-check:
     if: false  # disabled: dotnet format has platform-sensitive indentation behavior

@@ -189,14 +189,26 @@ public sealed class UploadCoordinatorTests
         Guid transferId,
         UploadTransferState state)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (true)
+        var reached = new TaskCompletionSource<UploadTransferSnapshot>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void Observe(UploadTransferSnapshot snapshot)
         {
-            UploadTransferSnapshot snapshot = coordinator.Snapshot()
-                .Single(item => item.TransferId == transferId);
-            if (snapshot.State == state)
-                return snapshot;
-            await Task.Delay(10, timeout.Token);
+            if (snapshot.TransferId == transferId && snapshot.State == state)
+                reached.TrySetResult(snapshot);
+        }
+
+        coordinator.TransferChanged += Observe;
+        try
+        {
+            UploadTransferSnapshot? current = coordinator.GetTransfer(transferId);
+            if (current is not null)
+                Observe(current);
+            return await reached.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            coordinator.TransferChanged -= Observe;
         }
     }
 
@@ -227,8 +239,9 @@ public sealed class UploadCoordinatorTests
     {
         public TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The test owns this handoff; completing it inline avoids making the
+        // asserted terminal transition depend on CI thread-pool availability.
+        public TaskCompletionSource Release { get; } = new();
 
         public async Task<UploadProtocolOutcome> UploadAsync(
             string username,

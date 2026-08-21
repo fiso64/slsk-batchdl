@@ -34,6 +34,7 @@ public sealed class ChatApiTests
                 Username = "local",
                 Password = "password",
                 ListenPort = null,
+                LogLevel = Microsoft.Extensions.Logging.LogLevel.None,
             },
             Persistence = new ServerPersistenceOptions
             {

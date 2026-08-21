@@ -28,9 +28,13 @@ configured storage, and ordinary local administration are trusted.
   `Warning` for recoverable degradation, and `Error` for failed operations.
   Never log per-item untrusted or private content; use IDs or hashes when needed.
 - Test observable behavior and failure isolation, not documentation wording.
-- The solution-wide `dotnet test --no-restore` must run in under 15 seconds; 
-  Remove waits, find tests that aren't useful, and optimize. Remember to mark stress tests as `Load`.
-  Refactor the production code for testability when needed, or even production code when obvious inefficiencies pop up (must be documented as separate work clearly).
-  Never compromise on coverage as long as it resonably tests behavior.
+- Keep warm `dotnet test --no-restore` under 15 seconds (it does not matter if the issue is pre-existing). Do not increase the
+  current test-worker counts or remove CI's sequential-host guard: oversubscription
+  caused thread-pool starvation and flaky timeouts. Remove polling and fixed waits,
+  optimize setup, and mark stress tests as `Load`. Delete obsolete, redundant,
+  overly specific, implementation-coupled, or otherwise low-value tests; preserve
+  meaningful behavioral coverage rather than test count.
+- Tests are quiet by default. Capture or disable application logging unless the
+  test asserts it; incidental console logs are test noise, not diagnostics.
 
 Archived designs in docs/design/archive provide rationale and context but may contain superseded requirements.

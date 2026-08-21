@@ -36,15 +36,13 @@ public sealed class UploadPersistenceAdapterTests
             @"Public\Two.bin");
 
         Assert.IsTrue(coordinator.Cancel(queued.TransferId!.Value));
-        TransferTerminalPersistenceMutation queuedTerminal = await WaitForTerminalAsync(
-            sink,
+        TransferTerminalPersistenceMutation queuedTerminal = await sink.WaitForTerminalAsync(
             queued.TransferId.Value);
         Assert.AreEqual(0, queuedTerminal.Transfer.AttemptCount);
         Assert.IsNull(queuedTerminal.FinalAttempt);
 
         protocol.Release.TrySetResult();
-        TransferTerminalPersistenceMutation activeTerminal = await WaitForTerminalAsync(
-            sink,
+        TransferTerminalPersistenceMutation activeTerminal = await sink.WaitForTerminalAsync(
             active.TransferId!.Value);
         Assert.AreEqual(1, activeTerminal.Transfer.AttemptCount);
         Assert.IsNotNull(activeTerminal.FinalAttempt);
@@ -53,40 +51,38 @@ public sealed class UploadPersistenceAdapterTests
         adapter.Detach(coordinator);
     }
 
-    private static async Task<TransferTerminalPersistenceMutation> WaitForTerminalAsync(
-        RecordingSink sink,
-        Guid transferId)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (true)
-        {
-            TransferTerminalPersistenceMutation? terminal = sink.Items
-                .OfType<TransferTerminalPersistenceMutation>()
-                .LastOrDefault(item => item.Transfer.TransferId == transferId);
-            if (terminal is not null)
-                return terminal;
-            await Task.Delay(10, timeout.Token);
-        }
-    }
-
     private sealed class RecordingSink : IPersistenceMutationSink
     {
-        private readonly ConcurrentQueue<PersistenceMutation> items = [];
-        public IReadOnlyCollection<PersistenceMutation> Items => items.ToArray();
+        private readonly ConcurrentDictionary<Guid, TaskCompletionSource<TransferTerminalPersistenceMutation>> terminals = [];
 
         public bool TryEnqueue(PersistenceMutation mutation)
         {
-            items.Enqueue(mutation);
+            if (mutation is TransferTerminalPersistenceMutation terminal)
+            {
+                terminals.GetOrAdd(
+                        terminal.Transfer.TransferId,
+                        static _ => new(TaskCreationOptions.RunContinuationsAsynchronously))
+                    .TrySetResult(terminal);
+            }
             return true;
         }
+
+        public Task<TransferTerminalPersistenceMutation> WaitForTerminalAsync(Guid transferId)
+            => terminals.GetOrAdd(
+                    transferId,
+                    static _ => new(TaskCreationOptions.RunContinuationsAsynchronously))
+                .Task
+                .WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     private sealed class BlockingProtocol : IUploadProtocolInvoker
     {
         public TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Completion is deliberately synchronous: this fake controls the exact
+        // handoff being asserted and must not depend on a saturated CI thread pool
+        // scheduling the protocol continuation within an arbitrary timeout.
+        public TaskCompletionSource Release { get; } = new();
 
         public async Task<UploadProtocolOutcome> UploadAsync(
             string username,

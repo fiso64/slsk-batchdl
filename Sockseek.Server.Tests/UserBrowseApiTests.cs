@@ -27,7 +27,11 @@ public sealed class UserBrowseApiTests
         string url = $"http://127.0.0.1:{port}";
         await using var app = ServerHost.Build([], new ServerOptions
         {
-            Engine = new EngineSettings { MockFilesDir = mockFiles },
+            Engine = new EngineSettings
+            {
+                MockFilesDir = mockFiles,
+                LogLevel = Microsoft.Extensions.Logging.LogLevel.None,
+            },
             Persistence = new ServerPersistenceOptions
             {
                 Enabled = false,
