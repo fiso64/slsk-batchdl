@@ -1,21 +1,5 @@
 import type { TransferStateDto } from '../mock/types';
 
-export function transferFilename(transfer: TransferStateDto): string {
-  const path = transfer.identity.remotePath ?? transfer.status.localPath ?? '(unknown path)';
-  const parts = path.split(/[\\/]/);
-  return parts.at(-1) || path;
-}
-
-export function transferFolder(transfer: TransferStateDto): string {
-  const path = transfer.identity.remotePath ?? transfer.status.localPath ?? '';
-  const parts = path.split(/[\\/]/);
-  return parts.slice(0, -1).join(' / ') || 'Unknown folder';
-}
-
-export function transferUser(transfer: TransferStateDto): string {
-  return transfer.identity.username ?? '(unknown user)';
-}
-
 function numeric(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const result = typeof value === 'number' ? value : Number(value);
@@ -35,7 +19,7 @@ export function formatSpeed(bytesPerSecond: number | string | null | undefined):
   return `${formatBytes(speed)}/s`;
 }
 
-export function formatBytes(bytes: number): string {
+function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let value = Math.max(0, bytes);
   let unit = 0;

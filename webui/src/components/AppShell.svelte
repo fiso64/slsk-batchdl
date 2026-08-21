@@ -4,7 +4,9 @@
   import type { PageId } from '../prototype/navigation';
   import type { SearchDraft } from '../prototype/search';
   import type { PrototypeSearchConditions } from '../prototype/search-config';
+  import type { UserBrowseDraft } from '../prototype/users';
   import GlobalSearch from './GlobalSearch.svelte';
+  import Icon from './Icon.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
   import Sidebar from './Sidebar.svelte';
 
@@ -13,10 +15,13 @@
     scenarioId: ScenarioId;
     scenario: PrototypeScenario;
     search: SearchDraft;
+    userBrowse: UserBrowseDraft;
     onnavigate: (page: PageId) => void;
     onscenariochange: (scenario: ScenarioId) => void;
     onsearchchange: (search: SearchDraft) => void;
     onsearchsubmit: (search: SearchDraft, conditions: PrototypeSearchConditions) => void;
+    onuserbrowsechange: (browse: UserBrowseDraft) => void;
+    onuserbrowsesubmit: (browse: UserBrowseDraft) => void;
     children: Snippet;
   }
 
@@ -25,10 +30,13 @@
     scenarioId,
     scenario,
     search,
+    userBrowse,
     onnavigate,
     onscenariochange,
     onsearchchange,
     onsearchsubmit,
+    onuserbrowsechange,
+    onuserbrowsesubmit,
     children,
   }: Props = $props();
 
@@ -82,7 +90,7 @@
       aria-current={activePage === 'settings' ? 'page' : undefined}
       onclick={() => onnavigate('settings')}
     >
-      <span class="nav-icon" aria-hidden="true">⚙</span>
+      <span class="nav-icon" aria-hidden="true"><Icon name="settings" /></span>
       <span class="nav-label">Settings</span>
     </button>
   </aside>
@@ -90,7 +98,15 @@
   <div class="workspace">
     <header class="topbar">
       <div class="topbar-inner">
-        <GlobalSearch value={search} onchange={onsearchchange} onsubmit={onsearchsubmit} />
+        <GlobalSearch
+          variant={activePage === 'users' ? 'user' : 'content'}
+          value={search}
+          userValue={userBrowse}
+          onchange={onsearchchange}
+          onsubmit={onsearchsubmit}
+          onuserchange={onuserbrowsechange}
+          onusersubmit={onuserbrowsesubmit}
+        />
         <div class="user-badge" aria-label="Prototype user">fi</div>
       </div>
     </header>

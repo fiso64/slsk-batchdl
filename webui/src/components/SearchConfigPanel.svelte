@@ -1,74 +1,47 @@
 <script lang="ts">
   import {
     createEmptySearchConditions,
+    createEmptySearchRanking,
     type PrototypeSearchConditions,
   } from '../prototype/search-config';
+  import {
+    SEARCH_BIT_DEPTHS as bitDepths,
+    SEARCH_SAMPLE_RATES as sampleRates,
+    searchConfigLabel,
+    type SearchConfigTab as ConfigTab,
+  } from '../prototype/search-config-schema';
   import type { SearchResultMode } from '../prototype/search';
+  import SearchFormatControl from './SearchFormatControl.svelte';
 
   interface Props {
     mode: SearchResultMode;
     conditions: PrototypeSearchConditions;
     title?: string;
+    initialTab?: ConfigTab;
     onclose?: () => void;
   }
-
-  const knownFormats = ['FLAC', 'MP3', 'OGG', 'OPUS', 'M4A', 'WAV'];
-  const sampleRates = [
-    { value: '44100', label: '44.1 kHz' },
-    { value: '48000', label: '48 kHz' },
-    { value: '88200', label: '88.2 kHz' },
-    { value: '96000', label: '96 kHz' },
-    { value: '176400', label: '176.4 kHz' },
-    { value: '192000', label: '192 kHz' },
-  ];
-  const bitDepths = ['16', '24', '32'];
 
   let {
     mode,
     conditions = $bindable(),
     title = 'Search configuration',
+    initialTab = 'conditions',
     onclose,
   }: Props = $props();
 
-  let formatView = $state<'buttons' | 'custom'>('buttons');
-  let customFormats = $state('');
+  let activeTab = $state<ConfigTab>('conditions');
+  $effect(() => { activeTab = initialTab; });
   let requiredTrackTitle = $state('');
 
-  $effect(() => {
-    if (formatView === 'buttons') customFormats = conditions.common.formats.join(', ');
-  });
-
-  function toggleFormat(format: string): void {
-    conditions.common.formats = conditions.common.formats.includes(format)
-      ? conditions.common.formats.filter((item) => item !== format)
-      : [...conditions.common.formats, format];
-    customFormats = conditions.common.formats.join(', ');
-  }
-
-  function showCustomFormats(): void {
-    customFormats = conditions.common.formats.join(', ');
-    formatView = 'custom';
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('#search-config-custom-formats')?.focus());
-  }
-
-  function parseCustomFormats(): void {
-    conditions.common.formats = [...new Set(
-      customFormats
-        .split(',')
-        .map((format) => format.trim().toUpperCase())
-        .filter(Boolean),
-    )];
-  }
-
-  function showFormatButtons(): void {
-    parseCustomFormats();
-    formatView = 'buttons';
-  }
-
-  function clearConditions(): void {
-    conditions = createEmptySearchConditions();
-    customFormats = '';
-    requiredTrackTitle = '';
+  function clearActiveTab(): void {
+    if (activeTab === 'conditions') {
+      const ranking = conditions.ranking;
+      conditions = createEmptySearchConditions();
+      conditions.ranking = ranking;
+      requiredTrackTitle = '';
+    } else {
+      conditions.ranking = createEmptySearchRanking();
+    }
   }
 
   function addRequiredTrackTitle(): void {
@@ -90,157 +63,202 @@
   {/if}
 </header>
 
-<div class="search-config-columns">
-  <div>
-    <section class="search-config-section">
-      <h3>Audio quality</h3>
-      <div class="config-label">Formats</div>
+<nav class="search-config-tabs" aria-label="Search configuration sections">
+  <button type="button" class:active={activeTab === 'conditions'} aria-current={activeTab === 'conditions' ? 'page' : undefined} onclick={() => (activeTab = 'conditions')}>Conditions</button>
+  <button type="button" class:active={activeTab === 'ranking'} aria-current={activeTab === 'ranking' ? 'page' : undefined} onclick={() => (activeTab = 'ranking')}>Ranking</button>
+</nav>
 
-      {#if formatView === 'buttons'}
-        <div class="format-control-row">
-          <div class="format-buttons">
-            {#each knownFormats as format}
-              <button
-                type="button"
-                class:active={conditions.common.formats.includes(format)}
-                onclick={() => toggleFormat(format)}
-              >{format}</button>
-            {/each}
-          </div>
-          <button type="button" class="format-view-button" onclick={showCustomFormats}>custom…</button>
-        </div>
-      {:else}
-        <div class="custom-format-row">
-          <input
-            id="search-config-custom-formats"
-            value={customFormats}
-            placeholder="flac, mp3, aac, ape…"
-            aria-label="Comma-separated formats"
-            oninput={(event) => {
-              customFormats = (event.currentTarget as HTMLInputElement).value;
-              parseCustomFormats();
-            }}
-          />
-          <button type="button" onclick={showFormatButtons}>buttons</button>
-        </div>
-      {/if}
-
-      <div class="config-grid">
-        <label>
-          <span>Min bitrate <small>kbps</small></span>
-          <input type="number" min="0" step="1" bind:value={conditions.common.minBitrate} placeholder="Any" />
-        </label>
-        <label>
-          <span>Max bitrate <small>kbps</small></span>
-          <input type="number" min="0" step="1" bind:value={conditions.common.maxBitrate} placeholder="Any" />
-        </label>
-      </div>
-
-      <div class="config-grid">
-        <label>
-          <span>Sample rate</span>
-          <select bind:value={conditions.common.sampleRate}>
-            <option value="">Any</option>
-            {#each sampleRates as rate}
-              <option value={rate.value}>{rate.label}</option>
-            {/each}
-          </select>
-        </label>
-        <label>
-          <span>Bit depth</span>
-          <select bind:value={conditions.common.bitDepth}>
-            <option value="">Any</option>
-            {#each bitDepths as depth}
-              <option value={depth}>{depth}-bit</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-
-      <label class="config-check"><input type="checkbox" bind:checked={conditions.common.rejectUnknownMetadata} /> Reject unknown metadata</label>
-      {#if mode === 'album'}
-        <label class="config-check"><input type="checkbox" bind:checked={conditions.album.strictAlbumQuality} /> Every album track must satisfy quality</label>
-      {/if}
-    </section>
-
-    <section class="search-config-section">
-      <h3>Matching</h3>
-      <label class="config-check"><input type="checkbox" bind:checked={conditions.common.strictArtist} /> Require artist in path</label>
-      {#if mode === 'track'}
-        <label class="config-check"><input type="checkbox" bind:checked={conditions.track.strictTitle} /> Require track title in filename</label>
-        <div class="config-grid config-grid-spaced">
-          <label>
-            <span>Expected length <small>sec</small></span>
-            <input type="number" min="0" bind:value={conditions.track.expectedLength} placeholder="Any" />
-          </label>
-          <label>
-            <span>Tolerance <small>sec</small></span>
-            <input type="number" min="0" bind:value={conditions.track.lengthTolerance} />
-          </label>
-        </div>
-        <label class="config-check"><input type="checkbox" bind:checked={conditions.track.acceptNoLength} /> Accept unknown length</label>
-      {:else}
-        <label class="config-check"><input type="checkbox" bind:checked={conditions.album.strictAlbum} /> Require album in folder path</label>
-      {/if}
-    </section>
-  </div>
-
-  <div>
-    {#if mode === 'album'}
+{#if activeTab === 'conditions'}
+  <div class="search-config-columns">
+    <div>
       <section class="search-config-section">
-        <h3>Album structure</h3>
+        <h3>Audio quality</h3>
+        <SearchFormatControl
+          bind:values={conditions.common.formats}
+          label={searchConfigLabel('formats', 'conditions')}
+          ariaLabel="Comma-separated required formats"
+          idPrefix="search-config-conditions"
+        />
+
         <div class="config-grid">
           <label>
-            <span>Min tracks</span>
-            <input type="number" min="0" bind:value={conditions.album.minTrackCount} placeholder="Any" />
+            <span>{searchConfigLabel('minBitrate', activeTab)} <small>kbps</small></span>
+            <input type="number" min="0" step="1" bind:value={conditions.common.minBitrate} placeholder="Any" />
           </label>
           <label>
-            <span>Max tracks</span>
-            <input type="number" min="0" bind:value={conditions.album.maxTrackCount} placeholder="Any" />
+            <span>{searchConfigLabel('maxBitrate', activeTab)} <small>kbps</small></span>
+            <input type="number" min="0" step="1" bind:value={conditions.common.maxBitrate} placeholder="Any" />
           </label>
         </div>
 
-        <div class="config-label config-label-spaced">Required track title</div>
-        <div class="required-track-row">
-          <input
-            value={requiredTrackTitle}
-            placeholder="e.g. Music Is Math"
-            oninput={(event) => (requiredTrackTitle = (event.currentTarget as HTMLInputElement).value)}
-            onkeydown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                addRequiredTrackTitle();
-              }
-            }}
-          />
-          <button type="button" onclick={addRequiredTrackTitle}>Add</button>
+        <div class="config-grid">
+          <label>
+            <span>{searchConfigLabel('sampleRate', 'conditions')}</span>
+            <select bind:value={conditions.common.sampleRate}>
+              <option value="">Any</option>
+              {#each sampleRates as rate}<option value={rate.value}>{rate.label}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>{searchConfigLabel('bitDepth', 'conditions')}</span>
+            <select bind:value={conditions.common.bitDepth}>
+              <option value="">Any</option>
+              {#each bitDepths as depth}<option value={depth}>{depth}-bit</option>{/each}
+            </select>
+          </label>
         </div>
-        {#if conditions.album.requiredTrackTitles.length}
-          <div class="required-track-pills">
-            {#each conditions.album.requiredTrackTitles as trackTitle}
-              <button type="button" onclick={() => removeRequiredTrackTitle(trackTitle)}>{trackTitle} ×</button>
-            {/each}
-          </div>
+
+        <label class="config-check"><input type="checkbox" bind:checked={conditions.common.rejectUnknownMetadata} /> {searchConfigLabel('rejectUnknownMetadata', 'conditions')}</label>
+        {#if mode === 'album'}
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.album.strictAlbumQuality} /> {searchConfigLabel('strictAlbumQuality', 'conditions')}</label>
         {/if}
       </section>
-    {/if}
 
-    <section class="search-config-section">
-      <h3>Peers</h3>
-      <div class="config-stack">
-        <label>
-          <span>Allowed users</span>
-          <input type="text" bind:value={conditions.common.allowedUsers} placeholder="user1, user2" />
-        </label>
-        <label>
-          <span>Banned users</span>
-          <input type="text" bind:value={conditions.common.bannedUsers} placeholder="user1, user2" />
-        </label>
-      </div>
-    </section>
+      <section class="search-config-section">
+        <h3>Matching</h3>
+        <label class="config-check"><input type="checkbox" bind:checked={conditions.common.strictArtist} /> {searchConfigLabel('strictArtist', 'conditions')}</label>
+        {#if mode === 'track'}
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.track.strictTitle} /> {searchConfigLabel('strictTitle', 'conditions')}</label>
+          <div class="config-grid config-grid-spaced">
+            <label>
+              <span>Expected length <small>sec</small></span>
+              <input type="number" min="0" bind:value={conditions.track.expectedLength} placeholder="Any" />
+            </label>
+            <label>
+              <span>{searchConfigLabel('lengthTolerance', 'conditions')} <small>sec</small></span>
+              <input type="number" min="0" bind:value={conditions.track.lengthTolerance} />
+            </label>
+          </div>
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.track.acceptNoLength} /> Accept unknown length</label>
+        {:else}
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.album.strictAlbum} /> {searchConfigLabel('strictAlbum', 'conditions')}</label>
+        {/if}
+      </section>
+    </div>
+
+    <div>
+      {#if mode === 'album'}
+        <section class="search-config-section">
+          <h3>Album structure</h3>
+          <div class="config-grid">
+            <label><span>{searchConfigLabel('minTrackCount', 'conditions')}</span><input type="number" min="0" bind:value={conditions.album.minTrackCount} placeholder="Any" /></label>
+            <label><span>{searchConfigLabel('maxTrackCount', 'conditions')}</span><input type="number" min="0" bind:value={conditions.album.maxTrackCount} placeholder="Any" /></label>
+          </div>
+
+          <div class="config-label config-label-spaced">{searchConfigLabel('requiredTrackTitle', 'conditions')}</div>
+          <div class="required-track-row">
+            <input
+              value={requiredTrackTitle}
+              placeholder="e.g. Music Is Math"
+              oninput={(event) => (requiredTrackTitle = (event.currentTarget as HTMLInputElement).value)}
+              onkeydown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  addRequiredTrackTitle();
+                }
+              }}
+            />
+            <button type="button" onclick={addRequiredTrackTitle}>Add</button>
+          </div>
+          {#if conditions.album.requiredTrackTitles.length}
+            <div class="required-track-pills">
+              {#each conditions.album.requiredTrackTitles as trackTitle}
+                <button type="button" onclick={() => removeRequiredTrackTitle(trackTitle)}>{trackTitle} ×</button>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
+
+      <section class="search-config-section">
+        <h3>Peers</h3>
+        <div class="config-stack">
+          <label><span>{searchConfigLabel('allowedUsers', 'conditions')}</span><input type="text" bind:value={conditions.common.allowedUsers} placeholder="user1, user2" /></label>
+          <label><span>{searchConfigLabel('bannedUsers', 'conditions')}</span><input type="text" bind:value={conditions.common.bannedUsers} placeholder="user1, user2" /></label>
+        </div>
+      </section>
+    </div>
   </div>
-</div>
+{:else}
+  <div class="search-config-columns ranking-config-columns">
+    <div>
+      <section class="search-config-section">
+        <h3>Audio ranking</h3>
+        <SearchFormatControl
+          bind:values={conditions.ranking.common.formats}
+          label={searchConfigLabel('formats', 'ranking')}
+          ariaLabel="Comma-separated preferred formats"
+          idPrefix="search-config-ranking"
+        />
+
+        <div class="config-grid">
+          <label><span>{searchConfigLabel('minBitrate', activeTab)} <small>kbps</small></span><input type="number" min="0" bind:value={conditions.ranking.common.minBitrate} placeholder="Any" /></label>
+          <label><span>{searchConfigLabel('maxBitrate', activeTab)} <small>kbps</small></span><input type="number" min="0" bind:value={conditions.ranking.common.maxBitrate} placeholder="Any" /></label>
+        </div>
+
+        <div class="config-grid">
+          <label>
+            <span>Min {searchConfigLabel('sampleRate', 'ranking').toLowerCase()}</span>
+            <select bind:value={conditions.ranking.common.minSampleRate}>
+              <option value="">Any</option>
+              {#each sampleRates as rate}<option value={rate.value}>{rate.label}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>Max {searchConfigLabel('sampleRate', 'ranking').toLowerCase()}</span>
+            <select bind:value={conditions.ranking.common.maxSampleRate}>
+              <option value="">Any</option>
+              {#each sampleRates as rate}<option value={rate.value}>{rate.label}</option>{/each}
+            </select>
+          </label>
+        </div>
+
+        <div class="config-grid">
+          <label>
+            <span>Min {searchConfigLabel('bitDepth', 'ranking').toLowerCase()}</span>
+            <select bind:value={conditions.ranking.common.minBitDepth}>
+              <option value="">Any</option>
+              {#each bitDepths as depth}<option value={depth}>{depth}-bit</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>Max {searchConfigLabel('bitDepth', 'ranking').toLowerCase()}</span>
+            <select bind:value={conditions.ranking.common.maxBitDepth}>
+              <option value="">Any</option>
+              {#each bitDepths as depth}<option value={depth}>{depth}-bit</option>{/each}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="search-config-section">
+        <h3>Matching</h3>
+        <label class="config-check"><input type="checkbox" bind:checked={conditions.ranking.common.strictArtist} /> {searchConfigLabel('strictArtist', 'ranking')}</label>
+        {#if mode === 'track'}
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.ranking.track.strictTitle} /> {searchConfigLabel('strictTitle', 'ranking')}</label>
+          <div class="config-grid config-grid-spaced single-config-field">
+            <label><span>{searchConfigLabel('lengthTolerance', 'ranking')} <small>sec</small></span><input type="number" min="0" bind:value={conditions.ranking.track.lengthTolerance} placeholder="Disabled" /></label>
+          </div>
+        {:else}
+          <label class="config-check"><input type="checkbox" bind:checked={conditions.ranking.album.strictAlbum} /> {searchConfigLabel('strictAlbum', 'ranking')}</label>
+        {/if}
+      </section>
+    </div>
+
+    <div>
+      <section class="search-config-section">
+        <h3>Peers</h3>
+        <div class="config-stack">
+          <label><span>{searchConfigLabel('allowedUsers', 'ranking')}</span><input type="text" bind:value={conditions.ranking.common.allowedUsers} placeholder="user1, user2" /></label>
+          <label><span>{searchConfigLabel('bannedUsers', 'ranking')}</span><input type="text" bind:value={conditions.ranking.common.bannedUsers} placeholder="user1, user2" /></label>
+        </div>
+      </section>
+
+      <p class="ranking-note">Ranking preferences change result order only; they never filter results out.</p>
+    </div>
+  </div>
+{/if}
 
 <footer class="search-config-footer">
-  <button type="button" onclick={clearConditions}>Clear conditions</button>
+  <button type="button" onclick={clearActiveTab}>{activeTab === 'conditions' ? 'Clear conditions' : 'Clear ranking'}</button>
 </footer>

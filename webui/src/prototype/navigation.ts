@@ -1,10 +1,13 @@
+import type { AppIconName } from './icons';
+
 export const navigationItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: '▦', placement: 'primary' },
-  { id: 'search', label: 'Search', icon: '⌕', placement: 'primary' },
-  { id: 'downloads', label: 'Downloads', icon: '↓', placement: 'primary' },
-  { id: 'uploads', label: 'Uploads', icon: '↑', placement: 'primary' },
-  { id: 'chat', label: 'Chat', icon: '◌', placement: 'primary' },
-  { id: 'settings', label: 'Settings', icon: '⚙', placement: 'secondary' },
-] as const;
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', placement: 'primary' },
+  { id: 'search', label: 'Search', icon: 'search', placement: 'primary' },
+  { id: 'downloads', label: 'Downloads', icon: 'download', placement: 'primary' },
+  { id: 'uploads', label: 'Uploads', icon: 'upload', placement: 'primary' },
+  { id: 'users', label: 'Users', icon: 'user', placement: 'primary' },
+  { id: 'chat', label: 'Chat', icon: 'chat', placement: 'primary' },
+  { id: 'settings', label: 'Settings', icon: 'settings', placement: 'secondary' },
+] as const satisfies readonly { id: string; label: string; icon: AppIconName; placement: 'primary' | 'secondary' }[];
 
 export type PageId = (typeof navigationItems)[number]['id'];

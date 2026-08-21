@@ -1,7 +1,8 @@
 import type { SearchDraft, SearchResultMode } from './search';
+import type { AudioAttributes, ItemPeerInfo } from './items';
 import {
   cloneSearchConditions,
-  createEmptySearchConditions,
+  createPrototypeSearchConditions,
   type PrototypeSearchConditions,
 } from './search-config';
 
@@ -23,19 +24,13 @@ export interface SearchRecord {
   fixture: 'autechre' | 'boards' | 'aphex' | 'burial' | 'generic';
 }
 
-export interface PeerInfo {
-  username: string;
+export type { AudioAttributes };
+
+export type PeerInfo = ItemPeerInfo & {
   uploadSpeedMbps: number;
   freeUploadSlot: boolean;
   queueLength: number;
-}
-
-export interface AudioAttributes {
-  bitrateKbps?: number;
-  sampleRateHz?: number;
-  bitDepth?: number;
-  lengthSeconds?: number;
-}
+};
 
 export interface TrackSearchResult {
   kind: 'track';
@@ -134,7 +129,7 @@ export const albumResults: AlbumSearchResult[] = [
 function conditionsFor(_mode: SearchResultMode, _variant: 'default' | 'simple' | 'aphex'): PrototypeSearchConditions {
   // Demo searches start with neutral conditions so the result fixtures remain
   // visible. Users can add restrictive conditions from the shared editor.
-  return createEmptySearchConditions();
+  return createPrototypeSearchConditions();
 }
 
 export function createInitialSearches(): SearchRecord[] {
