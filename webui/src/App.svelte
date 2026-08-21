@@ -17,6 +17,8 @@
   import {
     createInitialSearches,
     createSearchRecord,
+    defaultSearchId,
+    rerunSearchRecord,
     type SearchRecord,
     type SearchView,
   } from './prototype/search-results';
@@ -25,9 +27,9 @@
   let scenarioId = $state<ScenarioId>('normal');
   let scenario = $derived(getScenario(scenarioId));
   let search = $state<SearchDraft>({ ...emptySearchDraft });
-  let searches = $state<SearchRecord[]>(createInitialSearches());
+  let searches = $state<SearchRecord[]>(createInitialSearches('normal'));
   let searchView = $state<SearchView>('list');
-  let activeSearchId = $state<string | null>('search-boards');
+  let activeSearchId = $state<string | null>(defaultSearchId);
   let userBrowse = $state<UserBrowseDraft>({ query: getUserBrowseFixture('normal').profile.username, mode: 'user' });
   let userView = $state<UserBrowseView>('user');
   let chatInitialUsername = $state<string | null>(null);
@@ -154,9 +156,14 @@
 
   function changeScenario(nextScenario: ScenarioId): void {
     scenarioId = nextScenario;
+    searches = createInitialSearches(nextScenario);
+    activeSearchId = searches.find((record) => record.fixture === 'boards')?.id ?? searches[0]?.id ?? null;
+    if (searchView === 'results' && activeSearchId) search = { ...searches.find((record) => record.id === activeSearchId)!.draft };
+    if (searchView === 'results' && !activeSearchId) searchView = 'list';
     const nextUsername = getUserBrowseFixture(nextScenario).profile.username;
     userBrowse = { ...userBrowse, query: nextUsername };
     if (activePage === 'users') setBrowserPath(userPath(nextUsername, userView), true);
+    if (activePage === 'search') setBrowserPath(searchView === 'results' && activeSearchId ? searchResultPath(activeSearchId) : '/search', true);
   }
 
   function useUserBrowse(next: UserBrowseDraft): void {
@@ -212,12 +219,15 @@
   }
 
   function searchAgain(record: SearchRecord): void {
-    const restarted: SearchRecord = { ...record, status: 'searching' };
-    searches = searches.map((item) => item.id === record.id ? restarted : item);
-    activeSearchId = record.id;
+    // Jobs are immutable in the daemon. A rerun creates a new job identity, but
+    // replaces the old row in-place so the user stays in the same logical slot.
+    const rerun = rerunSearchRecord(record);
+    searches = searches.map((item) => item.id === record.id ? rerun : item);
+    activeSearchId = rerun.id;
     searchView = 'results';
-    search = { ...record.draft };
+    search = { ...rerun.draft };
     activePage = 'search';
+    setBrowserPath(searchResultPath(rerun.id), true);
   }
 </script>
 
@@ -239,6 +249,7 @@
   {:else if activePage === 'search'}
     <Search
       {search}
+      {scenarioId}
       bind:searches
       bind:view={searchView}
       bind:activeSearchId

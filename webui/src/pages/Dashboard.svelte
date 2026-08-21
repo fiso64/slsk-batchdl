@@ -1,7 +1,9 @@
 <script lang="ts">
   import UsernameLink from '../components/UsernameLink.svelte';
+  import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import type { PrototypeScenario } from '../mock/types';
-  import { dashboardData, dashboardRangeIds, type DashboardRangeId } from '../prototype/dashboard';
+  import { dashboardActivityFeed, dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardRangeId } from '../prototype/dashboard';
+  import { resourceStateForScenario } from '../prototype/resource-state';
 
   interface Props { scenario: PrototypeScenario; onopenuser: (username: string) => void; }
   let { scenario, onopenuser }: Props = $props();
@@ -9,6 +11,8 @@
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'peers' | 'content' | 'errors'>('peers');
   let data = $derived(dashboardData[range]);
+  let resourceState = $derived(resourceStateForScenario(scenario.id, 'dashboard'));
+  let contract = $derived(dashboardContractFor(range, scenario.id === 'stress'));
 
   let activeTransfers = $derived(scenario.snapshot.transfers.filter((transfer) => !transfer.status.isTerminal));
   let activeDownloads = $derived(activeTransfers.filter((transfer) => transfer.identity.direction === 'download'));
@@ -68,11 +72,13 @@
     </div>
   </div>
 
+  <ResourceStateNotice state={resourceState} />
+
   <div class="dashboard-metrics">
     <article class="dashboard-metric-card">
       <div class="metric-label download"><span aria-hidden="true">↓</span> Download</div>
       <strong>{formatRate(downloadRate)}</strong>
-      <small>{activeDownloads.length} active · {queuedTransfers} queued total</small>
+      <small>{activeDownloads.length} active · {queuedTransfers} queued transfer rows</small>
       <div class="metric-sparkline" aria-hidden="true">
         {#each data.downloadMbps.slice(-8) as point}
           <i style={`height:${Math.max(12, point * 9)}%`}></i>
@@ -94,7 +100,7 @@
     <article class="dashboard-metric-card">
       <div class="metric-label"><span aria-hidden="true">⇵</span> Transfers</div>
       <strong>{activeTransfers.length} active</strong>
-      <small>{queuedTransfers} queued · {scenario.snapshot.transfers.filter((transfer) => transfer.status.isTerminal).length} recent terminal</small>
+      <small>{queuedTransfers} queued transfer rows · {scenario.snapshot.transfers.filter((transfer) => transfer.status.isTerminal).length} terminal rows in snapshot</small>
       <div class="transfer-mini-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     </article>
 
@@ -106,7 +112,7 @@
     </article>
   </div>
 
-  <section class="dashboard-panel activity-panel">
+  <section class="dashboard-panel activity-panel" data-bucket-seconds={contract.range.bucketSeconds}>
     <div class="dashboard-panel-heading">
       <div>
         <h2>Transfer activity</h2>
@@ -193,10 +199,13 @@
       <section class="dashboard-panel recent-activity-panel">
         <div class="dashboard-panel-heading compact"><div><h2>Recent activity</h2><p>What the daemon has been doing</p></div><span class="live-indicator"><i></i>Live</span></div>
         <div class="activity-feed">
-          <div><i class="feed-icon download">↓</i><p><strong>Music Is Math.flac</strong><span>downloaded from <UsernameLink username="nightshift" {onopenuser} /></span></p><small>2m</small></div>
-          <div><i class="feed-icon upload">↑</i><p><strong>27 files uploaded</strong><span>to <UsernameLink username="cassetteculture" {onopenuser} /></span></p><small>8m</small></div>
-          <div><i class="feed-icon chat">○</i><p><strong>New message</strong><span>from <UsernameLink username="tape_loop" {onopenuser} /></span></p><small>14m</small></div>
-          <div><i class="feed-icon download">↓</i><p><strong>Xtal.flac</strong><span>download completed</span></p><small>31m</small></div>
+          {#each dashboardActivityFeed as item (item.contract.activityId)}
+            <div>
+              <i class={`feed-icon ${item.contract.kind}`}>{item.contract.kind === 'download' ? '↓' : item.contract.kind === 'upload' ? '↑' : '○'}</i>
+              <p><strong>{item.contract.itemName}</strong><span class="activity-detail"><span>{item.contract.detail}</span>{#if item.contract.actor}<UsernameLink username={item.contract.actor} {onopenuser} />{/if}</span></p>
+              <small>{item.displayAge}</small>
+            </div>
+          {/each}
         </div>
       </section>
 

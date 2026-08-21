@@ -1,5 +1,8 @@
 <script lang="ts">
   import SearchConditionPills from '../components/SearchConditionPills.svelte';
+  import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
+  import LoadMoreButton from '../components/LoadMoreButton.svelte';
+  import MutationStatus from '../components/MutationStatus.svelte';
   import ResultFilterControl from '../components/ResultFilterControl.svelte';
   import SelectionToolbar from '../components/SelectionToolbar.svelte';
   import FileItemCard from '../components/items/FileItemCard.svelte';
@@ -9,14 +12,15 @@
   import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
   import Icon from '../components/Icon.svelte';
   import { groupAdjacentBy } from '../prototype/grouping';
-  import { basename, extension } from '../prototype/items';
+  import type { ScenarioId } from '../mock/types';
+  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
   import type { SearchDraft } from '../prototype/search';
+  import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
-    albumResults,
-    trackResults,
+    buildSearchResultProjectionRequest,
+    requestSearchResultProjection,
     type AlbumFileResult,
     type AlbumSearchResult,
-    type AudioAttributes,
     type ProjectedSearchResult,
     type SearchRecord,
     type SearchSort,
@@ -27,6 +31,7 @@
 
   interface Props {
     search: SearchDraft;
+    scenarioId: ScenarioId;
     searches: SearchRecord[];
     view: SearchView;
     activeSearchId: string | null;
@@ -38,6 +43,7 @@
 
   let {
     search,
+    scenarioId,
     searches = $bindable(),
     view = $bindable(),
     activeSearchId = $bindable(),
@@ -52,9 +58,33 @@
   let sizeDirection = $state<SizeSortDirection>('desc');
   let selected = $state<Set<string>>(new Set());
   let conditionsOpen = $state(false);
+  let resultPagesRequested = $state(1);
+  let projectionRequestKey = '';
+  let historyLimit = $state(4);
+  let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
 
   let activeRecord = $derived(searches.find((item) => item.id === activeSearchId) ?? null);
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
+  let listResourceState = $derived(resourceStateForScenario(scenarioId, 'search-list'));
+
+  $effect(() => {
+    scenarioId;
+    historyLimit = 4;
+    mutation = { phase: 'idle' };
+  });
+
+  $effect(() => {
+    const key = JSON.stringify({
+      activeSearchId,
+      filterText,
+      sort,
+      sizeDirection,
+      conditions: activeRecord?.conditions,
+    });
+    if (key === projectionRequestKey) return;
+    projectionRequestKey = key;
+    resultPagesRequested = 1;
+  });
 
   function openSearch(record: SearchRecord): void {
     onopenrecord(record);
@@ -62,10 +92,15 @@
     sort = 'relevance';
     selected = new Set();
     conditionsOpen = false;
+    resultPagesRequested = 1;
   }
 
   function removeSearch(id: string): void {
+    const request: ProposedHistoryDeleteRequestDto = { resourceKind: 'search-job', resourceIds: [id], semantics: 'archive-from-history' };
+    void request;
+    mutation = { phase: 'pending', label: 'Removing search history…' };
     searches = searches.filter((item) => item.id !== id);
+    mutation = { phase: 'succeeded', label: 'Search removed' };
     if (activeSearchId !== id) return;
     activeSearchId = searches[0]?.id ?? null;
     view = 'list';
@@ -73,91 +108,23 @@
   }
 
   function statusLabel(status: SearchRecord['status']): string {
-    if (status === 'searching') return 'Searching';
-    if (status === 'receiving') return 'Receiving';
-    return 'Complete';
+    const labels: Record<SearchRecord['status'], string> = {
+      pending: 'Pending',
+      searching: 'Searching',
+      receiving: 'Receiving',
+      complete: 'Complete',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      skipped: 'Skipped',
+      interrupted: 'Interrupted',
+    };
+    return labels[status];
   }
 
-  function csv(value: string): string[] {
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
-  }
-
-  function isAudioPath(path: string): boolean {
-    return ['FLAC', 'MP3', 'OGG', 'OPUS', 'M4A', 'WAV', 'AAC', 'APE'].includes(extension(path));
-  }
-
-  function fileMatchesConditions(
-    path: string,
-    audio: AudioAttributes | undefined,
-    conditions: PrototypeSearchConditions,
-  ): boolean {
-    const formats = conditions.common.formats;
-    if (formats.length && !formats.includes(extension(path))) return false;
-    if (conditions.common.rejectUnknownMetadata && isAudioPath(path) && !audio) return false;
-    if (conditions.common.minBitrate && (audio?.bitrateKbps ?? 0) < Number(conditions.common.minBitrate)) return false;
-    if (conditions.common.maxBitrate && (audio?.bitrateKbps ?? Infinity) > Number(conditions.common.maxBitrate)) return false;
-    if (conditions.common.sampleRate && audio?.sampleRateHz !== Number(conditions.common.sampleRate)) return false;
-    if (conditions.common.bitDepth && audio?.bitDepth !== Number(conditions.common.bitDepth)) return false;
-    return true;
-  }
-
-  function peerMatches(record: SearchRecord, result: ProjectedSearchResult): boolean {
-    const allowed = csv(record.conditions.common.allowedUsers);
-    const banned = csv(record.conditions.common.bannedUsers);
-    if (allowed.length && !allowed.includes(result.peer.username)) return false;
-    if (banned.includes(result.peer.username)) return false;
-    return true;
-  }
-
-  function trackMatches(record: SearchRecord, result: TrackSearchResult): boolean {
-    if (!peerMatches(record, result)) return false;
-    if (!fileMatchesConditions(result.path, result.audio, record.conditions)) return false;
-    const normalized = result.path.toLowerCase();
-    if (filterText && !`${result.peer.username} ${result.path}`.toLowerCase().includes(filterText.toLowerCase())) return false;
-    if (record.conditions.common.strictArtist && record.draft.mode === 'split' && record.draft.artist && !normalized.includes(record.draft.artist.toLowerCase())) return false;
-    if (record.conditions.track.strictTitle && record.draft.mode === 'split' && record.draft.title && !basename(result.path).toLowerCase().includes(record.draft.title.toLowerCase())) return false;
-    if (!record.conditions.track.acceptNoLength && result.audio?.lengthSeconds === undefined) return false;
-    if (record.conditions.track.expectedLength) {
-      const expected = Number(record.conditions.track.expectedLength);
-      const tolerance = Number(record.conditions.track.lengthTolerance || 0);
-      const length = result.audio?.lengthSeconds;
-      if (length === undefined || Math.abs(length - expected) > tolerance) return false;
-    }
-    return true;
-  }
-
-  function albumMatches(record: SearchRecord, result: AlbumSearchResult): boolean {
-    if (!peerMatches(record, result)) return false;
-    const haystack = `${result.peer.username} ${result.path} ${result.files.map((file) => file.relativePath).join(' ')}`.toLowerCase();
-    if (filterText && !haystack.includes(filterText.toLowerCase())) return false;
-    if (record.conditions.common.strictArtist && record.draft.mode === 'split' && record.draft.artist && !result.path.toLowerCase().includes(record.draft.artist.toLowerCase())) return false;
-    if (record.conditions.album.strictAlbum && record.draft.mode === 'split' && record.draft.title && !result.path.toLowerCase().includes(record.draft.title.toLowerCase())) return false;
-    if (record.conditions.album.minTrackCount && result.files.filter((file) => isAudioPath(file.relativePath)).length < Number(record.conditions.album.minTrackCount)) return false;
-    if (record.conditions.album.maxTrackCount && result.files.filter((file) => isAudioPath(file.relativePath)).length > Number(record.conditions.album.maxTrackCount)) return false;
-    for (const title of record.conditions.album.requiredTrackTitles) {
-      if (!result.files.some((file) => file.relativePath.toLowerCase().includes(title.toLowerCase()))) return false;
-    }
-    const audioFiles = result.files.filter((file) => isAudioPath(file.relativePath));
-    const qualityMatches = audioFiles.filter((file) => fileMatchesConditions(file.relativePath, file.audio, record.conditions));
-    if (record.conditions.album.strictAlbumQuality) return qualityMatches.length === audioFiles.length;
-    if (record.conditions.common.formats.length || record.conditions.common.minBitrate || record.conditions.common.maxBitrate || record.conditions.common.sampleRate || record.conditions.common.bitDepth) {
-      return qualityMatches.length > 0;
-    }
-    return true;
-  }
-
-  function itemSize(result: ProjectedSearchResult): number {
-    return result.sizeBytes;
-  }
-
-  function sortedVisibleResults(record: SearchRecord): ProjectedSearchResult[] {
-    const source: ProjectedSearchResult[] = record.draft.resultMode === 'album' ? [...albumResults] : [...trackResults];
-    const filtered = source.filter((result) => result.kind === 'album' ? albumMatches(record, result) : trackMatches(record, result));
-    if (sort === 'relevance') return filtered;
-    const sorted = [...filtered];
-    if (sort === 'speed') return sorted.sort((a, b) => b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
-    if (sort === 'queue') return sorted.sort((a, b) => a.peer.queueLength - b.peer.queueLength || b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
-    return sorted.sort((a, b) => sizeDirection === 'desc' ? itemSize(b) - itemSize(a) : itemSize(a) - itemSize(b));
+  function resultResourceState(record: SearchRecord): PrototypeResourceState {
+    if (record.resultState === 'pruned') return { phase: 'pruned', title: 'Results unavailable', blocking: true };
+    if (record.resultState === 'not-persisted') return { phase: 'unavailable', title: 'Results unavailable', blocking: true };
+    return resourceStateForScenario(scenarioId, 'search-results');
   }
 
   interface PeerGroup {
@@ -225,6 +192,74 @@
     selected = next;
   }
 
+  function currentResultProjection(record: SearchRecord) {
+    let cursor: string | null = null;
+    let items: ProjectedSearchResult[] = [];
+    let page = requestSearchResultProjection(
+      record,
+      buildSearchResultProjectionRequest(
+        record,
+        filterText,
+        sort,
+        sizeDirection,
+        cursor,
+        record.pagination.resultPageSize,
+      ),
+    );
+    items = [...page.items];
+    for (let pageIndex = 1; pageIndex < resultPagesRequested && page.nextCursor; pageIndex += 1) {
+      cursor = page.nextCursor;
+      page = requestSearchResultProjection(
+        record,
+        buildSearchResultProjectionRequest(
+          record,
+          filterText,
+          sort,
+          sizeDirection,
+          cursor,
+          record.pagination.resultPageSize,
+        ),
+      );
+      items.push(...page.items);
+    }
+    return { ...page, items };
+  }
+
+  function selectionSummary(): PrototypeDownloadSelectionSummary {
+    let requestedCount = 0;
+    let lockedCount = 0;
+    const received = activeRecord ? currentResultProjection(activeRecord).items : [];
+    if (activeMode === 'track') {
+      for (const result of received) {
+        if (result.kind !== 'track' || !selected.has(selectedKey(result))) continue;
+        requestedCount += 1;
+        if (result.locked) lockedCount += 1;
+      }
+    } else {
+      for (const result of received) {
+        if (result.kind !== 'album') continue;
+        for (const file of result.files) {
+          if (!selected.has(selectedAlbumFileKey(result, file))) continue;
+          requestedCount += 1;
+          if (file.locked) lockedCount += 1;
+        }
+      }
+    }
+    return { requestedCount, uniqueFileCount: requestedCount, resolvablePublicCount: requestedCount - lockedCount, lockedCount, skippedCount: lockedCount };
+  }
+
+  function requestSelectedDownload(): void {
+    const summary = selectionSummary();
+    if (!summary.resolvablePublicCount) {
+      mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected file${summary.lockedCount === 1 ? '' : 's'} locked.` };
+      return;
+    }
+    mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} file${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
+    mutation = summary.skippedCount
+      ? { phase: 'partially-succeeded', label: `${summary.resolvablePublicCount} requested`, detail: `${summary.skippedCount} locked file${summary.skippedCount === 1 ? '' : 's'} skipped.` }
+      : { phase: 'succeeded', label: `${summary.resolvablePublicCount} download${summary.resolvablePublicCount === 1 ? '' : 's'} requested` };
+  }
+
   function tierGroups(groups: PeerGroup[], preferred: boolean): PeerGroup[] {
     return groups.filter((group) => group.preferred === preferred);
   }
@@ -241,8 +276,13 @@
       <h1>Searches</h1>
     </header>
 
+    {#if listResourceState.blocking}
+      <div class="empty-state"><strong>{listResourceState.title}</strong><p>{listResourceState.detail}</p></div>
+    {:else}
+      <ResourceStateNotice state={listResourceState} />
+      <MutationStatus state={mutation} />
     <div class="search-history-list">
-      {#each searches as record (record.id)}
+      {#each searches.slice(0, historyLimit) as record (record.id)}
         <div class="search-history-row">
           <button type="button" class="search-history-open" onclick={() => openSearch(record)}>
             <span class="search-history-query">{record.displayQuery}</span>
@@ -274,9 +314,15 @@
         <div class="empty-state">No searches yet.</div>
       {/each}
     </div>
+    {#if searches.length > historyLimit}
+      <LoadMoreButton label="Load earlier searches" onclick={() => (historyLimit = Math.min(searches.length, historyLimit + 4))} />
+    {/if}
+    {/if}
   {:else if activeRecord}
-    {@const visibleResults = sortedVisibleResults(activeRecord)}
-    {@const groups = groupAdjacent(visibleResults)}
+    {@const resultState = resultResourceState(activeRecord)}
+    {@const projection = currentResultProjection(activeRecord)}
+    {@const allVisibleResults = projection.items}
+    {@const groups = groupAdjacent(allVisibleResults)}
     <header class="search-results-heading">
       <button type="button" class="icon-button back-button" aria-label="Back to searches" onclick={onshowlist}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5L7 10l5.5 5.5M7.5 10H16" /></svg>
@@ -302,6 +348,12 @@
         </button>
       </div>
     </header>
+
+    {#if resultState.blocking}
+      <div class="empty-state"><strong>{resultState.title}</strong><p>{resultState.detail}</p></div>
+    {:else}
+      <ResourceStateNotice state={resultState} />
+      <MutationStatus state={mutation} />
 
     <div class="result-refine-wrap">
       <div class="result-refine-row">
@@ -342,12 +394,17 @@
       {/if}
     </div>
 
+    {@const selectedSummary = selectionSummary()}
     <SelectionToolbar
-      selectedCount={selected.size}
+      selectedCount={selectedSummary.requestedCount}
+      floatingLabel={`Download ${selectedSummary.resolvablePublicCount}`}
+      detail={selectedSummary.lockedCount ? `${selectedSummary.requestedCount} selected · ${selectedSummary.lockedCount} locked` : undefined}
+      actionDisabled={selectedSummary.resolvablePublicCount === 0}
       onclear={() => (selected = new Set())}
+      onaction={requestSelectedDownload}
     />
 
-    {#if visibleResults.length === 0}
+    {#if allVisibleResults.length === 0}
       <div class="search-results-empty">
         <strong>No matching results</strong>
         <span>Adjust the text filter or result conditions.</span>
@@ -385,6 +442,11 @@
       </div>
     {/if}
 
+    {#if projection.nextCursor}
+      <LoadMoreButton label="Load more results" loadingLabel="Loading results…" onclick={() => (resultPagesRequested += 1)} />
+    {/if}
+    {/if}
+
   {/if}
 </section>
 
@@ -407,6 +469,9 @@
           path={result.path}
           sizeBytes={result.sizeBytes}
           files={result.files}
+          totalFileCount={result.totalFileCount}
+          filesComplete
+          dataStateLabel={result.retrievalState === 'retrieving' ? 'Retrieving folder…' : result.retrievalState === 'failed' ? 'Folder retrieval failed' : undefined}
           locked={result.locked}
           selected={isAlbumFullySelected(result)}
           partial={isAlbumPartiallySelected(result)}

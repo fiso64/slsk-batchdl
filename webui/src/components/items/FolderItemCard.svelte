@@ -9,6 +9,9 @@
     path: string;
     sizeBytes: number;
     files: FolderItemFile[];
+    totalFileCount?: number;
+    filesComplete?: boolean;
+    dataStateLabel?: string;
     locked?: boolean;
     selected?: boolean;
     partial?: boolean;
@@ -26,6 +29,9 @@
     path,
     sizeBytes,
     files,
+    totalFileCount = files.length,
+    filesComplete = true,
+    dataStateLabel,
     locked = false,
     selected = false,
     partial = false,
@@ -89,6 +95,9 @@
         {#if transfer}<span class={`transfer-state ${transfer.tone ?? ''} ${transferDirectionClass}`}>{transfer.state}</span>{/if}
       </div>
       <small>{path}</small>
+      {#if dataStateLabel}
+        <div class="item-data-state"><span>{dataStateLabel}</span>{#if !filesComplete}<small>{files.length} of {totalFileCount} files loaded</small>{/if}</div>
+      {/if}
       {#if transfer}
         <div class="transfer-subline">
           {#if transfer.created}<span>{transfer.created}</span>{/if}
@@ -97,7 +106,7 @@
       {/if}
     </div>
 
-    <div class="folder-summary-stat folder-file-count"><strong>{files.length}</strong><small>files</small></div>
+    <div class="folder-summary-stat folder-file-count"><strong>{filesComplete ? totalFileCount : `${files.length}/${totalFileCount}`}</strong><small>files</small></div>
     <div class="item-detail result-detail item-size-detail"><strong>{formatBytes(sizeBytes)}</strong></div>
     {#if actions}
       <div class="item-card-action">{@render actions()}</div>

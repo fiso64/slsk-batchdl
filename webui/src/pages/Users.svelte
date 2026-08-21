@@ -3,13 +3,18 @@
   import LinkifiedText from '../components/LinkifiedText.svelte';
   import ResultFilterControl from '../components/ResultFilterControl.svelte';
   import SelectionToolbar from '../components/SelectionToolbar.svelte';
+  import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
+  import LoadMoreButton from '../components/LoadMoreButton.svelte';
+  import MutationStatus from '../components/MutationStatus.svelte';
   import type { ScenarioId } from '../mock/types';
+  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/backend-contracts';
   import { formatSpeed } from '../prototype/transfers';
+  import { resourceStateForScenario } from '../prototype/resource-state';
   import {
     flattenShareTree,
     formatShareSize,
     getUserBrowseFixtureForUsername,
-    shareMetrics,
+    requestShareTreeProjection,
     type ShareTreeRow,
     type UserBrowseView,
     type UserPresence,
@@ -30,11 +35,23 @@
   let selected = $state<Set<string>>(new Set());
   let expandedFolders = $state<Set<string>>(new Set());
   let fixtureKey = '';
+  let sharePagesRequested = $state(1);
+  let shareRequestKey = '';
+  let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
 
   let fixture = $derived(getUserBrowseFixtureForUsername(scenarioId, username));
   let rows = $derived(flattenShareTree(fixture.shares));
-  let metrics = $derived(shareMetrics(fixture.shares));
-  let displayUsername = $derived(fixture.profile.username);
+  let shareProjection = $derived(currentShareProjection());
+  let displayUsername = $derived(fixture.profileDto.username);
+  let profileState = $derived(resourceStateForScenario(scenarioId, 'profile'));
+  let sharesState = $derived.by(() => {
+    const state = resourceStateForScenario(scenarioId, 'shares');
+    // Entering Shares represents issuing/reissuing the browse request. The
+    // production adapter should reacquire expired browse artifacts automatically.
+    return view === 'shares' && state.phase === 'expired' ? { phase: 'ready' as const } : state;
+  });
+  let profile = $derived(fixture.profileDto);
+  let selectedSummary = $derived(shareSelectionSummary());
 
   $effect(() => {
     const key = fixture.profile.username;
@@ -42,8 +59,28 @@
     fixtureKey = key;
     filterText = '';
     selected = new Set();
+    sharePagesRequested = 1;
+    mutation = { phase: 'idle' };
     expandedFolders = new Set(rows.filter((row) => row.kind === 'folder').map((row) => row.id));
   });
+
+  $effect(() => {
+    const key = `${fixture.profile.username}\u0000${filterText.trim()}`;
+    if (key === shareRequestKey) return;
+    shareRequestKey = key;
+    sharePagesRequested = 1;
+  });
+
+  function currentShareProjection() {
+    const query = filterText.trim() || null;
+    let page = requestShareTreeProjection(fixture.shares, { query, cursor: null, limit: 18 });
+    const rows = [...page.rows];
+    for (let pageIndex = 1; pageIndex < sharePagesRequested && page.nextCursor; pageIndex += 1) {
+      page = requestShareTreeProjection(fixture.shares, { query, cursor: page.nextCursor, limit: 18 });
+      rows.push(...page.rows);
+    }
+    return { ...page, rows };
+  }
 
   function handleProfilePictureKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && profilePictureOpen) profilePictureOpen = false;
@@ -52,6 +89,7 @@
   function presenceLabel(presence: UserPresence): string {
     if (presence === 'away') return 'Away';
     if (presence === 'offline') return 'Offline';
+    if (presence === 'unknown') return 'Unknown';
     return 'Online';
   }
 
@@ -61,32 +99,15 @@
     return pieces.slice(0, 2).map((piece) => piece[0]!.toUpperCase()).join('');
   }
 
-  function formatInteger(value: number): string {
-    return new Intl.NumberFormat('en-US').format(value);
+  function formatInteger(value: number | string | null | undefined): string {
+    if (value === null || value === undefined) return '—';
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? new Intl.NumberFormat('en-US').format(numeric) : '—';
   }
 
-  function visibleShareRows(): ShareTreeRow[] {
-    const query = filterText.trim().toLowerCase();
-    if (query) {
-      const included = new Set<string>();
-      for (const row of rows) {
-        if (!row.path.toLowerCase().includes(query)) continue;
-        included.add(row.id);
-        for (const parent of row.parentFolderIds) included.add(parent);
-        if (row.kind === 'folder') {
-          for (const candidate of rows) {
-            if (candidate.parentFolderIds.includes(row.id)) included.add(candidate.id);
-          }
-        }
-      }
-      return rows.filter((row) => included.has(row.id));
-    }
-
-    return rows.filter((row) => row.parentFolderIds.every((id) => expandedFolders.has(id)));
-  }
-
-  function visibleFileIds(visibleRows: ShareTreeRow[]): string[] {
-    return visibleRows.filter((row) => row.kind === 'file').map((row) => row.id);
+  function visibleShareRows(projectedRows: ShareTreeRow[]): ShareTreeRow[] {
+    if (filterText.trim()) return projectedRows;
+    return projectedRows.filter((row) => row.parentFolderIds.every((id) => expandedFolders.has(id)));
   }
 
   function allSelected(ids: readonly string[]): boolean {
@@ -114,6 +135,26 @@
     expandedFolders = next;
   }
 
+
+  function shareSelectionSummary(): PrototypeDownloadSelectionSummary {
+    const selectedRows = rows.filter((row) => row.kind === 'file' && selected.has(row.id));
+    const requestedCount = selectedRows.length;
+    const lockedCount = selectedRows.filter((row) => row.visibility !== 'public').length;
+    return { requestedCount, uniqueFileCount: requestedCount, resolvablePublicCount: requestedCount - lockedCount, lockedCount, skippedCount: lockedCount };
+  }
+
+  function requestSelectedSharesDownload(): void {
+    const summary = shareSelectionSummary();
+    if (!summary.resolvablePublicCount) {
+      mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected file${summary.lockedCount === 1 ? '' : 's'} unavailable.` };
+      return;
+    }
+    mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} shared file${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
+    mutation = summary.skippedCount
+      ? { phase: 'partially-succeeded', label: `${summary.resolvablePublicCount} requested`, detail: `${summary.skippedCount} locked file${summary.skippedCount === 1 ? '' : 's'} skipped.` }
+      : { phase: 'succeeded', label: `${summary.resolvablePublicCount} download${summary.resolvablePublicCount === 1 ? '' : 's'} requested` };
+  }
+
   function indeterminate(node: HTMLInputElement, value: boolean) {
     node.indeterminate = value;
     return { update(next: boolean) { node.indeterminate = next; } };
@@ -135,16 +176,18 @@
   </header>
 
   {#if view === 'user'}
+    <ResourceStateNotice state={profileState} />
+    <MutationStatus state={mutation} />
     <article class="user-profile-card">
       <div class="user-profile-primary">
-        {#if fixture.profile.imageUrl}
+        {#if profile.picture?.url}
           <button
             type="button"
             class="user-profile-picture-button"
             aria-label={`View ${displayUsername}'s profile picture`}
             onclick={() => (profilePictureOpen = true)}
           >
-            <img class="user-profile-picture" src={fixture.profile.imageUrl} alt="" />
+            <img class="user-profile-picture" src={profile.picture.url} alt="" />
           </button>
         {:else}
           <div class="user-profile-picture user-profile-placeholder" aria-label="No profile picture">
@@ -156,11 +199,12 @@
         <div class="user-profile-copy">
           <div class="user-profile-name-line">
             <h2>{displayUsername}</h2>
-            <span class={`user-presence ${fixture.profile.presence}`}><i></i>{presenceLabel(fixture.profile.presence)}</span>
+            <span class={`user-presence ${profile.presence}`}><i></i>{presenceLabel(profile.presence)}</span>
           </div>
-          {#if fixture.profile.description}
-            <p class="user-profile-description"><LinkifiedText text={fixture.profile.description} /></p>
+          {#if profile.description}
+            <p class="user-profile-description"><LinkifiedText text={profile.description} /></p>
           {/if}
+          <small class="user-profile-observed">Observed {new Date(profile.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small>
           <div class="user-profile-actions">
             <button type="button" class="user-message-button" onclick={() => onmessageuser(displayUsername)}>
               <Icon name="chat" />
@@ -172,57 +216,74 @@
         <div class="user-capacity-card">
           <div class="user-capacity-heading">
             <span>Upload capacity</span>
-            <span class:available={fixture.profile.hasFreeUploadSlot} class="slot-state">
-              <i></i>{fixture.profile.hasFreeUploadSlot ? 'Free slot' : 'No free slot'}
+            <span class:available={profile.hasFreeUploadSlot === true} class:unknown={profile.hasFreeUploadSlot === null} class="slot-state">
+              <i></i>{profile.hasFreeUploadSlot === null ? 'Unknown' : profile.hasFreeUploadSlot ? 'Free slot' : 'No free slot'}
             </span>
           </div>
           <div class="user-capacity-values">
-            <div><strong>{fixture.profile.uploadSlots}</strong><span>slots</span></div>
-            <div><strong>{fixture.profile.queuedUploads}</strong><span>queued</span></div>
+            <div><strong>{profile.uploadSlots ?? '—'}</strong><span>slots</span></div>
+            <div><strong>{profile.queueLength ?? '—'}</strong><span>queued</span></div>
           </div>
         </div>
       </div>
 
+      {#if profile.info.state !== 'available' || profile.statistics.state !== 'available' || profile.pictureSection.state !== 'available'}
+        <div class="profile-section-states" aria-label="Profile section availability">
+          {#if profile.info.state !== 'available'}<span>Info {profile.info.state}{profile.info.reason ? ` · ${profile.info.reason}` : ''}</span>{/if}
+          {#if profile.statistics.state !== 'available'}<span>Statistics {profile.statistics.state}{profile.statistics.reason ? ` · ${profile.statistics.reason}` : ''}</span>{/if}
+          {#if profile.pictureSection.state !== 'available'}<span>Picture {profile.pictureSection.state}{profile.pictureSection.reason ? ` · ${profile.pictureSection.reason}` : ''}</span>{/if}
+        </div>
+      {/if}
+
       <div class="user-profile-stats">
         <div>
           <span>Shared files</span>
-          <strong>{formatInteger(metrics.files)}</strong>
+          <strong>{formatInteger(profile.sharedFileCount)}</strong>
         </div>
         <div>
           <span>Shared folders</span>
-          <strong>{formatInteger(metrics.folders)}</strong>
+          <strong>{formatInteger(profile.sharedDirectoryCount)}</strong>
         </div>
         <div>
           <span>Average upload speed</span>
-          <strong>{formatSpeed(fixture.profile.averageUploadSpeed) ?? '—'}</strong>
+          <strong>{formatSpeed(profile.averageUploadSpeed) ?? '—'}</strong>
         </div>
         <div>
           <span>Uploads</span>
-          <strong>{formatInteger(fixture.profile.uploadCount)}</strong>
+          <strong>{formatInteger(profile.uploadCount)}</strong>
         </div>
       </div>
     </article>
   {:else}
-    {@const visibleRows = visibleShareRows()}
-    {@const visibleFiles = visibleFileIds(visibleRows)}
+    {@const visibleRows = visibleShareRows(shareProjection.rows)}
+    {#if sharesState.blocking}
+      <div class="empty-state">
+        <strong>{sharesState.title}</strong><p>{sharesState.detail}</p>
+      </div>
+    {:else}
+      <ResourceStateNotice state={sharesState} />
+      <MutationStatus state={mutation} />
     <div class="shares-overview">
       <div class="shares-title-row">
         <div>
           <span class="shares-username">{displayUsername}</span>
-          <strong>{formatShareSize(metrics.sizeBytes)} shared</strong>
+          <strong>{formatShareSize(Number(fixture.browseDto.totalFileBytes))} shared</strong>
         </div>
       </div>
 
       <div class="shares-refine-row">
         <ResultFilterControl bind:value={filterText} placeholder="Filter shared files…" ariaLabel="Filter user shares" />
         {#if filterText}
-          <span class="shares-filter-count">{visibleFiles.length} matching {visibleFiles.length === 1 ? 'file' : 'files'}</span>
+          <span class="shares-filter-count">{shareProjection.matchingFileCount} matching {shareProjection.matchingFileCount === 1 ? 'file' : 'files'}</span>
         {/if}
       </div>
-
       <SelectionToolbar
-        selectedCount={selected.size}
+        selectedCount={selectedSummary.requestedCount}
+        floatingLabel={`Download ${selectedSummary.resolvablePublicCount}`}
+        detail={selectedSummary.lockedCount ? `${selectedSummary.requestedCount} selected · ${selectedSummary.lockedCount} locked` : undefined}
+        actionDisabled={selectedSummary.resolvablePublicCount === 0}
         onclear={() => (selected = new Set())}
+        onaction={requestSelectedSharesDownload}
       />
 
       {#if visibleRows.length}
@@ -242,6 +303,7 @@
                 </button>
                 <span class="share-tree-icon"><Icon name="folder" /></span>
                 <strong class="share-tree-name" title={row.path}>{row.name}</strong>
+                {#if row.visibility !== 'public'}<span class={`share-visibility ${row.visibility}`}>{row.visibility === 'locked' ? 'Locked' : 'Mixed'}</span>{/if}
                 <span class="share-tree-folder-meta">{row.fileIds.length} {row.fileIds.length === 1 ? 'file' : 'files'}</span>
                 <span class="share-tree-size">{formatShareSize(row.sizeBytes)}</span>
               </div>
@@ -255,11 +317,15 @@
                 <span class="share-tree-toggle-spacer"></span>
                 <span class="share-tree-icon"><Icon name="file" /></span>
                 <strong class="share-tree-name" title={row.path}>{row.name}</strong>
+                {#if row.visibility !== 'public'}<span class={`share-visibility ${row.visibility}`}>{row.visibility === 'locked' ? 'Locked' : 'Mixed'}</span>{/if}
                 <span class="share-tree-size">{formatShareSize(row.sizeBytes)}</span>
               </label>
             {/if}
           {/each}
         </div>
+        {#if shareProjection.nextCursor}
+          <LoadMoreButton label="Load more shared entries" onclick={() => (sharePagesRequested += 1)} />
+        {/if}
       {:else}
         <div class="search-results-empty">
           <strong>No matching shared files</strong>
@@ -267,10 +333,11 @@
         </div>
       {/if}
     </div>
+    {/if}
   {/if}
 </section>
 
-{#if profilePictureOpen && fixture.profile.imageUrl}
+{#if profilePictureOpen && profile.picture?.url}
   <div class="profile-picture-lightbox">
     <button
       type="button"
@@ -279,7 +346,7 @@
       onclick={() => (profilePictureOpen = false)}
     ></button>
     <div class="profile-picture-lightbox-dialog" role="dialog" aria-modal="true" aria-label={`${displayUsername} profile picture`}>
-      <img src={fixture.profile.imageUrl} alt={`${displayUsername} profile picture`} />
+      <img src={profile.picture.url} alt={`${displayUsername} profile picture`} />
       <button type="button" class="profile-picture-lightbox-close" aria-label="Close profile picture" onclick={() => (profilePictureOpen = false)}>×</button>
     </div>
   </div>

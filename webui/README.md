@@ -47,6 +47,14 @@ The prototype currently uses a **Carbon + Blue** palette: nearly neutral black/g
 
 The current scale pass favors roughly 14 px primary row text, 12 px secondary metadata and form labels, 32–34 px form controls, and 24–26 px condition pills. The global search remains intentionally larger at 54 px.
 
+Durable UX rules:
+
+- keep surfaces compact but not cramped, with alignment and visual hierarchy doing more work than prose;
+- avoid explanatory product copy for behavior or ordering that is already obvious from the interface;
+- use blue for active/focus/selection state, green for success, red for failure, and neutral gray for queued/indeterminate state;
+- preserve backend/order semantics when grouping: peer/user grouping is adjacent-only unless the backend explicitly returns a grouped object;
+- prefer shared file/folder presentation primitives and typed adapters over parallel Track/Album/Upload implementations.
+
 The shell currently has seven destinations:
 
 - **Dashboard**
@@ -59,7 +67,7 @@ The shell currently has seven destinations:
 
 Shares live as a subview of **Users** rather than as a separate top-level destination. Transfer history lives in Downloads/Uploads, and other historical information should generally remain close to the feature that produced it.
 
-A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A fixed-width **Album / Track** button switches result mode, while `•••` opens advanced search conditions. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
+A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A shared icon mode control switches **Track / Album** (or **User / Shares** while browsing users): left-click toggles and right-click opens an explicit picker. `•••` opens advanced search conditions where applicable. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
 
 ### Morphing search
 
@@ -92,9 +100,11 @@ The Conditions UI treats sample rate and bit depth as exact values. A small adap
 
 The Search tab now has persistent prototype state with two views: a newest-first Searches list and a projected Results view. Submitting the global search creates a search and opens its results; opening an existing search restores its Track or Album projection. The back button returns to Searches, and clicking Search in the sidebar while already viewing results does the same. Leaving Search and returning from another tab preserves the last Search subview.
 
-Search result refinement is deliberately compact: text filtering, sorting, and a **Conditions** button share one row. Applied condition pills render only when needed and reserve no empty row when a search has no hard filters. The Conditions button opens the same `SearchConfigPanel` component used by the global search rather than a second ad-hoc UI; its Ranking tab is available there as well. Removing or changing required conditions filters the mock result projection immediately.
+Search result refinement is deliberately compact: text filtering, sorting, and a **Conditions** button share one row. Applied condition pills render only when needed and reserve no empty row when a search has no hard filters. The Conditions button opens the same `SearchConfigPanel` component used by the global search rather than a second ad-hoc UI; its Ranking tab is available there as well. Text, Conditions, Ranking, and Sort changes each request a new daemon-owned projection over the complete retained result set and reset result pagination; they are not client-side operations over pages already received. The mock adapter responds synchronously only because the prototype is unwired.
 
-Track results show the full file path, lock state, size, length, and available bitrate/sample-rate/bit-depth metadata. Whole track rows are selectable. Album results show the full album directory path and a nested file list using paths relative to the album folder; clicking the album summary selects or clears the whole album, while individual files remain independently selectable. Adjacent results from the same peer share one collapsible peer header with free-slot state beside the peer name and compact upload/queue/file statistics on the right. Relevance sorting separates backend-marked preferred matches from other matches; speed, queue, and two-way size sorting use one combined result stream. Selection actions appear contextually rather than reserving a permanent toolbar.
+Track results show the full file path, lock state, size, length, and available bitrate/sample-rate/bit-depth metadata. Whole track rows are selectable. Album results show the full album directory path and a nested file list using paths relative to the album folder; clicking the album summary selects or clears the whole album, while individual files remain independently selectable. Adjacent results from the same peer share one collapsible peer header with free-slot state beside the peer name and compact upload/queue/file statistics on the right. Relevance, speed, queue, and two-way size are requested backend orderings over one result stream; relevance also returns the daemon's preferred/other classification after applying Ranking. Selection actions appear contextually rather than reserving a permanent toolbar.
+
+Album search folders render the files already returned by the search. Full-folder retrieval is a separate, user-initiated augmentation: while it runs, the existing folder contents remain visible and the retrieval state is layered on top; newly discovered files can then extend that folder. Ordinary search results should not look as though retrieval is running. Retained historical folders whose authoritative child detail is no longer available remain summary-only rather than showing a knowingly partial history. Search results render every item returned by the loaded backend projection pages; **Load more results** exists only when the latest page returns another cursor.
 
 Prototype searches now start with neutral required conditions so fixture results are visible until the user deliberately applies constraints. A fixed rounded-rectangle download action appears in the lower-right corner whenever any result items are selected, so long result lists do not require returning to the top. Checkboxes use a dark native-like treatment throughout the application when the OS requests dark mode, including indeterminate album selection.
 
@@ -105,7 +115,9 @@ The Users destination has two subviews: **User** and **Shares**. While Users is 
 
 The User profile combines the distinct Soulseek concepts we will eventually request from user info/statistics/status calls: presence, optional profile picture and description, shared file/folder counts, average upload speed, lifetime upload count, slot count, queue depth, and free-slot state. Scenario fixtures deliberately cover missing pictures, missing descriptions, offline state, and long usernames. Usernames shown elsewhere in the prototype use one shared `UsernameLink` action: hovering underlines the name, and activation navigates directly to that peer's User profile without disturbing the originating page's state. The profile also exposes a Message action that opens or creates that user's private conversation in Chat.
 
-Shares renders the full browsed directory tree rather than forcing it through the flat Album presentation. Folders and files are independently selectable, folder checkboxes represent all descendants with indeterminate state, folders can collapse, and filtering preserves matching paths and their ancestors. Total browse size is computed from the share tree and displayed only in the Shares view because Soulseek user statistics provide share counts but not aggregate shared bytes. Search Results and Shares reuse the same filter control and selection/download toolbar.
+Shares renders the browsed directory tree rather than forcing it through the flat Album presentation. Folders and files are independently selectable, folder checkboxes represent all descendants with indeterminate state, and folders can collapse. The filter bar requests a new daemon-owned mixed-tree projection across the complete browse artifact before pagination; the response preserves matching paths and ancestor context, supplies the total matching-file count, and has its own cursor. It does not filter only the currently loaded tree page. Total browse size is computed by the daemon for the browse artifact and displayed only in the Shares view because Soulseek user statistics provide share counts but not aggregate shared bytes. Search Results and Shares reuse the same filter control and selection/download toolbar.
+
+Opening/submitting the Shares view should itself acquire or reacquire the user's browse data when needed; an expired browse artifact must not require a second explicit refresh action from the user.
 
 ## Downloads exploration
 
@@ -122,7 +134,7 @@ This projection uses the same `FileItemCard`, `FolderItemCard`, `PeerItemGroup`,
 
 ## Chat exploration
 
-Chat is a first-class borderless workspace rather than a card inside the page. The left rail is split into **Rooms** first and **Users** second, with small add controls for joining/opening destinations. Both room and private-message threads are interactive prototype state: selecting a destination clears its unread badge, sending appends messages, leaving a room removes it from the rail, conversation history can be deleted, and a user can be locally blocked/unblocked. Usernames reuse the global `UsernameLink` behavior in the thread header and room messages, while conversation-rail usernames remain plain text and message bodies reuse `LinkifiedText` for safe external links.
+Chat is a first-class borderless workspace rather than a card inside the page. The left rail is split into **Rooms** first and **Users** second, with small add controls for joining/opening destinations. Both room and private-message threads are interactive prototype state: selecting a destination clears its unread badge, sending appends messages, leaving a room removes it from the rail, deleting a private chat removes that conversation from the rail, and a user can be locally blocked/unblocked. Usernames reuse the global `UsernameLink` behavior in the thread header and room messages, while conversation-rail usernames remain plain text and message bodies reuse `LinkifiedText` for safe external links.
 
 The composer is multiline. Enter inserts a newline; Ctrl+Enter (or Cmd+Enter) sends. It starts at one line, automatically grows to a capped height, and sent messages preserve line breaks. The prototype structure follows the daemon's separate private-conversation and room APIs; blocking remains prototype state because the daemon models blocked usernames as peer-access settings rather than a chat-only action.
 
@@ -138,6 +150,8 @@ The prototype does not need a live daemon, but its transfer fixtures satisfy the
 
 The scenario switcher remains deliberately visible as a prototype tool. It lets us inspect the same screens under different data pressure without building a fake daemon.
 
+Pagination/page-size limits in the prototype are intentionally very small so pagination, scrolling, and partial-loading interactions are easy to exercise. **Production limits are expected to be much larger everywhere**; the prototype values are not product recommendations.
+
 Generated API types are an **input**, not the UI architecture. UI-specific models can be introduced whenever the wire shape becomes inconvenient.
 
 ## Current project shape
@@ -152,6 +166,9 @@ src/
     ModeIconToggle.svelte
     Icon.svelte
     LinkifiedText.svelte
+    LoadMoreButton.svelte
+    MutationStatus.svelte
+    ResourceStateNotice.svelte
     ResultFilterControl.svelte
     SelectionToolbar.svelte
     TransferBulkActions.svelte
@@ -182,6 +199,8 @@ src/
   prototype/
     icons.ts
     navigation.ts
+    backend-contracts.ts
+    resource-state.ts
     search.ts
     search-config.ts
     search-results.ts
@@ -225,6 +244,12 @@ The lower dashboard uses independent vertical columns so panels size to their ow
 
 The search configuration UI deliberately keeps the daemon's required-vs-ranking vocabulary in one declarative registry (`src/prototype/search-config-schema.ts`). Required and preferred labels live next to each other there, and conditions without an explicit documented `pref-*` counterpart have no ranking entry. Compound controls remain explicit Svelte rather than being forced through a generic form generator; shared presentation such as the format selector is factored into reusable components. The API adapter in `search-config.ts` stays explicit so its wire mapping is easy to audit against the generated OpenAPI types.
 
+
+## Backend contract discipline
+
+Current OpenAPI-generated DTOs are used at daemon-facing fixture boundaries; UI-only grouping and presentation remain view models. When the prototype needs data or mutations the daemon does not expose cleanly, define that assumption once in `src/prototype/backend-contracts.ts` rather than reconstructing it ad hoc in components. This includes the proposed search reprojection and mixed share-tree query requests: their mock adapters deliberately apply request semantics before pagination. The backend audit remains in `DAEMON-AUDIT.md`; the README records only durable UI and architecture decisions.
+
+Resource views should keep loading, empty, unavailable, offline, and terminal states distinct without adding explanatory product copy when the state is already visually obvious. Search reruns follow immutable daemon-job semantics while replacing the prior run in the same logical UI slot. New private-chat targets remain frontend drafts until the first accepted send.
 
 ## Prototype URL/history behavior
 

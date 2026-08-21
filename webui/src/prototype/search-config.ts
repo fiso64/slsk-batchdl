@@ -133,7 +133,7 @@ export function createEmptySearchRanking(): SearchRankingPreferences {
   };
 }
 
-type SearchSettingsPatchDto = components['schemas']['SearchSettingsPatchDto'];
+export type SearchSettingsPatchDto = components['schemas']['SearchSettingsPatchDto'];
 type FileConditionsPatchDto = components['schemas']['FileConditionsPatchDto'];
 
 function numberOrNull(value: string): number | null {

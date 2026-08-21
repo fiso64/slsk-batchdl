@@ -4,6 +4,864 @@
  */
 
 export interface paths {
+    "/api/users/{username}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets a composite remote Soulseek user profile. */
+        get: {
+            parameters: {
+                query?: {
+                    refresh?: boolean;
+                };
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserProfileDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{username}/picture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets a validated remote Soulseek user profile picture. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/jpeg": string;
+                        "image/png": string;
+                        "image/gif": string;
+                        "image/webp": string;
+                    };
+                };
+                /** @description Not Modified */
+                304: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{username}/browses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts, joins, or reuses a remote user's share browse. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartUserBrowseRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserBrowseDto"];
+                    };
+                };
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserBrowseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Lists recent remote-user browse resources. */
+        get: {
+            parameters: {
+                query?: {
+                    username?: string;
+                    state?: string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PageDtoOfUserBrowseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets one remote-user browse resource. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserBrowseDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets one user-browse replication snapshot and stream position. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StateSnapshotDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Globally cancels a shared browse acquisition. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserBrowseDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets a stable page of share directories. */
+        get: {
+            parameters: {
+                query: {
+                    parentId?: number | string;
+                    query?: string;
+                    recursive: boolean;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PageDtoOfBrowseDirectoryEntryDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/directories/{directoryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets one share directory. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    browseId: string;
+                    directoryId: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowseDirectoryEntryDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/directories/{directoryId}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets a stable page of files in one share directory. */
+        get: {
+            parameters: {
+                query?: {
+                    query?: string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    browseId: string;
+                    directoryId: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PageDtoOfBrowseFileEntryDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user-browses/{browseId}/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts ordinary remote downloads from a browse selection. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["StartUserShareDownloadsRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StartUserShareDownloadsResponseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Bad Gateway */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/info": {
         parameters: {
             query?: never;
@@ -5071,6 +5929,35 @@ export interface components {
         BandcampSettingsPatchDto: {
             htmlFromFile?: null | string;
         };
+        BrowseDirectoryEntryDto: {
+            /** Format: int64 */
+            directoryId: number | string;
+            /** Format: int64 */
+            parentId: null | number | string;
+            name: string;
+            displayPath: string;
+            visibility: components["schemas"]["ShareVisibility"];
+            isSynthetic: boolean;
+            /** Format: int64 */
+            directDirectoryCount: number | string;
+            /** Format: int64 */
+            directFileCount: number | string;
+            /** Format: int64 */
+            recursiveFileCount: number | string;
+            /** Format: int64 */
+            recursiveFileBytes: number | string;
+            /** Format: int64 */
+            lockedDescendantCount: number | string;
+            hasChildren: boolean;
+        };
+        BrowseFileEntryDto: {
+            /** Format: int64 */
+            fileId: number | string;
+            /** Format: int64 */
+            directoryId: number | string;
+            visibility: components["schemas"]["ShareVisibility"];
+            file: components["schemas"]["FileMetadataDto"];
+        };
         CancelJobsResponseDto: {
             /** Format: int32 */
             cancelled: number | string;
@@ -5219,6 +6106,27 @@ export interface components {
             chat: components["schemas"]["ChatRuntimeStateDto"];
             notifications: components["schemas"]["NotificationSummaryDto"];
         };
+        DirectoryDownloadStateDto: {
+            phase: string;
+            /** Format: int32 */
+            attemptNumber: null | number | string;
+            downloadPath: null | string;
+            /** Format: int32 */
+            fileCount: number | string;
+            /** Format: int32 */
+            terminalFileCount: number | string;
+            /** Format: int32 */
+            successfulFileCount: number | string;
+            /** Format: int32 */
+            failedFileCount: number | string;
+            /** Format: int64 */
+            bytesTransferred: number | string;
+            /** Format: int64 */
+            totalKnownBytes: number | string;
+            /** Format: double */
+            progressPercent: null | number | string;
+        };
+        DirectoryTransferPlanDto: unknown;
         /**
          * @default Automatic
          * @enum {unknown}
@@ -5270,16 +6178,7 @@ export interface components {
             username: string;
             filename: string;
             peer: components["schemas"]["PeerInfoDto"];
-            /** Format: int64 */
-            size: number | string;
-            /** Format: int32 */
-            bitRate: null | number | string;
-            /** Format: int32 */
-            sampleRate: null | number | string;
-            /** Format: int32 */
-            length: null | number | string;
-            extension?: null | string;
-            attributes?: null | components["schemas"]["FileAttributeDto"][];
+            file: components["schemas"]["FileMetadataDto"];
         };
         FileCandidateRefDto: {
             username: string;
@@ -5308,6 +6207,30 @@ export interface components {
             allowedUsers?: null | components["schemas"]["CollectionPatchDtoOfstring"];
             acceptNoLength?: null | boolean;
             acceptMissingProps?: null | boolean;
+        };
+        FileDownloadStateDto: {
+            downloadPath: null | string;
+            /** Format: int64 */
+            bytesTransferred: number | string;
+            /** Format: int64 */
+            fileSize: null | number | string;
+            /** Format: double */
+            progressPercent: null | number | string;
+        };
+        FileMetadataDto: {
+            name: string;
+            /** Format: int64 */
+            size: number | string;
+            extension: null | string;
+            /** Format: int32 */
+            bitRate: null | number | string;
+            /** Format: int32 */
+            bitDepth: null | number | string;
+            /** Format: int32 */
+            sampleRate: null | number | string;
+            /** Format: int32 */
+            length: null | number | string;
+            attributes?: null | components["schemas"]["FileAttributeDto"][];
         };
         FileSearchProjectionRequestDto: {
             songQuery?: null | components["schemas"]["SongQueryDto"];
@@ -5355,7 +6278,7 @@ export interface components {
             appliedAutoProfiles: string[];
             printOption: components["schemas"]["PrintOption"];
         };
-        JobDraftDto: components["schemas"]["JobDraftDtoExtractJobDraftDto"] | components["schemas"]["JobDraftDtoTrackSearchJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumSearchJobDraftDto"] | components["schemas"]["JobDraftDtoSongJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumJobDraftDto"] | components["schemas"]["JobDraftDtoAggregateJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumAggregateJobDraftDto"] | components["schemas"]["JobDraftDtoJobListJobDraftDto"];
+        JobDraftDto: components["schemas"]["JobDraftDtoExtractJobDraftDto"] | components["schemas"]["JobDraftDtoTrackSearchJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumSearchJobDraftDto"] | components["schemas"]["JobDraftDtoSongJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumJobDraftDto"] | components["schemas"]["JobDraftDtoAggregateJobDraftDto"] | components["schemas"]["JobDraftDtoAlbumAggregateJobDraftDto"] | components["schemas"]["JobDraftDtoJobListJobDraftDto"] | components["schemas"]["JobDraftDtoRemoteFileJobDraftDto"] | components["schemas"]["JobDraftDtoRemoteDirectoryJobDraftDto"];
         JobDraftDtoAggregateJobDraftDto: {
             /** @enum {string} */
             kind?: "aggregate";
@@ -5405,6 +6328,23 @@ export interface components {
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
             provenance?: null | components["schemas"]["JobProvenanceDto"];
         };
+        JobDraftDtoRemoteDirectoryJobDraftDto: {
+            /** @enum {string} */
+            kind?: "remote-directory";
+            username?: null | string;
+            folderPath?: null | string;
+            plan?: null | components["schemas"]["DirectoryTransferPlanDto"];
+            downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
+            provenance?: null | components["schemas"]["JobProvenanceDto"];
+        };
+        JobDraftDtoRemoteFileJobDraftDto: {
+            /** @enum {string} */
+            kind?: "remote-file";
+            target: components["schemas"]["PeerFileTargetDto"];
+            outputPathComponents?: unknown;
+            downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
+            provenance?: null | components["schemas"]["JobProvenanceDto"];
+        };
         JobDraftDtoSongJobDraftDto: {
             /** @enum {string} */
             kind?: "song";
@@ -5435,7 +6375,7 @@ export interface components {
             cancellationSource: components["schemas"]["ServerJobCancellationSource"];
             availableActions: components["schemas"]["ResourceActionDto"][];
         };
-        JobPayloadDto: components["schemas"]["JobPayloadDtoExtractJobPayloadDto"] | components["schemas"]["JobPayloadDtoSearchJobPayloadDto"] | components["schemas"]["JobPayloadDtoSongJobPayloadDto"] | components["schemas"]["JobPayloadDtoAlbumJobPayloadDto"] | components["schemas"]["JobPayloadDtoAggregateJobPayloadDto"] | components["schemas"]["JobPayloadDtoAlbumAggregateJobPayloadDto"] | components["schemas"]["JobPayloadDtoJobListPayloadDto"] | components["schemas"]["JobPayloadDtoRetrieveFolderJobPayloadDto"] | components["schemas"]["JobPayloadDtoGenericJobPayloadDto"];
+        JobPayloadDto: components["schemas"]["JobPayloadDtoExtractJobPayloadDto"] | components["schemas"]["JobPayloadDtoSearchJobPayloadDto"] | components["schemas"]["JobPayloadDtoSongJobPayloadDto"] | components["schemas"]["JobPayloadDtoAlbumJobPayloadDto"] | components["schemas"]["JobPayloadDtoAggregateJobPayloadDto"] | components["schemas"]["JobPayloadDtoAlbumAggregateJobPayloadDto"] | components["schemas"]["JobPayloadDtoJobListPayloadDto"] | components["schemas"]["JobPayloadDtoRetrieveFolderJobPayloadDto"] | components["schemas"]["JobPayloadDtoRemoteFileJobPayloadDto"] | components["schemas"]["JobPayloadDtoRemoteDirectoryJobPayloadDto"] | components["schemas"]["JobPayloadDtoGenericJobPayloadDto"];
         JobPayloadDtoAggregateJobPayloadDto: {
             /** @enum {string} */
             kind?: "aggregate";
@@ -5463,17 +6403,9 @@ export interface components {
             query: components["schemas"]["AlbumQueryDto"];
             /** Format: int32 */
             resultCount: number | string;
-            downloadPath: null | string;
+            directory: components["schemas"]["DirectoryDownloadStateDto"];
             resolvedFolderUsername: null | string;
             resolvedFolderPath: null | string;
-            /** Format: int32 */
-            selectedFolderFileCount?: null | number | string;
-            /** Format: int32 */
-            selectedFolderCompletedFileCount?: null | number | string;
-            /** Format: int32 */
-            selectedFolderSucceededFileCount?: null | number | string;
-            /** Format: int32 */
-            selectedFolderFailedFileCount?: null | number | string;
             results?: null | components["schemas"]["AlbumFolderDto"][];
             tracks?: null | components["schemas"]["SongJobPayloadDto"][];
         };
@@ -5507,6 +6439,23 @@ export interface components {
             failedJobCount: number | string;
             directSongs?: null | components["schemas"]["SongJobPayloadDto"][];
         };
+        JobPayloadDtoRemoteDirectoryJobPayloadDto: {
+            /** @enum {string} */
+            kind?: "remote-directory";
+            sourceKind: components["schemas"]["RemoteDirectorySourceKindDto"];
+            sourceUsername: null | string;
+            sourceFolderPath: null | string;
+            resolvedPlanSource: null | components["schemas"]["DirectoryTransferPlanDto"];
+            activePlan: null | components["schemas"]["DirectoryTransferPlanDto"];
+            directory: components["schemas"]["DirectoryDownloadStateDto"];
+        };
+        JobPayloadDtoRemoteFileJobPayloadDto: {
+            /** @enum {string} */
+            kind?: "remote-file";
+            target: components["schemas"]["PeerFileTargetDto"];
+            outputPathComponents: string[];
+            file: components["schemas"]["FileDownloadStateDto"];
+        };
         JobPayloadDtoRetrieveFolderJobPayloadDto: {
             /** @enum {string} */
             kind?: "retrieve-folder";
@@ -5536,7 +6485,7 @@ export interface components {
             query: components["schemas"]["SongQueryDto"];
             /** Format: int32 */
             candidateCount: null | number | string;
-            downloadPath: null | string;
+            file: components["schemas"]["FileDownloadStateDto"];
             resolvedUsername?: null | string;
             resolvedFilename?: null | string;
             resolvedHasFreeUploadSlot?: null | boolean;
@@ -5561,16 +6510,11 @@ export interface components {
             skipReason?: null | components["schemas"]["ServerJobSkipReason"];
             failureReason?: null | components["schemas"]["ServerJobFailureReason"];
             failureMessage?: null | string;
-            /** Format: int64 */
-            bytesTransferred?: null | number | string;
-            /** Format: int64 */
-            totalBytes?: null | number | string;
-            /** Format: double */
-            progressPercent?: null | number | string;
             availableActions?: null | components["schemas"]["ResourceActionDto"][];
             transferState?: null | string;
             cancellationSource?: components["schemas"]["ServerJobCancellationSource"];
             downloadSource?: components["schemas"]["ServerSongDownloadSource"];
+            exactTarget?: null | components["schemas"]["PeerFileTargetDto"];
         };
         JobProvenanceDto: {
             /**
@@ -5682,6 +6626,19 @@ export interface components {
             albumArtOnly?: null | boolean;
             albumArtOption?: null | components["schemas"]["AlbumArtOption"];
         };
+        PageDtoOfBrowseDirectoryEntryDto: {
+            items: components["schemas"]["BrowseDirectoryEntryDto"][];
+            nextCursor: null | string;
+        };
+        PageDtoOfBrowseFileEntryDto: {
+            items: components["schemas"]["BrowseFileEntryDto"][];
+            nextCursor: null | string;
+        };
+        PageDtoOfUserBrowseDto: {
+            items: components["schemas"]["UserBrowseDto"][];
+            nextCursor: null | string;
+        };
+        PeerFileTargetDto: unknown;
         PeerInfoDto: {
             username: string;
             hasFreeUploadSlot?: null | boolean;
@@ -5884,11 +6841,15 @@ export interface components {
             match: components["schemas"]["RegexFieldsDto"];
             replace: components["schemas"]["RegexFieldsDto"];
         };
+        /** @enum {unknown} */
+        RemoteDirectorySourceKindDto: "PeerDirectory" | "Resolved";
         ResourceActionDto: {
             kind: components["schemas"]["ServerResourceActionKind"];
             method: string;
             href: string;
         };
+        /** @enum {unknown} */
+        ResourceSectionState: "available" | "unavailable" | "timed-out";
         RetrieveFolderRequestDto: {
             folder: components["schemas"]["AlbumFolderRefDto"];
             albumQuery?: null | components["schemas"]["AlbumQueryDto"];
@@ -5967,8 +6928,6 @@ export interface components {
             /** Format: int32 */
             searchTimeout?: null | number | string;
             /** Format: int32 */
-            maxStaleTime?: null | number | string;
-            /** Format: int32 */
             downrankOn?: null | number | string;
             /** Format: int32 */
             ignoreOn?: null | number | string;
@@ -6029,7 +6988,7 @@ export interface components {
         /** @enum {unknown} */
         ServerJobFailureReason: "None" | "InvalidSearchString" | "OutOfDownloadRetries" | "AllDownloadsFailed" | "Other" | "ExtractionFailed" | "Cancelled" | "ChildJobsFailed" | "NoSearchResults" | "NoMatchingResults" | null;
         /** @enum {unknown} */
-        ServerJobKind: "extract" | "search" | "song" | "album" | "aggregate" | "album-aggregate" | "job-list" | "retrieve-folder" | "generic";
+        ServerJobKind: "extract" | "search" | "song" | "album" | "aggregate" | "album-aggregate" | "job-list" | "retrieve-folder" | "remote-file" | "remote-directory" | "generic";
         /** @enum {unknown} */
         ServerJobLifecycleState: "Pending" | "Running" | "AwaitingSelection" | "Terminal";
         /** @enum {unknown} */
@@ -6102,6 +7061,8 @@ export interface components {
             errorSamples: components["schemas"]["ShareScanErrorSampleDto"][];
             availableActions: components["schemas"]["ResourceActionDto"][];
         };
+        /** @enum {unknown} */
+        ShareVisibility: "public" | "locked" | "mixed";
         SharingStateDto: {
             state: components["schemas"]["DaemonFeatureState"];
             reason: null | string;
@@ -6128,7 +7089,7 @@ export interface components {
             query: components["schemas"]["SongQueryDto"];
             /** Format: int32 */
             candidateCount: null | number | string;
-            downloadPath: null | string;
+            file: components["schemas"]["FileDownloadStateDto"];
             resolvedUsername?: null | string;
             resolvedFilename?: null | string;
             resolvedHasFreeUploadSlot?: null | boolean;
@@ -6153,16 +7114,11 @@ export interface components {
             skipReason?: null | components["schemas"]["ServerJobSkipReason"];
             failureReason?: null | components["schemas"]["ServerJobFailureReason"];
             failureMessage?: null | string;
-            /** Format: int64 */
-            bytesTransferred?: null | number | string;
-            /** Format: int64 */
-            totalBytes?: null | number | string;
-            /** Format: double */
-            progressPercent?: null | number | string;
             availableActions?: unknown;
             transferState?: null | string;
             cancellationSource?: components["schemas"]["ServerJobCancellationSource"];
             downloadSource?: components["schemas"]["ServerSongDownloadSource"];
+            exactTarget?: null | components["schemas"]["PeerFileTargetDto"];
         };
         SongQueryDto: {
             artist?: null | string;
@@ -6208,6 +7164,7 @@ export interface components {
         StartFileDownloadsRequestDto: {
             files: components["schemas"]["FileCandidateRefDto"][];
             options?: null | components["schemas"]["SubmissionOptionsDto"];
+            requestedMode?: null | components["schemas"]["ExtractionMode"];
         };
         StartFolderDownloadRequestDto: {
             folder: components["schemas"]["AlbumFolderRefDto"];
@@ -6215,6 +7172,7 @@ export interface components {
             albumQuery?: null | components["schemas"]["AlbumQueryDto"];
             selection?: null | components["schemas"]["AlbumFolderDownloadSelectionDto"];
             selectedFolder?: null | components["schemas"]["AlbumFolderDto"];
+            requestedMode?: null | components["schemas"]["ExtractionMode"];
         };
         StartShareScanResponseDto: {
             result: components["schemas"]["StartShareScanResult"];
@@ -6222,6 +7180,20 @@ export interface components {
         };
         /** @enum {unknown} */
         StartShareScanResult: "Started" | "AlreadyRunning";
+        StartUserBrowseRequestDto: {
+            /** @default false */
+            refresh: boolean;
+        };
+        StartUserShareDownloadsRequestDto: {
+            /** Format: uuid */
+            requestId: string;
+            selections: components["schemas"]["UserShareSelectionDto"][];
+            options?: null | components["schemas"]["SubmissionOptionsDto"];
+        };
+        StartUserShareDownloadsResponseDto: {
+            workflow: components["schemas"]["JobSummaryDto"];
+            resolution: components["schemas"]["UserShareResolutionSummaryDto"];
+        };
         StateSnapshotDto: {
             scope: components["schemas"]["StateStreamScopeDto"];
             position: components["schemas"]["StateStreamPositionDto"];
@@ -6233,6 +7205,7 @@ export interface components {
             searches: components["schemas"]["SearchStateDto"][];
             transfers: components["schemas"]["TransferStateDto"][];
             chatTarget?: null | components["schemas"]["ChatTargetSnapshotDto"];
+            userBrowse?: null | components["schemas"]["UserBrowseDto"];
         };
         StateStreamPositionDto: {
             /** Format: uuid */
@@ -6246,9 +7219,11 @@ export interface components {
             workflowId?: null | string;
             /** Format: uuid */
             chatTargetId?: null | string;
+            /** Format: uuid */
+            userBrowseId?: null | string;
         };
         /** @enum {unknown} */
-        StateStreamScopeKind: "daemon" | "workflow" | "chatConversation" | "chatRoom";
+        StateStreamScopeKind: "daemon" | "workflow" | "chatConversation" | "chatRoom" | "userBrowse";
         SubmissionOptionsDto: {
             /** Format: uuid */
             workflowId?: null | string;
@@ -6416,6 +7391,8 @@ export interface components {
             noIncompleteExt?: null | boolean;
             /** Format: int32 */
             albumTrackCountMaxRetries?: null | number | string;
+            /** Format: int32 */
+            maxStaleTime?: null | number | string;
         };
         TransferStateDto: {
             /** Format: uuid */
@@ -6460,6 +7437,36 @@ export interface components {
             /** Format: int32 */
             speedLimitKiBPerSecond: null | number | string;
         };
+        UserBrowseDto: {
+            /** Format: uuid */
+            browseId: string;
+            username: string;
+            state: components["schemas"]["UserBrowseState"];
+            phase: components["schemas"]["UserBrowsePhase"];
+            /** Format: int64 */
+            compressedBytesReceived: number | string;
+            /** Format: int64 */
+            compressedBytesExpected: null | number | string;
+            /** Format: int64 */
+            directoryCount: number | string;
+            /** Format: int64 */
+            fileCount: number | string;
+            /** Format: int64 */
+            totalFileBytes: number | string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            expiresAt: null | string;
+            failure: null | components["schemas"]["ApiErrorDto"];
+            /** Format: int64 */
+            revision: number | string;
+        };
+        /** @enum {unknown} */
+        UserBrowsePhase: "waiting-for-peer" | "receiving" | "indexing" | "ready";
+        /** @enum {unknown} */
+        UserBrowseState: "queued" | "running" | "complete" | "failed" | "cancelled";
         UserNotificationDto: {
             /** Format: uuid */
             notificationId: string;
@@ -6482,6 +7489,72 @@ export interface components {
         };
         /** @enum {unknown} */
         UserNotificationKind: "PrivateMessage" | "RoomMention";
+        UserPictureRefDto: {
+            url: string;
+            mediaType: string;
+            /** Format: int32 */
+            byteLength: number | string;
+            eTag: string;
+        };
+        UserProfileDto: {
+            username: string;
+            presence: components["schemas"]["UserProfilePresence"];
+            status: components["schemas"]["UserProfileSectionDto"];
+            info: components["schemas"]["UserProfileSectionDto"];
+            statistics: components["schemas"]["UserProfileSectionDto"];
+            pictureSection: components["schemas"]["UserProfileSectionDto"];
+            description: null | string;
+            /** Format: int64 */
+            sharedFileCount: null | number | string;
+            /** Format: int64 */
+            sharedDirectoryCount: null | number | string;
+            /** Format: int64 */
+            averageUploadSpeed: null | number | string;
+            /** Format: int32 */
+            uploadCount: null | number | string;
+            /** Format: int32 */
+            uploadSlots: null | number | string;
+            /** Format: int32 */
+            queueLength: null | number | string;
+            hasFreeUploadSlot: null | boolean;
+            picture: null | components["schemas"]["UserPictureRefDto"];
+            /** Format: date-time */
+            observedAt: string;
+        };
+        /** @enum {unknown} */
+        UserProfilePresence: "online" | "away" | "offline" | "unknown";
+        UserProfileSectionDto: {
+            state: components["schemas"]["ResourceSectionState"];
+            reason: null | string;
+        };
+        UserShareResolutionSummaryDto: {
+            /** Format: int32 */
+            canonicalDirectoryRoots: number | string;
+            /** Format: int32 */
+            standaloneFiles: number | string;
+            /** Format: int64 */
+            totalPublicFiles: number | string;
+            /** Format: int64 */
+            totalPublicBytes: number | string;
+            /** Format: int32 */
+            redundantSelectionsRemoved: number | string;
+            /** Format: int64 */
+            lockedBranchesSkipped: number | string;
+            outputParent: string;
+        };
+        UserShareSelectionDto: components["schemas"]["UserShareSelectionDtoUserShareDirectorySelectionDto"] | components["schemas"]["UserShareSelectionDtoUserShareFileSelectionDto"];
+        UserShareSelectionDtoUserShareDirectorySelectionDto: {
+            /** @enum {string} */
+            kind?: "directory";
+            /** Format: int64 */
+            directoryId: number | string;
+        };
+        UserShareSelectionDtoUserShareFileSelectionDto: {
+            /** @enum {string} */
+            kind?: "file";
+            /** Format: int64 */
+            fileId: number | string;
+        };
         WorkflowDetailDto: {
             summary: components["schemas"]["WorkflowSummaryDto"];
             jobs: components["schemas"]["JobSummaryDto"][];

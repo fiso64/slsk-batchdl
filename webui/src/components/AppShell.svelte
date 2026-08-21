@@ -5,6 +5,7 @@
   import type { SearchDraft } from '../prototype/search';
   import type { PrototypeSearchConditions } from '../prototype/search-config';
   import type { UserBrowseDraft } from '../prototype/users';
+  import { chatRuntimeForScenario } from '../prototype/chat';
   import GlobalSearch from './GlobalSearch.svelte';
   import Icon from './Icon.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
@@ -43,7 +44,8 @@
   let currentTransfers = $derived(scenario.snapshot.transfers.filter((transfer) => !transfer.status.isTerminal));
   let downloadCount = $derived(currentTransfers.filter((transfer) => transfer.identity.direction === 'download').length);
   let uploadCount = $derived(currentTransfers.filter((transfer) => transfer.identity.direction === 'upload').length);
-  const unreadChats = 2;
+  let chatRuntime = $derived(chatRuntimeForScenario(scenarioId));
+  let unreadChats = $derived(Number(chatRuntime.unreadPrivateMessageCount) + Number(chatRuntime.unreadRoomMessageCount));
 </script>
 
 <div class="app-shell">

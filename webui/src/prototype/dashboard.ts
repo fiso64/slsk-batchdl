@@ -147,3 +147,54 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
     summary: { downloaded: '238 GB', downloadFiles: 2908, uploaded: '621 GB', uploadFiles: 14834, shareRatio: '2.61', ratioDelta: '+0.39' },
   },
 };
+
+// Contract semantics for the future single dashboard aggregate endpoint. These
+// values are intentionally explicit even though the current visual fixtures are mocked.
+import type { ProposedActivityFeedItemDto, ProposedDashboardAnalyticsDto } from './backend-contracts';
+import { prototypeUuid } from './ids';
+
+const dashboardRangeContracts: Record<DashboardRangeId, ProposedDashboardAnalyticsDto['range']> = {
+  '24h': { startUtc: '2026-08-06T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 7_200, comparisonStartUtc: '2026-08-05T08:15:00.000Z', comparisonEndUtc: '2026-08-06T08:15:00.000Z', partialRetention: false },
+  '7d': { startUtc: '2026-07-31T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 43_200, comparisonStartUtc: '2026-07-24T08:15:00.000Z', comparisonEndUtc: '2026-07-31T08:15:00.000Z', partialRetention: false },
+  '30d': { startUtc: '2026-07-08T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 172_800, comparisonStartUtc: '2026-06-08T08:15:00.000Z', comparisonEndUtc: '2026-07-08T08:15:00.000Z', partialRetention: false },
+  '90d': { startUtc: '2026-05-09T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 518_400, comparisonStartUtc: '2026-02-08T08:15:00.000Z', comparisonEndUtc: '2026-05-09T08:15:00.000Z', partialRetention: false },
+};
+
+function decimalBytes(label: string): number {
+  const match = /^([0-9.]+)\s*(GB|TB)$/i.exec(label);
+  if (!match) return 0;
+  return Number(match[1]) * (match[2]!.toUpperCase() === 'TB' ? 1_000_000_000_000 : 1_000_000_000);
+}
+
+export function dashboardContractFor(range: DashboardRangeId, partialRetention = false): ProposedDashboardAnalyticsDto {
+  const data = dashboardData[range];
+  return {
+    contract: 'proposed-dashboard-analytics-v1',
+    range: { ...dashboardRangeContracts[range], partialRetention },
+    semantics: {
+      peerBytes: 'terminal-and-progress-transfer-bytes-by-remote-username',
+      peerFiles: 'distinct-terminal-transfer-ids',
+      contentIdentity: 'logical-download-source-path',
+      errorPopulation: 'terminal-transfer-attempt-failures',
+      activityOrdering: 'occurred-at-descending',
+      shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes',
+    },
+    downloadMbps: data.downloadMbps,
+    uploadMbps: data.uploadMbps,
+    peers: data.peers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
+    content: data.content.map((item) => ({ identity: item.folder, displayPath: item.folder, downloadCount: item.downloads, distinctPeerCount: item.peers })),
+    errors: data.errors.map((error, index) => ({ key: `error-${index}`, message: error.error, count: error.count, lastSeenUtc: '2026-08-07T07:44:00.000Z' })),
+    summary: {
+      downloadedBytes: decimalBytes(data.summary.downloaded), downloadedFiles: data.summary.downloadFiles,
+      uploadedBytes: decimalBytes(data.summary.uploaded), uploadedFiles: data.summary.uploadFiles,
+      shareRatio: Number(data.summary.shareRatio), comparisonShareRatio: Math.max(0, Number(data.summary.shareRatio) - Number(data.summary.ratioDelta)),
+    },
+  };
+}
+
+export const dashboardActivityFeed: { contract: ProposedActivityFeedItemDto; displayAge: string }[] = [
+  { contract: { activityId: prototypeUuid(0x71000000, 1), occurredAtUtc: '2026-08-07T08:13:00.000Z', kind: 'download', actor: 'nightshift', itemName: 'Music Is Math.flac', detail: 'downloaded from' }, displayAge: '2m' },
+  { contract: { activityId: prototypeUuid(0x71000000, 2), occurredAtUtc: '2026-08-07T08:07:00.000Z', kind: 'upload', actor: 'cassetteculture', itemName: '27 files uploaded', detail: 'to' }, displayAge: '8m' },
+  { contract: { activityId: prototypeUuid(0x71000000, 3), occurredAtUtc: '2026-08-07T08:01:00.000Z', kind: 'chat', actor: 'tape_loop', itemName: 'New message', detail: 'from' }, displayAge: '14m' },
+  { contract: { activityId: prototypeUuid(0x71000000, 4), occurredAtUtc: '2026-08-07T07:44:00.000Z', kind: 'download', itemName: 'Xtal.flac', detail: 'download completed' }, displayAge: '31m' },
+];

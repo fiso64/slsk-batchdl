@@ -1,7 +1,9 @@
 import type { PrototypeScenario, TransferStateDto } from '../mock/types';
 import { groupAdjacentBy } from './grouping';
 import type { FolderItemFile, TransferPresentation } from './items';
+import type { PrototypeDataLifetime, ResourceActionDto } from './backend-contracts';
 import { formatEta, formatSpeed, progressPercent } from './transfers';
+import { prototypeUuid } from './ids';
 
 interface UploadTransferView {
   id: string;
@@ -12,6 +14,8 @@ interface UploadTransferView {
   transferredBytes: number;
   bytesPerSecond: number;
   requestedAtUtc: string;
+  lifetime: PrototypeDataLifetime;
+  availableActions: ResourceActionDto[];
   transfer: TransferPresentation;
 }
 
@@ -20,6 +24,8 @@ export interface UploadFileEntry {
   id: string;
   path: string;
   sizeBytes: number;
+  lifetime: PrototypeDataLifetime;
+  sourceTransferIds: string[];
   transfer: TransferPresentation;
 }
 
@@ -29,6 +35,8 @@ export interface UploadFolderEntry {
   path: string;
   sizeBytes: number;
   files: FolderItemFile[];
+  lifetime: PrototypeDataLifetime;
+  sourceTransferIds: string[];
   transfer: TransferPresentation;
 }
 
@@ -39,6 +47,12 @@ export interface UploadPeerGroup {
   peer: string;
   transferCount: number;
   items: UploadEntry[];
+}
+
+function stableNumber(value: string): number {
+  let hash = 2166136261;
+  for (const char of value) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+  return hash % 900_000;
 }
 
 function numeric(value: number | string | null | undefined): number {
@@ -143,6 +157,8 @@ function viewFor(
     transferredBytes: numeric(transfer.progress.bytesTransferred),
     bytesPerSecond: numeric(transfer.progress.bytesPerSecond),
     requestedAtUtc: transfer.scheduling?.requestedAtUtc ?? '',
+    lifetime: transfer.status.isTerminal ? 'retained' : 'live-only',
+    availableActions: transfer.status.availableActions ?? [],
     transfer: transferPresentation(transfer, capturedAtUtc, cancelledTransferIds.has(transfer.transferId)),
   };
 }
@@ -213,19 +229,25 @@ function projectFolderRun(
       id: file.id,
       path: file.path,
       sizeBytes: file.sizeBytes,
+      lifetime: file.lifetime,
+      sourceTransferIds: [file.id],
       transfer: file.transfer,
     };
   }
 
   return {
     kind: 'folder',
-    id: `upload-folder:${key}`,
+    id: prototypeUuid(0x64000000, stableNumber(key)),
     path: folderPath,
     sizeBytes: files.reduce((total, file) => total + file.sizeBytes, 0),
+    sourceTransferIds: files.map((file) => file.id),
+    lifetime: files.every((file) => file.lifetime === 'retained') ? 'retained' : 'live-only',
     files: files.map((file) => ({
       id: file.id,
       relativePath: basename(file.path),
       sizeBytes: file.sizeBytes,
+      lifetime: file.lifetime,
+      sourceTransferIds: [file.id],
       transfer: file.transfer,
     })),
     transfer: aggregateFolderPresentation(files, capturedAtUtc),

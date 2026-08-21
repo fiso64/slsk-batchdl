@@ -1,5 +1,6 @@
 <script lang="ts">
   import { navigationItems, type PageId } from '../prototype/navigation';
+  import { displayCountDefinitions } from '../prototype/backend-contracts';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -19,6 +20,14 @@
     if (id === 'chat') return unreadChats;
     return null;
   }
+
+  function countTitle(id: PageId): string | undefined {
+    if (id === 'downloads') return displayCountDefinitions.downloadsSidebar.label;
+    if (id === 'uploads') return displayCountDefinitions.uploadsSidebar.label;
+    if (id === 'chat') return displayCountDefinitions.chatSidebar.label;
+    return undefined;
+  }
+
 </script>
 
 <nav class="sidebar-nav" aria-label="Primary navigation">
@@ -33,7 +42,7 @@
       <span class="nav-icon" aria-hidden="true"><Icon name={item.icon} /></span>
       <span class="nav-label">{item.label}</span>
       {#if count !== null && count > 0}
-        <span class:unread={item.id === 'chat'} class="nav-count">{count}</span>
+        <span class:unread={item.id === 'chat'} class="nav-count" title={countTitle(item.id)}>{count}</span>
       {/if}
     </button>
   {/each}
