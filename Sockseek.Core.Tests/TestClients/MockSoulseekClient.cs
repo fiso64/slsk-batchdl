@@ -27,7 +27,7 @@ namespace Tests.ClientTests
         private int disconnectingSearches;
         private int failingSearches;
 
-        public int SearchesCancelledMidDelay { get; private set; }
+        public int SearchesCancelledAfterFirstResponse { get; private set; }
         public int ConnectCallCount;
         public int SearchCallCount;
         public int DownloadCallCount;
@@ -37,6 +37,7 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadStartsAsync;
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
+        public Func<CancellationToken, Task>? AfterFirstSearchResponseAsync;
         public bool BrowseReturnsBasenames { get; set; }
         public BrowseResponse? BrowseResponseOverride { get; set; }
         public long? BrowseProgressSize { get; set; }
@@ -322,13 +323,19 @@ namespace Tests.ClientTests
 
                         // After firing the first response, simulate the search still running.
                         // This lets fast-search tests race the provisional download against the delay.
-                        if (firstResponse && searchDelayMs > 0)
+                        if (firstResponse && (searchDelayMs > 0 || AfterFirstSearchResponseAsync != null))
                         {
                             firstResponse = false;
-                            try { await Task.Delay(searchDelayMs, ct); }
+                            try
+                            {
+                                if (AfterFirstSearchResponseAsync != null)
+                                    await AfterFirstSearchResponseAsync(ct);
+                                else
+                                    await Task.Delay(searchDelayMs, ct);
+                            }
                             catch (OperationCanceledException)
                             {
-                                SearchesCancelledMidDelay++;
+                                SearchesCancelledAfterFirstResponse++;
                                 break;
                             }
                         }

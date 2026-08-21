@@ -52,26 +52,40 @@ namespace Tests.FastSearch
         [TestMethod]
         public async Task SongDownload_FastSearch_SucceedsAndCancelsBackgroundSearch()
         {
-            // Search delay simulates the search still running when the fast download fires.
-            // The download is near-instant, so the search should be cancelled mid-delay.
+            // Keep the search running after its first response until fast-search cancels it.
+            // A fixed delay made this test depend on whether CI could finish the provisional
+            // download within that delay.
+            var releaseSearch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var client = new ClientTests.MockSoulseekClient(
-                new[] { FastUser() }.ToList(),
-                searchDelayMs: 30);
+                new[] { FastUser() }.ToList())
+            {
+                AfterFirstSearchResponseAsync = ct => releaseSearch.Task.WaitAsync(ct),
+            };
 
             var (app, outputDir) = CreateApp(client,
                 "testartist - testsong",
                 new[] { "--fast-search", "--fast-search-min-up-speed", "1" });
 
-            try { await app.RunAsync(CancellationToken.None); }
+            Task? runTask = null;
+            try
+            {
+                runTask = app.RunAsync(CancellationToken.None);
+                await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             finally
             {
+                // Ensure a failed assertion or implementation regression cannot leave the
+                // deliberately blocked fake search alive after the test.
+                releaseSearch.TrySetResult();
+                if (runTask != null)
+                    await runTask.WaitAsync(TimeSpan.FromSeconds(5));
                 if (System.IO.Directory.Exists(outputDir))
                     System.IO.Directory.Delete(outputDir, true);
             }
 
             Assert.AreEqual(JobTerminalOutcome.Succeeded, app.Queue.AllSongs().Single().TerminalOutcome,
                 "Song should be downloaded via fast-search");
-            Assert.AreEqual(1, client.SearchesCancelledMidDelay,
+            Assert.AreEqual(1, client.SearchesCancelledAfterFirstResponse,
                 "Background search should have been cancelled once the fast download succeeded");
         }
 
