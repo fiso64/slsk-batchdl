@@ -57,5 +57,13 @@
     <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
     <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
     <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+  {:else if name === 'track'}
+    <path d="M9 17.5V6.5l9-2v10.8" />
+    <circle cx="6.5" cy="17.5" r="2.5" />
+    <circle cx="15.5" cy="15.5" r="2.5" />
+  {:else if name === 'album'}
+    <rect x="4" y="4" width="16" height="16" rx="2.5" />
+    <circle cx="12" cy="12" r="4.2" />
+    <circle cx="12" cy="12" r="1" />
   {/if}
 </svg>

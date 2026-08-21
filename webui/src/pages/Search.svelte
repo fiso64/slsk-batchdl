@@ -30,8 +30,10 @@
     searches: SearchRecord[];
     view: SearchView;
     activeSearchId: string | null;
-    onusequery: (search: SearchDraft) => void;
     onopenuser: (username: string) => void;
+    onopenrecord: (record: SearchRecord) => void;
+    onshowlist: () => void;
+    onsearchagain: (record: SearchRecord) => void;
   }
 
   let {
@@ -39,8 +41,10 @@
     searches = $bindable(),
     view = $bindable(),
     activeSearchId = $bindable(),
-    onusequery,
     onopenuser,
+    onopenrecord,
+    onshowlist,
+    onsearchagain,
   }: Props = $props();
 
   let filterText = $state('');
@@ -53,13 +57,11 @@
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
 
   function openSearch(record: SearchRecord): void {
-    activeSearchId = record.id;
-    view = 'results';
+    onopenrecord(record);
     filterText = '';
     sort = 'relevance';
     selected = new Set();
     conditionsOpen = false;
-    onusequery(record.draft);
   }
 
   function removeSearch(id: string): void {
@@ -67,6 +69,7 @@
     if (activeSearchId !== id) return;
     activeSearchId = searches[0]?.id ?? null;
     view = 'list';
+    onshowlist();
   }
 
   function statusLabel(status: SearchRecord['status']): string {
@@ -222,30 +225,6 @@
     selected = next;
   }
 
-  function visibleSelectionKeys(results: ProjectedSearchResult[]): string[] {
-    return results.flatMap((result) => result.kind === 'track'
-      ? [selectedKey(result)]
-      : result.files.map((file) => selectedAlbumFileKey(result, file)));
-  }
-
-  function selectVisible(results: ProjectedSearchResult[]): void {
-    selected = new Set([...selected, ...visibleSelectionKeys(results)]);
-  }
-
-  function allVisibleSelected(results: ProjectedSearchResult[]): boolean {
-    const keys = visibleSelectionKeys(results);
-    return keys.length > 0 && keys.every((key) => selected.has(key));
-  }
-
-  function toggleVisible(results: ProjectedSearchResult[], checked: boolean): void {
-    const next = new Set(selected);
-    for (const key of visibleSelectionKeys(results)) {
-      if (checked) next.add(key);
-      else next.delete(key);
-    }
-    selected = next;
-  }
-
   function tierGroups(groups: PeerGroup[], preferred: boolean): PeerGroup[] {
     return groups.filter((group) => group.preferred === preferred);
   }
@@ -299,7 +278,7 @@
     {@const visibleResults = sortedVisibleResults(activeRecord)}
     {@const groups = groupAdjacent(visibleResults)}
     <header class="search-results-heading">
-      <button type="button" class="icon-button back-button" aria-label="Back to searches" onclick={() => (view = 'list')}>
+      <button type="button" class="icon-button back-button" aria-label="Back to searches" onclick={onshowlist}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5L7 10l5.5 5.5M7.5 10H16" /></svg>
       </button>
       <div class="search-results-title">
@@ -312,15 +291,26 @@
         <span>{activeRecord.lockedFiles} locked</span>
         <span>{activeRecord.distinctPeers} peers</span>
       </div>
-      <button type="button" class="delete-search-button" aria-label={`Delete ${activeRecord.displayQuery}`} title="Delete search" onclick={() => removeSearch(activeRecord.id)}>
-        <Icon name="trash" />
-        <span>Delete</span>
-      </button>
+      <div class="search-results-actions">
+        <button type="button" class="search-again-button" title="Run this search again" onclick={() => onsearchagain(activeRecord)}>
+          <Icon name="search" />
+          <span>Search again</span>
+        </button>
+        <button type="button" class="delete-search-button" aria-label={`Delete ${activeRecord.displayQuery}`} title="Delete search" onclick={() => removeSearch(activeRecord.id)}>
+          <Icon name="trash" />
+          <span>Delete</span>
+        </button>
+      </div>
     </header>
 
     <div class="result-refine-wrap">
       <div class="result-refine-row">
         <ResultFilterControl bind:value={filterText} placeholder="Filter results…" ariaLabel="Filter search results" />
+
+        <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
+          Conditions
+        </button>
 
         <div class="result-sort-control">
           <label for="result-sort">Sort</label>
@@ -336,11 +326,6 @@
             </button>
           {/if}
         </div>
-
-        <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
-          Conditions
-        </button>
       </div>
 
       {#if hasAppliedConditions(activeMode, activeRecord.conditions)}
@@ -358,11 +343,7 @@
     </div>
 
     <SelectionToolbar
-      visibleLabel={`${visibleResults.length} visible`}
       selectedCount={selected.size}
-      allVisibleSelected={allVisibleSelected(visibleResults)}
-      ontogglevisible={(checked) => toggleVisible(visibleResults, checked)}
-      onselectvisible={() => selectVisible(visibleResults)}
       onclear={() => (selected = new Set())}
     />
 

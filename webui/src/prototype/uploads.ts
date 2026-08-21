@@ -235,10 +235,11 @@ function projectFolderRun(
 export function uploadsForScenario(
   scenario: PrototypeScenario,
   cancelledTransferIds: ReadonlySet<string> = new Set<string>(),
+  removedTransferIds: ReadonlySet<string> = new Set<string>(),
 ): UploadPeerGroup[] {
   const capturedAtUtc = scenario.snapshot.capturedAtUtc;
   const uploads = scenario.snapshot.transfers
-    .filter((transfer) => transfer.identity.direction === 'upload')
+    .filter((transfer) => transfer.identity.direction === 'upload' && !removedTransferIds.has(transfer.transferId))
     .slice()
     .sort((a, b) => (b.scheduling?.requestedAtUtc ?? '').localeCompare(a.scheduling?.requestedAtUtc ?? ''))
     .map((transfer) => viewFor(transfer, capturedAtUtc, cancelledTransferIds));

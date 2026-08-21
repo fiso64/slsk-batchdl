@@ -107,10 +107,6 @@
     selected = next;
   }
 
-  function selectVisible(visibleRows: ShareTreeRow[]): void {
-    toggleIds(visibleFileIds(visibleRows), true);
-  }
-
   function toggleFolder(folderId: string): void {
     const next = new Set(expandedFolders);
     if (next.has(folderId)) next.delete(folderId);
@@ -225,11 +221,7 @@
       </div>
 
       <SelectionToolbar
-        visibleLabel={`${visibleFiles.length} ${visibleFiles.length === 1 ? 'file' : 'files'} visible`}
         selectedCount={selected.size}
-        allVisibleSelected={allSelected(visibleFiles)}
-        ontogglevisible={(checked) => toggleIds(visibleFiles, checked)}
-        onselectvisible={() => selectVisible(visibleRows)}
         onclear={() => (selected = new Set())}
       />
 

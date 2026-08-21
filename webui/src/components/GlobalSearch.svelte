@@ -9,6 +9,7 @@
   } from '../prototype/search-config';
   import SearchConditionPills from './SearchConditionPills.svelte';
   import Icon from './Icon.svelte';
+  import ModeIconToggle from './ModeIconToggle.svelte';
   import SearchConfigPanel from './SearchConfigPanel.svelte';
 
   interface Props {
@@ -54,12 +55,24 @@
     onchange({ ...value, mode: 'split', query: '', artist, title });
   }
 
-  function toggleResultMode(): void {
-    onchange({ ...value, resultMode: value.resultMode === 'album' ? 'track' : 'album' });
+  const searchModeOptions = [
+    { value: 'track', label: 'Track', icon: 'track' as const },
+    { value: 'album', label: 'Album', icon: 'album' as const },
+  ];
+
+  const userBrowseModeOptions = [
+    { value: 'user', label: 'User', icon: 'user' as const },
+    { value: 'shares', label: 'Shares', icon: 'folder' as const },
+  ];
+
+  function setResultMode(nextMode: string): void {
+    if (nextMode !== 'track' && nextMode !== 'album') return;
+    onchange({ ...value, resultMode: nextMode });
   }
 
-  function toggleUserBrowseMode(): void {
-    onuserchange({ ...userValue, mode: userValue.mode === 'user' ? 'shares' : 'user' });
+  function setUserBrowseMode(nextMode: string): void {
+    if (nextMode !== 'user' && nextMode !== 'shares') return;
+    onuserchange({ ...userValue, mode: nextMode });
   }
 
   function setUserQuery(query: string): void {
@@ -189,14 +202,12 @@
         </div>
       </div>
 
-      <button
-        type="button"
-        class="search-result-mode-button user-browse-mode-button"
-        aria-label={`Switch browse request to ${userValue.mode === 'user' ? 'shares' : 'user'}`}
-        onclick={toggleUserBrowseMode}
-      >
-        {userValue.mode === 'user' ? 'User' : 'Shares'}
-      </button>
+      <ModeIconToggle
+        value={userValue.mode}
+        options={userBrowseModeOptions}
+        ariaLabel="User browse mode"
+        onchange={setUserBrowseMode}
+      />
     {:else}
       <div class="search-entry" onfocusin={() => (searchEngaged = true)}>
         {#if value.mode === 'simple'}
@@ -256,9 +267,12 @@
         {/if}
       </div>
 
-      <button type="button" class="search-result-mode-button" aria-label={`Switch to ${value.resultMode === 'album' ? 'track' : 'album'} search`} onclick={toggleResultMode}>
-        {value.resultMode === 'album' ? 'Album' : 'Track'}
-      </button>
+      <ModeIconToggle
+        value={value.resultMode}
+        options={searchModeOptions}
+        ariaLabel="Search result mode"
+        onchange={setResultMode}
+      />
 
       <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}>•••</button>
     {/if}

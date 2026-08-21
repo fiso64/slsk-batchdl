@@ -107,7 +107,6 @@
           onuserchange={onuserbrowsechange}
           onusersubmit={onuserbrowsesubmit}
         />
-        <div class="user-badge" aria-label="Prototype user">fi</div>
       </div>
     </header>
 

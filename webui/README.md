@@ -101,7 +101,7 @@ Prototype searches now start with neutral required conditions so fixture results
 
 ## Users exploration
 
-The Users destination has two subviews: **User** and **Shares**. While Users is active, the global search morphs into a username browser: it stays a single field, removes split/configuration controls, and repurposes the fixed result-mode button as **User / Shares**. The button chooses which request/view Enter opens; it does not immediately switch the current subview.
+The Users destination has two subviews: **User** and **Shares**. While Users is active, the global search morphs into a username browser: it stays a single field, removes split/configuration controls, and repurposes the shared icon mode control as **User / Shares**. Left-click toggles the mode; right-click opens an explicit mode picker. The selected mode chooses which request/view Enter opens; it does not immediately switch the current subview.
 
 The User profile combines the distinct Soulseek concepts we will eventually request from user info/statistics/status calls: presence, optional profile picture and description, shared file/folder counts, average upload speed, lifetime upload count, slot count, queue depth, and free-slot state. Scenario fixtures deliberately cover missing pictures, missing descriptions, offline state, and long usernames. Usernames shown elsewhere in the prototype use one shared `UsernameLink` action: hovering underlines the name, and activation navigates directly to that peer's User profile without disturbing the originating page's state. The profile also exposes a Message action that opens or creates that user's private conversation in Chat.
 
@@ -122,9 +122,9 @@ This projection uses the same `FileItemCard`, `FolderItemCard`, `PeerItemGroup`,
 
 ## Chat exploration
 
-Chat is a first-class borderless workspace rather than a card inside the page. The left rail is split into **Rooms** first and **Users** second, with small add controls for joining/opening destinations. Both room and private-message threads are interactive prototype state: selecting a destination clears its unread badge, sending appends messages, leaving a room removes it from the rail, conversation history can be deleted, and a user can be locally blocked/unblocked. Usernames reuse the global `UsernameLink` behavior in the rail, thread header, and room messages, while message bodies reuse `LinkifiedText` for safe external links.
+Chat is a first-class borderless workspace rather than a card inside the page. The left rail is split into **Rooms** first and **Users** second, with small add controls for joining/opening destinations. Both room and private-message threads are interactive prototype state: selecting a destination clears its unread badge, sending appends messages, leaving a room removes it from the rail, conversation history can be deleted, and a user can be locally blocked/unblocked. Usernames reuse the global `UsernameLink` behavior in the thread header and room messages, while conversation-rail usernames remain plain text and message bodies reuse `LinkifiedText` for safe external links.
 
-The composer is multiline. Enter inserts a newline; Ctrl+Enter (or Cmd+Enter) sends. It starts at two lines, automatically grows to a capped height, and sent messages preserve line breaks. The prototype structure follows the daemon's separate private-conversation and room APIs; blocking remains prototype state because the daemon models blocked usernames as peer-access settings rather than a chat-only action.
+The composer is multiline. Enter inserts a newline; Ctrl+Enter (or Cmd+Enter) sends. It starts at one line, automatically grows to a capped height, and sent messages preserve line breaks. The prototype structure follows the daemon's separate private-conversation and room APIs; blocking remains prototype state because the daemon models blocked usernames as peer-access settings rather than a chat-only action.
 
 ## Mock data and OpenAPI
 
@@ -149,9 +149,12 @@ src/
   components/
     AppShell.svelte
     GlobalSearch.svelte
+    ModeIconToggle.svelte
     Icon.svelte
+    LinkifiedText.svelte
     ResultFilterControl.svelte
     SelectionToolbar.svelte
+    TransferBulkActions.svelte
     UsernameLink.svelte
     SearchConditionPills.svelte
     SearchConfigPanel.svelte
@@ -159,7 +162,7 @@ src/
       FileItemCard.svelte
       FolderItemCard.svelte
       PeerItemGroup.svelte
-      TransferCancelButton.svelte
+      TransferItemActionButton.svelte
     PrototypeScenarioPicker.svelte
     Sidebar.svelte
   mock/
@@ -197,11 +200,13 @@ src/
 - real HTTP or SignalR integration;
 - authentication;
 - production hosting/packaging;
-- a comprehensive routing or state-management system;
+- a production routing or state-management framework;
 - a reusable design system before the UX is understood;
 - treating the current prototype layouts as production-final.
 
 The next iterations should continue to optimize for **learning what Sockseek should feel like**, not for preserving prototype code.
+
+The global Track/Album control is icon-only and shares the same `ModeIconToggle` component as the Users User/Shares control. Left-click cycles immediately; right-click opens a compact checked menu for explicit selection. The split/merge control remains embedded in the query bar.
 
 Applied search conditions appear in a focused overlay aligned to the query bar. Once engaged, the overlay remains open while interacting with the query controls, result-mode toggle, settings button, or settings panel; it closes on an outside click or Escape from the search controls. A source comment marks where future online metadata suggestions (for example MusicBrainz results) can be inserted beneath the pills once that workflow is supported.
 
@@ -219,3 +224,10 @@ The lower dashboard uses independent vertical columns so panels size to their ow
 ### Search configuration structure
 
 The search configuration UI deliberately keeps the daemon's required-vs-ranking vocabulary in one declarative registry (`src/prototype/search-config-schema.ts`). Required and preferred labels live next to each other there, and conditions without an explicit documented `pref-*` counterpart have no ranking entry. Compound controls remain explicit Svelte rather than being forced through a generic form generator; shared presentation such as the format selector is factored into reusable components. The API adapter in `search-config.ts` stays explicit so its wire mapping is easy to audit against the generated OpenAPI types.
+
+
+## Prototype URL/history behavior
+
+Top-level destinations now synchronize with the browser pathname (`/dashboard`, `/search`, `/downloads`, `/uploads`, `/users/...`, `/chat`, `/settings`) using the native History API. Search results use `/searches/{id}`. User profile/share subviews use `/users/{username}` and `/users/{username}/shares`. `popstate` restores the matching prototype view so browser Back/Forward works without a routing dependency. Dynamically created mock searches remain in-memory prototype state, so a hard reload of a newly generated `/searches/{id}` that is not one of the built-in fixtures falls back to `/search`.
+
+Search Results and Shares no longer reserve a select-visible toolbar row. Selection remains per item/folder, and selected items produce a floating Download action with a neighboring Deselect all control. Downloads and Uploads share `TransferBulkActions` for remove-completed and scoped bulk cancellation, while individual terminal transfer entries reuse the same contextual action slot with a trash icon instead of a cancel icon.
