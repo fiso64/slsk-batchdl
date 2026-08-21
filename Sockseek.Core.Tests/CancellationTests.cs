@@ -16,7 +16,6 @@ namespace Tests.Cancellation
         [ClassInitialize]
         public static void ClassSetup(TestContext _)
         {
-            SockseekLog.AddConsole(LogLevel.Critical);
         }
 
         // Long enough for songs to be concurrently Searching when we cancel;

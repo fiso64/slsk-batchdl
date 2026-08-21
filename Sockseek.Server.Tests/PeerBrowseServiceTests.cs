@@ -1,4 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Sharing;
@@ -11,6 +14,26 @@ namespace Sockseek.Server.Tests;
 [TestClass]
 public sealed class PeerBrowseServiceTests
 {
+    [TestMethod]
+    public async Task AcquisitionAndReuseLogsAreCompleteAndDoNotExposeUsername()
+    {
+        const string username = "PrivatePeerName";
+        var logger = new RecordingLogger<PeerBrowseService>();
+        await using var fixture = await Fixture.CreateAsync(logger: logger);
+
+        PeerBrowseResource completed = await fixture.Service.WaitForCompletionAsync(username);
+        PeerBrowseResource reused = await fixture.Service.StartAsync(username);
+
+        Assert.AreEqual(completed.BrowseId, reused.BrowseId);
+        int[] eventIds = logger.Entries.Select(entry => entry.EventId.Id).ToArray();
+        CollectionAssert.Contains(eventIds, SockseekEventIds.OperationStarted);
+        CollectionAssert.Contains(eventIds, SockseekEventIds.OperationSucceeded);
+        CollectionAssert.Contains(eventIds, 4200);
+        Assert.AreEqual(1, eventIds.Count(id => id == SockseekEventIds.OperationSucceeded));
+        Assert.IsFalse(logger.Entries.Any(entry =>
+            entry.Message.Contains(username, StringComparison.Ordinal)));
+    }
+
     [TestMethod]
     public async Task OrdinaryAndRefreshCallers_JoinOneInFlightGeneration()
     {
@@ -99,7 +122,8 @@ public sealed class PeerBrowseServiceTests
     [TestMethod]
     public async Task StartWithoutLoggedInAccountReportsUnavailable()
     {
-        await using var fixture = await Fixture.CreateAsync();
+        var logger = new RecordingLogger<PeerBrowseService>();
+        await using var fixture = await Fixture.CreateAsync(logger: logger);
         fixture.LocalAccount = null;
 
         PeerBrowseUnavailableException exception =
@@ -108,6 +132,7 @@ public sealed class PeerBrowseServiceTests
 
         Assert.AreEqual("Soulseek is not logged in.", exception.Message);
         Assert.AreEqual(0, fixture.Transport.CallCount);
+        Assert.IsTrue(logger.Entries.Any(entry => entry.EventId.Id == 4204));
     }
 
     [TestMethod]
@@ -178,7 +203,8 @@ public sealed class PeerBrowseServiceTests
             new PeerAccessPolicy(new PeerAccessSettings
             {
                 BlockedUsernames = ["Peer"],
-            }));
+            }),
+            NullLogger<PeerBrowseService>.Instance);
 
         await Assert.ThrowsExactlyAsync<PeerBrowseAccessDeniedException>(() =>
             denied.GetAccessibleAsync(completed.BrowseId));
@@ -265,7 +291,10 @@ public sealed class PeerBrowseServiceTests
     {
         private readonly string directory;
 
-        private Fixture(string directory, FakeTransport transport)
+        private Fixture(
+            string directory,
+            FakeTransport transport,
+            ILogger<PeerBrowseService>? logger)
         {
             this.directory = directory;
             Transport = transport;
@@ -274,7 +303,8 @@ public sealed class PeerBrowseServiceTests
                 Store,
                 Transport,
                 () => LocalAccount,
-                new PeerAccessPolicy(new PeerAccessSettings()));
+                new PeerAccessPolicy(new PeerAccessSettings()),
+                logger ?? NullLogger<PeerBrowseService>.Instance);
         }
 
         public string? LocalAccount { get; set; } = "local";
@@ -282,14 +312,16 @@ public sealed class PeerBrowseServiceTests
         public PeerBrowseArtifactStore Store { get; }
         public PeerBrowseService Service { get; }
 
-        public static async Task<Fixture> CreateAsync(bool gated = false)
+        public static async Task<Fixture> CreateAsync(
+            bool gated = false,
+            ILogger<PeerBrowseService>? logger = null)
         {
             string directory = Path.Combine(
                 Path.GetTempPath(),
                 "sockseek-peer-service-tests",
                 Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
-            var fixture = new Fixture(directory, new FakeTransport(gated));
+            var fixture = new Fixture(directory, new FakeTransport(gated), logger);
             await fixture.Store.InitializeAsync();
             return fixture;
         }

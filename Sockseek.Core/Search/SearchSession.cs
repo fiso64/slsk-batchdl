@@ -33,6 +33,7 @@ public sealed class SearchSession
     public event Action<SearchCompletedChange>? SearchCompleted;
     public event Action<CoreChange>? ChangePublished;
     public event Action? Completed;
+    internal event Action<string, Exception>? ObserverFailed;
 
     public SearchSession()
         : this(Guid.Empty)
@@ -202,7 +203,7 @@ public sealed class SearchSession
         InvokeObservers(ChangePublished, change, nameof(ChangePublished));
     }
 
-    private static void InvokeObservers<T>(Action<T>? observers, T value, string eventName)
+    private void InvokeObservers<T>(Action<T>? observers, T value, string eventName)
     {
         if (observers == null)
             return;
@@ -220,7 +221,7 @@ public sealed class SearchSession
         }
     }
 
-    private static void InvokeObservers(Action? observers, string eventName)
+    private void InvokeObservers(Action? observers, string eventName)
     {
         if (observers == null)
             return;
@@ -238,15 +239,15 @@ public sealed class SearchSession
         }
     }
 
-    private static void LogObserverFailure(string eventName, Exception exception)
+    private void LogObserverFailure(string eventName, Exception exception)
     {
-        try
+        if (ObserverFailed is null)
+            return;
+
+        foreach (Action<string, Exception> observer in ObserverFailed.GetInvocationList())
         {
-            SockseekLog.Core.Error(exception, $"Observer for {eventName} failed");
-        }
-        catch
-        {
-            // Observational failures, including logging failures, never affect domain work.
+            try { observer(eventName, exception); }
+            catch { /* Observer-failure reporting must not affect search domain work. */ }
         }
     }
 }

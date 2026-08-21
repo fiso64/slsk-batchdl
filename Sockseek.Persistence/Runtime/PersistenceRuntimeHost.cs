@@ -4,6 +4,9 @@ using Sockseek.Persistence.Read;
 using Sockseek.Persistence.Sqlite;
 using Sockseek.Persistence.Write;
 using Sockseek.Persistence.Chat;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Persistence;
 
 namespace Sockseek.Persistence.Runtime;
 
@@ -48,17 +51,20 @@ public sealed class PersistenceRuntimeHost
     private DateTimeOffset? lastFailureLogAtUtc;
     private PersistenceHealthState lastLoggedState = PersistenceHealthState.Healthy;
     private int suppressedFailureLogs;
+    private readonly ILogger<PersistenceRuntimeHost> logger;
 
     public PersistenceRuntimeHost(
         SockseekSqliteOptions sqliteOptions,
         PersistenceWriterOptions writerOptions,
         PersistenceRetentionOptions retentionOptions,
-        string version)
+        string version,
+        ILogger<PersistenceRuntimeHost>? logger = null)
     {
         this.sqliteOptions = sqliteOptions;
         this.writerOptions = writerOptions;
         this.retentionOptions = retentionOptions;
         this.version = version;
+        this.logger = logger ?? NullLogger<PersistenceRuntimeHost>.Instance;
         writerOptions.Validate();
         retentionOptions.Validate();
         Health.FailureRecorded += LogFailure;
@@ -287,14 +293,18 @@ public sealed class PersistenceRuntimeHost
                 return;
             }
 
-            string suppressed = suppressedFailureLogs > 0
-                ? $" ({suppressedFailureLogs} similar failures suppressed)"
-                : "";
-            string message = $"Persistence writer is {snapshot.State}: {snapshot.LastFailure}{suppressed}";
             if (snapshot.State == PersistenceHealthState.Unhealthy)
-                SockseekLog.Daemon.Error(message);
+                PersistenceLogMessages.WriterUnhealthy(
+                    logger,
+                    snapshot.State,
+                    FailureKind(snapshot.LastFailure),
+                    suppressedFailureLogs);
             else
-                SockseekLog.Daemon.Warn(message);
+                PersistenceLogMessages.WriterDegraded(
+                    logger,
+                    snapshot.State,
+                    FailureKind(snapshot.LastFailure),
+                    suppressedFailureLogs);
             suppressedFailureLogs = 0;
             lastFailureLogAtUtc = now;
             lastLoggedState = snapshot.State;
@@ -310,10 +320,18 @@ public sealed class PersistenceRuntimeHost
         {
             if (lastLoggedState == PersistenceHealthState.Healthy)
                 return;
-            SockseekLog.Daemon.Info("Persistence writer recovered after reconciling retained mutations.");
+            PersistenceLogMessages.WriterRecovered(logger);
             lastLoggedState = PersistenceHealthState.Healthy;
             suppressedFailureLogs = 0;
         }
+    }
+
+    private static string FailureKind(string? failure)
+    {
+        if (string.IsNullOrWhiteSpace(failure))
+            return "UnknownFailure";
+        int separator = failure.IndexOf(':');
+        return separator > 0 ? failure[..separator] : "UnknownFailure";
     }
 
     private PersistenceQueueSnapshot SnapshotQueue()

@@ -86,9 +86,6 @@ namespace Tests.ClientTests
 
         public static MockSoulseekClient FromLocalPaths(bool useTags, params string[] localPaths)
         {
-            if (useTags)
-                SockseekLog.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
-
             var files = localPaths.SelectMany(path =>
                 System.IO.Directory.Exists(path)
                     ? System.IO.Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
@@ -120,7 +117,7 @@ namespace Tests.ClientTests
                                         attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitDepth, file.Properties.BitsPerSample));
                                 }
                             }
-                            catch (Exception ex) { SockseekLog.Warn($"Failed to read tags for '{path}': {ex.Message}"); }
+                            catch (Exception) { }
                         }
                         else
                         {

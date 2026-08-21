@@ -113,7 +113,7 @@ internal sealed class DirectoryTransferRunner
             JobOutcomeCommitter.Commit(child, JobOutcome.Failed(
                 JobFailureReason.AllDownloadsFailed,
                 ex.Message,
-                SockseekLog.ExceptionDetail(ex)));
+                Diagnostics.ExceptionText.Detail(ex)));
         }
         finally
         {

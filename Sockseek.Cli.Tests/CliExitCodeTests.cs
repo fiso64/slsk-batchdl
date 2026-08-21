@@ -107,7 +107,6 @@ public class CliExitCodeTests
         {
             listener.Stop();
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
             try { Directory.Delete(root, recursive: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -292,7 +291,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -312,7 +310,7 @@ public class CliExitCodeTests
             var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "blah"]);
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
-            StringAssert.Contains(stdout.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stdout.ToString(), "[cli] CLI session started in local mode");
             StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
             var combined = stdout.ToString() + stderr.ToString();
             Assert.IsFalse(combined.Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
@@ -322,7 +320,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -343,7 +340,7 @@ public class CliExitCodeTests
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
             Assert.AreEqual("", stdout.ToString());
-            StringAssert.Contains(stderr.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stderr.ToString(), "[cli] CLI session started in local mode");
             StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
             Assert.IsFalse(stderr.ToString().Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
         }
@@ -351,7 +348,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -397,7 +393,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
             if (Directory.Exists(musicRoot)) Directory.Delete(musicRoot, true);
             if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
         }

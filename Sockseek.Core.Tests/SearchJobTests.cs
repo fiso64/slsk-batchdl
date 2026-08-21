@@ -69,15 +69,20 @@ namespace Tests.Unit
             var response = new SearchResponse("User1", 1, true, 100, 0, [file]);
             var successfulObservers = 0;
             var published = new List<CoreChange>();
+            var observerFailures = new List<(string Name, Exception Exception)>();
 
             session.ResultsAdded += _ => throw new InvalidOperationException("observer failed");
             session.ResultsAdded += _ => successfulObservers++;
             session.ChangePublished += published.Add;
+            session.ObserverFailed += (name, exception) => observerFailures.Add((name, exception));
 
             session.AddResponse(response);
             session.Complete();
 
             Assert.AreEqual(1, successfulObservers);
+            Assert.AreEqual(1, observerFailures.Count);
+            Assert.AreEqual(nameof(session.ResultsAdded), observerFailures[0].Name);
+            Assert.AreEqual("observer failed", observerFailures[0].Exception.Message);
             Assert.AreEqual(2, published.Count);
             Assert.IsTrue(published.All(change => change.OccurredAtUtc == now));
         }

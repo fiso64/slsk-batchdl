@@ -224,29 +224,6 @@ public class StaleDownloadCoordinatorTests
         Assert.IsFalse(attempt.Download.Cts.IsCancellationRequested);
     }
 
-    [TestMethod]
-    public void StaleCoordinator_DoesNotWriteUserFacingAttemptLogs()
-    {
-        SockseekLog.RemoveNonFileOutputs();
-        var entries = new List<SockseekLog.StructuredLogEntry>();
-        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry));
-        try
-        {
-            using var scenario = new Scenario();
-            scenario.Start("user-a", @"Music\Artist - Song.mp3");
-
-            scenario.Advance(MaxStaleTime);
-            Assert.AreEqual(1, scenario.CancelStaleDownloads());
-
-            Assert.IsFalse(entries.Any(entry => entry.CategoryName == SockseekLog.Categories.Jobs),
-                "The coordinator is only the watchdog; Downloader/album orchestration own user-facing stale diagnostics.");
-        }
-        finally
-        {
-            SockseekLog.RemoveNonFileOutputs();
-        }
-    }
-
     private static void AssertStaleTransferCancelled(AttemptHandle attempt)
     {
         Assert.IsFalse(attempt.Song.Cts?.IsCancellationRequested == true);

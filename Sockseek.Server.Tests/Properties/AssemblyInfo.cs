@@ -1,3 +1,3 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-[assembly: Parallelize(Workers = 4, Scope = ExecutionScope.ClassLevel)]
+[assembly: Parallelize(Workers = 12, Scope = ExecutionScope.ClassLevel)]

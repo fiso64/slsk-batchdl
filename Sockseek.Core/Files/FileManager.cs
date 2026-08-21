@@ -2,6 +2,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core;
 using Sockseek.Core.Settings;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Core.Services;
 
@@ -142,15 +143,23 @@ public class FileManager
     private readonly OutputSettings output;
     private readonly ExtractionSettings extraction;
     private readonly OutputScope outputScope;
+    private readonly ILogger<FileManager> logger;
+    private int metadataReadFailureLogged;
 
     private string OutputParentDir => OutputScope.OutputParentDir(output);
     private string DefaultOutputDir => outputScope.DefaultDirectory(output);
 
-    public FileManager(Job job, OutputSettings output, ExtractionSettings extraction, OutputScope? outputScope = null)
+    public FileManager(
+        Job job,
+        OutputSettings output,
+        ExtractionSettings extraction,
+        ILogger<FileManager> logger,
+        OutputScope? outputScope = null)
     {
         this.job = job;
         this.output = output;
         this.extraction = extraction;
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.outputScope = outputScope ?? OutputScope.ForLegacyOwner(job, output);
     }
 
@@ -272,7 +281,6 @@ public class FileManager
                 {
                     if (File.Exists(newFilePath) && !File.Exists(oldFilePath))
                     {
-                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] file was organized to '{newFilePath}', but cleanup of its previous directory failed: {SockseekLog.ExceptionSummary(ex)}");
                         song.DownloadPath = newFilePath;
                         organized.Add(song);
                         return;
@@ -320,7 +328,6 @@ public class FileManager
             {
                 if (File.Exists(newFilePath) && !File.Exists(oldFilePath))
                 {
-                    SockseekLog.Jobs.Debug($"[{file.DisplayId}] album ancillary file was organized to '{newFilePath}', but cleanup of its previous directory failed: {SockseekLog.ExceptionSummary(ex)}");
                     file.DownloadPath = newFilePath;
                     organized.Add(file);
                     return;
@@ -356,7 +363,11 @@ public class FileManager
             {
                 tried = true;
                 try { tagFile = TagLib.File.Create(ctx.DownloadPath); }
-                catch (Exception ex) { SockseekLog.Trace($"Failed to read tags for '{ctx.DownloadPath}': {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    if (Interlocked.Exchange(ref metadataReadFailureLogged, 1) == 0)
+                        DownloadLogMessages.MetadataReadFailed(logger, ex.GetType().Name);
+                }
             }
             return tagFile;
         }

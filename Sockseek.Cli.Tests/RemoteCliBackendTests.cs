@@ -24,7 +24,6 @@ public class RemoteCliBackendTests
     [TestCleanup]
     public async Task Cleanup()
     {
-        SockseekLog.RemoveNonFileOutputs();
         foreach (string directory in serverDataDirectories)
             await DeleteDirectoryIfExistsWithRetryAsync(directory);
     }
@@ -1566,7 +1565,7 @@ public class RemoteCliBackendTests
             if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'.");
@@ -1581,7 +1580,7 @@ public class RemoteCliBackendTests
             if (seenTypes.Contains(eventType))
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         Assert.Fail($"Timed out waiting for event '{eventType}'. Seen: {string.Join(", ", seenTypes.Distinct().OrderBy(x => x))}");
@@ -1603,7 +1602,7 @@ public class RemoteCliBackendTests
                 return;
             }
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         var position = backend.ClientStore.GetPosition(StateStreamScopeDto.Workflow(workflowId));
@@ -1627,7 +1626,7 @@ public class RemoteCliBackendTests
             if (detail?.Summary.State == expectedState)
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
@@ -1734,7 +1733,7 @@ public class RemoteCliBackendTests
             if (await condition())
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         Assert.Fail(failureMessage);

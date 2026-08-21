@@ -20,6 +20,28 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void LoggingDefaults_AreInformationForForegroundAndDebugForDaemon()
+        {
+            Assert.AreEqual(LogLevel.Information, new EngineSettings().LogLevel);
+
+            var foreground = new EngineSettings();
+            EngineSettings daemon = Sockseek.Cli.Program.CreateDaemonEngineSettings(foreground);
+
+            Assert.AreEqual(LogLevel.Information, foreground.LogLevel);
+            Assert.AreEqual(LogLevel.Debug, daemon.LogLevel);
+        }
+
+        [TestMethod]
+        public void DaemonLoggingDefault_PreservesMoreVerboseSelection()
+        {
+            var configured = new EngineSettings { LogLevel = LogLevel.Trace };
+
+            EngineSettings daemon = Sockseek.Cli.Program.CreateDaemonEngineSettings(configured);
+
+            Assert.AreEqual(LogLevel.Trace, daemon.LogLevel);
+        }
+
+        [TestMethod]
         public void Defaults_NecessaryCondFormats_AreSet()
         {
             var config = Cfg();

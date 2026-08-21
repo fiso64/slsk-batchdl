@@ -63,11 +63,22 @@ public class CliProgressReporter
         string failureReason)
     {
         string message = $"failed [{failureReason}]: {name}";
-        SockseekLog.Jobs.Info($"[{displayId:000}] {jobType}: {message}");
+        output.WriteOutput(new CliOutputEvent.JobLog(
+            new TerminalLogLine(
+                TerminalLogKind.JobFailed,
+                $"cli:{displayId}",
+                displayId,
+                jobType,
+                message)));
     }
 
     public void ReportClientError(string message)
-        => SockseekLog.Error(message);
+        => output.WriteOutput(new CliOutputEvent.ProcessLog(
+            new TerminalProcessLogLine(
+                LogLevel.Error,
+                "cli",
+                message,
+                CliProcessLogPresentation.Decorated)));
 
     internal void Attach(ICliBackend backend)
     {
@@ -542,11 +553,17 @@ public class CliProgressReporter
         if (summary?.ParentJobId is Guid parentId
             && !albumAttemptWarnings.Add(parentId))
         {
-            SockseekLog.Jobs.Debug($"[{displayId}] {jobType}: {message}");
             return;
         }
 
-        SockseekLog.Jobs.Warn($"[{displayId}] {jobType}: {message}");
+        output.WriteOutput(new CliOutputEvent.JobLog(
+            new TerminalLogLine(
+                TerminalLogKind.Status,
+                $"cli:{displayId}",
+                displayId,
+                jobType,
+                message),
+            LogLevel.Warning));
     }
 
     private void ReportSearchRateLimit(DateTimeOffset? resetsAtUtc)

@@ -84,10 +84,6 @@ namespace Tests.Core
                 dl.Output.ParentDir = outputDir;
                 dl.YtDlp.UseYtdlp = true;
 
-                SockseekLog.RemoveNonFileOutputs();
-                var logEntries = new List<SockseekLog.StructuredLogEntry>();
-                SockseekLog.AddStructuredSink((entry, _) => logEntries.Add(entry), LogLevel.Information);
-
                 var fakeFallback = new FakeSongDownloadFallback();
                 var song = new SongJob(new SongQuery
                 {
@@ -99,10 +95,16 @@ namespace Tests.Core
                 TransferCompletedChange? transferCompleted = null;
                 TransferAttemptStartedChange? attemptStarted = null;
                 TransferAttemptCompletedChange? attemptCompleted = null;
+                JobMessageChange? fallbackMessage = null;
                 bool finalPathExistedAtTerminalPublication = false;
                 app.Events.FallbackTransferStarted += change => transferStarted = change;
                 app.Events.TransferAttemptStarted += change => attemptStarted = change;
                 app.Events.TransferAttemptCompleted += change => attemptCompleted = change;
+                app.Events.JobMessage += change =>
+                {
+                    if (change.Job.Id == song.Id && change.Message == "running fallback downloader")
+                        fallbackMessage = change;
+                };
                 app.Events.TransferCompleted += change =>
                 {
                     transferCompleted = change;
@@ -115,10 +117,9 @@ namespace Tests.Core
 
                 Assert.AreEqual(1, fakeFallback.Calls, "Song fallback should run after the mock Soulseek search returns no results.");
                 Assert.AreEqual(JobActivityPhase.RunningFallback, fakeFallback.ObservedPhase, "Song fallback should run under the fallback activity phase.");
-                var fallbackLog = logEntries.SingleOrDefault(e => e.Message == $"[{song.DisplayId}] SongJob: running fallback: {song}");
-                Assert.IsNotNull(fallbackLog, "Fallback should leave an info-level log entry.");
-                Assert.AreEqual(LogLevel.Information, fallbackLog.Level);
-                Assert.AreEqual(SockseekLog.Categories.Jobs, fallbackLog.CategoryName);
+                Assert.IsNotNull(fallbackMessage, "Fallback should publish an info-level job activity message.");
+                Assert.AreEqual(LogLevel.Information, fallbackMessage.Level);
+                Assert.IsNull(fallbackMessage.Source);
                 Assert.AreEqual(JobLifecycleState.Terminal, song.LifecycleState);
                 Assert.AreEqual(JobActivityPhase.None, song.ActivityPhase);
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, song.TerminalOutcome);
@@ -140,7 +141,6 @@ namespace Tests.Core
             }
             finally
             {
-                SockseekLog.RemoveNonFileOutputs();
                 if (Directory.Exists(rootDir)) Directory.Delete(rootDir, true);
             }
         }
@@ -975,7 +975,11 @@ namespace Tests.Core
                     ResolvedTarget = candidate,
                     DownloadPath = stagingPath,
                 };
-                var organizer = new FileManager(song, dl.Output, dl.Extraction);
+                var organizer = new FileManager(
+                    song,
+                    dl.Output,
+                    dl.Extraction,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance);
                 var finalizer = new OutputFinalizer(new DownloadedFileCache());
 
                 var result = finalizer.FinalizeSongPlacement(

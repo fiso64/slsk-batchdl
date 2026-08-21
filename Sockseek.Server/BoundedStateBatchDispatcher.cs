@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Api;
+using Sockseek.Core.Diagnostics;
 
 namespace Sockseek.Server;
 
@@ -15,6 +18,8 @@ public sealed class BoundedStateBatchDispatcher : IAsyncDisposable
     private readonly int maximumScopes;
     private readonly TimeSpan sendTimeout;
     private readonly TimeSpan idleLifetime;
+    private readonly ILogger<BoundedStateBatchDispatcher> logger;
+    private readonly RepeatedWarningGate warningGate = new();
     private readonly ConcurrentDictionary<StateStreamScopeDto, ScopeSender> senders = [];
     private readonly CancellationTokenSource lifetime = new();
     private readonly object creationGate = new();
@@ -27,9 +32,11 @@ public sealed class BoundedStateBatchDispatcher : IAsyncDisposable
         int perScopeCapacity = 256,
         int maximumScopes = 2_048,
         TimeSpan? sendTimeout = null,
-        TimeSpan? idleLifetime = null)
+        TimeSpan? idleLifetime = null,
+        ILogger<BoundedStateBatchDispatcher>? logger = null)
     {
         this.send = send ?? throw new ArgumentNullException(nameof(send));
+        this.logger = logger ?? NullLogger<BoundedStateBatchDispatcher>.Instance;
         if (perScopeCapacity < 1)
             throw new ArgumentOutOfRangeException(nameof(perScopeCapacity));
         if (maximumScopes < 1)
@@ -102,12 +109,15 @@ public sealed class BoundedStateBatchDispatcher : IAsyncDisposable
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {
             Interlocked.Increment(ref failedSends);
+            if (!lifetime.IsCancellationRequested
+                && warningGate.TryAcquire(out long suppressedCount))
+                ServerLogMessages.LiveStateSendTimedOut(logger, suppressedCount);
         }
         catch (Exception ex)
         {
             Interlocked.Increment(ref failedSends);
-            Sockseek.Core.SockseekLog.Daemon.Warn(
-                $"Live state transport send failed: {Sockseek.Core.SockseekLog.ExceptionSummary(ex)}");
+            if (warningGate.TryAcquire(out long suppressedCount))
+                ServerLogMessages.LiveStateSendFailed(logger, ex, suppressedCount);
         }
     }
 

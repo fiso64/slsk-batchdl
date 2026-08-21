@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Api;
 using Sockseek.Core;
 using Sockseek.Core.Snapshots;
@@ -6,26 +8,49 @@ using Sockseek.Core.Snapshots;
 namespace Sockseek.Server;
 
 /// <summary>Publishes coalesced state and activity batches to scoped SignalR groups.</summary>
-public sealed class ServerEventBroadcaster : IDisposable, IAsyncDisposable
+public sealed class ServerEventBroadcaster : IDisposable, IAsyncDisposable, IHostedService
 {
     private readonly IHubContext<ServerEventHub> hubContext;
     private readonly EngineStateStore stateStore;
     private readonly EngineSupervisor supervisor;
     private readonly StateUpdateCoalescer coalescer;
     private readonly BoundedStateBatchDispatcher dispatcher;
+    private readonly ILogger<ServerEventBroadcaster> logger;
     private int disposeState;
 
     public event Action<StateUpdateBatchDto>? BatchPublished;
 
-    public ServerEventBroadcaster(
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    internal ServerEventBroadcaster(
         EngineStateStore stateStore,
         EngineSupervisor supervisor,
         IHubContext<ServerEventHub> hubContext)
+        : this(
+            stateStore,
+            supervisor,
+            hubContext,
+            NullLogger<ServerEventBroadcaster>.Instance,
+            NullLoggerFactory.Instance)
+    {
+    }
+
+    public ServerEventBroadcaster(
+        EngineStateStore stateStore,
+        EngineSupervisor supervisor,
+        IHubContext<ServerEventHub> hubContext,
+        ILogger<ServerEventBroadcaster> logger,
+        ILoggerFactory loggerFactory)
     {
         this.stateStore = stateStore;
         this.supervisor = supervisor;
         this.hubContext = hubContext;
-        dispatcher = new BoundedStateBatchDispatcher(SendBatchAsync);
+        this.logger = logger;
+        dispatcher = new BoundedStateBatchDispatcher(
+            SendBatchAsync,
+            logger: loggerFactory.CreateLogger<BoundedStateBatchDispatcher>());
         coalescer = new StateUpdateCoalescer(PublishBatches);
         stateStore.StateBatchPublished += coalescer.Publish;
         supervisor.EngineCreated += AttachEngine;
@@ -46,8 +71,7 @@ public sealed class ServerEventBroadcaster : IDisposable, IAsyncDisposable
                     try { handler(batch); }
                     catch (Exception ex)
                     {
-                        SockseekLog.Daemon.Warn(
-                            $"Live batch observer failed: {SockseekLog.ExceptionSummary(ex)}");
+                        ServerLogMessages.LiveBatchObserverFailed(logger, ex);
                     }
                 }
             }

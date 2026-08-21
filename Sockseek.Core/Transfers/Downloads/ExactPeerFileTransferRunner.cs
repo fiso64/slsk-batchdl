@@ -9,6 +9,8 @@ using Sockseek.Core.Settings;
 using Sockseek.Core.Transfers;
 using Sockseek.Core.Transfers.Downloads.State;
 using Sockseek.Core.Events;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
@@ -45,13 +47,15 @@ public sealed class ExactPeerFileTransferRunner
     private readonly DownloadedFileCache downloadedFiles;
     private readonly DownloadEvents events;
     private readonly StaleDownloadCoordinator staleDownloads;
+    private readonly ILogger<ExactPeerFileTransferRunner> logger;
 
     internal ExactPeerFileTransferRunner(ISoulseekClient client,
                         SoulseekClientManager clientManager,
                         ActiveDownloadTracker activeDownloads,
                         DownloadedFileCache downloadedFiles,
                         DownloadEvents events,
-                        StaleDownloadCoordinator staleDownloads)
+                        StaleDownloadCoordinator staleDownloads,
+                        ILogger<ExactPeerFileTransferRunner>? logger = null)
     {
         this.client = client;
         this.clientManager = clientManager;
@@ -59,6 +63,7 @@ public sealed class ExactPeerFileTransferRunner
         this.downloadedFiles = downloadedFiles;
         this.events = events;
         this.staleDownloads = staleDownloads;
+        this.logger = logger ?? NullLogger<ExactPeerFileTransferRunner>.Instance;
     }
 
     public async Task<ExactFileTransferOutcome> DownloadFile(
@@ -84,12 +89,19 @@ public sealed class ExactPeerFileTransferRunner
             var outputFileInfo   = new FileInfo(outputPath);
             var existingFileInfo = new FileInfo(existingPath);
 
-            SockseekLog.Jobs.Debug(
-                $"File \"{PeerIdentityValidator.ToDisplayText(target.Filename)}\" already downloaded at {existingPath}");
+            DownloadLogMessages.JobDecision(
+                logger,
+                owner.Id,
+                "reusing-existing-transfer",
+                null);
 
             if (!outputFileInfo.Exists || outputFileInfo.Length != existingFileInfo.Length)
             {
-                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: copying existing download from '{existingPath}' to '{outputPath}'");
+                DownloadLogMessages.JobDecision(
+                    logger,
+                    owner.Id,
+                    "copying-reused-transfer",
+                    null);
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                 File.Copy(existingPath!, outputPath, true);
             }
@@ -104,10 +116,6 @@ public sealed class ExactPeerFileTransferRunner
         int attemptCount = 0;
         Guid currentAttemptId = Guid.Empty;
         long totalBytes = target.Size ?? 0;
-
-        SockseekLog.Soulseek.Debug(
-            $"Downloading: {owner} from '{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}' "
-            + $"to '{incompleteOutputPath}'");
 
         StaleDownloadCoordinator.PeerTransferActivity? staleActivity = null;
         var transferOptions = new TransferOptions(
@@ -147,11 +155,13 @@ public sealed class ExactPeerFileTransferRunner
             try
             {
                 Utils.DeleteFileAndParentsIfEmpty(incompleteOutputPath, CleanupRootForIncompletePath(incompleteOutputPath, parentDir));
-                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: deleted incomplete download '{incompleteOutputPath}' after failure");
             }
             catch (Exception ex)
             {
-                SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: failed to delete incomplete download '{incompleteOutputPath}' after failure: {ex.Message}");
+                DownloadLogMessages.CleanupFailed(
+                    logger,
+                    "incomplete-transfer",
+                    ex.GetType().Name);
             }
         }
 
@@ -218,10 +228,13 @@ public sealed class ExactPeerFileTransferRunner
                     bool canRetry = IsRetryableTransferFailure(e)
                         && attemptCount < maxRetries;
 
-                    SockseekLog.Soulseek.Debug(
-                        $"Error while downloading '{target.Username}\\{PeerIdentityValidator.ToDisplayText(target.Filename)}' "
-                        + $"to '{incompleteOutputPath}' " +
-                        $"(attempt {attemptCount}/{maxRetries}): {SockseekLog.ExceptionSummary(e)}");
+                    DownloadLogMessages.TransferAttemptFailed(
+                        logger,
+                        e,
+                        transferId,
+                        attemptCount,
+                        maxRetries,
+                        owner.Id);
                     events.RaiseTransferAttemptFailed(
                         transferId,
                         currentAttemptId,
@@ -348,7 +361,10 @@ public sealed class ExactPeerFileTransferRunner
                 }
                 catch (Exception cleanupEx)
                 {
-                    SockseekLog.Jobs.Debug($"[{owner.DisplayId}] {owner.GetType().Name}: failed to delete incomplete download '{incompleteOutputPath}' after final rename failure: {cleanupEx.Message}");
+                    DownloadLogMessages.CleanupFailed(
+                        logger,
+                        "finalization-incomplete-transfer",
+                        cleanupEx.GetType().Name);
                 }
 
                 var finalizationException = new IOException(

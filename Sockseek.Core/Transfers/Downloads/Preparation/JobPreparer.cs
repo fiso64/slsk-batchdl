@@ -192,7 +192,6 @@ public static class JobPreparer
             || (config.Skip.SkipExisting && config.Skip.SkipMode == SkipMode.Index)
             || config.Skip.SkipNotFound;
 
-        SockseekLog.Trace($"SetupIndexEditor: Job {job.DisplayId} ({job.GetType().Name}) - WillWriteIndex={indexOption != M3uOption.None}, NeedIndex={needIndex}");
 
         if (!needIndex) return;
 
@@ -225,7 +224,6 @@ public static class JobPreparer
         if (job is RemoteFileJob or RemoteDirectoryJob)
             return;
         var config = job.Config;
-        SockseekLog.Trace($"SetupPlaylistEditor: Job {job.DisplayId} ({job.GetType().Name}) - WritePlaylist={config.Output.WritePlaylist}");
         if (!config.Output.WritePlaylist) return;
 
         string m3uPath;

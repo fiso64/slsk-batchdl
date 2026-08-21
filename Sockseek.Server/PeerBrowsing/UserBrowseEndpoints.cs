@@ -1,5 +1,4 @@
 using Sockseek.Api;
-using Sockseek.Core;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Services;
 
@@ -111,12 +110,15 @@ internal static class UserBrowseEndpoints
         string username,
         StartUserBrowseRequestDto request,
         EngineSupervisor supervisor,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         PeerBrowseService? service = supervisor.PeerBrowses;
         if (service is null)
         {
-            SockseekLog.Daemon.Warn("Peer browse request rejected because the browse service is unavailable.");
+            ServerLogMessages.FeatureRequestUnavailable(
+                loggerFactory.CreateLogger("Sockseek.Server.PeerBrowsing.UserBrowseEndpoints"),
+                "peer browsing");
             return Unavailable();
         }
         try
@@ -134,7 +136,6 @@ internal static class UserBrowseEndpoints
         }
         catch (Exception exception)
         {
-            LogStartFailure(username, exception);
             return StartFailure(exception);
         }
     }
@@ -558,19 +559,6 @@ internal static class UserBrowseEndpoints
                 new ApiErrorDto("The peer browse could not be started.", "soulseek-unavailable"),
                 statusCode: StatusCodes.Status503ServiceUnavailable),
         };
-
-    private static void LogStartFailure(string username, Exception exception)
-    {
-        if (exception is PeerBrowseAccessDeniedException or ArgumentException)
-            return;
-
-        string context = $"Peer browse could not be started for peer hash "
-            + PeerBrowseService.PeerHash(username);
-        if (exception is PeerBrowseUnavailableException)
-            SockseekLog.Daemon.Warn($"{context}: {SockseekLog.ExceptionSummary(exception)}");
-        else
-            SockseekLog.Daemon.Error(exception, context);
-    }
 
     private static IResult ReadFailure(Exception exception)
         => exception switch

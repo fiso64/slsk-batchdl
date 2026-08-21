@@ -6,6 +6,9 @@ using Sockseek.Core.Settings;
 using Sockseek.Api;
 using Sockseek.Server;
 using Sockseek.Core.Snapshots;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Sockseek.Core.Diagnostics;
 
 namespace Sockseek.Cli;
 
@@ -24,12 +27,11 @@ internal static partial class Program
         Console.ResetColor();
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-        SockseekLog.SetupExceptionHandling();
         using var output = CliOutputController.Install(args);
 
         try
         {
-            CliExitCode? configuredCommand = await ConfiguredCommandDispatcher.TryRunAsync(args)
+            CliExitCode? configuredCommand = await ConfiguredCommandDispatcher.TryRunAsync(args, output)
                 .ConfigureAwait(false);
             if (configuredCommand is not null)
                 return (int)configuredCommand.Value;
@@ -39,7 +41,7 @@ internal static partial class Program
         }
         catch (Exception ex)
         {
-            SockseekLog.Fatal($"Unhandled CLI startup error: {SockseekLog.ExceptionSummary(ex)}");
+            Write(output, LogLevel.Critical, $"Unhandled CLI startup error: {ExceptionText.Summary(ex)}");
             return (int)CliExitCode.WorkFailed;
         }
     }
@@ -89,7 +91,7 @@ internal static partial class Program
         }
         catch (Exception ex) when (ex is ArgumentException || ex.Message.StartsWith("Input error:"))
         {
-            SockseekLog.Error(ex.Message);
+            Write(output, LogLevel.Error, ex.Message);
             return CliExitCode.UsageError;
         }
 
@@ -118,7 +120,7 @@ internal static partial class Program
             }
             catch (Exception ex)
             {
-                SockseekLog.Error($"Failed to retrieve profiles from remote daemon: {SockseekLog.ExceptionSummary(ex)}");
+                Write(output, LogLevel.Error, $"Failed to retrieve profiles from remote daemon: {ExceptionText.Summary(ex)}");
                 return CliExitCode.WorkFailed;
             }
                 }
@@ -138,10 +140,12 @@ internal static partial class Program
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(engineSettings.LogFilePath))
-            SockseekLog.AddOrReplaceFile(engineSettings.LogFilePath, engineSettings.LogLevel < LogLevel.Debug ? engineSettings.LogLevel : LogLevel.Debug);
-
-        SockseekLog.SetConsoleLogLevel(rootSettings.NonVerbosePrint ? LogLevel.Error : engineSettings.LogLevel);
+        using ILoggerFactory loggerFactory = output.CreateLoggerFactory(
+            rootSettings.NonVerbosePrint ? LogLevel.Error : engineSettings.LogLevel,
+            engineSettings.LogFilePath,
+            LogLevel.Debug);
+        ILogger logger = loggerFactory.CreateLogger("Sockseek.Cli.Program");
+        using var exceptionObserver = ProcessExceptionObserver.Install(logger);
 
         if (daemonMode)
         {
@@ -151,23 +155,24 @@ internal static partial class Program
             }
             catch (ArgumentException ex)
             {
-                SockseekLog.Error(ex.Message);
+                Write(output, LogLevel.Error, ex.Message);
                 return CliExitCode.UsageError;
             }
             catch (DaemonEndpointUnavailableException ex)
             {
-                SockseekLog.Error(ex.Message);
+                Write(output, LogLevel.Error, ex.Message);
                 return CliExitCode.WorkFailed;
             }
             catch (Exception ex)
             {
-                SockseekLog.Fatal($"Unhandled daemon error: {SockseekLog.ExceptionSummary(ex)}");
+                CliLogMessages.OperationFailed(logger, ex, "daemon");
+                Write(output, LogLevel.Error, $"Unhandled daemon error: {ExceptionText.Summary(ex)}");
                 return CliExitCode.WorkFailed;
             }
             return CliExitCode.Success;
         }
 
-        LogCliSessionStart(remoteSettings);
+        LogCliSessionStart(logger, remoteSettings);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -175,7 +180,7 @@ internal static partial class Program
         {
             if (!remoteSettings.IsEnabled)
             {
-                SockseekLog.Error(
+                Write(output, LogLevel.Error,
                     "Monitor mode requires a configured remote URL "
                     + "(remote = <url> or --remote <url>).");
                 return CliExitCode.UsageError;
@@ -190,6 +195,7 @@ internal static partial class Program
                     cliSettings,
                     remoteSettings,
                     output,
+                    logger,
                     cts);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -198,7 +204,8 @@ internal static partial class Program
             }
             catch (Exception ex)
             {
-                SockseekLog.Error($"Remote monitor failed: {SockseekLog.ExceptionSummary(ex)}");
+                CliLogMessages.OperationFailed(logger, ex, "remote-monitor");
+                Write(output, LogLevel.Error, $"Remote monitor failed: {ExceptionText.Summary(ex)}");
                 return CliExitCode.WorkFailed;
             }
         }
@@ -207,37 +214,49 @@ internal static partial class Program
         {
             try
             {
-                return await RunRemoteAsync(bindArgs, engineSettings, rootSettings, cliSettings, remoteSettings, output, cts);
+                return await RunRemoteAsync(
+                    bindArgs,
+                    engineSettings,
+                    rootSettings,
+                    cliSettings,
+                    remoteSettings,
+                    output,
+                    logger,
+                    cts);
             }
             catch (SockseekApiRequestException ex)
             {
-                SockseekLog.Error(ex.Message);
+                Write(output, LogLevel.Error, ex.Message);
                 return CliExitCode.WorkFailed;
             }
             catch (Exception ex)
             {
-                SockseekLog.Fatal($"Unhandled remote CLI error: {SockseekLog.ExceptionSummary(ex)}");
+                CliLogMessages.OperationFailed(logger, ex, "remote-session");
+                Write(output, LogLevel.Error, $"Unhandled remote CLI error: {ExceptionText.Summary(ex)}");
                 return CliExitCode.WorkFailed;
             }
         }
 
-        var clientManager = new SoulseekClientManager(engineSettings);
+        var clientManager = new SoulseekClientManager(
+            engineSettings,
+            logger: loggerFactory.CreateLogger<SoulseekClientManager>());
 
         if (string.IsNullOrEmpty(rootSettings.Extraction.Input))
         {
-            var diagnostic = new DiagnosticService(clientManager);
+            var diagnostic = new DiagnosticService(clientManager, output);
             try
             {
                 await diagnostic.PerformNoInputActions(rootSettings.PrintOption, rootSettings.Output.IndexFilePath, cts.Token);
             }
             catch (Exception ex)
             {
-                SockseekLog.Error($"Diagnostic action failed: {SockseekLog.ExceptionSummary(ex)}");
+                CliLogMessages.OperationFailed(logger, ex, "diagnostic-action");
+                Write(output, LogLevel.Error, $"Diagnostic action failed: {ExceptionText.Summary(ex)}");
             }
 
             if (!rootSettings.PrintOption.HasFlag(PrintOption.Index))
             {
-                SockseekLog.Error("Input error: No input provided.");
+                Write(output, LogLevel.Error, "Input error: No input provided.");
                 Help.PrintAndExitIfNeeded([]);
                 return CliExitCode.UsageError;
             }
@@ -247,13 +266,16 @@ internal static partial class Program
         IJobSettingsResolver jobSettingsResolver;
         try
         {
-            jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(configFile, bindArgs, cliSettings);
+            jobSettingsResolver = ConfigManager.CreateJobSettingsResolver(
+                configFile,
+                bindArgs,
+                cliSettings);
             if (!string.IsNullOrEmpty(engineSettings.MockFilesDir))
                 jobSettingsResolver = new MockFilesJobSettingsResolver(jobSettingsResolver);
         }
         catch (Exception ex) when (ex is ArgumentException || ex.Message.StartsWith("Input error:"))
         {
-            SockseekLog.Error(ex.Message);
+            Write(output, LogLevel.Error, ex.Message);
             return CliExitCode.UsageError;
         }
 
@@ -271,7 +293,12 @@ internal static partial class Program
                 engineSettings.ReportIntervalProgress = false;
         }
 
-        var engine = new DownloadEngine(engineSettings, clientManager, localSubmissionOptionsResolver);
+        var engine = new DownloadEngine(
+            engineSettings,
+            clientManager,
+            localSubmissionOptionsResolver,
+            loggerFactory: loggerFactory,
+            sensitiveOutput: new CliSensitiveOutput(output));
         var backend = new LocalCliBackend(
             engine,
             rootSettings,
@@ -287,7 +314,7 @@ internal static partial class Program
             cliReporter.Attach(backend);
         }
 
-        var eventLogger = new EventLogger(backend, includeDiagnosticDetails: engineSettings.LogLevel <= LogLevel.Debug);
+        var eventLogger = new EventLogger(backend, output, includeDiagnosticDetails: engineSettings.LogLevel <= LogLevel.Debug);
         eventLogger.Attach();
 
         backend.ActivityReceived += activity =>
@@ -297,7 +324,7 @@ internal static partial class Program
                 && ShouldPrintHumanBatchPreview(batch.PrintOption)
                 && cliReporter?.UsesLiveRendering != true)
             {
-                PrintCompactTrackBatchResolved(activity, batch);
+                PrintCompactTrackBatchResolved(activity, batch, output);
             }
         };
 
@@ -345,7 +372,6 @@ internal static partial class Program
             if (interactiveCoordinatorTask != null)
                 await interactiveCoordinatorTask;
 
-            SockseekLog.Trace("Main: RunAsync returned.");
             bool hasDownloadableJobs = PrintOutputRenderer.HasDownloadableJobs(engine.Queue);
             bool hasRequestedOutput = PrintOutputRenderer.HasRequestedOutput(engine.Queue);
 
@@ -359,7 +385,7 @@ internal static partial class Program
                 PrintOutputRenderer.PrintRequestedOutput(engine.Queue);
             }
 
-            var exitCode = LogCliSessionExit(DetermineLocalExitCode(engine.Queue));
+            var exitCode = LogCliSessionExit(logger, DetermineLocalExitCode(engine.Queue));
             cliReporter?.Stop();
             cliReporter = null;
 
@@ -367,29 +393,27 @@ internal static partial class Program
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            return LogCliSessionExit(CliExitCode.Cancelled);
+            return LogCliSessionExit(logger, CliExitCode.Cancelled);
         }
         catch (SoulseekConnectionUnavailableException ex)
         {
-            SockseekLog.Error(ex.Message);
-            return LogCliSessionExit(CliExitCode.WorkFailed);
+            Write(output, LogLevel.Error, ex.Message);
+            return LogCliSessionExit(logger, CliExitCode.WorkFailed);
         }
         catch (Exception ex)
         {
-            SockseekLog.Fatal($"Unhandled CLI error: {SockseekLog.ExceptionSummary(ex)}");
-            return LogCliSessionExit(CliExitCode.WorkFailed);
+            CliLogMessages.OperationFailed(logger, ex, "local-session");
+            Write(output, LogLevel.Error, $"Unhandled CLI error: {ExceptionText.Summary(ex)}");
+            return LogCliSessionExit(logger, CliExitCode.WorkFailed);
         }
         finally
         {
-            SockseekLog.Trace("Main: Entered finally block. Disposing clientManager...");
             engine.Cancel();
             await engine.DisposeAsync();
             await cts.CancelAsync();
             cliReporter?.Stop();
             clientManager.Dispose();
             Printing.SetBuffering(false);
-            SockseekLog.Trace("Main: ClientManager disposed.");
-            SockseekLog.Trace("Main: Exiting.");
         }
     }
 
@@ -419,11 +443,12 @@ internal static partial class Program
         CliSettings cliSettings,
         RemoteSettings remoteSettings,
         CliOutputController output,
+        ILogger logger,
         CancellationTokenSource cts)
     {
         if (string.IsNullOrWhiteSpace(rootSettings.Extraction.Input))
         {
-            SockseekLog.Error("Remote mode requires an input.");
+            Write(output, LogLevel.Error, "Remote mode requires an input.");
             return CliExitCode.UsageError;
         }
 
@@ -440,7 +465,7 @@ internal static partial class Program
             cliReporter.Attach(backend);
         }
 
-        var eventLogger = new EventLogger(backend, includeDiagnosticDetails: false);
+        var eventLogger = new EventLogger(backend, output, includeDiagnosticDetails: false);
         eventLogger.Attach();
 
         backend.ActivityReceived += activity =>
@@ -450,7 +475,7 @@ internal static partial class Program
                 && ShouldPrintHumanBatchPreview(batch.PrintOption)
                 && cliReporter?.UsesLiveRendering != true)
             {
-                PrintCompactTrackBatchResolved(activity, batch);
+                PrintCompactTrackBatchResolved(activity, batch, output);
             }
         };
 
@@ -500,7 +525,10 @@ internal static partial class Program
             if (!rootSettings.DoNotDownload)
                 await PrintRemoteCompleteAsync(backend, submission.WorkflowId, cts.Token);
 
-            var exitCode = LogCliSessionExit(await DetermineRemoteExitCodeAsync(backend, submission.WorkflowId, cts.Token), remoteSettings);
+            var exitCode = LogCliSessionExit(
+                logger,
+                await DetermineRemoteExitCodeAsync(backend, submission.WorkflowId, cts.Token),
+                remoteSettings);
             cliReporter?.Stop();
             cliReporter = null;
 
@@ -511,25 +539,26 @@ internal static partial class Program
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            return LogCliSessionExit(CliExitCode.Cancelled, remoteSettings);
+            return LogCliSessionExit(logger, CliExitCode.Cancelled, remoteSettings);
         }
         catch (SockseekApiRequestException ex)
         {
             if (cliReporter != null)
                 cliReporter.ReportClientError(ex.Message);
             else
-                SockseekLog.Error(ex.Message);
+                Write(output, LogLevel.Error, ex.Message);
 
-            return LogCliSessionExit(CliExitCode.WorkFailed, remoteSettings);
+            return LogCliSessionExit(logger, CliExitCode.WorkFailed, remoteSettings);
         }
         catch (Exception ex)
         {
             if (cliReporter != null)
-                cliReporter.ReportClientError($"Unhandled remote CLI error: {SockseekLog.ExceptionSummary(ex)}");
+                cliReporter.ReportClientError($"Unhandled remote CLI error: {ExceptionText.Summary(ex)}");
             else
-                SockseekLog.Fatal($"Unhandled remote CLI error: {SockseekLog.ExceptionSummary(ex)}");
+                Write(output, LogLevel.Error, $"Unhandled remote CLI error: {ExceptionText.Summary(ex)}");
 
-            return LogCliSessionExit(CliExitCode.WorkFailed, remoteSettings);
+            CliLogMessages.OperationFailed(logger, ex, "remote-session");
+            return LogCliSessionExit(logger, CliExitCode.WorkFailed, remoteSettings);
         }
         finally
         {
@@ -545,6 +574,7 @@ internal static partial class Program
         CliSettings cliSettings,
         RemoteSettings remoteSettings,
         CliOutputController output,
+        ILogger logger,
         CancellationTokenSource cts)
     {
         await using var backend = new RemoteCliBackend(remoteSettings.ServerUrl!);
@@ -558,7 +588,7 @@ internal static partial class Program
             reporter.Attach(backend);
         }
 
-        var eventLogger = new EventLogger(backend, includeDiagnosticDetails: false);
+        var eventLogger = new EventLogger(backend, output, includeDiagnosticDetails: false);
         eventLogger.Attach();
 
         ConsoleCancelEventHandler cancel = (_, eventArgs) =>
@@ -630,7 +660,6 @@ internal static partial class Program
 
             if (result.Action == ConsoleInputManager.CancelPromptAction.CancelAll)
             {
-                SockseekLog.Info(cancelAllMessage);
                 Printing.WriteLine(cancelAllMessage, ConsoleColor.Gray, force: true);
                 await cancelAll(cts.Token);
                 return;
@@ -640,13 +669,13 @@ internal static partial class Program
                 && result.JobId is int id)
             {
                 if (await backend.CancelJobByDisplayIdAsync(id, workflowId, cts.Token))
-                    SockseekLog.Info($"Cancelling job [{id}]...");
+                    Printing.WriteLine($"Cancelling job [{id}]...", force: true);
                 else
-                    SockseekLog.Error($"Job ID [{id}] not found.");
+                    Printing.WriteLine($"Job ID [{id}] not found.", ConsoleColor.Red, force: true);
                 return;
             }
 
-            SockseekLog.Error($"Invalid input '{result.Input}'.");
+            Printing.WriteLine($"Invalid input '{result.Input}'.", ConsoleColor.Red, force: true);
         };
 
         Func<Task> nextCandidateHandler = async () =>
@@ -672,17 +701,19 @@ internal static partial class Program
                     workflowId,
                     cts.Token))
                 {
-                    SockseekLog.Info($"Trying next candidate for job [{id}]...");
+                    Printing.WriteLine($"Trying next candidate for job [{id}]...", force: true);
                 }
                 else
                 {
-                    SockseekLog.Error(
-                        $"Job ID [{id}] not found or has no active download.");
+                    Printing.WriteLine(
+                        $"Job ID [{id}] not found or has no active download.",
+                        ConsoleColor.Red,
+                        force: true);
                 }
                 return;
             }
 
-            SockseekLog.Error($"Invalid input '{result.Input}'.");
+            Printing.WriteLine($"Invalid input '{result.Input}'.", ConsoleColor.Red, force: true);
         };
 
         Func<Task> infoHandler = async () =>
@@ -708,7 +739,7 @@ internal static partial class Program
                     workflowId,
                     cts.Token);
                 if (detail == null)
-                    SockseekLog.Error($"Job ID [{id}] not found.");
+                    Printing.WriteLine($"Job ID [{id}] not found.", ConsoleColor.Red, force: true);
                 else
                     JobInfoPrinter.Print(detail);
 
@@ -928,7 +959,8 @@ internal static partial class Program
 
     private static void PrintCompactTrackBatchResolved(
         ActivityEventDto activity,
-        TrackBatchResolvedActivityDto batch)
+        TrackBatchResolvedActivityDto batch,
+        CliOutputController output)
     {
         if (batch.IsNormal && batch.PendingCount == 1 && batch.ExistingCount + batch.NotFoundCount == 0)
             return;
@@ -946,7 +978,7 @@ internal static partial class Program
 
         if (batch.IsNormal || activity.JobId == null)
         {
-            SockseekLog.Info(message);
+            Write(output, LogLevel.Information, message);
             return;
         }
 
@@ -956,11 +988,7 @@ internal static partial class Program
             batch.DisplayId,
             "Job List",
             message);
-        SockseekLog.Write(new SockseekLog.StructuredLogEntry(
-            LogLevel.Information,
-            SockseekLog.Categories.Jobs,
-            CliLogStyle.FormatTerminalLogText(line),
-            Context: new CliOutputEvent.JobLog(line)));
+        output.WriteOutput(new CliOutputEvent.JobLog(line));
     }
 
     private static bool ShouldAttachHumanProgressReporter(PrintOption printOption)
@@ -1471,26 +1499,20 @@ internal static partial class Program
             ? null
             : names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-    private static void LogCliSessionStart(RemoteSettings remoteSettings)
+    private static void LogCliSessionStart(ILogger logger, RemoteSettings remoteSettings)
+        => CliLogMessages.SessionStarted(
+            logger,
+            remoteSettings.IsEnabled ? "remote" : "local");
+
+    private static CliExitCode LogCliSessionExit(
+        ILogger logger,
+        CliExitCode exitCode,
+        RemoteSettings? remoteSettings = null)
     {
-        if (remoteSettings.IsEnabled)
-        {
-            SockseekLog.Cli.Info($"Starting CLI session in remote mode: {remoteSettings.ServerUrl}");
-            return;
-        }
-
-        SockseekLog.Cli.Info("Starting CLI session in local mode");
-    }
-
-    private static CliExitCode LogCliSessionExit(CliExitCode exitCode, RemoteSettings? remoteSettings = null)
-    {
-        if (remoteSettings?.IsEnabled == true)
-        {
-            SockseekLog.Cli.Debug($"Exiting CLI session in remote mode with code {(int)exitCode} ({exitCode})");
-            return exitCode;
-        }
-
-        SockseekLog.Cli.Debug($"Exiting CLI session in local mode with code {(int)exitCode} ({exitCode})");
+        CliLogMessages.SessionEnded(
+            logger,
+            remoteSettings?.IsEnabled == true ? "remote" : "local",
+            (int)exitCode);
         return exitCode;
     }
 
@@ -1505,7 +1527,7 @@ internal static partial class Program
         EnsureDaemonEndpointAvailable(daemonSettings);
         var options = new ServerOptions
         {
-            Engine = SettingsCloner.Clone(engineSettings),
+            Engine = CreateDaemonEngineSettings(engineSettings),
             DefaultDownload = SettingsCloner.Clone(rootSettings),
             LaunchDownloadSettings = ConfigManager.CreateCliDownloadSettingsPatch(args),
             Profiles = ConfigManager.CreateProfileCatalog(configFile),
@@ -1526,23 +1548,28 @@ internal static partial class Program
         };
 
         var app = ServerHost.Build(args, options, url);
-        CoreLoggerBridge.Configure(engineSettings.LogLevel);
-        SockseekLog.Info($"Starting Sockseek daemon on {url}", categoryName: SockseekLog.Categories.Daemon);
+        var logger = app.Services.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Sockseek.Cli.Daemon");
+        CliLogMessages.DaemonStarting(logger, url);
         if (IsDaemonListenAddressNetworkExposed(daemonSettings))
-        {
-            SockseekLog.Warn(
-                "Sockseek daemon is listening on all network interfaces. The API is unauthenticated; expose it only on trusted networks or behind your own access control.",
-                categoryName: SockseekLog.Categories.Daemon);
-        }
-        SockseekLog.Info("Press Ctrl+C to stop.", categoryName: SockseekLog.Categories.Daemon);
+            CliLogMessages.DaemonNetworkExposed(logger);
+        Console.WriteLine("Press Ctrl+C to stop.");
         try
         {
             await app.RunAsync();
         }
         finally
         {
-            SockseekLog.Info($"Exiting Sockseek daemon on {url}", categoryName: SockseekLog.Categories.Daemon);
+            CliLogMessages.DaemonStopped(logger);
         }
+    }
+
+    internal static EngineSettings CreateDaemonEngineSettings(EngineSettings settings)
+    {
+        EngineSettings daemonSettings = SettingsCloner.Clone(settings);
+        if (daemonSettings.LogLevel == LogLevel.Information)
+            daemonSettings.LogLevel = LogLevel.Debug;
+        return daemonSettings;
     }
 
     internal static void EnsureDaemonEndpointAvailable(DaemonSettings daemonSettings)
@@ -1559,7 +1586,7 @@ internal static partial class Program
         catch (Exception ex) when (ex is System.Net.Sockets.SocketException or InvalidOperationException)
         {
             throw new DaemonEndpointUnavailableException(
-                $"Cannot start Sockseek daemon on {BuildDaemonListenUrl(daemonSettings)}: {SockseekLog.ExceptionSummary(ex)}",
+                $"Cannot start Sockseek daemon on {BuildDaemonListenUrl(daemonSettings)}: {ExceptionText.Summary(ex)}",
                 ex);
         }
     }
@@ -1852,4 +1879,11 @@ internal static partial class Program
                 responseFileCount: 0,
                 candidate.Peer.UploadSpeed,
                 candidate.Peer.HasFreeUploadSlot));
+
+    private static void Write(
+        CliOutputController output,
+        LogLevel level,
+        string message,
+        string category = "cli")
+        => CliProcessOutput.Write(output, level, message, category);
 }

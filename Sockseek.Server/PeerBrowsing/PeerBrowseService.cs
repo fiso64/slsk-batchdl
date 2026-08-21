@@ -1,8 +1,8 @@
 using System.Threading.Channels;
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
+using Microsoft.Extensions.Logging;
 using Sockseek.Core;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Models;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Sharing;
@@ -24,6 +24,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
     private readonly IPeerBrowseTransport transport;
     private readonly Func<string?> localAccountProvider;
     private readonly PeerAccessPolicy accessPolicy;
+    private readonly ILogger<PeerBrowseService> logger;
     private readonly SemaphoreSlim stateGate = new(1, 1);
     private readonly Dictionary<AcquisitionKey, ActiveBrowse> activeByKey = [];
     private readonly Dictionary<Guid, ActiveBrowse> activeById = [];
@@ -40,12 +41,14 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         IPeerBrowseTransport transport,
         Func<string?> localAccountProvider,
         PeerAccessPolicy accessPolicy,
+        ILogger<PeerBrowseService> logger,
         int networkConcurrency = DefaultNetworkConcurrency)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
         this.localAccountProvider = localAccountProvider ?? throw new ArgumentNullException(nameof(localAccountProvider));
         this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         if (networkConcurrency <= 0)
             throw new ArgumentOutOfRangeException(nameof(networkConcurrency));
 
@@ -96,9 +99,14 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         username = PeerUsername.Validate(username);
         if (accessPolicy.IsUsernameBlocked(username))
             throw new PeerBrowseAccessDeniedException();
-        string localAccount = PeerUsername.Validate(
-            localAccountProvider()
-            ?? throw new PeerBrowseUnavailableException("Soulseek is not logged in."));
+        string peerHash = LogIdentity.PeerHash(username);
+        string? observedLocalAccount = localAccountProvider();
+        if (observedLocalAccount is null)
+        {
+            PeerBrowseLogMessages.SessionUnavailable(logger, peerHash);
+            throw new PeerBrowseUnavailableException("Soulseek is not logged in.");
+        }
+        string localAccount = PeerUsername.Validate(observedLocalAccount);
         var key = new AcquisitionKey(localAccount, username);
 
         await stateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -112,6 +120,10 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
                 if (observed.State is PeerBrowseState.Queued or PeerBrowseState.Running)
                 {
                     PeerBrowseTelemetry.RecordReuse("in-flight");
+                    PeerBrowseLogMessages.ReusedActive(
+                        logger,
+                        observed.BrowseId,
+                        peerHash);
                     return observed;
                 }
 
@@ -133,6 +145,11 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
                 if (fresh is not null)
                 {
                     PeerBrowseTelemetry.RecordReuse("fresh");
+                    PeerBrowseLogMessages.ReusedFresh(
+                        logger,
+                        fresh.BrowseId,
+                        peerHash,
+                        (long)(DateTimeOffset.UtcNow - (fresh.CompletedAt ?? fresh.UpdatedAt)).TotalMilliseconds);
                     return fresh;
                 }
             }
@@ -152,9 +169,16 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
             active.Execution = RunAsync(active);
             Publish(resource);
             active.Begin.TrySetResult();
-            SockseekLog.Daemon.Info(
-                $"Peer browse {resource.BrowseId:D} started for peer hash {PeerHash(username)}");
             return resource;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            PeerBrowseLogMessages.StartFailed(logger, exception, peerHash);
+            throw;
         }
         finally
         {
@@ -363,6 +387,10 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
     private async Task<PeerBrowseResource> RunAsync(ActiveBrowse active)
     {
         await active.Begin.Task.ConfigureAwait(false);
+        using OperationLogScope operationLog = OperationLogScope.Start(
+            logger,
+            "peer-browse",
+            $"{active.BrowseId:D}/{LogIdentity.PeerHash(active.Key.Username)}");
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             active.Cancellation.Token,
             lifetime.Token,
@@ -390,9 +418,19 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
             if (terminal.State != PeerBrowseState.Complete)
                 throw new InvalidDataException("The browse transport ended without completing its artifact.");
             Publish(terminal);
+            PeerBrowseLogMessages.ArtifactCompleted(
+                logger,
+                terminal.BrowseId,
+                terminal.DirectoryCount,
+                terminal.FileCount,
+                terminal.TotalFileBytes);
+            operationLog.Succeeded(
+                "complete",
+                terminal.FileCount,
+                terminal.TotalFileBytes);
             return terminal;
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (token.IsCancellationRequested)
         {
             if (active.ConnectionToken.IsCancellationRequested
                 && !active.Cancellation.IsCancellationRequested
@@ -403,10 +441,12 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
                     "connection-lost",
                     "The Soulseek connection was lost during the peer browse.",
                     CancellationToken.None).ConfigureAwait(false);
+                operationLog.Failed(exception, "connection-lost");
             }
             else
             {
                 await store.MarkCancelledAsync(active.BrowseId, CancellationToken.None).ConfigureAwait(false);
+                operationLog.Cancelled();
             }
             PeerBrowseResource terminal = await RequireResourceAsync(active.BrowseId, CancellationToken.None).ConfigureAwait(false);
             Publish(terminal);
@@ -415,9 +455,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         catch (Exception exception)
         {
             (string code, string message) = Classify(exception);
-            SockseekLog.Daemon.Error(
-                exception,
-                $"Peer browse {active.BrowseId:D} failed for peer hash {PeerHash(active.Key.Username)} ({code})");
+            operationLog.Failed(exception, code);
             await store.MarkFailedAsync(active.BrowseId, code, message, CancellationToken.None).ConfigureAwait(false);
             PeerBrowseResource terminal = await RequireResourceAsync(active.BrowseId, CancellationToken.None).ConfigureAwait(false);
             Publish(terminal);
@@ -441,10 +479,6 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
                 observed,
                 active.ReachedRunning,
                 Stopwatch.GetElapsedTime(active.StartTimestamp));
-            SockseekLog.Daemon.Info(
-                $"Peer browse {active.BrowseId:D} ended as {observed?.State.ToString() ?? "unknown"} "
-                + $"for peer hash {PeerHash(active.Key.Username)}"
-                + (observed?.Failure is { } failure ? $" ({failure.Code})" : ""));
             await RemoveActiveAsync(active).ConfigureAwait(false);
         }
     }
@@ -617,7 +651,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
     }
 
     internal static string PeerHash(string username)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(username)))[..12].ToLowerInvariant();
+        => LogIdentity.PeerHash(username);
 
     private static PeerBrowseAcquisitionException Failure(PeerBrowseResource resource)
         => new(
@@ -793,4 +827,46 @@ public sealed class PeerBrowseNotReadyException(PeerBrowseResource resource)
     : InvalidOperationException("The peer browse is not complete.")
 {
     public PeerBrowseResource Resource { get; } = resource;
+}
+
+internal static partial class PeerBrowseLogMessages
+{
+    [LoggerMessage(
+        EventId = 4200,
+        EventName = "peer-browse.reused-fresh",
+        Level = LogLevel.Debug,
+        Message = "Reused fresh peer browse {BrowseId} for peer hash {PeerHash} at age {AgeMs} ms")]
+    public static partial void ReusedFresh(
+        ILogger logger, Guid browseId, string peerHash, long ageMs);
+
+    [LoggerMessage(
+        EventId = 4201,
+        EventName = "peer-browse.reused-active",
+        Level = LogLevel.Debug,
+        Message = "Joined active peer browse {BrowseId} for peer hash {PeerHash}")]
+    public static partial void ReusedActive(
+        ILogger logger, Guid browseId, string peerHash);
+
+    [LoggerMessage(
+        EventId = 4202,
+        EventName = "peer-browse.artifact-completed",
+        Level = LogLevel.Debug,
+        Message = "Peer browse {BrowseId} artifact contains {DirectoryCount} directories, {FileCount} files, and {TotalBytes} bytes")]
+    public static partial void ArtifactCompleted(
+        ILogger logger, Guid browseId, long directoryCount, long fileCount, long totalBytes);
+
+    [LoggerMessage(
+        EventId = 4203,
+        EventName = "peer-browse.start-failed",
+        Level = LogLevel.Error,
+        Message = "Peer browse could not be created for peer hash {PeerHash}")]
+    public static partial void StartFailed(
+        ILogger logger, Exception exception, string peerHash);
+
+    [LoggerMessage(
+        EventId = 4204,
+        EventName = "peer-browse.session-unavailable",
+        Level = LogLevel.Warning,
+        Message = "Peer browse could not start for peer hash {PeerHash} because Soulseek is not logged in")]
+    public static partial void SessionUnavailable(ILogger logger, string peerHash);
 }

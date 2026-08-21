@@ -45,7 +45,7 @@ internal sealed class RemoteDirectoryDownloadExecutor
             return JobOutcome.Failed(
                 JobFailureReason.AllDownloadsFailed,
                 ex.Message,
-                SockseekLog.ExceptionDetail(ex));
+                Diagnostics.ExceptionText.Detail(ex));
         }
     }
 

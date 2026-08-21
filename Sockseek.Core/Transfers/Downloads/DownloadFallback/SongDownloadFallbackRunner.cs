@@ -6,16 +6,19 @@ using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Events;
 using Sockseek.Core.Transfers;
 using Sockseek.Core.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Core;
 
 internal sealed class SongDownloadFallbackRunner
 {
     private readonly DownloadExecutionContext context;
+    private readonly ILogger<SongDownloadFallbackRunner> logger;
 
     public SongDownloadFallbackRunner(DownloadExecutionContext context)
     {
         this.context = context;
+        logger = context.LoggerFactory.CreateLogger<SongDownloadFallbackRunner>();
     }
 
     public async Task<JobOutcome?> TryRunAsync(
@@ -28,7 +31,11 @@ internal sealed class SongDownloadFallbackRunner
             return null;
 
         song.UpdateActivity(JobActivityPhase.RunningFallback);
-        SockseekLog.Jobs.Info(song, $"running fallback: {song}");
+        context.Events.RaiseJobMessage(
+            song,
+            LogLevel.Information,
+            null,
+            "running fallback downloader");
         var fallbackLog = ExtractorContext.ForJob(song, context.Events).Log;
         Guid? transferId = null;
         Guid? attemptId = null;
@@ -157,7 +164,11 @@ internal sealed class SongDownloadFallbackRunner
                 exception: new IOException(outcome.FailureMessage ?? "Fallback transfer failed."));
         }
 
-        SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: fallback produced {outcome.TerminalOutcome}: {song}");
+        DownloadLogMessages.JobDecision(
+            logger,
+            song.Id,
+            $"fallback-{outcome.TerminalOutcome.ToString().ToLowerInvariant()}",
+            null);
         return outcome;
     }
 }

@@ -98,7 +98,6 @@ public class CliBackendParityTests
     [TestCleanup]
     public void Cleanup()
     {
-        SockseekLog.RemoveNonFileOutputs();
     }
 
     [TestMethod]
@@ -761,7 +760,7 @@ public class CliBackendParityTests
             if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         var finalDetail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
@@ -778,7 +777,7 @@ public class CliBackendParityTests
             if (detail?.Summary.State == expectedState)
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
@@ -803,7 +802,7 @@ public class CliBackendParityTests
             if (match != null)
                 return match;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         var finalJobs = await backend.GetJobsAsync(new JobQuery(null, null, null, workflowId, IncludeAll: true), CancellationToken.None);
@@ -820,7 +819,7 @@ public class CliBackendParityTests
             if (condition())
                 return;
 
-            await Task.Delay(5, CancellationToken.None);
+            await Task.Delay(2, CancellationToken.None);
         }
 
         Assert.Fail(failureMessage);

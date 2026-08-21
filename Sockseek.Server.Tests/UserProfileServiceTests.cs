@@ -1,5 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Api;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Sharing;
 using Sockseek.Server.UserProfiles;
@@ -10,6 +13,25 @@ namespace Sockseek.Server.Tests;
 [TestClass]
 public sealed class UserProfileServiceTests
 {
+    [TestMethod]
+    public async Task AcquisitionAndReuseLogsAreCompleteAndDoNotExposeUsername()
+    {
+        const string username = "PrivatePeerName";
+        var logger = new RecordingLogger<UserProfileService>();
+        await using var service = CreateService(new DelegateTransport(), logger: logger);
+
+        await service.GetAsync(username);
+        await service.GetAsync(username);
+
+        int[] eventIds = logger.Entries.Select(entry => entry.EventId.Id).ToArray();
+        CollectionAssert.Contains(eventIds, SockseekEventIds.OperationStarted);
+        CollectionAssert.Contains(eventIds, SockseekEventIds.OperationSucceeded);
+        CollectionAssert.Contains(eventIds, 4102);
+        Assert.AreEqual(1, eventIds.Count(id => id == SockseekEventIds.OperationSucceeded));
+        Assert.IsFalse(logger.Entries.Any(entry =>
+            entry.Message.Contains(username, StringComparison.Ordinal)));
+    }
+
     [TestMethod]
     public async Task ConcurrentRefreshJoinsAndCallerCancellationOnlyDetaches()
     {
@@ -115,7 +137,8 @@ public sealed class UserProfileServiceTests
             new PeerAccessPolicy(new PeerAccessSettings
             {
                 BlockedUsernames = ["blocked"],
-            }));
+            }),
+            NullLogger<UserProfileService>.Instance);
 
         await Assert.ThrowsExactlyAsync<UserProfileAccessDeniedException>(() =>
             service.GetAsync("blocked"));
@@ -161,12 +184,14 @@ public sealed class UserProfileServiceTests
         IUserProfileTransport transport,
         Func<CancellationToken, Task>? ensureStarted = null,
         Func<DateTimeOffset>? utcNow = null,
-        TimeSpan? sectionTimeout = null)
+        TimeSpan? sectionTimeout = null,
+        ILogger<UserProfileService>? logger = null)
         => new(
             transport,
             ensureStarted ?? (_ => Task.CompletedTask),
             () => "account",
             new PeerAccessPolicy(new PeerAccessSettings()),
+            logger ?? NullLogger<UserProfileService>.Instance,
             utcNow: utcNow,
             sectionTimeout: sectionTimeout);
 

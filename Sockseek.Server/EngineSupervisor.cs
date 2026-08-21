@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
@@ -16,6 +18,7 @@ using Sockseek.Core.Sharing;
 using Sockseek.Core.Transfers.Uploads;
 using Sockseek.Core.Chat;
 using Sockseek.Core.PeerBrowsing;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Persistence.PeerBrowsing;
 using Sockseek.Server.PeerBrowsing;
 using Sockseek.Core.UserProfiles;
@@ -34,6 +37,8 @@ public sealed class EngineSupervisor
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly Lock engineGate = new();
     private readonly PersistenceCoordinator? persistence;
+    private readonly ILoggerFactory loggerFactory;
+    private readonly ILogger<EngineSupervisor> logger;
 
     private DownloadEngine? currentEngine;
     private int restartCount;
@@ -53,10 +58,15 @@ public sealed class EngineSupervisor
     /// </summary>
     public SoulseekClientManager? SoulseekSession { get; private set; }
 
-    public EngineSupervisor(IOptions<ServerOptions> options, PersistenceCoordinator? persistence = null)
+    public EngineSupervisor(
+        IOptions<ServerOptions> options,
+        PersistenceCoordinator? persistence = null,
+        ILoggerFactory? loggerFactory = null)
     {
         this.options = options.Value;
         this.persistence = persistence;
+        this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        logger = this.loggerFactory.CreateLogger<EngineSupervisor>();
 
         engineSettings = SettingsCloner.Clone(this.options.Engine);
         engineSettings.AutoReconnectAfterKickedFromServer = true;
@@ -77,20 +87,30 @@ public sealed class EngineSupervisor
             options.Persistence.DataDirectory);
         LocalUserProfile localProfile = await LocalUserProfile.LoadAsync(
             engineSettings,
-            ct).ConfigureAwait(false);
+            ct,
+            loggerFactory.CreateLogger<LocalUserProfile>()).ConfigureAwait(false);
         await using var soulseek = new DaemonSoulseekRuntime(
             engineSettings,
             options.ClientFactory,
-            localProfile);
+            localProfile,
+            loggerFactory.CreateLogger<SoulseekClientManager>());
         await using var sharing = new SharingRuntime(
             engineSettings,
             dataDirectory,
-            soulseek);
+            soulseek,
+            loggerFactory.CreateLogger<SharingRuntime>(),
+            loggerFactory.CreateLogger<UploadCoordinator>());
         await using ChatRuntime? chat = persistence?.Chat is { } chatStore
-            ? new ChatRuntime(engineSettings, soulseek, chatStore)
+            ? new ChatRuntime(
+                engineSettings,
+                soulseek,
+                chatStore,
+                loggerFactory.CreateLogger<ChatRuntime>())
             : null;
         await using DisabledChatIngress? disabledChat = chat is null
-            ? new DisabledChatIngress(soulseek)
+            ? new DisabledChatIngress(
+                soulseek,
+                loggerFactory.CreateLogger<DisabledChatIngress>())
             : null;
         Sharing = sharing;
         Chat = chat;
@@ -171,10 +191,13 @@ public sealed class EngineSupervisor
                 () => soulseek.ClientManager.LoggedInUsername
                       ?? (!string.IsNullOrWhiteSpace(engineSettings.MockFilesDir) ? "local" : null)
                       ?? (!engineSettings.UseRandomLogin ? engineSettings.Username : null),
-                soulseek.AccessPolicy);
+                soulseek.AccessPolicy,
+                logger: loggerFactory.CreateLogger<UserProfileService>());
             userProfiles.OnSoulseekStateChanged(sharing.ClientManager.State);
             UserProfiles = userProfiles;
-            var peerBrowseStore = new PeerBrowseArtifactStore(dataDirectory);
+            var peerBrowseStore = new PeerBrowseArtifactStore(
+                dataDirectory,
+                logger: loggerFactory.CreateLogger<PeerBrowseArtifactStore>());
             await peerBrowseStore.InitializeAsync(ct);
             peerBrowses = new PeerBrowseService(
                 peerBrowseStore,
@@ -184,7 +207,8 @@ public sealed class EngineSupervisor
                 () => soulseek.ClientManager.LoggedInUsername
                       ?? (!string.IsNullOrWhiteSpace(engineSettings.MockFilesDir) ? "local" : null)
                       ?? (!engineSettings.UseRandomLogin ? engineSettings.Username : null),
-                soulseek.AccessPolicy);
+                soulseek.AccessPolicy,
+                logger: loggerFactory.CreateLogger<PeerBrowseService>());
             peerBrowses.OnSoulseekStateChanged(sharing.ClientManager.State);
             peerBrowses.Changed += OnPeerBrowseChanged;
             peerBrowses.Removed += OnPeerBrowseRemoved;
@@ -226,10 +250,10 @@ public sealed class EngineSupervisor
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     Interlocked.Increment(ref restartCount);
-                    SockseekLog.Daemon.Error(ex, "Engine instance failed, restarting supervisor loop");
+                    ServerLogMessages.EngineRestarting(logger, ex, restartCount);
                     StateStore.MarkActiveJobsInfrastructureFailed(
-                        SockseekLog.ExceptionSummary(ex),
-                        SockseekLog.ExceptionDetail(ex));
+                        ExceptionText.Summary(ex),
+                        ExceptionText.Detail(ex));
                     continue;
                 }
                 finally
@@ -1370,7 +1394,8 @@ public sealed class EngineSupervisor
             engineSettings,
             clientManager,
             jobSettingsResolver,
-            directorySource: PeerBrowses);
+            directorySource: PeerBrowses,
+            loggerFactory: loggerFactory);
         persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
         lock (engineGate)

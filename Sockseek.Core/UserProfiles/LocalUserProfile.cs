@@ -1,4 +1,7 @@
 using Sockseek.Core.Settings;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Services;
 
 namespace Sockseek.Core.UserProfiles;
 
@@ -7,7 +10,8 @@ public sealed record LocalUserProfile(string Description, UserPicture? Picture)
 {
     public static async Task<LocalUserProfile> LoadAsync(
         EngineSettings settings,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         string description = UserProfileText.NormalizeDescription(settings.UserDescription);
@@ -22,19 +26,17 @@ public sealed record LocalUserProfile(string Description, UserPicture? Picture)
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Profile picture '{settings.UserPicturePath}' was not loaded because processing "
-                    + $"exceeded {UserPictureCodec.MaximumWorkDuration.TotalSeconds:0} seconds. "
-                    + "Continuing without a profile picture.");
+                SoulseekLogMessages.ProfilePictureTimedOut(
+                    logger ?? NullLogger.Instance);
             }
             catch (Exception ex) when (ex is IOException
                 or UnauthorizedAccessException
                 or InvalidDataException
                 or SixLabors.ImageSharp.ImageProcessingException)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Profile picture '{settings.UserPicturePath}' was not loaded: {ex.Message} "
-                    + "Continuing without a profile picture.");
+                SoulseekLogMessages.ProfilePictureRejected(
+                    logger ?? NullLogger.Instance,
+                    ex.GetType().Name);
             }
         }
 

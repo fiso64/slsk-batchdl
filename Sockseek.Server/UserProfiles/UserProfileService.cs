@@ -1,5 +1,7 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using Sockseek.Api;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Models;
 using Sockseek.Core.Sharing;
 using Sockseek.Core.UserProfiles;
@@ -56,6 +58,7 @@ public sealed class UserProfileService : IAsyncDisposable
     private readonly PeerAccessPolicy accessPolicy;
     private readonly Func<DateTimeOffset> utcNow;
     private readonly TimeSpan sectionTimeout;
+    private readonly ILogger<UserProfileService> logger;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<ProfileKey, Task<CachedProfile>> active = [];
     private readonly Dictionary<ProfileKey, CachedProfile> cache = [];
@@ -73,6 +76,7 @@ public sealed class UserProfileService : IAsyncDisposable
         Func<CancellationToken, Task> ensureSessionStarted,
         Func<string?> localAccountProvider,
         PeerAccessPolicy accessPolicy,
+        ILogger<UserProfileService> logger,
         int networkConcurrency = DefaultNetworkConcurrency,
         Func<DateTimeOffset>? utcNow = null,
         TimeSpan? sectionTimeout = null)
@@ -83,6 +87,7 @@ public sealed class UserProfileService : IAsyncDisposable
         this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
         this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         this.sectionTimeout = sectionTimeout ?? SectionTimeout;
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         if (networkConcurrency <= 0)
             throw new ArgumentOutOfRangeException(nameof(networkConcurrency));
         if (this.sectionTimeout <= TimeSpan.Zero)
@@ -145,7 +150,17 @@ public sealed class UserProfileService : IAsyncDisposable
         if (accessPolicy.IsUsernameBlocked(username))
             throw new UserProfileAccessDeniedException();
 
-        await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
+        string peerHash = LogIdentity.PeerHash(username);
+
+        try
+        {
+            await EnsureSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            UserProfileLogMessages.SessionUnavailable(logger, exception, peerHash);
+            throw;
+        }
         string localAccount = PeerUsername.Validate(
             localAccountProvider()
             ?? throw new UserProfileUnavailableException("Soulseek is not logged in."));
@@ -157,6 +172,7 @@ public sealed class UserProfileService : IAsyncDisposable
         {
             if (active.TryGetValue(key, out Task<CachedProfile>? running))
             {
+                UserProfileLogMessages.JoinedActive(logger, peerHash);
                 operation = running;
             }
             else if (!refresh
@@ -164,6 +180,10 @@ public sealed class UserProfileService : IAsyncDisposable
                 && utcNow() - existing.Profile.ObservedAt < Freshness)
             {
                 existing.LastAccess = utcNow();
+                UserProfileLogMessages.ReusedCached(
+                    logger,
+                    peerHash,
+                    (long)(utcNow() - existing.Profile.ObservedAt).TotalMilliseconds);
                 return existing;
             }
             else
@@ -171,7 +191,7 @@ public sealed class UserProfileService : IAsyncDisposable
                 CancellationToken connectionToken;
                 lock (connectionSync)
                     connectionToken = connectionLifetime.Token;
-                operation = RunAndStoreAsync(key, connectionToken);
+                operation = RunAndStoreAsync(key, peerHash, connectionToken);
                 active.Add(key, operation);
             }
         }
@@ -211,8 +231,11 @@ public sealed class UserProfileService : IAsyncDisposable
 
     private async Task<CachedProfile> RunAndStoreAsync(
         ProfileKey key,
+        string peerHash,
         CancellationToken connectionToken)
     {
+        using OperationLogScope operationLog = OperationLogScope.Start(
+            logger, "user-profile.fetch", peerHash);
         int slot = -1;
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(
             lifetime.Token,
@@ -221,11 +244,26 @@ public sealed class UserProfileService : IAsyncDisposable
         {
             slot = await networkSlots.Reader.ReadAsync(operation.Token).ConfigureAwait(false);
             Task<SectionResult<UserStatus>> statusTask = CaptureAsync(
-                token => transport.GetStatusAsync(key.Username, token), operation.Token, sectionTimeout);
+                token => transport.GetStatusAsync(key.Username, token),
+                operation.Token,
+                sectionTimeout,
+                logger,
+                peerHash,
+                "status");
             Task<SectionResult<UserInfo>> infoTask = CaptureAsync(
-                token => transport.GetInfoAsync(key.Username, token), operation.Token, sectionTimeout);
+                token => transport.GetInfoAsync(key.Username, token),
+                operation.Token,
+                sectionTimeout,
+                logger,
+                peerHash,
+                "info");
             Task<SectionResult<UserStatistics>> statisticsTask = CaptureAsync(
-                token => transport.GetStatisticsAsync(key.Username, token), operation.Token, sectionTimeout);
+                token => transport.GetStatisticsAsync(key.Username, token),
+                operation.Token,
+                sectionTimeout,
+                logger,
+                peerHash,
+                "statistics");
             await Task.WhenAll(statusTask, infoTask, statisticsTask).ConfigureAwait(false);
 
             SectionResult<UserStatus> status = await statusTask.ConfigureAwait(false);
@@ -233,7 +271,7 @@ public sealed class UserProfileService : IAsyncDisposable
             SectionResult<UserStatistics> statistics = await statisticsTask.ConfigureAwait(false);
 
             (UserProfileSectionDto PictureSection, UserPicture? Picture) picture =
-                await ResolvePictureAsync(info, operation.Token).ConfigureAwait(false);
+                await ResolvePictureAsync(info, operation.Token, logger, peerHash).ConfigureAwait(false);
             DateTimeOffset observedAt = utcNow();
             var profile = new UserProfileDto(
                 key.Username,
@@ -272,11 +310,47 @@ public sealed class UserProfileService : IAsyncDisposable
             {
                 gate.Release();
             }
+            ResourceSectionState[] states =
+            [
+                status.Section.State,
+                info.Section.State,
+                statistics.Section.State,
+                picture.PictureSection.State,
+            ];
+            int availableSections = states.Count(state => state == ResourceSectionState.Available);
+            string outcome = availableSections == states.Length
+                ? "available"
+                : $"partial-{availableSections}-of-{states.Length}";
+            if (availableSections == states.Length)
+            {
+                operationLog.Succeeded(
+                    outcome,
+                    itemCount: availableSections,
+                    byteCount: picture.Picture?.Bytes.Length);
+            }
+            else
+            {
+                operationLog.Degraded(
+                    outcome,
+                    itemCount: availableSections,
+                    byteCount: picture.Picture?.Bytes.Length);
+            }
             return cached;
         }
         catch (OperationCanceledException ex) when (!lifetime.IsCancellationRequested)
         {
+            operationLog.Failed(ex, "connection-lost");
             throw new UserProfileUnavailableException("Soulseek connection was lost.", ex);
+        }
+        catch (OperationCanceledException)
+        {
+            operationLog.Cancelled();
+            throw;
+        }
+        catch (Exception exception)
+        {
+            operationLog.Failed(exception);
+            throw;
         }
         finally
         {
@@ -297,7 +371,10 @@ public sealed class UserProfileService : IAsyncDisposable
     private static async Task<SectionResult<T>> CaptureAsync<T>(
         Func<CancellationToken, Task<T>> request,
         CancellationToken operationToken,
-        TimeSpan timeoutDuration)
+        TimeSpan timeoutDuration,
+        ILogger logger,
+        string peerHash,
+        string section)
         where T : class
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(operationToken);
@@ -325,8 +402,10 @@ public sealed class UserProfileService : IAsyncDisposable
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
+            UserProfileLogMessages.SectionFailed(
+                logger, exception, peerHash, section);
             return new SectionResult<T>(
                 new UserProfileSectionDto(ResourceSectionState.Unavailable, "request-failed"),
                 null);
@@ -336,7 +415,9 @@ public sealed class UserProfileService : IAsyncDisposable
     private static async Task<(UserProfileSectionDto PictureSection, UserPicture? Picture)>
         ResolvePictureAsync(
             SectionResult<UserInfo> info,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            ILogger logger,
+            string peerHash)
     {
         if (info.Value is null)
             return (info.Section, null);
@@ -358,8 +439,9 @@ public sealed class UserProfileService : IAsyncDisposable
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
+            UserProfileLogMessages.PictureRejected(logger, exception, peerHash);
             return (new UserProfileSectionDto(ResourceSectionState.Unavailable, "invalid-image"), null);
         }
     }
@@ -440,4 +522,45 @@ public sealed class UserProfileService : IAsyncDisposable
     }
 
     private readonly record struct ProfileKey(string LocalAccount, string Username);
+}
+
+internal static partial class UserProfileLogMessages
+{
+    [LoggerMessage(
+        EventId = 4100,
+        EventName = "user-profile.session-unavailable",
+        Level = LogLevel.Error,
+        Message = "User profile session unavailable for peer hash {PeerHash}")]
+    public static partial void SessionUnavailable(
+        ILogger logger, Exception exception, string peerHash);
+
+    [LoggerMessage(
+        EventId = 4101,
+        EventName = "user-profile.joined-active",
+        Level = LogLevel.Debug,
+        Message = "Joined active user profile acquisition for peer hash {PeerHash}")]
+    public static partial void JoinedActive(ILogger logger, string peerHash);
+
+    [LoggerMessage(
+        EventId = 4102,
+        EventName = "user-profile.reused-cache",
+        Level = LogLevel.Debug,
+        Message = "Reused cached user profile for peer hash {PeerHash} at age {AgeMs} ms")]
+    public static partial void ReusedCached(ILogger logger, string peerHash, long ageMs);
+
+    [LoggerMessage(
+        EventId = 4103,
+        EventName = "user-profile.section-failed",
+        Level = LogLevel.Warning,
+        Message = "User profile {Section} section failed for peer hash {PeerHash}")]
+    public static partial void SectionFailed(
+        ILogger logger, Exception exception, string peerHash, string section);
+
+    [LoggerMessage(
+        EventId = 4104,
+        EventName = "user-profile.picture-rejected",
+        Level = LogLevel.Debug,
+        Message = "User profile picture was rejected for peer hash {PeerHash}")]
+    public static partial void PictureRejected(
+        ILogger logger, Exception exception, string peerHash);
 }

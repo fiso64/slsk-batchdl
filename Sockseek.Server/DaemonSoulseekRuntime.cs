@@ -3,6 +3,7 @@ using Sockseek.Core.Settings;
 using Sockseek.Core.Sharing;
 using Soulseek;
 using Sockseek.Core.UserProfiles;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Server;
 
@@ -17,7 +18,8 @@ public sealed class DaemonSoulseekRuntime : IAsyncDisposable
     public DaemonSoulseekRuntime(
         EngineSettings settings,
         Func<EngineSettings, ISoulseekClient>? clientFactory = null,
-        LocalUserProfile? localProfile = null)
+        LocalUserProfile? localProfile = null,
+        ILogger<SoulseekClientManager>? logger = null)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         InboundRequests = new SoulseekInboundRequestRouter();
@@ -29,7 +31,8 @@ public sealed class DaemonSoulseekRuntime : IAsyncDisposable
             settings,
             clientFactory?.Invoke(settings),
             InboundRequests,
-            LocalProfile);
+            LocalProfile,
+            logger);
     }
 
     public SoulseekClientManager ClientManager { get; }

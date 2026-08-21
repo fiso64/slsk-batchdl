@@ -33,12 +33,18 @@ internal static class UserProfileEndpoints
     private static async Task<IResult> GetProfileAsync(
         string username,
         EngineSupervisor supervisor,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken,
         bool refresh = false)
     {
         UserProfileService? service = supervisor.UserProfiles;
         if (service is null)
+        {
+            ServerLogMessages.FeatureRequestUnavailable(
+                loggerFactory.CreateLogger("Sockseek.Server.UserProfiles.UserProfileEndpoints"),
+                "user profiles");
             return Unavailable();
+        }
         try
         {
             return Results.Ok(await service.GetAsync(
@@ -57,11 +63,17 @@ internal static class UserProfileEndpoints
         HttpRequest request,
         HttpResponse response,
         EngineSupervisor supervisor,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         UserProfileService? service = supervisor.UserProfiles;
         if (service is null)
+        {
+            ServerLogMessages.FeatureRequestUnavailable(
+                loggerFactory.CreateLogger("Sockseek.Server.UserProfiles.UserProfileEndpoints"),
+                "user profiles");
             return Unavailable();
+        }
         try
         {
             UserPicture? picture = await service.GetPictureAsync(

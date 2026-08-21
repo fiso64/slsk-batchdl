@@ -2,6 +2,8 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Transfers.Downloads.State;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
@@ -19,7 +21,7 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
                 retainedPath == null
                     ? exception.Message
                     : $"{exception.Message}{Environment.NewLine}Downloaded payload retained at: {retainedPath}",
-                SockseekLog.ExceptionDetail(exception)),
+                Diagnostics.ExceptionText.Detail(exception)),
             exception);
 }
 
@@ -29,10 +31,17 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
 internal sealed class OutputFinalizer
 {
     private readonly DownloadedFileCache downloadedFiles;
+    private readonly DownloadEvents? events;
+    private readonly ILogger<OutputFinalizer> logger;
 
-    public OutputFinalizer(DownloadedFileCache downloadedFiles)
+    public OutputFinalizer(
+        DownloadedFileCache downloadedFiles,
+        DownloadEvents? events = null,
+        ILogger<OutputFinalizer>? logger = null)
     {
         this.downloadedFiles = downloadedFiles;
+        this.events = events;
+        this.logger = logger ?? NullLogger<OutputFinalizer>.Instance;
     }
 
     public InitialDownloadTarget GetInitialDownloadTarget(
@@ -87,7 +96,7 @@ internal sealed class OutputFinalizer
             catch (Exception ex)
             {
                 var organizationException = AsOrganizationException(ex, song.DownloadPath, targetPath: null);
-                SockseekLog.Jobs.Error(song, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                LogOrganizationFailure(song, organizationException);
                 return OutputFinalizationResult.Failed(
                     organizationException,
                     RetainedStagedPayload(song.DownloadPath, parentJob.Config.Output));
@@ -131,12 +140,26 @@ internal sealed class OutputFinalizer
                     .Select(file => file.DownloadPath)
                     .FirstOrDefault(path => OutputStaging.Contains(path, album.Config.Output));
                 var organizationException = AsOrganizationException(ex, strandedPath, album.DownloadPath);
-                SockseekLog.Jobs.Error(album, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                LogOrganizationFailure(album, organizationException);
                 return OutputFinalizationResult.Failed(
                     organizationException,
                     RetainedStagedPayload(strandedPath, album.Config.Output));
             }
         });
+    }
+
+    private void LogOrganizationFailure(Job job, FileOrganizationException exception)
+    {
+        DownloadLogMessages.ComponentFailed(
+            logger,
+            exception,
+            "output-organization",
+            job.Id);
+        events?.RaiseJobMessage(
+            job,
+            LogLevel.Error,
+            null,
+            "download completed, but organizing the output failed");
     }
 
     public void PublishDownloadedFileCache(SongJob song)

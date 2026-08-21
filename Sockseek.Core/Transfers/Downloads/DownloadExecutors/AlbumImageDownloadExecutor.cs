@@ -1,15 +1,21 @@
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using Microsoft.Extensions.Logging;
+using Sockseek.Core.Transfers.Downloads.Runtime;
 
 namespace Sockseek.Core;
 
 internal sealed class AlbumImageDownloadExecutor
 {
     private readonly SongDownloadExecutor songDownloads;
+    private readonly DownloadExecutionContext context;
 
-    public AlbumImageDownloadExecutor(SongDownloadExecutor songDownloads)
+    public AlbumImageDownloadExecutor(
+        DownloadExecutionContext context,
+        SongDownloadExecutor songDownloads)
     {
+        this.context = context;
         this.songDownloads = songDownloads;
     }
 
@@ -41,7 +47,14 @@ internal sealed class AlbumImageDownloadExecutor
             .ToList();
 
         if (imageFolders.Count == 0)
-        { SockseekLog.Jobs.Info(job, $"no images found: {job}"); return result; }
+        {
+            context.Events.RaiseJobMessage(
+                job,
+                LogLevel.Information,
+                null,
+                "no images found");
+            return result;
+        }
 
         if (option == AlbumArtOption.Largest)
         {
@@ -105,7 +118,11 @@ internal sealed class AlbumImageDownloadExecutor
                 || !needsDownload(imgs))
             {
                 var imageFolderPath = Utils.GreatestCommonDirectorySlsk(imgs.Select(af => af.Filename));
-                SockseekLog.Jobs.Info(job, $"image requirements already satisfied: {imageFolderPath}");
+                context.Events.RaiseJobMessage(
+                    job,
+                    LogLevel.Information,
+                    null,
+                    "image requirements already satisfied");
                 return result;
             }
 

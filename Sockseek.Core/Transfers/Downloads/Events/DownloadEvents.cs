@@ -5,6 +5,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Events;
 using Sockseek.Core.Snapshots;
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core;
 
@@ -15,6 +16,7 @@ namespace Sockseek.Core;
 public class DownloadEvents
 {
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<DownloadEvents> logger;
     private readonly ConcurrentDictionary<Guid, long> jobRevisions = new();
     private readonly ConcurrentDictionary<Guid, long> transferRevisions = new();
     private readonly ConcurrentDictionary<Guid, long> attemptRevisions = new();
@@ -79,9 +81,12 @@ public class DownloadEvents
 
     public event Action<CoreChange>? ChangePublished;
 
-    public DownloadEvents(TimeProvider? timeProvider = null)
+    public DownloadEvents(
+        TimeProvider? timeProvider = null,
+        ILogger<DownloadEvents>? logger = null)
     {
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.logger = logger ?? NullLogger<DownloadEvents>.Instance;
     }
 
     // ── Internal raise methods (same assembly only) ──────────────────────────
@@ -610,7 +615,7 @@ public class DownloadEvents
         InvokeObservers(ChangePublished, change, nameof(ChangePublished));
     }
 
-    private static void InvokeObservers<T>(Action<T>? observers, T value, string eventName)
+    private void InvokeObservers<T>(Action<T>? observers, T value, string eventName)
     {
         if (observers == null)
             return;
@@ -625,7 +630,7 @@ public class DownloadEvents
             {
                 try
                 {
-                    SockseekLog.Core.Error(ex, $"Observer for {eventName} failed");
+                    DownloadLogMessages.ObserverFailed(logger, ex, eventName);
                 }
                 catch
                 {

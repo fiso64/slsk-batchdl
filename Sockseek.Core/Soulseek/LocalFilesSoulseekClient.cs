@@ -2,6 +2,9 @@ using System.Collections.Concurrent;
 using Soulseek;
 using Sockseek.Core.Models;
 using Sockseek.Core.PeerBrowsing;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 
 #pragma warning disable CS8618, CS8625, CS8600, CS8632, CS0067
 
@@ -47,11 +50,22 @@ namespace Sockseek.Core.Services
         }
 
         public static LocalFilesSoulseekClient FromLocalPaths(bool useTags, bool slowMode, int failDownloads, params string[] localPaths)
+            => FromLocalPaths(
+                useTags,
+                slowMode,
+                failDownloads,
+                NullLogger.Instance,
+                localPaths);
+
+        public static LocalFilesSoulseekClient FromLocalPaths(
+            bool useTags,
+            bool slowMode,
+            int failDownloads,
+            ILogger logger,
+            params string[] localPaths)
         {
-            if (useTags)
-                SockseekLog.Soulseek.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
-            else
-                SockseekLog.Soulseek.Info("Mock files tag reading disabled; using deterministic synthetic track lengths derived from filenames.");
+            SoulseekLogMessages.LocalIndexStarting(logger, useTags);
+            var warningGate = new RepeatedWarningGate();
 
             var files = localPaths.SelectMany(EnumerateLocalFiles).ToList();
             var localFilePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -85,7 +99,14 @@ namespace Sockseek.Core.Services
                                         attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitDepth, file.Properties.BitsPerSample));
                                 }
                             }
-                            catch (Exception ex) { SockseekLog.Soulseek.Warn($"Failed to read tags for '{path}': {ex.Message}"); }
+                            catch (Exception ex)
+                            {
+                                if (warningGate.TryAcquire(out long suppressedCount))
+                                    SoulseekLogMessages.LocalMetadataFailed(
+                                        logger,
+                                        ex.GetType().Name,
+                                        suppressedCount);
+                            }
                         }
                         else
                         {
@@ -119,6 +140,7 @@ namespace Sockseek.Core.Services
                 )
             };
 
+            SoulseekLogMessages.LocalIndexCompleted(logger, fileList.Count);
             return new LocalFilesSoulseekClient(index, slowMode, localFilePaths: localFilePaths, failDownloads: failDownloads);
         }
 

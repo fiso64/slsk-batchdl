@@ -1,6 +1,9 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Core;
 using Sockseek.Core.Chat;
+using Sockseek.Core.Diagnostics;
 using Soulseek;
 
 namespace Sockseek.Server;
@@ -18,10 +21,15 @@ internal sealed class DisabledChatIngress : IAsyncDisposable
     private readonly HashSet<ISoulseekClient> attached = new(ReferenceEqualityComparer.Instance);
     private readonly object gate = new();
     private readonly Task worker;
+    private readonly ILogger<DisabledChatIngress> logger;
+    private readonly RepeatedWarningGate warningGate = new();
 
-    public DisabledChatIngress(DaemonSoulseekRuntime soulseek)
+    public DisabledChatIngress(
+        DaemonSoulseekRuntime soulseek,
+        ILogger<DisabledChatIngress>? logger = null)
     {
         this.soulseek = soulseek;
+        this.logger = logger ?? NullLogger<DisabledChatIngress>.Instance;
         acknowledgements = Channel.CreateBounded<(ISoulseekClient, int)>(
             new BoundedChannelOptions(256)
             {
@@ -63,7 +71,8 @@ internal sealed class DisabledChatIngress : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Disabled chat callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            if (warningGate.TryAcquire(out long suppressedCount))
+                ServerLogMessages.DisabledChatCallbackFailed(logger, ex, suppressedCount);
             return;
         }
 
@@ -71,7 +80,8 @@ internal sealed class DisabledChatIngress : IAsyncDisposable
             && !acknowledgements.Writer.TryWrite((client, args.Id)))
         {
             ChatTelemetry.RecordDropped("private", "disabled_capacity");
-            SockseekLog.Daemon.Warn("Disabled chat discard queue is full; the message remains replayable.");
+            if (warningGate.TryAcquire(out long suppressedCount))
+                ServerLogMessages.DisabledChatQueueFull(logger, suppressedCount);
         }
     }
 
@@ -89,7 +99,8 @@ internal sealed class DisabledChatIngress : IAsyncDisposable
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
                 catch (Exception ex)
                 {
-                    SockseekLog.Daemon.Warn($"Discarded private-message ACK failed: {SockseekLog.ExceptionSummary(ex)}");
+                    if (warningGate.TryAcquire(out long suppressedCount))
+                        ServerLogMessages.DisabledChatAcknowledgementFailed(logger, ex, suppressedCount);
                 }
             }
         }

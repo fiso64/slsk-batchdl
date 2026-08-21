@@ -3,6 +3,7 @@ using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Transfers.Downloads.State;
 using Sockseek.Core.PeerBrowsing;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Core.Transfers.Downloads.Runtime;
 
@@ -18,6 +19,8 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
     private readonly StaleDownloadCoordinator staleDownloads;
     private readonly TimeProvider timeProvider;
     private readonly IPeerDirectorySource? directorySource;
+    private readonly ILoggerFactory loggerFactory;
+    private readonly ILogger<DownloadRunScope> logger;
     private readonly CancellationTokenSource appCts = new();
     private readonly SemaphoreSlim jobSemaphore;
     private readonly SemaphoreSlim extractorSemaphore;
@@ -37,7 +40,8 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         SearchEvents searchEvents,
         StaleDownloadCoordinator staleDownloads,
         TimeProvider? timeProvider = null,
-        IPeerDirectorySource? directorySource = null)
+        IPeerDirectorySource? directorySource = null,
+        ILoggerFactory? loggerFactory = null)
     {
         this.settings = settings;
         this.clientManager = clientManager;
@@ -49,6 +53,9 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         this.staleDownloads = staleDownloads;
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.directorySource = directorySource;
+        this.loggerFactory = loggerFactory
+            ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance;
+        logger = this.loggerFactory.CreateLogger<DownloadRunScope>();
         jobSemaphore = new SemaphoreSlim(settings.ConcurrentJobs);
         extractorSemaphore = new SemaphoreSlim(settings.ConcurrentExtractors);
     }
@@ -76,9 +83,9 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            SockseekLog.Soulseek.Error(ex, "Initial Soulseek login failed. Reconnection will be attempted automatically in the background");
+            DownloadLogMessages.SessionInitializationDegraded(logger);
         }
 
         await clientManager.WaitUntilReadyAsync(ct);
@@ -86,13 +93,30 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
         IPeerDirectorySource effectiveDirectorySource = directorySource
             ?? client as IPeerDirectorySource
             ?? new OneShotPeerDirectorySource(new SoulseekPeerBrowseTransport(clientManager));
-        searcher = new Searcher(client, userSuccesses, events, settings.SearchesPerTime, settings.SearchRenewTime, settings.ConcurrentSearches, searchEvents, timeProvider, effectiveDirectorySource);
-        exactFileTransfers = new ExactPeerFileTransferRunner(client, clientManager, activeDownloads, downloadedFiles, events, staleDownloads);
+        searcher = new Searcher(
+            client,
+            userSuccesses,
+            events,
+            settings.SearchesPerTime,
+            settings.SearchRenewTime,
+            settings.ConcurrentSearches,
+            searchEvents,
+            timeProvider,
+            effectiveDirectorySource,
+            loggerFactory);
+        exactFileTransfers = new ExactPeerFileTransferRunner(
+            client,
+            clientManager,
+            activeDownloads,
+            downloadedFiles,
+            events,
+            staleDownloads,
+            loggerFactory.CreateLogger<ExactPeerFileTransferRunner>());
 
         if (automaticStaleChecksEnabled)
             staleDownloadTask ??= Task.Run(() => staleDownloads.RunAsync(appCts.Token), appCts.Token);
 
-        SockseekLog.Jobs.Debug("Soulseek services initialized");
+        DownloadLogMessages.ServicesInitialized(logger);
         servicesInitialized = true;
     }
 

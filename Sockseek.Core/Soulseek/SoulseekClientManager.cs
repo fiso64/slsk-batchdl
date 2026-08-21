@@ -3,6 +3,9 @@ using System.Security.Cryptography;
 using System.Net.Sockets;
 using Sockseek.Core.Settings;
 using System.ComponentModel;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.UserProfiles;
 
 namespace Sockseek.Core.Services;
@@ -35,6 +38,8 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     private readonly ISoulseekInboundRequestRouter? inboundRouter;
     private readonly LocalUserProfile? localProfile;
     private readonly Func<TimeSpan, CancellationToken, Task> monitorDelay;
+    private readonly ILogger<SoulseekClientManager> logger;
+    private readonly RepeatedWarningGate reconnectWarningGate = new();
     private ISoulseekClient? _client;
     private readonly SemaphoreSlim _initializationSemaphore = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim connectionStateChanged = new(0, 1);
@@ -94,8 +99,9 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         EngineSettings initialSettings,
         ISoulseekClient? client = null,
         ISoulseekInboundRequestRouter? inboundRouter = null,
-        LocalUserProfile? localProfile = null)
-        : this(initialSettings, client, inboundRouter, Task.Delay, localProfile)
+        LocalUserProfile? localProfile = null,
+        ILogger<SoulseekClientManager>? logger = null)
+        : this(initialSettings, client, inboundRouter, Task.Delay, localProfile, logger)
     {
     }
 
@@ -104,12 +110,14 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         ISoulseekClient? client,
         ISoulseekInboundRequestRouter? inboundRouter,
         Func<TimeSpan, CancellationToken, Task> monitorDelay,
-        LocalUserProfile? localProfile = null)
+        LocalUserProfile? localProfile = null,
+        ILogger<SoulseekClientManager>? logger = null)
     {
         _initialSettings = initialSettings ?? throw new ArgumentNullException(nameof(initialSettings));
         this.monitorDelay = monitorDelay ?? throw new ArgumentNullException(nameof(monitorDelay));
         this.inboundRouter = inboundRouter;
         this.localProfile = localProfile;
+        this.logger = logger ?? NullLogger<SoulseekClientManager>.Instance;
         if (client != null)
         {
             _client = client;
@@ -140,8 +148,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             // A malformed server resource may disable search serving, but must
             // never escape the library event callback and destabilize session
             // reconnect or unrelated transfers.
-            SockseekLog.Daemon.Warn(
-                $"Excluded search phrase update failed: {SockseekLog.ExceptionSummary(ex)}");
+            SoulseekLogMessages.ExcludedPhrasesFailed(logger, ex);
         }
     }
 
@@ -184,8 +191,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Soulseek state observer failed: {SockseekLog.ExceptionSummary(ex)}");
+                SoulseekLogMessages.StateObserverFailed(logger, ex);
             }
         }
     }
@@ -194,11 +200,11 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     {
         if (_initialSettings.AutoReconnectAfterKickedFromServer)
         {
-            SockseekLog.Soulseek.Warn($"{KickedFromServerMessage} Reconnecting because daemon mode is active.");
+            SoulseekLogMessages.KickedReconnecting(logger);
             return;
         }
 
-        SockseekLog.Soulseek.Error($"{KickedFromServerMessage} Stopping this run.");
+        SoulseekLogMessages.KickedStopping(logger);
         MarkFatal(new SoulseekConnectionUnavailableException(
             KickedFromServerMessage,
             new KickedFromServerException(KickedFromServerMessage)));
@@ -288,7 +294,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
             if (IsTransient(ex))
             {
-                SockseekLog.Soulseek.Error(ex, "Failed to ensure Soulseek connection and login");
+                SoulseekLogMessages.SessionStartFailed(logger, ex);
                 StartMonitoring(); // Ensure monitoring starts even on transient failure so we can retry
             }
             else
@@ -321,7 +327,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
         => new(
             IsKickedFromServer(ex)
                 ? KickedFromServerMessage
-                : $"Soulseek login failed: {SockseekLog.ExceptionSummary(ex)}",
+                : $"Soulseek login failed: {ExceptionText.Summary(ex)}",
             ex);
 
     private void PublishClientCreated(ISoulseekClient client)
@@ -334,8 +340,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             try { handler(client); }
             catch (Exception ex)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Soulseek client-created observer failed: {SockseekLog.ExceptionSummary(ex)}");
+                SoulseekLogMessages.ClientCreatedObserverFailed(logger, ex);
             }
         }
     }
@@ -406,12 +411,13 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 if (HasFatalError)
                     break;
 
-                SockseekLog.Soulseek.Warn($"Connection lost. Retrying in {retryDelay}s...");
+                if (reconnectWarningGate.TryAcquire(out long suppressedCount))
+                    SoulseekLogMessages.ConnectionLost(logger, retryDelay, suppressedCount);
                 await monitorDelay(TimeSpan.FromSeconds(retryDelay), ct);
 
                 await EnsureConnectedAndLoggedInAsync(_initialSettings, ct);
                 retryDelay = 1;
-                SockseekLog.Soulseek.Info("Reconnected successfully.");
+                SoulseekLogMessages.Reconnected(logger);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -419,11 +425,11 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 if (!IsTransient(ex))
                 {
                     MarkFatal(ex);
-                    SockseekLog.Soulseek.Fatal(ex, "Permanent Soulseek error. Stopping reconnection attempts");
+                    SoulseekLogMessages.PermanentFailure(logger, ex);
                     break;
                 }
 
-                SockseekLog.Soulseek.Debug(SockseekLog.FormatException("Reconnection attempt failed", ex));
+                SoulseekLogMessages.ReconnectAttemptFailed(logger, ex);
                 retryDelay = Math.Min(retryDelay * 2, 8);
             }
         }
@@ -431,21 +437,21 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
     private ISoulseekClient CreateClientInstance(EngineSettings settings)
     {
-        SockseekLog.Soulseek.Debug("Creating Soulseek client instance...");
+        SoulseekLogMessages.CreatingClient(logger);
         if (!string.IsNullOrEmpty(settings.MockFilesDir))
         {
-            SockseekLog.Soulseek.Info("Using local files Soulseek client.");
+            SoulseekLogMessages.UsingLocalClient(logger);
             return LocalFilesSoulseekClient.FromLocalPaths(
                 settings.MockFilesReadTags,
                 settings.MockFilesSlow,
                 settings.MockFilesFailDownloads,
+                logger,
                 settings.MockFilesDir);
         }
         else
         {
-            SockseekLog.Soulseek.Debug("Configuring Soulseek Client connection options.");
+            SoulseekLogMessages.ConfiguringNetworkClient(logger);
             int startingToken = CreateRandomStartingToken();
-            SockseekLog.Soulseek.Debug($"Using Soulseek client starting token {startingToken}.");
             return new SoulseekClient(
                 SockseekSoulseekClientIdentity.MinorVersion,
                 CreateClientOptions(settings, startingToken, inboundRouter, localProfile));
@@ -563,11 +569,12 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
             user = RandomNumberGenerator.GetString(chars, 10);
             pass = RandomNumberGenerator.GetString(chars, 10);
-            SockseekLog.Soulseek.Debug($"Generated random username: {user}");
         }
 
-        string displayUser = settings.UseRandomLogin ? "[Random]" : user;
-        SockseekLog.Soulseek.Info($"Logging in as {displayUser}..");
+        if (settings.UseRandomLogin)
+            SoulseekLogMessages.RandomLoginStarting(logger);
+        else
+            SoulseekLogMessages.LoginStarting(logger);
 
         cancellationToken.ThrowIfCancellationRequested();
         string? previousUser;
@@ -592,7 +599,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             }
             throw;
         }
-        SockseekLog.Soulseek.Debug($"Logged in as {displayUser}");
+        SoulseekLogMessages.LoginCompleted(logger);
     }
 
     public void Dispose()
@@ -620,9 +627,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Soulseek monitor stopped with an error during disposal: "
-                    + SockseekLog.ExceptionSummary(ex));
+                SoulseekLogMessages.MonitorDisposeFailed(logger, ex);
             }
         }
         _client?.Dispose();

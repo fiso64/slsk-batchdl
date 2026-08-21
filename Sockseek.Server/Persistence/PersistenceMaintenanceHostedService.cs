@@ -1,11 +1,12 @@
 using Microsoft.Extensions.Options;
-using Sockseek.Core;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Server.Persistence;
 
 public sealed class PersistenceMaintenanceHostedService(
     PersistenceCoordinator coordinator,
-    IOptions<ServerOptions> serverOptions) : BackgroundService
+    IOptions<ServerOptions> serverOptions,
+    ILogger<PersistenceMaintenanceHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -23,8 +24,12 @@ public sealed class PersistenceMaintenanceHostedService(
                 try
                 {
                     var result = await coordinator.RunRetentionAsync(stoppingToken).ConfigureAwait(false);
-                    SockseekLog.Daemon.Info(
-                        $"Persistence retention pruned {result.PrunedJobs} jobs, {result.PrunedSearchResults} raw search results, and {result.PrunedChatMessages} chat messages in {result.DurationMilliseconds} ms.");
+                    ServerLogMessages.PersistenceRetentionCompleted(
+                        logger,
+                        result.PrunedJobs,
+                        result.PrunedSearchResults,
+                        result.PrunedChatMessages,
+                        result.DurationMilliseconds);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -32,7 +37,7 @@ public sealed class PersistenceMaintenanceHostedService(
                 }
                 catch (Exception ex)
                 {
-                    SockseekLog.Daemon.Error(ex, "Scheduled persistence retention failed");
+                    ServerLogMessages.PersistenceRetentionFailed(logger, ex);
                 }
             }
         }

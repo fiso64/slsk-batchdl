@@ -133,8 +133,7 @@ public static partial class ConfigManager
             namedProfiles,
             cliProfile,
             context,
-            normalize: settings => PostProcessDownload(settings, new PathVariableContext(ConfigDir: file.ConfigDir)),
-            warn: msg => SockseekLog.Warn(msg));
+            normalize: settings => PostProcessDownload(settings, new PathVariableContext(ConfigDir: file.ConfigDir)));
     }
 
     public static DownloadSettings BindCliDownloadTokens(IReadOnlyList<string> cliArgs)
@@ -205,7 +204,8 @@ public static partial class ConfigManager
                 return;
         }
 
-        SockseekLog.Warn("Warning: Client profile settings did not stabilize after repeated auto-profile passes");
+        Console.Error.WriteLine(
+            "[warn] [cli] Client profile settings did not stabilize after repeated auto-profile passes");
     }
 
     public static IReadOnlyList<string> GetProfileNames(ConfigFile file)

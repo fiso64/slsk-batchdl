@@ -1,4 +1,6 @@
 using Sockseek.Core.Settings;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Cli;
 
@@ -19,6 +21,7 @@ internal static class ConfiguredCommandDispatcher
 {
     public static async Task<Program.CliExitCode?> TryRunAsync(
         string[] args,
+        CliOutputController? output = null,
         CancellationToken cancellationToken = default)
     {
         if (args.Length == 0)
@@ -74,10 +77,18 @@ internal static class ConfiguredCommandDispatcher
                     return null;
                 ConfiguredCommandInvocation invocation = ConfiguredCommandInvocation.Create(
                     args, ConfiguredCommandOptions.DataDirectory);
+                using ILoggerFactory loggerFactory = output is null
+                    ? NullLoggerFactory.Instance
+                    : output.CreateLoggerFactory(
+                        invocation.Engine.LogLevel,
+                        invocation.Engine.LogFilePath,
+                        LogLevel.Debug);
                 return await DatabaseCommandRunner.RunAsync(
                     invocation.CommandArguments.Skip(1).ToArray(),
                     invocation.ConfigFile,
-                    invocation.Daemon).ConfigureAwait(false);
+                    invocation.Daemon,
+                    loggerFactory.CreateLogger("Sockseek.Cli.DatabaseCommandRunner"),
+                    output).ConfigureAwait(false);
             }
 
             return null;
@@ -100,6 +111,7 @@ internal static class ConfiguredCommandDispatcher
 internal sealed record ConfiguredCommandInvocation(
     string[] CommandArguments,
     ConfigFile ConfigFile,
+    EngineSettings Engine,
     DaemonSettings Daemon,
     RemoteSettings Remote)
 {
@@ -142,10 +154,10 @@ internal sealed record ConfiguredCommandInvocation(
             bindingArguments.Add(RequireValue(option, value));
         }
 
-        var (configFile, _, _, _, daemon, remote) =
+        var (configFile, engine, _, _, daemon, remote) =
             ConfigManager.LoadAndBindAll(bindingArguments);
         return new ConfiguredCommandInvocation(
-            commandArguments.ToArray(), configFile, daemon, remote);
+            commandArguments.ToArray(), configFile, engine, daemon, remote);
     }
 
     private static void SplitOption(

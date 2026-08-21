@@ -3,6 +3,8 @@ using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core;
@@ -28,6 +30,8 @@ public partial class Searcher : IDisposable
     private readonly SemaphoreSlim concurrencySemaphore;
     private readonly TimeProvider timeProvider;
     private readonly IPeerDirectorySource directorySource;
+    private readonly ILoggerFactory loggerFactory;
+    private readonly ILogger<Searcher> logger;
 
     public Searcher(ISoulseekClient client,
                     IUserSuccessStats userStats,
@@ -35,7 +39,8 @@ public partial class Searcher : IDisposable
                     int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
                     SearchEvents? searchEvents = null,
                     TimeProvider? timeProvider = null,
-                    IPeerDirectorySource? directorySource = null)
+                    IPeerDirectorySource? directorySource = null,
+                    ILoggerFactory? loggerFactory = null)
     {
         this.client = client;
         this.userStats = userStats;
@@ -45,6 +50,8 @@ public partial class Searcher : IDisposable
         this.directorySource = directorySource
             ?? client as IPeerDirectorySource
             ?? MissingPeerDirectorySource.Instance;
+        this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        logger = this.loggerFactory.CreateLogger<Searcher>();
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -84,6 +91,13 @@ public partial class Searcher : IDisposable
         downloadEvents.RaiseJobDiscoveryChanged(job);
     }
 
+    private void LogSessionObserverFailure(string observerName, Exception exception, Guid jobId)
+        => DownloadLogMessages.SearchObserverFailed(
+            logger,
+            exception,
+            observerName,
+            jobId);
+
     public async Task<JobOutcome> Search(
         SearchJob job,
         SearchSettings search,
@@ -95,6 +109,9 @@ public partial class Searcher : IDisposable
     {
         var session = job.Session;
         session.ConfigureTimeProvider(timeProvider);
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(activityJob, session);
@@ -142,6 +159,7 @@ public partial class Searcher : IDisposable
         {
             session.RawResultAdded -= OnRawResultAdded;
             session.ChangePublished -= OnSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
         }
     }
 
@@ -164,6 +182,9 @@ public partial class Searcher : IDisposable
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
         var session = new SearchSession(song.Id, timeProvider, song.Query.ToString(noInfo: true));
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(song);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(song, session);
         session.RawResultAdded += OnRawResultAdded;
@@ -207,6 +228,7 @@ public partial class Searcher : IDisposable
             session.Complete();
             session.RawResultAdded -= OnRawResultAdded;
             session.ChangePublished -= downloadEvents.RaiseSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
         }
 
@@ -216,12 +238,7 @@ public partial class Searcher : IDisposable
         responseData.resultCount = session.Results.Count;
         UpdateDiscoveryProgress(song, session);
 
-        SockseekLog.Soulseek.Debug($"{session.Results.Count} results found: {song}");
-
-        if (!session.Results.IsEmpty && SockseekLog.IsEnabled(LogLevel.Trace))
-        {
-            SockseekLog.Soulseek.Trace(string.Join("\n", session.Results.Select(r => $"  {r.Value.Item1.Username}: {r.Value.Item2.Filename}")));
-        }
+        DownloadLogMessages.SearchCompleted(logger, song.Id, session.Results.Count);
 
         song.Candidates = SearchResultProjector.SortedTrackCandidates(
             session.Snapshot(),
@@ -253,6 +270,9 @@ public partial class Searcher : IDisposable
     public async Task<JobOutcome?> SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
         var session = new SearchSession(job.Id, timeProvider, job.Query.ToString(noInfo: true));
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(job);
         void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(job, session);
         session.RawResultAdded += OnRawResultAdded;
@@ -275,6 +295,7 @@ public partial class Searcher : IDisposable
             session.Complete();
             session.RawResultAdded -= OnRawResultAdded;
             session.ChangePublished -= downloadEvents.RaiseSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
         }
 
@@ -335,7 +356,14 @@ public partial class Searcher : IDisposable
                 snapshot = await RetrieveDirectory(folder.DirectoryIdentity, ct);
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception e) { SockseekLog.Soulseek.Error($"Error getting all files in '{folder.FolderPath}': {e}"); return 0; }
+            catch (Exception e)
+            {
+                DownloadLogMessages.FolderCompletionFailed(
+                    logger,
+                    e,
+                    DirectoryHash(folder));
+                return 0;
+            }
 
             newFiles = ApplyDirectorySnapshot(folder, snapshot);
         }
@@ -345,10 +373,19 @@ public partial class Searcher : IDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Soulseek.Error($"Error completing folder: {ex}");
+            DownloadLogMessages.FolderCompletionFailed(
+                logger,
+                ex,
+                DirectoryHash(folder));
         }
         return newFiles;
     }
+
+    private static string DirectoryHash(AlbumFolder folder)
+        => LogIdentity.Hash(
+            folder.DirectoryIdentity.Username
+            + "\0"
+            + folder.DirectoryIdentity.FolderPath);
 
     /// <summary>
     /// Associates a generic retrieval result back with an album candidate. The

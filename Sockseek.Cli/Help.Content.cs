@@ -314,10 +314,10 @@ public static partial class Help
 
   Printing & Debug Options
 
-    -v, --verbose                   Print extra debug info
+    -v, --verbose                   Print debug logs
     -vv, --trace                    Print trace-level debug info
     --debug                         Alias for --verbose
-    --log-file <path>               Write debug info to a specified file
+    --log-file <path>               Write debug logs to a file
     --no-progress                   Disable progress bars/percentages, only simple printing
     --progress-json                 Print progress events as JSON lines
     --print <option>                Print jobs or search results instead of downloading:

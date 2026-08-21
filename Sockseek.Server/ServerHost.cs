@@ -6,7 +6,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Sockseek.Api;
 using Sockseek.Core.Chat;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Services;
+using Sockseek.Core.Settings;
 using Sockseek.Server.Persistence;
 using Sockseek.Server.PeerBrowsing;
 using Sockseek.Server.UserProfiles;
@@ -18,12 +20,36 @@ public static class ServerHost
     public static WebApplication Build(string[] args, ServerOptions? options = null, string? url = null)
     {
         var builder = WebApplication.CreateBuilder(args);
-        builder.Logging.ClearProviders();
-        builder.Logging.AddSimpleConsole(consoleOptions =>
+        string entryAssemblyName = Assembly.GetEntryAssembly()?.GetName().Name ?? "";
+        bool isOpenApiGeneration = entryAssemblyName.Contains(
+            "getdocument",
+            StringComparison.OrdinalIgnoreCase);
+        EngineSettings loggingSettings;
+        if (options is not null)
         {
-            consoleOptions.SingleLine = false;
-            consoleOptions.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
-        });
+            loggingSettings = options.Engine;
+        }
+        else
+        {
+            loggingSettings = new EngineSettings { LogLevel = LogLevel.Debug };
+            builder.Configuration.GetSection("SockseekServer:Engine").Bind(loggingSettings);
+        }
+        builder.Logging.ClearProviders();
+        // Keep the factory permissive so each provider can enforce its own
+        // level. In particular, the Debug file must remain independent of the
+        // configured console level.
+        builder.Logging.SetMinimumLevel(LogLevel.Trace);
+        builder.Logging.AddProvider(new CompactTextLoggerProvider(
+            record => Console.WriteLine(CompactLogFormatter.Format(
+                record,
+                includeTimestamp: true,
+                includeInformationLevel: true,
+                includeSource: loggingSettings.LogLevel <= LogLevel.Debug)),
+            isOpenApiGeneration ? LogLevel.None : loggingSettings.LogLevel));
+        if (!isOpenApiGeneration && !string.IsNullOrWhiteSpace(loggingSettings.LogFilePath))
+            builder.Logging.AddProvider(new CompactFileLoggerProvider(
+                loggingSettings.LogFilePath,
+                LogLevel.Debug));
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 
         if (!string.IsNullOrWhiteSpace(url))
@@ -34,10 +60,6 @@ public static class ServerHost
         else
         {
             builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("SockseekServer"));
-            bool isOpenApiGeneration = string.Equals(
-                Assembly.GetEntryAssembly()?.GetName().Name,
-                "GetDocument.Insider",
-                StringComparison.Ordinal);
             if (!isOpenApiGeneration && builder.Configuration["SockseekServer:Persistence:Enabled"] == null)
                 builder.Services.PostConfigure<ServerOptions>(configured => configured.Persistence.Enabled = true);
         }
@@ -89,10 +111,10 @@ public static class ServerHost
         builder.Services.AddSingleton<IOperatorMutationAuthorizer,
             CurrentTrustDomainOperatorAuthorizer>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerEventBroadcaster>());
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
 
         var app = builder.Build();
-        _ = app.Services.GetRequiredService<ServerEventBroadcaster>();
 
         app.MapOpenApi("/api/openapi.json");
         MapEndpoints(app);
@@ -1567,7 +1589,6 @@ public static class ServerHost
     private static IResult BadRequest(Exception ex)
     {
         TryCreateBadRequest(ex, out var error);
-        Sockseek.Core.SockseekLog.Daemon.Warn($"Bad request: {error}");
         string code = ex is UnsupportedNameFormatVariableException
             ? "invalid-name-format-variable"
             : "InvalidRequest";

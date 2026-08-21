@@ -9,12 +9,17 @@ internal sealed class EventLogger
     internal static readonly IReadOnlySet<string> HandledEventTypes = JobActivityLogFormatter.HandledActivityTypes;
 
     private readonly ICliBackend _backend;
+    private readonly CliOutputController _output;
     private readonly bool _includeDiagnosticDetails;
     private readonly JobActivityLogFormatter _formatter = new();
 
-    public EventLogger(ICliBackend backend, bool includeDiagnosticDetails = true)
+    public EventLogger(
+        ICliBackend backend,
+        CliOutputController output,
+        bool includeDiagnosticDetails = true)
     {
         _backend = backend;
+        _output = output;
         _includeDiagnosticDetails = includeDiagnosticDetails;
     }
 
@@ -51,17 +56,18 @@ internal sealed class EventLogger
 
     private void Write(ActivityLogEntry entry)
     {
-        var context = entry.Display is { } display
+        CliOutputEvent? context = entry.Display is { } display
             ? new CliOutputEvent.JobLog(
                 new TerminalLogLine(TerminalKind(display.Kind), "", display.DisplayId, display.JobType, display.Message, display.Source, display.Highlight, display.ShowInLive),
                 entry.Level)
             : null;
 
-        SockseekLog.Write(new SockseekLog.StructuredLogEntry(
-            entry.Level,
-            entry.CategoryName,
-            entry.Message,
-            Context: context));
+        _output.WriteOutput(context ?? new CliOutputEvent.ProcessLog(
+            new TerminalProcessLogLine(
+                entry.Level,
+                entry.CategoryName,
+                entry.Message,
+                CliProcessLogPresentation.Decorated)));
     }
 
     private static TerminalLogKind TerminalKind(ActivityLogDisplayKind kind)

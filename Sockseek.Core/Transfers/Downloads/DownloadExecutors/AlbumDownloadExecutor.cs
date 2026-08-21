@@ -23,7 +23,7 @@ internal sealed class AlbumDownloadExecutor
         this.context = context;
         this.jobs = jobs;
         this.songDownloads = songDownloads;
-        imageDownloads = new AlbumImageDownloadExecutor(songDownloads);
+        imageDownloads = new AlbumImageDownloadExecutor(context, songDownloads);
         incompleteAlbums = new IncompleteAlbumActionExecutor(context);
     }
 
@@ -34,7 +34,12 @@ internal sealed class AlbumDownloadExecutor
     public async Task<JobOutcome> ProcessAlbumDownload(AlbumJob job, JobContext ctx)
     {
         var config = job.Config;
-        var organizer = new FileManager(job, config.Output, config.Extraction, ctx.OutputScope);
+        var organizer = new FileManager(
+            job,
+            config.Output,
+            config.Extraction,
+            context.LoggerFactory.CreateLogger<FileManager>(),
+            ctx.OutputScope);
         var audioResult = await TryDownloadAlbumAudio(job, ctx, organizer);
         var completion = PrepareAlbumAudioOutcome(job, audioResult, ctx);
         var chosenFiles = completion.ChosenFiles;
@@ -136,7 +141,7 @@ internal sealed class AlbumDownloadExecutor
         if (!config.Output.AlbumArtOnly && (!audioResult.Succeeded || config.Output.AlbumArtOption == AlbumArtOption.Default))
             return new(chosenFiles, null);
 
-        SockseekLog.Jobs.Info(job, $"downloading additional images: {job}");
+        Info(job, "downloading additional images");
         var additionalImages = await imageDownloads.DownloadImages(job, ctx, organizer, job.ResolvedTarget);
 
         if (chosenFiles != null && additionalImages.Count > 0)
@@ -347,14 +352,14 @@ internal sealed class AlbumDownloadExecutor
                 state.RetrievedFolders.Add(chosenFolder.FolderPath);
             else
             {
-                SockseekLog.Jobs.Info(job, $"album track count verification was cancelled, skipping folder: {chosenFolder.FolderPath}");
+                Info(job, "album track count verification was cancelled; skipping folder");
                 if (selection.WasPreselected)
                     return new(false, ReturnSelectedFolderToManualPicker(job, ctx, organizer, state, chosenFolder, JobFailureReason.NoMatchingResults));
 
                 job.Results.RemoveAt(state.Index);
                 if (--state.TrackCountRetries <= 0)
                 {
-                    SockseekLog.Jobs.Info(job, $"failed album track count condition {config.Transfer.AlbumTrackCountMaxRetries} times, skipping album: {job}");
+                    Info(job, $"failed album track count condition {config.Transfer.AlbumTrackCountMaxRetries} times; skipping album");
                     return new(false, new(false, DownloadOutcomes.NoMatchingCandidates(), null, state.LastChosenFolder));
                 }
 
@@ -366,23 +371,23 @@ internal sealed class AlbumDownloadExecutor
 
         var trackCountCheck = ConditionSatisfactionPolicy.CheckAlbumTrackCount(folderCond, knownCount);
         if (trackCountCheck.FailedAboveMaximum && trackCountCheck.Maximum is { } maximum)
-            SockseekLog.Jobs.Info(job, $"file count ({trackCountCheck.AudioFileCount}) above maximum ({maximum}), skipping folder: {chosenFolder.FolderPath}");
+            Info(job, $"file count ({trackCountCheck.AudioFileCount}) above maximum ({maximum}); skipping folder");
         if (trackCountCheck.FailedBelowMinimum && trackCountCheck.Minimum is { } minimum)
-            SockseekLog.Jobs.Info(job, $"file count ({trackCountCheck.AudioFileCount}) below minimum ({minimum}), skipping folder: {chosenFolder.FolderPath}");
+            Info(job, $"file count ({trackCountCheck.AudioFileCount}) below minimum ({minimum}); skipping folder");
 
         if (trackCountCheck.Satisfied)
             return new(false, null);
 
         if (selection.WasPreselected)
         {
-            SockseekLog.Jobs.Info(job, $"preselected folder failed album track count condition, skipping album: {chosenFolder.FolderPath}");
+            Info(job, "preselected folder failed album track count condition; skipping album");
             return new(false, ReturnSelectedFolderToManualPicker(job, ctx, organizer, state, chosenFolder, JobFailureReason.NoMatchingResults));
         }
 
         job.Results.RemoveAt(state.Index);
         if (--state.TrackCountRetries <= 0)
         {
-            SockseekLog.Jobs.Info(job, $"failed album track count condition {config.Transfer.AlbumTrackCountMaxRetries} times, skipping album: {job}");
+            Info(job, $"failed album track count condition {config.Transfer.AlbumTrackCountMaxRetries} times; skipping album");
             return new(false, new(false, DownloadOutcomes.NoMatchingCandidates(), null, state.LastChosenFolder));
         }
 
@@ -413,7 +418,7 @@ internal sealed class AlbumDownloadExecutor
                 state.RetrievedFolders.Add(chosenFolder.FolderPath);
             else
             {
-                SockseekLog.Jobs.Info(job, $"strict album quality verification was cancelled, skipping folder: {chosenFolder.FolderPath}");
+                Info(job, "strict album quality verification was cancelled; skipping folder");
                 if (selection.WasPreselected)
                     return new(false, ReturnSelectedFolderToManualPicker(job, ctx, organizer, state, chosenFolder, JobFailureReason.NoMatchingResults));
 
@@ -426,7 +431,7 @@ internal sealed class AlbumDownloadExecutor
         if (ConditionSatisfactionPolicy.AlbumQualityIsAcceptable(qualityCoverage, strictAlbumQuality: true))
             return new(false, null);
 
-        SockseekLog.Jobs.Info(job, $"strict album quality failed ({qualityCoverage.MatchingFileCount}/{qualityCoverage.AudioFileCount} matching audio files), skipping folder: {chosenFolder.FolderPath}");
+        Info(job, $"strict album quality failed ({qualityCoverage.MatchingFileCount}/{qualityCoverage.AudioFileCount} matching audio files); skipping folder");
         if (selection.WasPreselected)
             return new(false, ReturnSelectedFolderToManualPicker(job, ctx, organizer, state, chosenFolder, JobFailureReason.NoMatchingResults));
 
@@ -623,6 +628,13 @@ internal sealed class AlbumDownloadExecutor
             JobOutcomeCommitter.Commit(song, JobOutcome.Cancelled(JobCancellationSource.ParentJob));
         }
     }
+
+    private void Info(Job job, string message)
+        => context.Events.RaiseJobMessage(
+            job,
+            LogLevel.Information,
+            null,
+            message);
 
 
 }

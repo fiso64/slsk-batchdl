@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Persistence.Read;
@@ -12,9 +13,16 @@ using Sockseek.Persistence.Chat;
 
 namespace Sockseek.Server.Persistence;
 
-public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions)
+public sealed class PersistenceCoordinator(
+    IOptions<ServerOptions> serverOptions,
+    ILogger<PersistenceCoordinator>? logger = null,
+    ILoggerFactory? loggerFactory = null)
 {
     private readonly ServerOptions options = serverOptions.Value;
+    private readonly ILogger<PersistenceCoordinator> logger = logger
+        ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PersistenceCoordinator>.Instance;
+    private readonly ILoggerFactory loggerFactory = loggerFactory
+        ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance;
     private readonly Dictionary<DownloadEngine, EnginePersistenceAdapter> adapters = [];
     private readonly object gate = new();
     private PersistenceRuntimeHost? host;
@@ -98,7 +106,8 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
                 BusyTimeoutMilliseconds: busyTimeoutMilliseconds),
             writerOptions,
             retentionOptions,
-            version);
+            version,
+            loggerFactory.CreateLogger<PersistenceRuntimeHost>());
         var startup = await host.StartAsync(cancellationToken).ConfigureAwait(false);
         host.Health.CommitCompleted += OnHistoryHealthChanged;
         host.Health.FailureRecorded += OnHistoryHealthChanged;
@@ -165,8 +174,7 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
             try { await handler(result, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                SockseekLog.Daemon.Warn(
-                    $"Chat retention projection failed: {SockseekLog.ExceptionSummary(ex)}");
+                ServerLogMessages.ChatRetentionProjectionFailed(logger, ex);
             }
         }
     }
@@ -228,8 +236,7 @@ public sealed class PersistenceCoordinator(IOptions<ServerOptions> serverOptions
         var stop = await host.StopAsync(options.Persistence.DrainTimeout, cancellationToken).ConfigureAwait(false);
         if (!stop.Drained)
         {
-            SockseekLog.Daemon.Error(
-                $"Persistence drain timed out; leaving runtime {stop.RuntimeId} unfinished for startup reconciliation.");
+            ServerLogMessages.PersistenceDrainTimedOut(logger, stop.RuntimeId);
         }
     }
 

@@ -179,7 +179,7 @@ public static class CoreSnapshotFactory
     }
 
     public static ExceptionSnapshot CreateException(Exception exception)
-        => new(exception.GetType().Name, SockseekLog.ExceptionSummary(exception), SockseekLog.ExceptionDetail(exception));
+        => new(exception.GetType().Name, Diagnostics.ExceptionText.Summary(exception), Diagnostics.ExceptionText.Detail(exception));
 
     private static JobSnapshot CreateJob(Job job, long revision, HashSet<Guid> visited)
     {

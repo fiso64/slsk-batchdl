@@ -17,9 +17,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Main", "TestArtist", "TestAlbum");
@@ -73,9 +70,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-playlist-test-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-playlist-test-out-" + Guid.NewGuid());
@@ -126,9 +120,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-index-test-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-index-test-out-" + Guid.NewGuid());
@@ -439,9 +430,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var tempRoot  = Path.Combine(Path.GetTempPath(), "slsk-nested-index-" + Guid.NewGuid());
             var sourceDir = Path.Combine(tempRoot, "src");
@@ -1106,9 +1094,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-e2e", Guid.NewGuid().ToString());
@@ -1161,9 +1146,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-list-format-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Album2");
@@ -1222,9 +1204,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-list-strict-album-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Album", "Disc 1");
@@ -1283,9 +1262,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-list-strict-count-out-" + Guid.NewGuid());
             var listPath  = Path.GetTempFileName();
@@ -1394,9 +1370,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-list-track-count-browse-out-" + Guid.NewGuid());
             var listPath  = Path.GetTempFileName();
@@ -1482,9 +1455,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Error);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Chosen Album");
@@ -1543,9 +1513,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Error);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-song-music-" + Guid.NewGuid());
             var songDir   = Path.Combine(musicRoot, "Artist");
@@ -1859,9 +1826,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-song-rfs-" + Guid.NewGuid());
@@ -1904,9 +1868,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-album-rfs-" + Guid.NewGuid());
@@ -1949,9 +1910,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-song-ae-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-song-ae-out-" + Guid.NewGuid());
@@ -2146,9 +2104,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-album-ae-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "TestArtist", "TestAlbum");

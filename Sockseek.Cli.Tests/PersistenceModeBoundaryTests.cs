@@ -30,7 +30,6 @@ public sealed class PersistenceModeBoundaryTests
             try { Directory.Delete(root, recursive: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -60,7 +59,6 @@ public sealed class PersistenceModeBoundaryTests
             try { Directory.Delete(root, recursive: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -76,7 +74,6 @@ public sealed class PersistenceModeBoundaryTests
         }
         finally
         {
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 

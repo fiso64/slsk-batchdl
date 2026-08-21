@@ -5,6 +5,9 @@ using Sockseek.Core.IO;
 using Sockseek.Core.Models;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Snapshots;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Persistence;
 
 namespace Sockseek.Persistence.PeerBrowsing;
 
@@ -34,6 +37,7 @@ public sealed class PeerBrowseArtifactStore
     private long lastCleanupLogTick = long.MinValue;
     private long lastBudgetLogTick = long.MinValue;
     private bool initialized;
+    private readonly ILogger<PeerBrowseArtifactStore> logger;
 
     /// <summary>Raised after a browse resource has been removed from the registry.</summary>
     public event Action<Guid>? ResourceRemoved;
@@ -43,7 +47,8 @@ public sealed class PeerBrowseArtifactStore
         TimeProvider? timeProvider = null,
         TimeSpan? resourceRetention = null,
         long artifactByteBudget = DefaultArtifactByteBudget,
-        int resourceCountTarget = DefaultResourceCountTarget)
+        int resourceCountTarget = DefaultResourceCountTarget,
+        ILogger<PeerBrowseArtifactStore>? logger = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         if (resourceRetention is { } retention && retention <= TimeSpan.Zero)
@@ -58,6 +63,7 @@ public sealed class PeerBrowseArtifactStore
         artifactDirectory = Path.Combine(rootDirectory, "artifacts");
         registryPath = Path.Combine(rootDirectory, "resources.sqlite");
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.logger = logger ?? NullLogger<PeerBrowseArtifactStore>.Instance;
         this.resourceRetention = resourceRetention ?? DefaultResourceRetention;
         this.artifactByteBudget = artifactByteBudget;
         this.resourceCountTarget = resourceCountTarget;
@@ -1714,7 +1720,7 @@ public sealed class PeerBrowseArtifactStore
     {
         if (!TryLog(ref lastBudgetLogTick))
             return;
-        SockseekLog.Daemon.Warn("Peer browse artifact storage exceeded its byte target; an old artifact was evicted.");
+        PersistenceLogMessages.BrowseArtifactEvicted(logger);
     }
 
     private void LogCleanupFailure(Exception? exception = null)
@@ -1722,9 +1728,9 @@ public sealed class PeerBrowseArtifactStore
         if (!TryLog(ref lastCleanupLogTick))
             return;
         if (exception is null)
-            SockseekLog.Daemon.Error("Peer browse artifact cleanup failed; startup cleanup will retry orphan removal.");
+            PersistenceLogMessages.BrowseCleanupFailed(logger);
         else
-            SockseekLog.Daemon.Error(exception, "Peer browse artifact cleanup failed; a later cleanup will retry.");
+            PersistenceLogMessages.BrowseCleanupFailed(logger, exception);
     }
 
     private static bool TryLog(ref long previous)

@@ -2,9 +2,12 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Api;
 using Sockseek.Core;
 using Sockseek.Core.Chat;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Sharing;
 using Sockseek.Core.Settings;
 using Sockseek.Persistence.Chat;
@@ -29,6 +32,9 @@ public sealed class ChatRuntime : IAsyncDisposable
     private readonly EngineSettings settings;
     private readonly DaemonSoulseekRuntime soulseek;
     private readonly ChatPersistenceStore store;
+    private readonly ILogger<ChatRuntime> logger;
+    private readonly FeatureHealthLogger healthLog;
+    private readonly RepeatedWarningGate ingressCapacityWarningGate = new();
     private readonly Channel<IngressItem> ingress;
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim roomMutationGate = new(1, 1);
@@ -54,8 +60,9 @@ public sealed class ChatRuntime : IAsyncDisposable
     public ChatRuntime(
         EngineSettings settings,
         DaemonSoulseekRuntime soulseek,
-        ChatPersistenceStore store)
-        : this(settings, soulseek, store, IngressCapacity)
+        ChatPersistenceStore store,
+        ILogger<ChatRuntime>? logger = null)
+        : this(settings, soulseek, store, IngressCapacity, logger)
     {
     }
 
@@ -63,11 +70,14 @@ public sealed class ChatRuntime : IAsyncDisposable
         EngineSettings settings,
         DaemonSoulseekRuntime soulseek,
         ChatPersistenceStore store,
-        int ingressCapacity)
+        int ingressCapacity,
+        ILogger<ChatRuntime>? logger = null)
     {
         this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
         this.soulseek = soulseek ?? throw new ArgumentNullException(nameof(soulseek));
         this.store = store ?? throw new ArgumentNullException(nameof(store));
+        this.logger = logger ?? NullLogger<ChatRuntime>.Instance;
+        healthLog = new FeatureHealthLogger(this.logger, "chat");
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ingressCapacity);
         configuredRooms = settings.Chat.AutoJoinRooms
             .Select(ChatIdentity.NormalizeRoom)
@@ -118,7 +128,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
-            SockseekLog.Daemon.Error(ex, "Initial chat session startup failed");
+            ChatLogMessages.StartupFailed(logger, ex);
         }
         finally
         {
@@ -212,6 +222,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             await store.MarkConversationReadAsync(Account, id, throughMessageId, cancellationToken).ConfigureAwait(false);
             await PublishConversationAsync(id, null, CancellationToken.None).ConfigureAwait(false);
             await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
+            ChatLogMessages.HistoryDeleted(logger, "direct", id);
         }
         finally
         {
@@ -357,6 +368,10 @@ public sealed class ChatRuntime : IAsyncDisposable
                     ?? persisted;
         PublishCurrentSummary();
         await PublishRoomAsync(persisted.RoomId, null, CancellationToken.None).ConfigureAwait(false);
+        ChatLogMessages.RoomJoined(
+            logger,
+            persisted.RoomId,
+            LogIdentity.Hash(persisted.RoomKey));
         return MapRoom(persisted);
     }
 
@@ -410,6 +425,10 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         PublishCurrentSummary();
         await PublishRoomAsync(persisted.RoomId, null, CancellationToken.None).ConfigureAwait(false);
+        ChatLogMessages.RoomLeft(
+            logger,
+            persisted.RoomId,
+            LogIdentity.Hash(persisted.RoomKey));
         return MapRoom(persisted);
     }
 
@@ -441,6 +460,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             await store.MarkRoomReadAsync(Account, id, throughMessageId, cancellationToken).ConfigureAwait(false);
             await PublishRoomAsync(id, null, CancellationToken.None).ConfigureAwait(false);
             await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
+            ChatLogMessages.HistoryDeleted(logger, "room", id);
         }
         finally
         {
@@ -626,7 +646,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             {
                 ChatTelemetry.RecordInboundResult("private", "dropped");
                 ChatTelemetry.RecordDropped("private", "capacity");
-                SockseekLog.Daemon.Warn("Chat ingress is full; a private message remains replayable.");
+                LogIngressCapacityWarning();
             }
         }
         catch (ArgumentException)
@@ -637,12 +657,12 @@ public sealed class ChatRuntime : IAsyncDisposable
             {
                 ChatTelemetry.RecordInboundResult("private", "dropped");
                 ChatTelemetry.RecordDropped("private", "capacity");
-                SockseekLog.Daemon.Warn("Chat ingress is full; an invalid private message remains replayable.");
+                LogIngressCapacityWarning();
             }
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Private-message callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "private-message");
         }
     }
 
@@ -671,7 +691,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Room-message callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "room-message");
         }
     }
 
@@ -686,7 +706,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         catch (Exception ex)
         {
             MarkRosterIncomplete(e.RoomName, "InvalidRosterEvent");
-            SockseekLog.Daemon.Warn($"Room-join callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "room-join");
         }
     }
 
@@ -701,7 +721,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         catch (Exception ex)
         {
             MarkRosterIncomplete(e.RoomName, "InvalidRosterEvent");
-            SockseekLog.Daemon.Warn($"Room-leave callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "room-leave");
         }
     }
 
@@ -727,7 +747,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Private-room callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "private-room");
         }
     }
 
@@ -745,7 +765,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Private-room moderation callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "private-room-moderation");
         }
     }
 
@@ -761,7 +781,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Room roster callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "room-roster");
         }
     }
 
@@ -776,7 +796,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Chat connection callback failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "connection");
         }
     }
 
@@ -815,6 +835,12 @@ public sealed class ChatRuntime : IAsyncDisposable
             }
         }
         return written;
+    }
+
+    private void LogIngressCapacityWarning()
+    {
+        if (ingressCapacityWarningGate.TryAcquire(out long suppressedCount))
+            ChatLogMessages.IngressFull(logger, suppressedCount);
     }
 
     private async Task RunIngressAsync(CancellationToken cancellationToken)
@@ -856,7 +882,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                 catch (Exception ex)
                 {
                     SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
-                    SockseekLog.Daemon.Error(ex, "Chat ingress item failed");
+                    ChatLogMessages.OperationFailed(logger, ex, "ingress-item");
                 }
                 try
                 {
@@ -866,7 +892,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                 catch (Exception ex)
                 {
                     SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
-                    SockseekLog.Daemon.Error(ex, "Could not publish incomplete room roster state");
+                    ChatLogMessages.OperationFailed(logger, ex, "publish-incomplete-roster");
                 }
             }
         }
@@ -968,7 +994,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                     item is PrivateMessage ? "private_ingress" : "room_ingress");
             }
             SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
-            SockseekLog.Daemon.Error(ex, "Chat ingress batch failed");
+            ChatLogMessages.OperationFailed(logger, ex, "ingress-batch");
             return;
         }
 
@@ -1044,7 +1070,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             catch (Exception ex)
             {
                 SetHealth(DaemonFeatureState.Degraded, CompactFailure(ex));
-                SockseekLog.Daemon.Error(ex, "Chat ingress item failed");
+                ChatLogMessages.OperationFailed(logger, ex, "private-message-acknowledgement");
             }
         }
     }
@@ -1133,7 +1159,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         catch (Exception persistenceFailure)
         {
             ChatTelemetry.RecordPersistenceFailure("send_state");
-            SockseekLog.Daemon.Error(persistenceFailure, "Could not persist chat send outcome");
+            ChatLogMessages.OperationFailed(logger, persistenceFailure, "persist-send-outcome");
             return null;
         }
     }
@@ -1173,7 +1199,10 @@ public sealed class ChatRuntime : IAsyncDisposable
             try { await JoinRoomCoreAsync(row, cancellationToken).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                SockseekLog.Daemon.Warn($"Could not join configured chat room: {SockseekLog.ExceptionSummary(ex)}");
+                ChatLogMessages.ConfiguredRoomJoinFailed(
+                    logger,
+                    ex,
+                    LogIdentity.Hash(row.RoomKey));
             }
             await PublishRoomAsync(row.RoomId, null, cancellationToken).ConfigureAwait(false);
         }
@@ -1209,8 +1238,10 @@ public sealed class ChatRuntime : IAsyncDisposable
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    SockseekLog.Daemon.Warn(
-                        $"Room list refresh failed before join; trying known classification: {SockseekLog.ExceptionSummary(ex)}");
+                    ChatLogMessages.RoomListRefreshFailed(
+                        logger,
+                        ex,
+                        LogIdentity.Hash(persisted.RoomKey));
                 }
                 bool isPrivate = classification?.Kind == ChatRoomKind.Private
                                  || persisted.Kind == ChatRoomKind.Private;
@@ -1706,8 +1737,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn(
-                $"Could not publish failed room state: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "publish-failed-room");
         }
     }
 
@@ -1719,11 +1749,11 @@ public sealed class ChatRuntime : IAsyncDisposable
         try { handler(delta); }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Chat target observer failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "target-observer");
         }
     }
 
-    private static void InvokeContained<T>(Action<T>? handlers, T value, string observerName)
+    private void InvokeContained<T>(Action<T>? handlers, T value, string observerName)
     {
         if (handlers is null)
             return;
@@ -1732,8 +1762,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             try { handler(value); }
             catch (Exception ex)
             {
-                SockseekLog.Daemon.Warn(
-                    $"{observerName} observer failed: {SockseekLog.ExceptionSummary(ex)}");
+                ChatLogMessages.CallbackFailed(logger, ex, observerName);
             }
         }
     }
@@ -1845,6 +1874,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             notificationSummary = notificationSummary with { Revision = revision };
         }
         ChatTelemetry.SetRoomCounts(joined, desired);
+        healthLog.Observe(health.ToString(), reason ?? "Available");
         PublishState();
     }
 
@@ -1860,10 +1890,11 @@ public sealed class ChatRuntime : IAsyncDisposable
             chat = state;
             notifications = notificationSummary;
         }
+        healthLog.Observe(chat.State.ToString(), chat.Reason ?? "Available");
         try { handler(chat, notifications); }
         catch (Exception ex)
         {
-            SockseekLog.Daemon.Warn($"Chat state observer failed: {SockseekLog.ExceptionSummary(ex)}");
+            ChatLogMessages.CallbackFailed(logger, ex, "state-observer");
         }
     }
 
@@ -1943,9 +1974,10 @@ public sealed class ChatRuntime : IAsyncDisposable
     }
 
     private static string CompactFailure(Exception exception)
-        => SockseekLog.ExceptionSummary(exception)[..Math.Min(
-            SockseekLog.ExceptionSummary(exception).Length,
-            ChatLimits.MaximumFailureReasonLength)];
+    {
+        string summary = ExceptionText.Summary(exception);
+        return summary[..Math.Min(summary.Length, ChatLimits.MaximumFailureReasonLength)];
+    }
 
     private static string EncodeTextCursor(string value)
         => Convert.ToBase64String(Encoding.UTF8.GetBytes(value))
@@ -2118,4 +2150,35 @@ public sealed class ChatRuntime : IAsyncDisposable
         IReadOnlyList<AvailableRoomDto> Rooms,
         DateTimeOffset ObservedAtUtc,
         bool Truncated);
+}
+
+internal static partial class ChatLogMessages
+{
+    [LoggerMessage(4400, LogLevel.Error, "Chat runtime could not start")]
+    internal static partial void StartupFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(4401, LogLevel.Warning,
+        "Chat ingress capacity was exhausted; an inbound item could not be accepted (suppressed since previous warning: {SuppressedCount})")]
+    internal static partial void IngressFull(ILogger logger, long suppressedCount);
+
+    [LoggerMessage(4402, LogLevel.Warning, "Chat callback failed during {Operation}")]
+    internal static partial void CallbackFailed(ILogger logger, Exception exception, string operation);
+
+    [LoggerMessage(4403, LogLevel.Error, "Chat operation {Operation} failed")]
+    internal static partial void OperationFailed(ILogger logger, Exception exception, string operation);
+
+    [LoggerMessage(4404, LogLevel.Warning, "Configured chat room join failed for room hash {RoomHash}")]
+    internal static partial void ConfiguredRoomJoinFailed(ILogger logger, Exception exception, string roomHash);
+
+    [LoggerMessage(4405, LogLevel.Warning, "Chat room list refresh failed for room hash {RoomHash}")]
+    internal static partial void RoomListRefreshFailed(ILogger logger, Exception exception, string roomHash);
+
+    [LoggerMessage(4406, LogLevel.Information, "Joined chat room {RoomId} (room hash {RoomHash})")]
+    internal static partial void RoomJoined(ILogger logger, Guid roomId, string roomHash);
+
+    [LoggerMessage(4407, LogLevel.Information, "Left chat room {RoomId} (room hash {RoomHash})")]
+    internal static partial void RoomLeft(ILogger logger, Guid roomId, string roomHash);
+
+    [LoggerMessage(4408, LogLevel.Information, "Deleted {TargetKind} chat history for target {TargetId}")]
+    internal static partial void HistoryDeleted(ILogger logger, string targetKind, Guid targetId);
 }

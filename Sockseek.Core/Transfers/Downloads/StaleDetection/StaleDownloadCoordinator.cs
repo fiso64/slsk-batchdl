@@ -1,5 +1,7 @@
 using Soulseek;
 using Sockseek.Core.Transfers.Downloads.State;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
@@ -7,6 +9,7 @@ internal sealed class StaleDownloadCoordinator
 {
     private readonly ActiveDownloadTracker activeDownloads;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<StaleDownloadCoordinator> logger;
     private readonly object gate = new();
     private readonly Dictionary<Guid, Attempt> attempts = new();
     // Keep recent peer activity after an attempt completes, so queued same-user
@@ -14,10 +17,14 @@ internal sealed class StaleDownloadCoordinator
     private readonly Dictionary<string, long> latestActivityByUser = new(StringComparer.OrdinalIgnoreCase);
     private TaskCompletionSource deadlinesChanged = NewSignal();
 
-    public StaleDownloadCoordinator(ActiveDownloadTracker activeDownloads, TimeProvider? timeProvider = null)
+    public StaleDownloadCoordinator(
+        ActiveDownloadTracker activeDownloads,
+        TimeProvider? timeProvider = null,
+        ILogger<StaleDownloadCoordinator>? logger = null)
     {
         this.activeDownloads = activeDownloads;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.logger = logger ?? NullLogger<StaleDownloadCoordinator>.Instance;
     }
 
     // Arms stale detection only for the Soulseek peer-transfer call. Search,
@@ -100,7 +107,11 @@ internal sealed class StaleDownloadCoordinator
             }
             catch (Exception ex)
             {
-                SockseekLog.Jobs.Error(ex, "Error in stale download scheduler");
+                DownloadLogMessages.ComponentFailed(
+                    logger,
+                    ex,
+                    "stale-download-scheduler",
+                    null);
                 await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, cancellationToken);
             }
         }

@@ -1,6 +1,7 @@
 using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
+using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Core;
 
@@ -13,11 +14,13 @@ internal sealed class DownloadExecutorCoordinator
     private readonly AlbumDownloadExecutor albumDownloads;
     private readonly RemoteFileDownloadExecutor remoteFileDownloads;
     private readonly RemoteDirectoryDownloadExecutor remoteDirectoryDownloads;
+    private readonly ILogger<DownloadExecutorCoordinator> logger;
 
     public DownloadExecutorCoordinator(DownloadExecutionContext context, JobOrchestrator jobs)
     {
         this.context = context;
         this.jobs = jobs;
+        logger = context.LoggerFactory.CreateLogger<DownloadExecutorCoordinator>();
         aggregateDownloads = new AggregateDownloadExecutor(context, jobs);
         songDownloads = new SongDownloadExecutor(context, jobs);
         albumDownloads = new AlbumDownloadExecutor(context, jobs, songDownloads);
@@ -41,7 +44,12 @@ internal sealed class DownloadExecutorCoordinator
             {
                 case SongJob sj:
                     var songParent = parentJob ?? sj;
-                    var songOrganizer = new FileManager(sj, config.Output, config.Extraction, ctx.OutputScope);
+                    var songOrganizer = new FileManager(
+                        sj,
+                        config.Output,
+                        config.Extraction,
+                        context.LoggerFactory.CreateLogger<FileManager>(),
+                        ctx.OutputScope);
                     outcome = await songDownloads.ProcessSongDownload(sj, songParent, songOrganizer, parentToken);
                     outcome = await songDownloads.CommitAndFinalizeSong(sj, songParent, outcome, ctx, songOrganizer, finalizePlacement: true, updateIndexes: true);
                     break;
@@ -52,13 +60,25 @@ internal sealed class DownloadExecutorCoordinator
 
                 case RemoteFileJob remoteFile:
                     outcome = await remoteFileDownloads.Process(remoteFile, parentJob);
-                    outcome = await OnCompleteExecutor.ExecuteAsync(remoteFile, null, ctx, outcome);
+                    outcome = await OnCompleteExecutor.ExecuteAsync(
+                        remoteFile,
+                        null,
+                        ctx,
+                        outcome,
+                        context.Events,
+                        logger);
                     JobOutcomeCommitter.Commit(remoteFile, outcome);
                     break;
 
                 case RemoteDirectoryJob remoteDirectory:
                     outcome = await remoteDirectoryDownloads.Process(remoteDirectory);
-                    outcome = await OnCompleteExecutor.ExecuteAsync(remoteDirectory, null, ctx, outcome);
+                    outcome = await OnCompleteExecutor.ExecuteAsync(
+                        remoteDirectory,
+                        null,
+                        ctx,
+                        outcome,
+                        context.Events,
+                        logger);
                     JobOutcomeCommitter.Commit(remoteDirectory, outcome);
                     break;
 
@@ -69,7 +89,7 @@ internal sealed class DownloadExecutorCoordinator
                     break;
             }
 
-            SockseekLog.Jobs.Trace($"ProcessLeafJob: finished for job {job.DisplayId} ({job.GetType().Name})");
+            DownloadLogMessages.JobDecision(logger, job.Id, "leaf-download-completed", null);
             return outcome;
         }
         catch (OperationCanceledException)
@@ -151,5 +171,4 @@ internal sealed class DownloadExecutorCoordinator
         return outcome;
     }
 
-    public static string JobLogKind(Job job) => SockseekLog.JobTypeName(job);
 }

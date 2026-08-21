@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.IO;
 using Sockseek.Core.Sharing;
 using Soulseek;
@@ -150,6 +153,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
     private readonly PeerAccessPolicy accessPolicy;
     private readonly UploadScheduler scheduler;
     private readonly TimeSpan shutdownGrace;
+    private readonly ILogger<UploadCoordinator> logger;
     private readonly Dictionary<Guid, Work> work = [];
     private readonly ConcurrentDictionary<Guid, Task> activeTasks = [];
     private volatile bool stopping;
@@ -158,13 +162,15 @@ public sealed class UploadCoordinator : IAsyncDisposable
         IShareCatalogProvider catalogs,
         Func<ISoulseekClient?> clientProvider,
         PeerAccessPolicy accessPolicy,
-        UploadScheduler scheduler)
+        UploadScheduler scheduler,
+        ILogger<UploadCoordinator>? logger = null)
         : this(
             catalogs,
             new SoulseekUploadProtocolInvoker(clientProvider),
             accessPolicy,
             scheduler,
-            shutdownGrace: null)
+            shutdownGrace: null,
+            logger)
     {
     }
 
@@ -173,12 +179,14 @@ public sealed class UploadCoordinator : IAsyncDisposable
         IUploadProtocolInvoker protocol,
         PeerAccessPolicy accessPolicy,
         UploadScheduler scheduler,
-        TimeSpan? shutdownGrace = null)
+        TimeSpan? shutdownGrace = null,
+        ILogger<UploadCoordinator>? logger = null)
     {
         this.catalogs = catalogs ?? throw new ArgumentNullException(nameof(catalogs));
         this.protocol = protocol ?? throw new ArgumentNullException(nameof(protocol));
         this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
         this.scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+        this.logger = logger ?? NullLogger<UploadCoordinator>.Instance;
         this.shutdownGrace = shutdownGrace ?? TimeSpan.FromSeconds(10);
         if (this.shutdownGrace <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(shutdownGrace));
@@ -193,6 +201,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
         string remotePath,
         CancellationToken cancellationToken = default)
     {
+        string peerHash = LogIdentity.PeerHash(username ?? "");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(AdmissionDeadline);
         try
@@ -200,12 +209,12 @@ public sealed class UploadCoordinator : IAsyncDisposable
             if (string.IsNullOrWhiteSpace(username)
                 || string.IsNullOrWhiteSpace(remotePath))
             {
-                return Rejected(UploadAdmissionRejection.InvalidRequest);
+                return Rejected(UploadAdmissionRejection.InvalidRequest, peerHash);
             }
 
             string exactUsername = PeerUsername.Validate(username);
             if (accessPolicy.IsBlocked(exactUsername, endpoint))
-                return Rejected(UploadAdmissionRejection.Denied);
+                return Rejected(UploadAdmissionRejection.Denied, peerHash);
 
             RemotePathKey pathKey;
             try
@@ -214,7 +223,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
             }
             catch (ArgumentException)
             {
-                return Rejected(UploadAdmissionRejection.InvalidRequest);
+                return Rejected(UploadAdmissionRejection.InvalidRequest, peerHash);
             }
 
             ShareCatalogResolvedFile? resolved = await ResolveCurrentAsync(
@@ -225,7 +234,8 @@ public sealed class UploadCoordinator : IAsyncDisposable
                 return Rejected(
                     catalogs.TryAcquire(out var unavailableLease)
                         ? DisposeAndReturn(unavailableLease, UploadAdmissionRejection.NotShared)
-                        : UploadAdmissionRejection.Unavailable);
+                        : UploadAdmissionRejection.Unavailable,
+                    peerHash);
             }
 
             var request = new UploadAdmissionRequest(
@@ -243,7 +253,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
             lock (sync)
             {
                 if (stopping)
-                    return Rejected(UploadAdmissionRejection.Unavailable);
+                    return Rejected(UploadAdmissionRejection.Unavailable, peerHash);
                 admitted = scheduler.Admit(request);
                 if (admitted.Kind == UploadAdmissionResultKind.Accepted)
                     work.Add(request.TransferId, item);
@@ -251,6 +261,10 @@ public sealed class UploadCoordinator : IAsyncDisposable
             if (admitted.Kind == UploadAdmissionResultKind.Duplicate)
             {
                 SharingTelemetry.RecordUploadDuplicate();
+                UploadLogMessages.Duplicate(
+                    logger,
+                    admitted.Entry!.TransferId,
+                    peerHash);
                 return new UploadCoordinatorAdmission(
                     admitted.Kind,
                     admitted.Entry!.TransferId,
@@ -258,6 +272,11 @@ public sealed class UploadCoordinator : IAsyncDisposable
             }
             PublishQueueChanged();
             Publish(item);
+            UploadLogMessages.Accepted(
+                logger,
+                request.TransferId,
+                peerHash,
+                request.SizeBytes);
             Dispatch(admitted.Grants);
             return new UploadCoordinatorAdmission(
                 UploadAdmissionResultKind.Accepted,
@@ -266,7 +285,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            return Rejected(UploadAdmissionRejection.Unavailable);
+            return Rejected(UploadAdmissionRejection.Unavailable, peerHash);
         }
     }
 
@@ -540,8 +559,13 @@ public sealed class UploadCoordinator : IAsyncDisposable
                 UploadTransferState.Failed,
                 UploadFailureReason.Unavailable);
         }
-        catch
+        catch (Exception exception)
         {
+            UploadLogMessages.InternalFailure(
+                logger,
+                exception,
+                item.Request.TransferId,
+                LogIdentity.PeerHash(item.Request.Username));
             Terminalize(item, UploadTransferState.Failed, UploadFailureReason.InternalFailure);
         }
         finally
@@ -657,6 +681,14 @@ public sealed class UploadCoordinator : IAsyncDisposable
         SharingTelemetry.RecordUploadTerminal(
             state,
             item.BytesTransferred);
+        UploadLogMessages.Terminal(
+            logger,
+            item.Request.TransferId,
+            LogIdentity.PeerHash(item.Request.Username),
+            state,
+            failure,
+            item.BytesTransferred,
+            (long)((item.FinishedAtUtc ?? DateTimeOffset.UtcNow) - item.Request.RequestedAtUtc).TotalMilliseconds);
         return true;
     }
 
@@ -734,9 +766,12 @@ public sealed class UploadCoordinator : IAsyncDisposable
             or UploadTransferState.Failed
             or UploadTransferState.Interrupted;
 
-    private static UploadCoordinatorAdmission Rejected(UploadAdmissionRejection rejection)
+    private UploadCoordinatorAdmission Rejected(
+        UploadAdmissionRejection rejection,
+        string peerHash)
     {
         SharingTelemetry.RecordUploadRejected(rejection);
+        UploadLogMessages.Rejected(logger, peerHash, rejection);
         return new(UploadAdmissionResultKind.Rejected, null, rejection);
     }
 
@@ -863,4 +898,48 @@ public sealed class UploadCoordinator : IAsyncDisposable
     {
         public UploadFailureReason Reason { get; } = reason;
     }
+}
+
+internal static partial class UploadLogMessages
+{
+    [LoggerMessage(
+        EventId = 4310,
+        EventName = "upload.accepted",
+        Level = LogLevel.Information,
+        Message = "Accepted upload {TransferId} for peer hash {PeerHash} ({SizeBytes} bytes)")]
+    public static partial void Accepted(
+        ILogger logger, Guid transferId, string peerHash, long sizeBytes);
+
+    [LoggerMessage(
+        EventId = 4311,
+        EventName = "upload.duplicate",
+        Level = LogLevel.Debug,
+        Message = "Coalesced duplicate upload {TransferId} for peer hash {PeerHash}")]
+    public static partial void Duplicate(
+        ILogger logger, Guid transferId, string peerHash);
+
+    [LoggerMessage(
+        EventId = 4312,
+        EventName = "upload.rejected",
+        Level = LogLevel.Debug,
+        Message = "Rejected upload request for peer hash {PeerHash}: {Rejection}")]
+    public static partial void Rejected(
+        ILogger logger, string peerHash, UploadAdmissionRejection rejection);
+
+    [LoggerMessage(
+        EventId = 4313,
+        EventName = "upload.terminal",
+        Level = LogLevel.Information,
+        Message = "Upload {TransferId} for peer hash {PeerHash} ended as {State}/{FailureReason} after {DurationMs} ms with {BytesTransferred} bytes transferred")]
+    public static partial void Terminal(
+        ILogger logger, Guid transferId, string peerHash, UploadTransferState state,
+        UploadFailureReason failureReason, long bytesTransferred, long durationMs);
+
+    [LoggerMessage(
+        EventId = 4314,
+        EventName = "upload.internal-failure",
+        Level = LogLevel.Error,
+        Message = "Upload {TransferId} for peer hash {PeerHash} failed internally")]
+    public static partial void InternalFailure(
+        ILogger logger, Exception exception, Guid transferId, string peerHash);
 }

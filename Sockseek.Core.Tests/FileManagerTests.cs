@@ -6,6 +6,7 @@ using System.Reflection;
 using System.IO;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Diagnostics;
 
 namespace Tests.FileManagerTests
 {
@@ -16,7 +17,11 @@ namespace Tests.FileManagerTests
         {
             config ??= TestHelpers.CreateDefaultSettings().Download;
             job ??= new JobList();
-            return new FileManager(job, config.Output, config.Extraction);
+            return new FileManager(
+                job,
+                config.Output,
+                config.Extraction,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance);
         }
 
         [TestMethod]
@@ -49,7 +54,11 @@ namespace Tests.FileManagerTests
             var config = TestHelpers.CreateDefaultSettings().Download;
             config.Output.ParentDir = "/music";
             var job = new AlbumJob(new AlbumQuery());
-            var manager = new FileManager(job, config.Output, config.Extraction);
+            var manager = new FileManager(
+                job,
+                config.Output,
+                config.Extraction,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance);
 
             manager.SetremoteBaseDir("Music\\Artist\\Album");
 
@@ -440,7 +449,12 @@ namespace Tests.FileManagerTests
 
             var contexts = Prepare(aggregate);
             generatedSong.Config = aggregate.Config;
-            var manager = new FileManager(generatedSong, aggregate.Config.Output, aggregate.Config.Extraction, contexts[aggregate.Id].OutputScope);
+            var manager = new FileManager(
+                generatedSong,
+                aggregate.Config.Output,
+                aggregate.Config.Extraction,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance,
+                contexts[aggregate.Id].OutputScope);
 
             string target = manager.GetSavePath(@"User1\Artist1 - Track1.mp3");
 
@@ -455,7 +469,12 @@ namespace Tests.FileManagerTests
 
             var contexts = Prepare(aggregate);
             generatedAlbum.Config = aggregate.Config;
-            var manager = new FileManager(generatedAlbum, aggregate.Config.Output, aggregate.Config.Extraction, contexts[aggregate.Id].OutputScope);
+            var manager = new FileManager(
+                generatedAlbum,
+                aggregate.Config.Output,
+                aggregate.Config.Extraction,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance,
+                contexts[aggregate.Id].OutputScope);
             manager.SetremoteBaseDir(AlbumRemoteDir);
 
             string target = manager.GetSavePath(AlbumRemoteTrack);
@@ -531,6 +550,35 @@ namespace Tests.FileManagerTests
             string expected = Path.Combine(testRoot, "Formatted", $"Original File.{extension}");
             AssertSamePath(expected, song.DownloadPath!);
             Assert.IsTrue(File.Exists(expected));
+        }
+
+        [TestMethod]
+        public void NameFormat_MetadataFailureLogsOnceWithoutPath()
+        {
+            config.Output.NameFormat = "Formatted/{artist|filename}";
+            var song = new SongJob(new SongQuery { Artist = "Artist1", Title = "Track" });
+            var contexts = Prepare(song);
+            var records = new List<CompactLogRecord>();
+            using ILoggerFactory loggerFactory = LoggerFactory.Create(builder => builder
+                .SetMinimumLevel(LogLevel.Trace)
+                .AddProvider(new CompactTextLoggerProvider(records.Add, LogLevel.Debug)));
+            var manager = new FileManager(
+                song,
+                song.Config.Output,
+                song.Config.Extraction,
+                loggerFactory.CreateLogger<FileManager>(),
+                contexts[song.Id].OutputScope);
+            MarkDownloaded(
+                song,
+                @"User1\Original File.mp3",
+                Path.Combine(testRoot, ".sockseek-staging", "download.mp3"));
+
+            manager.OrganizeDownloadedFile(song);
+
+            CompactLogRecord failure = records.Single(record => record.EventId.Id == 3006);
+            Assert.AreEqual(LogLevel.Debug, failure.Level);
+            StringAssert.Contains(failure.Message, "File metadata could not be read");
+            Assert.IsFalse(failure.Message.Contains(testRoot, StringComparison.OrdinalIgnoreCase));
         }
 
         [TestMethod]
@@ -620,7 +668,12 @@ namespace Tests.FileManagerTests
             => JobPreparer.PrepareJobs(new JobList(null, jobs), config);
 
         private FileManager PreparedManager(Job job, Dictionary<Guid, JobContext> contexts)
-            => new(job, job.Config.Output, job.Config.Extraction, contexts[job.Id].OutputScope);
+            => new(
+                job,
+                job.Config.Output,
+                job.Config.Extraction,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance,
+                contexts[job.Id].OutputScope);
 
         private (SongJob Song, Dictionary<Guid, JobContext> Contexts) PrepareNestedExtractedCsvSong()
         {

@@ -276,7 +276,7 @@ public static class Printing
             return;
 
         WriteLine();
-        SockseekLog.Info(message);
+        WriteLine(message);
     }
 
     internal static string? FormatComplete(int successes, int fails, int skipped)
@@ -320,7 +320,7 @@ public static class Printing
         }
         else if (summary && !printOnly && (isNormal || skippedTracks.Length > 0))
         {
-            SockseekLog.Info($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+            WriteLine($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
         }
 
         if (toBeDownloaded.Count > 0)
@@ -523,7 +523,7 @@ public static class Printing
     public static void RefreshOrPrint(int current, string item, bool print = false)
     {
         if (print)
-            SockseekLog.Info(item);
+            WriteLine(item);
     }
 
     public static void WriteLine(string value = "", ConsoleColor color = ConsoleColor.Gray, bool force = false)

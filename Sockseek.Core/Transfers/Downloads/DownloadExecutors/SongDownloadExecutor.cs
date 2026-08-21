@@ -4,6 +4,8 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
+using Microsoft.Extensions.Logging;
+using Sockseek.Core.Diagnostics;
 
 namespace Sockseek.Core;
 
@@ -12,11 +14,13 @@ internal sealed class SongDownloadExecutor
     private readonly DownloadExecutionContext context;
     private readonly JobOrchestrator jobs;
     private readonly SongDownloadFallbackRunner fallbackRunner;
+    private readonly ILogger<SongDownloadExecutor> logger;
 
     public SongDownloadExecutor(DownloadExecutionContext context, JobOrchestrator jobs)
     {
         this.context = context;
         this.jobs = jobs;
+        logger = context.LoggerFactory.CreateLogger<SongDownloadExecutor>();
         fallbackRunner = new SongDownloadFallbackRunner(context);
     }
 
@@ -54,7 +58,11 @@ internal sealed class SongDownloadExecutor
 
         if (updateIndexes)
         {
-            SockseekLog.Jobs.Trace($"ProcessSongJob finished for {song.DisplayId}. Calling IndexEditor Update ({(jobCtx.IndexEditor != null ? "Yes" : "No")}) and PlaylistEditor Update ({(jobCtx.PlaylistEditor != null ? "Yes" : "No")})");
+            DownloadLogMessages.JobDecision(
+                logger,
+                song.Id,
+                "updating-output-indexes",
+                (jobCtx.IndexEditor is null ? 0 : 1) + (jobCtx.PlaylistEditor is null ? 0 : 1));
             jobCtx.IndexEditor?.Update();
             jobCtx.PlaylistEditor?.Update();
         }
@@ -69,7 +77,13 @@ internal sealed class SongDownloadExecutor
 
         var activityJob = song ?? job;
         activityJob.UpdateActivity(JobActivityPhase.RunningOnComplete);
-        return await OnCompleteExecutor.ExecuteAsync(job, song, ctx, outcome);
+        return await OnCompleteExecutor.ExecuteAsync(
+            job,
+            song,
+            ctx,
+            outcome,
+            context.Events,
+            logger);
     }
 
     public async Task<JobOutcome> DownloadEmbeddedSong(
@@ -196,16 +210,20 @@ internal sealed class SongDownloadExecutor
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            SockseekLog.Jobs.Debug($"Cancelled: {song}");
+            DownloadLogMessages.JobDecision(logger, song.Id, "cancelled", null);
             return JobOutcome.Cancelled(cancellationSource());
         }
         catch (Exception ex)
         {
-            SockseekLog.Jobs.Debug($"{ex}");
+            DownloadLogMessages.ComponentFailed(
+                logger,
+                ex,
+                "song-download",
+                song.Id);
             return JobOutcome.Failed(
                 JobFailureReason.AllDownloadsFailed,
                 DownloadFailureMessage(ex),
-                SockseekLog.ExceptionDetail(ex));
+                ExceptionText.Detail(ex));
         }
     }
 
@@ -255,7 +273,11 @@ internal sealed class SongDownloadExecutor
                         if (fastDownloadTask == null)
                         {
                             fastCandidate = fc;
-                            SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: fast-search starting provisional download from {fc.Username}\\{fc.Filename}: {song}");
+                            DownloadLogMessages.JobDecision(
+                                logger,
+                                song.Id,
+                                "fast-search-provisional-download-started",
+                                null);
                             var target = context.OutputFinalizer.GetInitialDownloadTarget(config, song, organizer, fc);
 
                             // Use the main job CTS for the download so cancelling the search doesn't kill the download.
@@ -309,19 +331,29 @@ internal sealed class SongDownloadExecutor
                                 result.Target.Filename,
                                 result.OutputPath);
                         }
-                        SockseekLog.Jobs.Debug(
-                            $"[{song.DisplayId}] SongJob: fast-search provisional download succeeded from "
-                            + $"{result.Target.Username}\\{PeerIdentityValidator.ToDisplayText(result.Target.Filename)}: {song}");
+                        DownloadLogMessages.JobDecision(
+                            logger,
+                            song.Id,
+                            "fast-search-provisional-download-succeeded",
+                            null);
                         return JobOutcome.Done(result.OutputPath, fastCandidate);
                     }
 
                     if (fastDownload?.Status == ExactFileTransferStatus.ManuallySkipped)
                     {
-                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: fast-search provisional download was manually skipped, waiting for full search to complete: {song}");
+                        DownloadLogMessages.JobDecision(
+                            logger,
+                            song.Id,
+                            "fast-search-provisional-download-skipped",
+                            null);
                     }
                     else
                     {
-                        SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: fast-search provisional download failed, waiting for full search to complete: {song}");
+                        DownloadLogMessages.JobDecision(
+                            logger,
+                            song.Id,
+                            "fast-search-provisional-download-failed",
+                            null);
                     }
 
                     await searchTask;
@@ -341,7 +373,7 @@ internal sealed class SongDownloadExecutor
             if (fallbackOutcome != null)
                 return fallbackOutcome;
 
-            SockseekLog.Jobs.Debug($"[{song.DisplayId}] SongJob: no suitable candidates after search: {song}");
+            DownloadLogMessages.JobDecision(logger, song.Id, "no-suitable-candidates", 0);
             return searched
                 ? DownloadOutcomes.NoMatchingDiscovery(responseData, "file result", "file results", "song candidates")
                 : DownloadOutcomes.NoMatchingCandidates();
@@ -380,9 +412,11 @@ internal sealed class SongDownloadExecutor
 
                 lastDownloadException = ex;
                 lastDownloadFailureMessage = DownloadFailureMessage(ex);
-                SockseekLog.Jobs.Debug(
-                    $"Download attempt {tried} failed for '{candidate.Username}\\{candidate.Filename}' " +
-                    $"to '{target.Path}': {SockseekLog.ExceptionSummary(ex)}");
+                DownloadLogMessages.JobDecision(
+                    logger,
+                    song.Id,
+                    "candidate-download-failed",
+                    tried);
                 if (tried >= candidates.Count || tried >= config.Transfer.MaxDownloadRetries)
                 {
                     return JobOutcome.Failed(
@@ -395,7 +429,11 @@ internal sealed class SongDownloadExecutor
 
             if (download.Status == ExactFileTransferStatus.ManuallySkipped)
             {
-                SockseekLog.Jobs.Debug($"Manually skipped candidate: {candidate.Username}\\{candidate.Filename}");
+                DownloadLogMessages.JobDecision(
+                    logger,
+                    song.Id,
+                    "candidate-manually-skipped",
+                    tried);
                 tried--;
                 continue;
             }
@@ -412,10 +450,11 @@ internal sealed class SongDownloadExecutor
                     result.Target.Filename,
                     result.OutputPath);
             }
-            SockseekLog.Jobs.Debug(
-                $"[{song.DisplayId}] SongJob: download succeeded from "
-                + $"{result.Target.Username}\\{PeerIdentityValidator.ToDisplayText(result.Target.Filename)} "
-                + $"to '{result.OutputPath}': {song}");
+            DownloadLogMessages.JobDecision(
+                logger,
+                song.Id,
+                "candidate-download-succeeded",
+                tried);
             return JobOutcome.Done(result.OutputPath, candidate);
         }
 
@@ -552,7 +591,7 @@ internal sealed class SongDownloadExecutor
     }
 
     private static string? DownloadFailureMessage(Exception ex)
-        => SockseekLog.ExceptionSummary(ex);
+        => ExceptionText.Summary(ex);
 
     private static Job? DownloadParentFor(SongJob song, Job job)
         => ReferenceEquals(song, job) ? null : job;

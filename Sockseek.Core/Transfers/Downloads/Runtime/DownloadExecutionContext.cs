@@ -10,6 +10,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Extractors;
 
 namespace Sockseek.Core.Transfers.Downloads.Runtime;
 
@@ -39,7 +40,9 @@ internal sealed class DownloadExecutionContext
         DownloadJobTracker jobs,
         AutoProfileWorkflowReporter autoProfiles,
         SkipEvaluationCoordinator skipEvaluation,
-        DownloadRunScope runtime)
+        DownloadRunScope runtime,
+        ILoggerFactory loggerFactory,
+        ISensitiveOutput sensitiveOutput)
     {
         EngineSettings = engineSettings;
         ClientManager = clientManager;
@@ -56,6 +59,8 @@ internal sealed class DownloadExecutionContext
         AutoProfiles = autoProfiles;
         SkipEvaluation = skipEvaluation;
         Runtime = runtime;
+        LoggerFactory = loggerFactory;
+        SensitiveOutput = sensitiveOutput;
     }
 
     public EngineSettings EngineSettings { get; }
@@ -73,6 +78,8 @@ internal sealed class DownloadExecutionContext
     public AutoProfileWorkflowReporter AutoProfiles { get; }
     public SkipEvaluationCoordinator SkipEvaluation { get; }
     public DownloadRunScope Runtime { get; }
+    public ILoggerFactory LoggerFactory { get; }
+    public ISensitiveOutput SensitiveOutput { get; }
     public ConcurrentDictionary<Guid, PendingTerminalTransfer> PendingTerminalTransfers { get; } = new();
 
     public JobContext Ctx(Job job) => Contexts.Get(job);

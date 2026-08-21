@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Soulseek;
 using Sockseek.Core.Models;
 using Sockseek.Core;
@@ -31,16 +32,19 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     private readonly IJobSettingsResolver _jobSettingsResolver;
     private readonly ISongDownloadFallback _songDownloadFallback;
     private readonly StaleDownloadCoordinator _staleDownloadCoordinator;
+    private readonly ILoggerFactory loggerFactory;
+    private readonly ILogger<DownloadEngine> logger;
+    private readonly string engineId = Guid.NewGuid().ToString("N")[..12];
 
     internal bool AutomaticStaleChecksEnabled { get; set; } = true;
 
     public DownloadEvents Events { get; }
-    public SearchEvents SearchEvents { get; } = new();
+    public SearchEvents SearchEvents { get; }
 
     public JobList Queue { get; } = new();
 
     private readonly DownloadJobContextStore _contexts = new();
-    private readonly SourceMutationCoordinator _sourceMutations = new();
+    private readonly SourceMutationCoordinator _sourceMutations;
     private readonly ConcurrentDictionary<Guid, byte> _musicDirectoryIndexBuildLoggedByWorkflow = new();
     private readonly DownloadJobTracker _jobs;
     private readonly DownloadCommandTargetResolver _commandTargets;
@@ -63,7 +67,11 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
         if (activeDownloads.Count > 0)
         {
-            SockseekLog.Jobs.Info(job, $"trying next candidate; cancelling {activeDownloads.Count} active download{(activeDownloads.Count == 1 ? "" : "s")}: {job}");
+            Events.RaiseJobMessage(
+                job,
+                LogLevel.Information,
+                null,
+                $"trying next candidate; cancelling {activeDownloads.Count} active download{(activeDownloads.Count == 1 ? "" : "s")}");
             foreach (var ad in activeDownloads)
             {
                 ad.IsManuallySkipped = true;
@@ -219,25 +227,53 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         IJobSettingsResolver? jobSettingsResolver = null,
         ISongDownloadFallback? songDownloadFallback = null,
         TimeProvider? timeProvider = null,
-        IPeerDirectorySource? directorySource = null)
+        IPeerDirectorySource? directorySource = null,
+        ILoggerFactory? loggerFactory = null,
+        ISensitiveOutput? sensitiveOutput = null)
     {
         engineSettings = settings;
-        Events = new DownloadEvents(timeProvider);
+        this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        logger = this.loggerFactory.CreateLogger<DownloadEngine>();
+        Events = new DownloadEvents(
+            timeProvider,
+            this.loggerFactory.CreateLogger<DownloadEvents>());
+        SearchEvents = new SearchEvents();
+        _sourceMutations = new SourceMutationCoordinator(
+            Events,
+            this.loggerFactory.CreateLogger<SourceMutationCoordinator>());
         _clientManager = clientManager;
         _jobSettingsResolver = jobSettingsResolver ?? DefaultJobSettingsResolver.Instance;
         _songDownloadFallback = songDownloadFallback ?? SongDownloadFallback.Default;
-        _staleDownloadCoordinator = new StaleDownloadCoordinator(_activeDownloads, timeProvider);
-        _outputFinalizer = new OutputFinalizer(_downloadedFiles);
+        _staleDownloadCoordinator = new StaleDownloadCoordinator(
+            _activeDownloads,
+            timeProvider,
+            this.loggerFactory.CreateLogger<StaleDownloadCoordinator>());
+        _outputFinalizer = new OutputFinalizer(
+            _downloadedFiles,
+            Events,
+            this.loggerFactory.CreateLogger<OutputFinalizer>());
         _jobs = new DownloadJobTracker(Events);
         _commandTargets = new DownloadCommandTargetResolver(_jobs, _activeDownloads);
         _autoProfiles = new AutoProfileWorkflowReporter(Events);
         // These collaborators call each other only after construction; the delegates break the cycle explicitly.
         _skipEvaluation = new SkipEvaluationCoordinator(
             job => _executionContext!.Ctx(job),
-            job => _executionContext!.RaiseBuildingMusicDirectoryIndex(job));
+            job => _executionContext!.RaiseBuildingMusicDirectoryIndex(job),
+            this.loggerFactory.CreateLogger<SkipEvaluationCoordinator>());
         if (settings.ConcurrentJobs <= 0)
             throw new ArgumentOutOfRangeException(nameof(settings.ConcurrentJobs), "ConcurrentJobs must be greater than zero.");
-        _runtime = new DownloadRunScope(settings, _clientManager, _activeDownloads, _downloadedFiles, _userSuccesses, Events, SearchEvents, _staleDownloadCoordinator, timeProvider, directorySource);
+        _runtime = new DownloadRunScope(
+            settings,
+            _clientManager,
+            _activeDownloads,
+            _downloadedFiles,
+            _userSuccesses,
+            Events,
+            SearchEvents,
+            _staleDownloadCoordinator,
+            timeProvider,
+            directorySource,
+            this.loggerFactory);
         _executionContext = new DownloadExecutionContext(
             engineSettings,
             _clientManager,
@@ -253,7 +289,9 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             _jobs,
             _autoProfiles,
             _skipEvaluation,
-            _runtime);
+            _runtime,
+            this.loggerFactory,
+            sensitiveOutput ?? NullSensitiveOutput.Instance);
         _orchestrator = new JobOrchestrator(
             _executionContext,
             album => _manualSelections!.TryFinalizeClosedAggregateSelectionForAlbumAsync(album));
@@ -287,12 +325,16 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     {
         var rootTasks = new List<Task>();
 
-        SockseekLog.Jobs.Trace("RunAsync: Starting to read from job channel.");
+        DownloadLogMessages.EngineStage(logger, engineId, "reading-job-channel");
         await foreach (var queuedJob in _jobQueue.ReadAllAsync(ct))
         {
             var rootJob = queuedJob.Job;
             var settings = queuedJob.Settings;
-            SockseekLog.Jobs.Trace($"RunAsync: Read {(queuedJob.IsResume ? "resume" : "root")} job {rootJob.DisplayId} from channel.");
+            DownloadLogMessages.JobDecision(
+                logger,
+                rootJob.Id,
+                queuedJob.IsResume ? "resume-dequeued" : "root-dequeued",
+                null);
 
             if (!queuedJob.IsResume)
             {
@@ -316,16 +358,16 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             rootTasks.Add(_orchestrator.ProcessRootJob(rootJob));
         }
 
-        SockseekLog.Jobs.Trace("RunAsync: Channel fully drained. Waiting for rootTasks to complete.");
+        DownloadLogMessages.EngineStage(logger, engineId, "waiting-for-root-jobs");
         await Task.WhenAll(rootTasks);
-        SockseekLog.Jobs.Trace("RunAsync: All rootTasks completed.");
+        DownloadLogMessages.EngineStage(logger, engineId, "root-jobs-completed");
 
         CleanupEmptyStagingDirectories();
 
         if (Queue.Jobs.Any(ContainsDownloadableJob))
             Events.RaiseEngineCompleted(Queue);
 
-        SockseekLog.Jobs.Debug("Exiting RunAsync");
+        DownloadLogMessages.EngineStage(logger, engineId, "stopped");
         await _runtime.CancelAsync();
     }
 
@@ -349,7 +391,10 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                SockseekLog.Jobs.Debug($"Failed to remove empty staging directory '{stagingRoot}': {SockseekLog.ExceptionSummary(ex)}");
+                DownloadLogMessages.CleanupFailed(
+                    logger,
+                    "staging-directory",
+                    ex.GetType().Name);
             }
         }
     }

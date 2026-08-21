@@ -4,12 +4,13 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core;
 using Sockseek.Core.Settings;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
 public static class OnCompleteExecutor
 {
-    private const int MaxLoggedCommandOutputChars = 600;
     private const int MaxCapturedCommandOutputChars = 64 * 1024;
     private static readonly SemaphoreSlim _lockingSemaphore = new(1, 1);
 
@@ -60,6 +61,24 @@ public static class OnCompleteExecutor
     private readonly record struct OnCompleteContext(FileManagerContext Variables, string? TagSourcePath);
     private readonly record struct CommandProcessingResult(JobOutcome Outcome, bool NeedsIndexUpdate);
     private readonly record struct UpdateIndexStateResult(JobOutcome? Outcome, bool AllowsPathUpdate);
+    private readonly record struct Reporter(
+        Job Job,
+        DownloadEvents? Events,
+        ILogger Logger)
+    {
+        public void Message(LogLevel level, string message)
+            => Events?.RaiseJobMessage(Job, level, null, message);
+
+        public void Decision(string decision, int? count = null)
+            => DownloadLogMessages.JobDecision(Logger, Job.Id, decision, count);
+
+        public void Failure(Exception exception)
+            => DownloadLogMessages.ComponentFailed(
+                Logger,
+                exception,
+                "on-complete",
+                Job.Id);
+    }
 
     public static void ValidateCommand(string rawCommand)
         => _ = ParseCommand(rawCommand);
@@ -75,12 +94,22 @@ public static class OnCompleteExecutor
 
     // Execute on-complete actions for a job.
     // song is null when called for an album-level completion (no individual song).
-    public static async Task<JobOutcome> ExecuteAsync(Job job, SongJob? song, JobContext ctx, JobOutcome outcome)
+    public static async Task<JobOutcome> ExecuteAsync(
+        Job job,
+        SongJob? song,
+        JobContext ctx,
+        JobOutcome outcome,
+        DownloadEvents? events = null,
+        ILogger? logger = null)
     {
         if (!job.Config.HasOnComplete || job.Config.Output.OnComplete == null)
             return outcome;
 
         bool isAlbumOnComplete = IsAlbumOnComplete(job, song);
+        var reporter = new Reporter(
+            OnCompleteLogJob(job, song),
+            events,
+            logger ?? NullLogger.Instance);
 
         // Build a FileManagerContext for variable substitution.
         string extractorName = job.Config.Extraction.InputType.ToString();
@@ -125,10 +154,17 @@ public static class OnCompleteExecutor
             if (!ShouldExecuteCommand(config, outcome, isTrack: song != null, isAlbum: isAlbumOnComplete))
                 continue;
 
-            string preparedCommand = PrepareCommandString(config.Command, onCompleteContext, prevCommandResult, firstCommandResult);
+            string preparedCommand = PrepareCommandString(
+                config.Command,
+                onCompleteContext,
+                prevCommandResult,
+                firstCommandResult,
+                reporter);
             if (string.IsNullOrWhiteSpace(preparedCommand))
             {
-                SockseekLog.Jobs.Warn(OnCompleteLogJob(job, song), $"skipping on-complete action {i + 1} because the prepared command is empty after variable replacement.");
+                reporter.Message(
+                    LogLevel.Warning,
+                    $"skipping on-complete action {i + 1} because the prepared command is empty after variable replacement");
                 continue;
             }
 
@@ -142,13 +178,13 @@ public static class OnCompleteExecutor
             {
                 if (config.UseLocking)
                 {
-                    SockseekLog.Jobs.Debug($"{OnCompleteLogPrefix(job, song)} on-complete [{i + 1}/{job.Config.Output.OnComplete.Count}]: waiting for lock");
+                    reporter.Decision("waiting-for-on-complete-lock", i + 1);
                     await _lockingSemaphore.WaitAsync();
                     acquiredLock = true;
                 }
 
-                SockseekLog.Jobs.Debug($"{OnCompleteLogPrefix(job, song)} on-complete [{i + 1}/{job.Config.Output.OnComplete.Count}]: executing FileName='{startInfo.FileName}', {FormatProcessArgumentsForLog(startInfo)}, UseShellExecute={startInfo.UseShellExecute}, CreateNoWindow={startInfo.CreateNoWindow}, RedirectOutput={startInfo.RedirectStandardOutput}");
-                currentResult = await ExecuteProcessAsync(startInfo);
+                reporter.Decision("executing-on-complete", i + 1);
+                currentResult = await ExecuteProcessAsync(startInfo, reporter);
             }
             finally
             {
@@ -158,11 +194,19 @@ public static class OnCompleteExecutor
 
             if (currentResult == null)
             {
-                SockseekLog.Jobs.Error(OnCompleteLogJob(job, song), $"execution failed for on-complete command {i + 1}. Stopping further on-complete actions for this item.");
+                reporter.Message(
+                    LogLevel.Error,
+                    $"execution failed for on-complete command {i + 1}; stopping further actions for this item");
                 return currentOutcome;
             }
 
-            var processedResult = ProcessCommandResult(currentResult.Value, config, song, job, currentOutcome);
+            var processedResult = ProcessCommandResultCore(
+                currentResult.Value,
+                config,
+                song,
+                job,
+                currentOutcome,
+                reporter);
             currentOutcome = processedResult.Outcome;
             if (processedResult.NeedsIndexUpdate)
                 needUpdateIndex = true;
@@ -173,7 +217,7 @@ public static class OnCompleteExecutor
 
         if (needUpdateIndex)
         {
-            SockseekLog.Jobs.Debug($"{OnCompleteLogPrefix(job, song)} index/playlist will be updated based on on-complete action output.");
+            reporter.Decision("on-complete-updated-index", null);
         }
 
         return currentOutcome;
@@ -272,20 +316,6 @@ public static class OnCompleteExecutor
             TerminalOutcome = outcome.TerminalOutcome,
             SkipReason = outcome.SkipReason,
             FailureReason = outcome.FailureReason,
-        };
-    }
-
-    private static string OnCompleteLogPrefix(Job job, SongJob? song)
-    {
-        if (song != null)
-            return $"[{song.DisplayId}] SongJob:";
-
-        return job switch
-        {
-            AlbumJob => $"[{job.DisplayId}] AlbumJob:",
-            JobList => $"[{job.DisplayId}] Job List:",
-            SearchJob => $"[{job.DisplayId}] SearchJob:",
-            _ => $"[{job.DisplayId}] {job.GetType().Name}:",
         };
     }
 
@@ -465,7 +495,12 @@ public static class OnCompleteExecutor
         };
     }
 
-    private static string PrepareCommandString(string commandTemplate, OnCompleteContext ctx, ProcessResult? prevResult, ProcessResult? firstResult)
+    private static string PrepareCommandString(
+        string commandTemplate,
+        OnCompleteContext ctx,
+        ProcessResult? prevResult,
+        ProcessResult? firstResult,
+        Reporter reporter)
     {
         TagLib.File? audio = null;
         if (FileManager.HasTagVariables(commandTemplate))
@@ -476,11 +511,15 @@ public static class OnCompleteExecutor
                 if (!string.IsNullOrEmpty(tagSourcePath) && System.IO.File.Exists(tagSourcePath))
                     audio = TagLib.File.Create(tagSourcePath);
                 else
-                    SockseekLog.Warn($"Cannot load tags for variable replacement: tag source path is null or file does not exist ('{tagSourcePath}')");
+                    reporter.Message(
+                        LogLevel.Warning,
+                        "cannot load audio tags for on-complete variable replacement because the tag source is unavailable");
             }
             catch (Exception ex)
             {
-                SockseekLog.Warn($"Failed to load audio tags for variable replacement from '{ctx.TagSourcePath ?? ctx.Variables.DownloadPath}': {ex.Message}");
+                reporter.Message(
+                    LogLevel.Warning,
+                    $"failed to load audio tags for on-complete variable replacement ({ex.GetType().Name})");
             }
         }
 
@@ -565,23 +604,16 @@ public static class OnCompleteExecutor
         return startInfo;
     }
 
-    private static string FormatProcessArgumentsForLog(ProcessStartInfo startInfo)
-    {
-        if (startInfo.ArgumentList.Count == 0)
-            return $"Arguments='{startInfo.Arguments}'";
-
-        var args = string.Join(", ", startInfo.ArgumentList.Select(arg => $"'{arg.Replace("'", "\\'")}'"));
-        return $"ArgumentList=[{args}]";
-    }
-
-    private static async Task<ProcessResult?> ExecuteProcessAsync(ProcessStartInfo startInfo)
+    private static async Task<ProcessResult?> ExecuteProcessAsync(
+        ProcessStartInfo startInfo,
+        Reporter reporter)
     {
         using var process = new Process { StartInfo = startInfo };
         try
         {
             if (!process.Start())
             {
-                SockseekLog.Error($"Failed to start process: FileName='{startInfo.FileName}', {FormatProcessArgumentsForLog(startInfo)}");
+                reporter.Message(LogLevel.Error, "failed to start on-complete process");
                 return null;
             }
 
@@ -606,7 +638,7 @@ public static class OnCompleteExecutor
         }
         catch (Exception ex)
         {
-            SockseekLog.Error($"Error executing process: FileName='{startInfo.FileName}', {FormatProcessArgumentsForLog(startInfo)}. Exception: {ex}");
+            reporter.Failure(ex);
             return null;
         }
     }
@@ -638,18 +670,38 @@ public static class OnCompleteExecutor
     private static string? CleanCapturedOutput(string? output)
         => string.IsNullOrWhiteSpace(output) ? null : output.Trim().Trim('"');
 
-    private static CommandProcessingResult ProcessCommandResult(ProcessResult result, CommandConfig config, SongJob? song, Job job, JobOutcome currentOutcome)
+    private static CommandProcessingResult ProcessCommandResult(
+        ProcessResult result,
+        CommandConfig config,
+        SongJob? song,
+        Job job,
+        JobOutcome currentOutcome)
+        => ProcessCommandResultCore(
+            result,
+            config,
+            song,
+            job,
+            currentOutcome,
+            new Reporter(OnCompleteLogJob(job, song), null, NullLogger.Instance));
+
+    private static CommandProcessingResult ProcessCommandResultCore(
+        ProcessResult result,
+        CommandConfig config,
+        SongJob? song,
+        Job job,
+        JobOutcome currentOutcome,
+        Reporter reporter)
     {
         bool needsUpdate = false;
         var nextOutcome = currentOutcome;
-        var logJob = OnCompleteLogJob(job, song);
-        var logPrefix = OnCompleteLogPrefix(job, song);
 
         if (config.UseOutputToUpdateIndex && !string.IsNullOrWhiteSpace(result.Stdout))
         {
             if (result.StdoutTruncated)
             {
-                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout for index update because command output exceeded the capture limit.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
+                reporter.Message(
+                    LogLevel.Warning,
+                    "ignored on-complete stdout for index update because command output exceeded the capture limit");
                 return new CommandProcessingResult(nextOutcome, needsUpdate);
             }
 
@@ -660,7 +712,12 @@ public static class OnCompleteExecutor
                 : null;
             var indexTarget = GetUpdateIndexTarget(job, song);
 
-            var stateResult = TryGetUpdateIndexStateOutcome(stateText, indexTarget, logJob, result, nextOutcome, newPath);
+            var stateResult = TryGetUpdateIndexStateOutcome(
+                stateText,
+                indexTarget,
+                nextOutcome,
+                newPath,
+                reporter);
             if (stateResult.Outcome is { } stateOutcome)
             {
                 nextOutcome = stateOutcome;
@@ -672,19 +729,23 @@ public static class OnCompleteExecutor
                 var currentPath = nextOutcome.DownloadPath ?? GetDownloadPath(indexTarget);
                 if (currentPath != newPath)
                 {
-                    SockseekLog.Jobs.Debug($"{logPrefix} updating index path from '{currentPath}' to '{newPath}' based on stdout: {indexTarget}");
+                    reporter.Decision("on-complete-index-path-updated");
                     nextOutcome = WithDownloadPath(nextOutcome, newPath);
                     needsUpdate = true;
                 }
             }
             else if (stateResult.AllowsPathUpdate && newPath != null && indexTarget == null)
             {
-                SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout path update because index path can only be updated for track- or album-level completions.\n{FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead)}");
+                reporter.Message(
+                    LogLevel.Warning,
+                    "ignored on-complete stdout path update because index paths can only be updated for track- or album-level completions");
             }
         }
 
         if (result.ExitCode != 0)
-            SockseekLog.Jobs.Warn(logJob, $"on-complete command exited with code {result.ExitCode}. {FormatCommandOutputForLog(result)}");
+            reporter.Message(
+                LogLevel.Warning,
+                $"on-complete command exited with code {result.ExitCode}");
 
         return new CommandProcessingResult(nextOutcome, needsUpdate);
     }
@@ -700,7 +761,12 @@ public static class OnCompleteExecutor
             _ => null,
         };
 
-    private static UpdateIndexStateResult TryGetUpdateIndexStateOutcome(string stateText, Job? indexTarget, Job logJob, ProcessResult result, JobOutcome currentOutcome, string? newPath)
+    private static UpdateIndexStateResult TryGetUpdateIndexStateOutcome(
+        string stateText,
+        Job? indexTarget,
+        JobOutcome currentOutcome,
+        string? newPath,
+        Reporter reporter)
     {
         if (string.IsNullOrWhiteSpace(stateText)
             || stateText.Equals("ignored", StringComparison.OrdinalIgnoreCase)
@@ -711,7 +777,9 @@ public static class OnCompleteExecutor
 
         if (indexTarget == null)
         {
-            SockseekLog.Jobs.Warn(logJob, $"ignored on-complete stdout state update because index state can only be updated for track- or album-level completions.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+            reporter.Message(
+                LogLevel.Warning,
+                "ignored on-complete stdout state update because index state can only be updated for track- or album-level completions");
             return new UpdateIndexStateResult(null, AllowsPathUpdate: false);
         }
 
@@ -735,13 +803,17 @@ public static class OnCompleteExecutor
                         : indexTarget.FailureReason
                     : currentOutcome.FailureReason;
                 if (newPath != null)
-                    SockseekLog.Jobs.Warn(logJob, $"ignored path after failed on-complete index state because failed index entries clear their stored path.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+                    reporter.Message(
+                        LogLevel.Warning,
+                        "ignored path after failed on-complete index state because failed index entries clear their stored path");
                 return new UpdateIndexStateResult(
                     JobOutcome.Failed(failureReason, currentOutcome.FailureMessage, currentOutcome.FailureDetail, clearDownloadPath: true),
                     AllowsPathUpdate: false);
 
             default:
-                SockseekLog.Jobs.Warn(logJob, $"ignored unknown on-complete index state '{stateText}'. Use success, failed, or ignored.\n{FormatCommandOutputBlock("Stdout", result.Stdout!, result.StdoutTruncated, result.StdoutCharsRead)}");
+                reporter.Message(
+                    LogLevel.Warning,
+                    $"ignored unknown on-complete index state '{stateText}'; use success, failed, or ignored");
                 return new UpdateIndexStateResult(null, AllowsPathUpdate: false);
         }
     }
@@ -774,47 +846,4 @@ public static class OnCompleteExecutor
             ? JobFailureReason.Other
             : reason;
 
-    private static string FormatCommandOutputForLog(ProcessResult result)
-    {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(result.Stdout))
-            parts.Add(FormatCommandOutputBlock("Stdout", result.Stdout, result.StdoutTruncated, result.StdoutCharsRead));
-        if (!string.IsNullOrWhiteSpace(result.Stderr))
-            parts.Add(FormatCommandOutputBlock("Stderr", result.Stderr, result.StderrTruncated, result.StderrCharsRead));
-
-        return parts.Count == 0
-            ? " No captured output."
-            : "\n" + string.Join("\n", parts);
-    }
-
-    private static string FormatCommandOutputBlock(string label, string output, bool captureTruncated = false, int charsRead = 0)
-        => $"    {label}:\n{IndentCommandOutput(SummarizeCommandOutput(output, captureTruncated, charsRead))}";
-
-    private static string SummarizeCommandOutput(string output, bool captureTruncated = false, int charsRead = 0)
-    {
-        var normalized = output
-            .Replace("\r\n", "\n")
-            .Replace('\r', '\n')
-            .Trim();
-
-        var totalLength = normalized.Length;
-        if (totalLength <= MaxLoggedCommandOutputChars && !captureTruncated)
-            return normalized;
-
-        var excerpt = normalized[..Math.Min(totalLength, MaxLoggedCommandOutputChars)].TrimEnd();
-        var logOmitted = Math.Max(0, totalLength - MaxLoggedCommandOutputChars);
-        var logNote = logOmitted > 0
-            ? $"log excerpt truncated, {logOmitted} chars omitted"
-            : "output capture truncated";
-        var captureNote = captureTruncated
-            ? $"; captured first {MaxCapturedCommandOutputChars} of {charsRead} chars"
-            : "";
-        return $"{excerpt}\n... ({logNote}{captureNote})";
-    }
-
-    private static string IndentCommandOutput(string output)
-    {
-        var lines = output.Split('\n');
-        return string.Join('\n', lines.Select(line => $"      {line}"));
-    }
 }

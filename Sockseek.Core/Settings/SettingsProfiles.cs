@@ -111,7 +111,6 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
     private readonly IReadOnlyList<SettingsProfile> _namedProfiles;
     private readonly SettingsProfile? _cliProfile;
     private readonly ProfileContext _context;
-    private readonly Action<string>? _warn;
     private readonly Action<DownloadSettings>? _normalize;
 
     public ProfileJobSettingsResolver(
@@ -121,8 +120,7 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
         IReadOnlyList<SettingsProfile> namedProfiles,
         SettingsProfile? cliProfile,
         ProfileContext? context = null,
-        Action<DownloadSettings>? normalize = null,
-        Action<string>? warn = null)
+        Action<DownloadSettings>? normalize = null)
     {
         _baseDefaults = SettingsCloner.Clone(baseDefaults);
         _defaultProfile = defaultProfile;
@@ -131,7 +129,6 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
         _cliProfile = cliProfile;
         _context = context ?? new ProfileContext();
         _normalize = normalize;
-        _warn = warn;
 
         foreach (var profile in _autoProfiles.Where(p => p.HasEngineSettings))
             throw new Exception($"Input error: Auto-profile '{profile.Name}' contains engine settings, which cannot be applied per job");
