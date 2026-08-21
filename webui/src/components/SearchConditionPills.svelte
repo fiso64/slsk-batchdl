@@ -32,11 +32,17 @@
 {#if conditions.common.maxBitrate}
   <span class="search-condition-pill">bitrate ≤ {conditions.common.maxBitrate} kbps<button type="button" onclick={() => (conditions.common.maxBitrate = '')}>×</button></span>
 {/if}
-{#if conditions.common.sampleRate}
-  <span class="search-condition-pill">sample rate: {sampleRates[conditions.common.sampleRate] ?? conditions.common.sampleRate}<button type="button" onclick={() => (conditions.common.sampleRate = '')}>×</button></span>
+{#if conditions.common.minSampleRate}
+  <span class="search-condition-pill">sample rate ≥ {sampleRates[conditions.common.minSampleRate] ?? conditions.common.minSampleRate}<button type="button" onclick={() => (conditions.common.minSampleRate = '')}>×</button></span>
 {/if}
-{#if conditions.common.bitDepth}
-  <span class="search-condition-pill">bit depth: {conditions.common.bitDepth}-bit<button type="button" onclick={() => (conditions.common.bitDepth = '')}>×</button></span>
+{#if conditions.common.maxSampleRate}
+  <span class="search-condition-pill">sample rate ≤ {sampleRates[conditions.common.maxSampleRate] ?? conditions.common.maxSampleRate}<button type="button" onclick={() => (conditions.common.maxSampleRate = '')}>×</button></span>
+{/if}
+{#if conditions.common.minBitDepth}
+  <span class="search-condition-pill">bit depth ≥ {conditions.common.minBitDepth}-bit<button type="button" onclick={() => (conditions.common.minBitDepth = '')}>×</button></span>
+{/if}
+{#if conditions.common.maxBitDepth}
+  <span class="search-condition-pill">bit depth ≤ {conditions.common.maxBitDepth}-bit<button type="button" onclick={() => (conditions.common.maxBitDepth = '')}>×</button></span>
 {/if}
 {#if conditions.common.strictArtist}
   <span class="search-condition-pill">strict artist<button type="button" onclick={() => (conditions.common.strictArtist = false)}>×</button></span>

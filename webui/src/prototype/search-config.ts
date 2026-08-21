@@ -5,8 +5,10 @@ export interface CommonSearchConditions {
   formats: string[];
   minBitrate: string;
   maxBitrate: string;
-  sampleRate: string;
-  bitDepth: string;
+  minSampleRate: string;
+  maxSampleRate: string;
+  minBitDepth: string;
+  maxBitDepth: string;
   rejectUnknownMetadata: boolean;
   strictArtist: boolean;
   allowedUsers: string;
@@ -64,7 +66,7 @@ export interface PrototypeSearchConditions {
 }
 
 export function createPrototypeSearchConditions(): PrototypeSearchConditions {
-  // Required conditions intentionally begin unrestricted. The explicit `All`
+  // Required conditions intentionally begin unrestricted. The explicit `Any`
   // format state communicates this in the UI without manufacturing a no-op pill.
   // Ranking defaults mirror the documented pref-* defaults where they are useful
   // to expose in the prototype, but ranking never filters results out.
@@ -85,8 +87,10 @@ export function createEmptySearchConditions(): PrototypeSearchConditions {
       formats: [],
       minBitrate: '',
       maxBitrate: '',
-      sampleRate: '',
-      bitDepth: '',
+      minSampleRate: '',
+      maxSampleRate: '',
+      minBitDepth: '',
+      maxBitDepth: '',
       rejectUnknownMetadata: false,
       strictArtist: false,
       allowedUsers: '',
@@ -161,18 +165,16 @@ export function toNecessarySearchPatch(
   resultMode: SearchResultMode,
   conditions: PrototypeSearchConditions,
 ): SearchSettingsPatchDto {
-  const sampleRate = numberOrNull(conditions.common.sampleRate);
-  const bitDepth = numberOrNull(conditions.common.bitDepth);
   const allowedUsers = csv(conditions.common.allowedUsers);
   const bannedUsers = csv(conditions.common.bannedUsers);
 
   const necessaryCond: FileConditionsPatchDto = {
     minBitrate: numberOrNull(conditions.common.minBitrate),
     maxBitrate: numberOrNull(conditions.common.maxBitrate),
-    minSampleRate: sampleRate,
-    maxSampleRate: sampleRate,
-    minBitDepth: bitDepth,
-    maxBitDepth: bitDepth,
+    minSampleRate: numberOrNull(conditions.common.minSampleRate),
+    maxSampleRate: numberOrNull(conditions.common.maxSampleRate),
+    minBitDepth: numberOrNull(conditions.common.minBitDepth),
+    maxBitDepth: numberOrNull(conditions.common.maxBitDepth),
     strictArtist: conditions.common.strictArtist || null,
     strictTitle: resultMode === 'track' ? conditions.track.strictTitle || null : null,
     strictAlbum: resultMode === 'album' ? conditions.album.strictAlbum || null : null,
@@ -220,8 +222,10 @@ export function hasAppliedConditions(mode: SearchResultMode, conditions: Prototy
     conditions.common.formats.length
       || conditions.common.minBitrate
       || conditions.common.maxBitrate
-      || conditions.common.sampleRate
-      || conditions.common.bitDepth
+      || conditions.common.minSampleRate
+      || conditions.common.maxSampleRate
+      || conditions.common.minBitDepth
+      || conditions.common.maxBitDepth
       || conditions.common.strictArtist
       || conditions.common.rejectUnknownMetadata
       || conditions.common.allowedUsers.trim()

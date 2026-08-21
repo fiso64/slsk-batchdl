@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { ItemPeerInfo } from '../../prototype/items';
+  import type { UserLinkActions } from '../../prototype/navigation';
   import UsernameLink from '../UsernameLink.svelte';
 
   interface Props {
@@ -8,7 +9,7 @@
     itemCount: number;
     itemNoun?: string;
     itemNounPlural?: string;
-    onopenuser: (username: string) => void;
+    userActions: UserLinkActions;
     children: Snippet;
   }
 
@@ -17,7 +18,7 @@
     itemCount,
     itemNoun = 'result',
     itemNounPlural = `${itemNoun}s`,
-    onopenuser,
+    userActions,
     children,
   }: Props = $props();
 
@@ -40,7 +41,7 @@
     ></button>
     <svg class:collapsed class="peer-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l6 5-6 5" /></svg>
     <span class="peer-identity">
-      <UsernameLink username={peer.username} {onopenuser} />
+      <UsernameLink username={peer.username} actions={userActions} />
       {#if peer.freeUploadSlot !== undefined}
         <span class:available={peer.freeUploadSlot} class="peer-slot"><i></i>{peer.freeUploadSlot ? 'Free slot' : 'No free slot'}</span>
       {/if}

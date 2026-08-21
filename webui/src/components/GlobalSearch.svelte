@@ -8,7 +8,6 @@
     type PrototypeSearchConditions,
   } from '../prototype/search-config';
   import SearchConditionPills from './SearchConditionPills.svelte';
-  import Icon from './Icon.svelte';
   import ModeIconToggle from './ModeIconToggle.svelte';
   import SearchConfigPanel from './SearchConfigPanel.svelte';
 
@@ -186,40 +185,44 @@
   <div class="search-controls-row" bind:this={searchControlsRow}>
     {#if variant === 'user'}
       <div class="search-entry">
-        <div class="search-bar simple user-browser-global-search">
-          <span class="search-glyph" aria-hidden="true"><Icon name="user" /></span>
+        <ModeIconToggle
+          value={userValue.mode}
+          options={userBrowseModeOptions}
+          ariaLabel="User browse mode"
+          onchange={setUserBrowseMode}
+        />
+        <div class="search-bar simple has-mode-picker user-browser-global-search">
           <input
             id="global-user-search"
             value={userValue.query}
-            placeholder="Browse username…"
+            placeholder={userValue.mode === 'shares' ? 'Search user shares…' : 'Search users…'}
             autocomplete="off"
             spellcheck="false"
-            aria-label="Browse Soulseek username"
+            aria-label={userValue.mode === 'shares' ? 'Search user shares' : 'Search users'}
             oninput={(event) => setUserQuery((event.currentTarget as HTMLInputElement).value)}
             onkeydown={submitUserOnEnter}
           />
           <span class="search-shortcut" aria-hidden="true">/</span>
         </div>
       </div>
-
-      <ModeIconToggle
-        value={userValue.mode}
-        options={userBrowseModeOptions}
-        ariaLabel="User browse mode"
-        onchange={setUserBrowseMode}
-      />
+      <span class="search-settings-spacer" aria-hidden="true"></span>
     {:else}
       <div class="search-entry" onfocusin={() => (searchEngaged = true)}>
+        <ModeIconToggle
+          value={value.resultMode}
+          options={searchModeOptions}
+          ariaLabel="Search result mode"
+          onchange={setResultMode}
+        />
         {#if value.mode === 'simple'}
-          <div class="search-bar simple">
-            <span class="search-glyph" aria-hidden="true"><Icon name="search" /></span>
+          <div class="search-bar simple has-mode-picker">
             <input
               id="global-search-simple"
               value={value.query}
-              placeholder="Search Soulseek…"
+              placeholder={value.resultMode === 'album' ? 'Search albums…' : 'Search songs…'}
               autocomplete="off"
               spellcheck="false"
-              aria-label="Search Soulseek"
+              aria-label={value.resultMode === 'album' ? 'Search albums' : 'Search songs'}
               oninput={handleSimpleInput}
               onkeydown={submitOnEnter}
             />
@@ -227,7 +230,7 @@
             <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
           </div>
         {:else}
-          <div class="search-bar split">
+          <div class="search-bar split has-mode-picker">
             <label class="search-field">
               <span>artist</span>
               <input
@@ -266,13 +269,6 @@
           </section>
         {/if}
       </div>
-
-      <ModeIconToggle
-        value={value.resultMode}
-        options={searchModeOptions}
-        ariaLabel="Search result mode"
-        onchange={setResultMode}
-      />
 
       <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}>•••</button>
     {/if}

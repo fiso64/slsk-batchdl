@@ -8,14 +8,15 @@
   import FileItemCard from '../components/items/FileItemCard.svelte';
   import TransferItemActionButton from '../components/items/TransferItemActionButton.svelte';
   import type { PrototypeScenario } from '../mock/types';
+  import type { UserLinkActions } from '../prototype/navigation';
   import type { PrototypeMutationState, ProposedBulkActionRequestDto, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
   import { downloadsForScenario, type DownloadItem, type FolderDownloadItem } from '../prototype/downloads';
   import { groupAdjacentBy } from '../prototype/grouping';
   import { basename, type FolderItemFile, type TransferPresentation } from '../prototype/items';
   import { resourceStateForScenario } from '../prototype/resource-state';
 
-  interface Props { scenario: PrototypeScenario; onopenuser: (username: string) => void; }
-  let { scenario, onopenuser }: Props = $props();
+  interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
+  let { scenario, userActions }: Props = $props();
 
   let cancelledItems = $state<Set<string>>(new Set());
   let cancelledFiles = $state<Set<string>>(new Set());
@@ -124,7 +125,7 @@
   {:else}
     <div class="transfer-peer-list">
       {#each groups as group (group.key)}
-        <PeerItemGroup peer={{ username: group.peer }} itemCount={group.items.length} itemNoun="download" {onopenuser}>
+        <PeerItemGroup peer={{ username: group.peer }} itemCount={group.items.length} itemNoun="download" {userActions}>
           {#each group.items as item (item.id)}
             {@const itemTransfer = presentationFor(item)}
             {#if item.kind === 'track' || item.kind === 'remote-file'}

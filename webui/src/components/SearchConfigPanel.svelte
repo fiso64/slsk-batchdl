@@ -57,16 +57,15 @@
 </script>
 
 <header class="search-config-header">
-  <div><strong>{title}</strong></div>
+  <strong>{title}</strong>
+  <nav class="search-config-tabs" aria-label="Search configuration sections">
+    <button type="button" class:active={activeTab === 'conditions'} aria-current={activeTab === 'conditions' ? 'page' : undefined} onclick={() => (activeTab = 'conditions')}>Filtering</button>
+    <button type="button" class:active={activeTab === 'ranking'} aria-current={activeTab === 'ranking' ? 'page' : undefined} onclick={() => (activeTab = 'ranking')}>Ranking</button>
+  </nav>
   {#if onclose}
-    <button type="button" aria-label="Close search configuration" onclick={onclose}>×</button>
+    <button type="button" class="search-config-close" aria-label="Close search configuration" onclick={onclose}>×</button>
   {/if}
 </header>
-
-<nav class="search-config-tabs" aria-label="Search configuration sections">
-  <button type="button" class:active={activeTab === 'conditions'} aria-current={activeTab === 'conditions' ? 'page' : undefined} onclick={() => (activeTab = 'conditions')}>Conditions</button>
-  <button type="button" class:active={activeTab === 'ranking'} aria-current={activeTab === 'ranking' ? 'page' : undefined} onclick={() => (activeTab = 'ranking')}>Ranking</button>
-</nav>
 
 {#if activeTab === 'conditions'}
   <div class="search-config-columns">
@@ -93,15 +92,32 @@
 
         <div class="config-grid">
           <label>
-            <span>{searchConfigLabel('sampleRate', 'conditions')}</span>
-            <select bind:value={conditions.common.sampleRate}>
+            <span>Min {searchConfigLabel('sampleRate', 'conditions').toLowerCase()}</span>
+            <select bind:value={conditions.common.minSampleRate}>
               <option value="">Any</option>
               {#each sampleRates as rate}<option value={rate.value}>{rate.label}</option>{/each}
             </select>
           </label>
           <label>
-            <span>{searchConfigLabel('bitDepth', 'conditions')}</span>
-            <select bind:value={conditions.common.bitDepth}>
+            <span>Max {searchConfigLabel('sampleRate', 'conditions').toLowerCase()}</span>
+            <select bind:value={conditions.common.maxSampleRate}>
+              <option value="">Any</option>
+              {#each sampleRates as rate}<option value={rate.value}>{rate.label}</option>{/each}
+            </select>
+          </label>
+        </div>
+
+        <div class="config-grid">
+          <label>
+            <span>Min {searchConfigLabel('bitDepth', 'conditions').toLowerCase()}</span>
+            <select bind:value={conditions.common.minBitDepth}>
+              <option value="">Any</option>
+              {#each bitDepths as depth}<option value={depth}>{depth}-bit</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>Max {searchConfigLabel('bitDepth', 'conditions').toLowerCase()}</span>
+            <select bind:value={conditions.common.maxBitDepth}>
               <option value="">Any</option>
               {#each bitDepths as depth}<option value={depth}>{depth}-bit</option>{/each}
             </select>
@@ -260,5 +276,5 @@
 {/if}
 
 <footer class="search-config-footer">
-  <button type="button" onclick={clearActiveTab}>{activeTab === 'conditions' ? 'Clear conditions' : 'Clear ranking'}</button>
+  <button type="button" onclick={clearActiveTab}>{activeTab === 'conditions' ? 'Clear filtering' : 'Clear ranking'}</button>
 </footer>

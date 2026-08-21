@@ -1,7 +1,7 @@
 import type { SearchResultMode } from './search';
 
 export type SearchConfigTab = 'conditions' | 'ranking';
-export type SearchConfigRelationship = 'paired' | 'exact-to-range' | 'partial' | 'conditions-only';
+export type SearchConfigRelationship = 'paired' | 'partial' | 'conditions-only';
 
 export interface SearchConfigSideDefinition {
   label: string;
@@ -46,12 +46,12 @@ export const SEARCH_CONFIG_FIELDS = {
     ranking: { label: 'Max bitrate', section: 'quality' },
   },
   sampleRate: {
-    id: 'sampleRate', modes: 'all', relationship: 'exact-to-range',
+    id: 'sampleRate', modes: 'all', relationship: 'paired',
     conditions: { label: 'Sample rate', section: 'quality' },
     ranking: { label: 'Sample rate', section: 'quality' },
   },
   bitDepth: {
-    id: 'bitDepth', modes: 'all', relationship: 'exact-to-range',
+    id: 'bitDepth', modes: 'all', relationship: 'paired',
     conditions: { label: 'Bit depth', section: 'quality' },
     ranking: { label: 'Bit depth', section: 'quality' },
   },

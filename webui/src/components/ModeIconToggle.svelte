@@ -21,22 +21,12 @@
 
   let current = $derived(options.find((option) => option.value === value) ?? options[0]);
 
-  function toggle(): void {
-    if (!options.length) return;
-    const index = Math.max(0, options.findIndex((option) => option.value === value));
-    const next = options[(index + 1) % options.length];
-    if (!next) return;
-    onchange(next.value);
-    menuOpen = false;
-  }
-
   function choose(nextValue: string): void {
     onchange(nextValue);
     menuOpen = false;
   }
 
-  function openMenu(event: MouseEvent): void {
-    event.preventDefault();
+  function toggleMenu(): void {
     menuOpen = !menuOpen;
   }
 
@@ -58,12 +48,11 @@
   <button
     type="button"
     class="search-result-mode-button mode-icon-button"
-    aria-label={`${ariaLabel}: ${current?.label ?? value}. Click to toggle; right-click to choose.`}
+    aria-label={`${ariaLabel}: ${current?.label ?? value}. Choose mode.`}
     aria-haspopup="menu"
     aria-expanded={menuOpen}
-    title={`${current?.label ?? value} · click to toggle · right-click to choose`}
-    onclick={toggle}
-    oncontextmenu={openMenu}
+    title={`${current?.label ?? value} · choose mode`}
+    onclick={toggleMenu}
   >
     {#if current}
       <Icon name={current.icon} />

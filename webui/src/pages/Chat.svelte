@@ -5,6 +5,7 @@
   import LoadMoreButton from '../components/LoadMoreButton.svelte';
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { PrototypeScenario } from '../mock/types';
+  import type { UserLinkActions } from '../prototype/navigation';
   import type { PrototypeMutationState } from '../prototype/backend-contracts';
   import { prototypeUuid } from '../prototype/ids';
   import {
@@ -26,11 +27,11 @@
 
   interface Props {
     scenario: PrototypeScenario;
-    onopenuser: (username: string) => void;
+    userActions: UserLinkActions;
     initialUsername?: string | null;
   }
 
-  let { scenario, onopenuser, initialUsername = null }: Props = $props();
+  let { scenario, userActions, initialUsername = null }: Props = $props();
 
   let rooms = $state<PrototypeChatRoom[]>(createPrototypeChatRooms('normal'));
   let conversations = $state<PrototypeChatConversation[]>(createPrototypeChatConversations('normal'));
@@ -298,7 +299,7 @@
     <div class="chat-thread">
       <header class="chat-thread-heading">
         {#if activeConversation || activeDraft}
-          <div class="chat-thread-identity"><UsernameLink username={activeUsername ?? ''} {onopenuser} /><small class:blocked={activeUserBlocked}>{activeUserBlocked ? 'blocked' : activeConversation ? presenceAgeLabel() : 'new chat'}</small></div>
+          <div class="chat-thread-identity"><UsernameLink username={activeUsername ?? ''} actions={userActions} /><small class:blocked={activeUserBlocked}>{activeUserBlocked ? 'blocked' : activeConversation ? presenceAgeLabel() : 'new chat'}</small></div>
         {:else if activeRoom}
           <div class="chat-thread-identity"><strong>#{activeRoom.name}</strong><small>{activeRoom.kind === 'private' ? 'Private room' : 'Public room'} · {activeRoom.memberCount.toLocaleString()} users · {activeRoom.rosterComplete ? 'roster complete' : 'roster partial'}{activeRoom.phase !== 'Joined' ? ` · ${activeRoom.phase}` : ''}</small></div>
         {/if}
@@ -316,7 +317,7 @@
           <div class="chat-empty-thread"><strong>{activeDraft ? 'New chat' : 'No messages yet'}</strong></div>
         {:else if activeRoom}
           {#each activeMessages as message (message.id)}
-            <div class:mine={message.mine} class:send-failed={message.state === 'Failed'} class="room-message"><div class="room-message-meta">{#if message.mine}<span class="room-message-self">fi</span>{:else}<UsernameLink username={message.sender} {onopenuser} />{/if}<time>{message.time}</time>{#if message.mine}<span class={`message-send-state ${message.state.toLowerCase()}`}>{message.state}{message.failureReason ? ` · ${message.failureReason}` : ''}</span>{/if}</div><div class="message-body"><LinkifiedText text={message.text} /></div></div>
+            <div class:mine={message.mine} class:send-failed={message.state === 'Failed'} class="room-message"><div class="room-message-meta">{#if message.mine}<span class="room-message-self">fi</span>{:else}<UsernameLink username={message.sender} actions={userActions} />{/if}<time>{message.time}</time>{#if message.mine}<span class={`message-send-state ${message.state.toLowerCase()}`}>{message.state}{message.failureReason ? ` · ${message.failureReason}` : ''}</span>{/if}</div><div class="message-body"><LinkifiedText text={message.text} /></div></div>
           {/each}
         {:else if activeConversation}
           {#each activeMessages as message (message.id)}

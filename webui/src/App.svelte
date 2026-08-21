@@ -10,7 +10,7 @@
   import Settings from './pages/Settings.svelte';
   import Uploads from './pages/Uploads.svelte';
   import Users from './pages/Users.svelte';
-  import type { PageId } from './prototype/navigation';
+  import type { PageId, UserLinkActions } from './prototype/navigation';
   import { emptySearchDraft, type SearchDraft } from './prototype/search';
   import type { PrototypeSearchConditions } from './prototype/search-config';
   import { getUserBrowseFixture, type UserBrowseDraft, type UserBrowseView } from './prototype/users';
@@ -177,11 +177,24 @@
     setBrowserPath(userPath(username, 'user'));
   }
 
+  function openUserShares(username: string): void {
+    userBrowse = { query: username, mode: 'shares' };
+    userView = 'shares';
+    activePage = 'users';
+    setBrowserPath(userPath(username, 'shares'));
+  }
+
   function openChatUser(username: string): void {
     chatInitialUsername = username;
     activePage = 'chat';
     setBrowserPath('/chat');
   }
+
+  const userActions: UserLinkActions = {
+    profile: openUser,
+    shares: openUserShares,
+    message: openChatUser,
+  };
 
   function submitUserBrowse(next: UserBrowseDraft): void {
     useUserBrowse(next);
@@ -245,7 +258,7 @@
   onuserbrowsesubmit={submitUserBrowse}
 >
   {#if activePage === 'dashboard'}
-    <Dashboard {scenario} onopenuser={openUser} />
+    <Dashboard {scenario} {userActions} />
   {:else if activePage === 'search'}
     <Search
       {search}
@@ -253,7 +266,7 @@
       bind:searches
       bind:view={searchView}
       bind:activeSearchId
-      onopenuser={openUser}
+      {userActions}
       onopenrecord={openSearchRecord}
       onshowlist={showSearchList}
       onsearchagain={searchAgain}
@@ -261,11 +274,11 @@
   {:else if activePage === 'users'}
     <Users {scenarioId} username={userBrowse.query} view={userView} onviewchange={changeUserView} onmessageuser={openChatUser} />
   {:else if activePage === 'downloads'}
-    <Downloads {scenario} onopenuser={openUser} />
+    <Downloads {scenario} {userActions} />
   {:else if activePage === 'uploads'}
-    <Uploads {scenario} onopenuser={openUser} />
+    <Uploads {scenario} {userActions} />
   {:else if activePage === 'chat'}
-    <Chat {scenario} onopenuser={openUser} initialUsername={chatInitialUsername} />
+    <Chat {scenario} {userActions} initialUsername={chatInitialUsername} />
   {:else}
     <Settings />
   {/if}

@@ -2,14 +2,15 @@
   import UsernameLink from '../components/UsernameLink.svelte';
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import type { PrototypeScenario } from '../mock/types';
-  import { dashboardActivityFeed, dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardRangeId } from '../prototype/dashboard';
+  import type { UserLinkActions } from '../prototype/navigation';
+  import { dashboardActivityFeed, dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
   import { resourceStateForScenario } from '../prototype/resource-state';
 
-  interface Props { scenario: PrototypeScenario; onopenuser: (username: string) => void; }
-  let { scenario, onopenuser }: Props = $props();
+  interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
+  let { scenario, userActions }: Props = $props();
 
   let range = $state<DashboardRangeId>('24h');
-  let rankingTab = $state<'peers' | 'content' | 'errors'>('peers');
+  let rankingTab = $state<'downloads' | 'uploads' | 'content' | 'errors'>('downloads');
   let data = $derived(dashboardData[range]);
   let resourceState = $derived(resourceStateForScenario(scenario.id, 'dashboard'));
   let contract = $derived(dashboardContractFor(range, scenario.id === 'stress'));
@@ -153,17 +154,19 @@
     <div class="dashboard-column">
       <section class="dashboard-panel ranking-panel">
         <div class="ranking-tabs" role="tablist" aria-label="Dashboard ranking">
-          <button type="button" class:active={rankingTab === 'peers'} onclick={() => (rankingTab = 'peers')}>Peers</button>
+          <button type="button" class:active={rankingTab === 'downloads'} onclick={() => (rankingTab = 'downloads')}>Downloads</button>
+          <button type="button" class:active={rankingTab === 'uploads'} onclick={() => (rankingTab = 'uploads')}>Uploads</button>
           <button type="button" class:active={rankingTab === 'content'} onclick={() => (rankingTab = 'content')}>Content</button>
           <button type="button" class:active={rankingTab === 'errors'} onclick={() => (rankingTab = 'errors')}>Errors</button>
           <span>{data.label}</span>
         </div>
 
-        {#if rankingTab === 'peers'}
+        {#if rankingTab === 'downloads' || rankingTab === 'uploads'}
+          {@const rows: DashboardPeerRow[] = rankingTab === 'downloads' ? data.downloadUsers : data.uploadUsers}
           <div class="dashboard-ranking-table peers-table">
-            <div class="dashboard-ranking-row heading"><span>#</span><span>Peer</span><span>Transferred</span><span>Files</span></div>
-            {#each data.peers as peer, index}
-              <div class="dashboard-ranking-row"><span>{index + 1}</span><span class="dashboard-peer-name"><UsernameLink username={peer.peer} {onopenuser} /></span><span>{peer.transferred}</span><span>{peer.files}</span></div>
+            <div class="dashboard-ranking-row heading"><span>#</span><span>User</span><span>{rankingTab === 'downloads' ? 'Downloaded' : 'Uploaded'}</span><span>Files</span></div>
+            {#each rows as peer, index}
+              <div class="dashboard-ranking-row"><span>{index + 1}</span><span class="dashboard-peer-name"><UsernameLink username={peer.peer} actions={userActions} /></span><span>{peer.transferred}</span><span>{peer.files}</span></div>
             {/each}
           </div>
         {:else if rankingTab === 'content'}
@@ -175,9 +178,9 @@
           </div>
         {:else}
           <div class="dashboard-ranking-table errors-table">
-            <div class="dashboard-ranking-row heading"><span>Error</span><span>Count</span><span>Last seen</span></div>
-            {#each data.errors as error}
-              <div class="dashboard-ranking-row"><span title={error.error}>{error.error}</span><span>{error.count}</span><span>{error.lastSeen}</span></div>
+            <div class="dashboard-ranking-row heading"><span>#</span><span>Error</span><span>Count</span><span>Last seen</span></div>
+            {#each data.errors as error, index}
+              <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={error.error}>{error.error}</span><span>{error.count}</span><span>{error.lastSeen}</span></div>
             {/each}
           </div>
         {/if}
@@ -202,7 +205,7 @@
           {#each dashboardActivityFeed as item (item.contract.activityId)}
             <div>
               <i class={`feed-icon ${item.contract.kind}`}>{item.contract.kind === 'download' ? '↓' : item.contract.kind === 'upload' ? '↑' : '○'}</i>
-              <p><strong>{item.contract.itemName}</strong><span class="activity-detail"><span>{item.contract.detail}</span>{#if item.contract.actor}<UsernameLink username={item.contract.actor} {onopenuser} />{/if}</span></p>
+              <p><strong>{item.contract.itemName}</strong><span class="activity-detail"><span>{item.contract.detail}</span>{#if item.contract.actor}<UsernameLink username={item.contract.actor} actions={userActions} />{/if}</span></p>
               <small>{item.displayAge}</small>
             </div>
           {/each}

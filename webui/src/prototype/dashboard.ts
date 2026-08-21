@@ -24,7 +24,8 @@ export interface DashboardRangeData {
   chartLabels: string[];
   downloadMbps: number[];
   uploadMbps: number[];
-  peers: DashboardPeerRow[];
+  downloadUsers: DashboardPeerRow[];
+  uploadUsers: DashboardPeerRow[];
   content: DashboardContentRow[];
   errors: DashboardErrorRow[];
   summary: {
@@ -37,30 +38,110 @@ export interface DashboardRangeData {
   };
 }
 
+const rankingUsers = [
+  'nightshift', 'cassetteculture', 'cloudarchive', 'tape_loop', 'silvermachine',
+  'neonrain', 'bitrot', 'deepcatalog', 'wavetable', 'orbiting',
+  'subharmonic', 'magnetosphere', 'slowdive88', 'archivist', 'nocturne',
+  'plasticpulse', 'riplog', 'phasecancel', 'spectralghost', 'databender',
+  'lowquality_uploader', 'listener_17', 'vinylindex', 'roomtone', 'sinesweep',
+];
+
+const contentCatalog = [
+  'Boards of Canada / Geogaddi', 'Autechre / Tri Repetae', 'Aphex Twin / SAW 85–92', 'Burial / Untrue',
+  'Massive Attack / Mezzanine', 'Biosphere / Substrata', 'Plaid / Not for Threes', 'Squarepusher / Hard Normal Daddy',
+  'µ-Ziq / Lunatic Harness', 'Clark / Body Riddle', 'Broadcast / Tender Buttons', 'Oneohtrix Point Never / R Plus Seven',
+  'Tim Hecker / Virgins', 'Stars of the Lid / And Their Refinement of the Decline', 'Global Communication / 76:14',
+  'The Future Sound of London / Lifeforms', 'Portishead / Dummy', 'Coil / Musick to Play in the Dark',
+  'Flying Lotus / Cosmogramma', 'Four Tet / Rounds', 'Jon Hopkins / Immunity', 'Skee Mask / Compro',
+  'Floating Points / Crush', 'DJ Shadow / Endtroducing.....', 'The Orb / Adventures Beyond the Ultraworld',
+];
+
+const errorCatalog = [
+  'Peer disconnected', 'Transfer timed out', 'Connection failed', 'File unavailable', 'File no longer shared',
+  'Remote queue rejected request', 'Peer went offline', 'Transfer cancelled remotely', 'Socket closed', 'Remote path unavailable',
+  'Download stalled', 'Upload stalled', 'Connection reset', 'Handshake failed', 'Peer busy', 'Transfer interrupted',
+  'Remote file changed', 'Permission denied', 'Invalid response', 'Unknown transfer error', 'Queue timeout', 'Peer not reachable',
+];
+
+function formatTransferredGb(gb: number): string {
+  if (gb >= 1000) return `${(gb / 1000).toFixed(2)} TB`;
+  return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+}
+
+function top20Users(base: DashboardPeerRow[], startGb: number, stepGb: number, startFiles: number, fileStep: number): DashboardPeerRow[] {
+  const used = new Set(base.map((row) => row.peer));
+  const available = rankingUsers.filter((username) => !used.has(username));
+  const result = [...base];
+  for (let index = 0; result.length < 20 && index < available.length; index += 1) {
+    result.push({
+      peer: available[index]!,
+      transferred: formatTransferredGb(Math.max(0.4, startGb - stepGb * index)),
+      files: Math.max(1, Math.round(startFiles - fileStep * index)),
+    });
+  }
+  return result.slice(0, 20);
+}
+
+function top20Content(base: DashboardContentRow[], startDownloads: number, step: number, startPeers: number): DashboardContentRow[] {
+  const used = new Set(base.map((row) => row.folder));
+  const available = contentCatalog.filter((folder) => !used.has(folder));
+  const result = [...base];
+  for (let index = 0; result.length < 20 && index < available.length; index += 1) {
+    result.push({
+      folder: available[index]!,
+      downloads: Math.max(1, Math.round(startDownloads - step * index)),
+      peers: Math.max(1, Math.round(startPeers - index * 0.6)),
+    });
+  }
+  return result.slice(0, 20);
+}
+
+function top20Errors(base: DashboardErrorRow[], startCount: number): DashboardErrorRow[] {
+  const used = new Set(base.map((row) => row.error));
+  const available = errorCatalog.filter((error) => !used.has(error));
+  const result = [...base];
+  const ages = ['5h ago', '7h ago', '11h ago', '14h ago', '19h ago', '1d ago', '2d ago', '3d ago', '4d ago', '5d ago', '7d ago', '9d ago', '12d ago', '18d ago', '24d ago', '31d ago', '46d ago', '63d ago'];
+  for (let index = 0; result.length < 20 && index < available.length; index += 1) {
+    result.push({
+      error: available[index]!,
+      count: Math.max(1, startCount - index),
+      lastSeen: ages[index] ?? 'older',
+    });
+  }
+  return result.slice(0, 20);
+}
+
 export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
   '24h': {
     label: 'Last 24 hours',
     chartLabels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'],
     downloadMbps: [1.4, 1.1, 1.6, 3.2, 8.1, 5.5, 4.2, 6.0, 9.4, 7.0, 6.2, 7.1, 5.4, 3.5, 4.3],
     uploadMbps: [0.7, 0.6, 0.8, 1.4, 3.0, 2.4, 2.1, 2.8, 4.1, 3.5, 2.9, 3.2, 2.8, 1.6, 2.0],
-    peers: [
+    downloadUsers: top20Users([
       { peer: 'nightshift', transferred: '18.4 GB', files: 284 },
       { peer: 'cassetteculture', transferred: '12.7 GB', files: 196 },
       { peer: 'cloudarchive', transferred: '9.2 GB', files: 117 },
       { peer: 'tape_loop', transferred: '7.8 GB', files: 96 },
       { peer: 'lowquality_uploader', transferred: '6.1 GB', files: 82 },
-    ],
-    content: [
+    ], 5.6, 0.28, 76, 3.2),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '24.7 GB', files: 611 },
+      { peer: 'neonrain', transferred: '17.1 GB', files: 403 },
+      { peer: 'tape_loop', transferred: '12.9 GB', files: 327 },
+      { peer: 'bitrot', transferred: '9.8 GB', files: 241 },
+      { peer: 'orbiting', transferred: '7.4 GB', files: 188 },
+    ], 6.8, 0.31, 171, 6.5),
+    content: top20Content([
       { folder: 'Boards of Canada / Geogaddi', downloads: 51, peers: 11 },
       { folder: 'Autechre / Tri Repetae', downloads: 32, peers: 5 },
       { folder: 'Aphex Twin / SAW 85–92', downloads: 31, peers: 5 },
       { folder: 'Burial / Untrue', downloads: 27, peers: 4 },
       { folder: 'Massive Attack / Mezzanine', downloads: 23, peers: 3 },
-    ],
-    errors: [
+    ], 21, 1.1, 8),
+    errors: top20Errors([
       { error: 'Peer disconnected', count: 3, lastSeen: '31m ago' },
       { error: 'Transfer timed out', count: 1, lastSeen: '4h ago' },
-    ],
+    ], 2),
     summary: { downloaded: '1.46 GB', downloadFiles: 18, uploaded: '5.72 GB', uploadFiles: 143, shareRatio: '3.92', ratioDelta: '+0.18' },
   },
   '7d': {
@@ -68,26 +149,33 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
     chartLabels: ['Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu'],
     downloadMbps: [3.1, 4.4, 2.6, 6.9, 5.2, 7.6, 4.8, 5.6, 8.4, 6.5, 7.2, 4.9, 5.8, 6.4, 5.1],
     uploadMbps: [1.8, 2.2, 1.5, 3.2, 2.8, 3.9, 2.6, 3.1, 4.4, 3.8, 4.0, 2.7, 3.2, 3.7, 3.0],
-    peers: [
+    downloadUsers: top20Users([
       { peer: 'cassetteculture', transferred: '88.2 GB', files: 1284 },
       { peer: 'nightshift', transferred: '74.6 GB', files: 936 },
       { peer: 'tape_loop', transferred: '53.1 GB', files: 721 },
       { peer: 'cloudarchive', transferred: '42.7 GB', files: 568 },
       { peer: 'silvermachine', transferred: '38.9 GB', files: 501 },
-    ],
-    content: [
+    ], 35, 1.25, 470, 18),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '121 GB', files: 2941 },
+      { peer: 'neonrain', transferred: '96.7 GB', files: 2357 },
+      { peer: 'bitrot', transferred: '82.4 GB', files: 2089 },
+      { peer: 'tape_loop', transferred: '70.2 GB', files: 1742 },
+      { peer: 'deepcatalog', transferred: '61.8 GB', files: 1510 },
+    ], 57, 2.0, 1420, 47),
+    content: top20Content([
       { folder: 'Boards of Canada / Geogaddi', downloads: 209, peers: 37 },
       { folder: 'Burial / Untrue', downloads: 184, peers: 31 },
       { folder: 'Autechre / Tri Repetae', downloads: 171, peers: 28 },
       { folder: 'Aphex Twin / SAW 85–92', downloads: 146, peers: 24 },
       { folder: 'Biosphere / Substrata', downloads: 118, peers: 20 },
-    ],
-    errors: [
+    ], 108, 5.1, 19),
+    errors: top20Errors([
       { error: 'Peer disconnected', count: 19, lastSeen: '31m ago' },
       { error: 'Transfer timed out', count: 8, lastSeen: '4h ago' },
       { error: 'Connection failed', count: 5, lastSeen: '1d ago' },
       { error: 'File unavailable', count: 2, lastSeen: '3d ago' },
-    ],
+    ], 6),
     summary: { downloaded: '18.7 GB', downloadFiles: 231, uploaded: '42.9 GB', uploadFiles: 1094, shareRatio: '2.29', ratioDelta: '+0.07' },
   },
   '30d': {
@@ -95,27 +183,34 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
     chartLabels: ['Jul 9', 'Jul 14', 'Jul 19', 'Jul 24', 'Jul 29', 'Aug 3', 'Aug 7'],
     downloadMbps: [2.2, 3.8, 4.6, 3.1, 5.4, 6.7, 5.1, 4.2, 7.9, 6.3, 5.8, 8.8, 7.1, 5.4, 6.0],
     uploadMbps: [2.8, 3.4, 3.1, 4.2, 5.0, 4.6, 5.7, 4.9, 6.1, 5.5, 6.3, 7.0, 6.2, 5.8, 6.6],
-    peers: [
+    downloadUsers: top20Users([
       { peer: 'nightshift', transferred: '312 GB', files: 4184 },
       { peer: 'cassetteculture', transferred: '287 GB', files: 3792 },
       { peer: 'silvermachine', transferred: '219 GB', files: 2801 },
       { peer: 'cloudarchive', transferred: '198 GB', files: 2450 },
       { peer: 'tape_loop', transferred: '176 GB', files: 2127 },
-    ],
-    content: [
+    ], 163, 5.7, 2010, 72),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '416 GB', files: 10192 },
+      { peer: 'neonrain', transferred: '353 GB', files: 8641 },
+      { peer: 'bitrot', transferred: '311 GB', files: 7428 },
+      { peer: 'deepcatalog', transferred: '276 GB', files: 6811 },
+      { peer: 'orbiting', transferred: '244 GB', files: 5982 },
+    ], 226, 7.4, 5540, 176),
+    content: top20Content([
       { folder: 'Boards of Canada / Geogaddi', downloads: 817, peers: 104 },
       { folder: 'Aphex Twin / SAW 85–92', downloads: 742, peers: 97 },
       { folder: 'Burial / Untrue', downloads: 608, peers: 82 },
       { folder: 'Autechre / Tri Repetae', downloads: 573, peers: 76 },
       { folder: 'Massive Attack / Mezzanine', downloads: 451, peers: 69 },
-    ],
-    errors: [
+    ], 428, 17, 65),
+    errors: top20Errors([
       { error: 'Peer disconnected', count: 87, lastSeen: '31m ago' },
       { error: 'Transfer timed out', count: 41, lastSeen: '4h ago' },
       { error: 'Connection failed', count: 24, lastSeen: '1d ago' },
       { error: 'File unavailable', count: 15, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 7, lastSeen: '9d ago' },
-    ],
+    ], 12),
     summary: { downloaded: '76.4 GB', downloadFiles: 926, uploaded: '192 GB', uploadFiles: 4682, shareRatio: '2.51', ratioDelta: '+0.24' },
   },
   '90d': {
@@ -123,27 +218,34 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
     chartLabels: ['May', 'Late May', 'Jun', 'Late Jun', 'Jul', 'Late Jul', 'Aug'],
     downloadMbps: [2.8, 4.1, 3.6, 5.0, 4.4, 5.8, 6.1, 5.3, 6.8, 7.1, 6.4, 7.8, 7.0, 6.2, 6.9],
     uploadMbps: [3.7, 4.0, 4.6, 4.9, 5.5, 5.2, 6.0, 6.4, 6.1, 6.8, 7.3, 7.0, 7.6, 7.2, 7.9],
-    peers: [
+    downloadUsers: top20Users([
       { peer: 'cassetteculture', transferred: '1.02 TB', files: 14240 },
       { peer: 'nightshift', transferred: '941 GB', files: 12588 },
       { peer: 'silvermachine', transferred: '803 GB', files: 10447 },
       { peer: 'tape_loop', transferred: '694 GB', files: 9031 },
       { peer: 'cloudarchive', transferred: '618 GB', files: 8122 },
-    ],
-    content: [
+    ], 582, 18, 7750, 240),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '1.48 TB', files: 36422 },
+      { peer: 'neonrain', transferred: '1.21 TB', files: 30108 },
+      { peer: 'bitrot', transferred: '1.04 TB', files: 26614 },
+      { peer: 'deepcatalog', transferred: '918 GB', files: 23105 },
+      { peer: 'orbiting', transferred: '836 GB', files: 20471 },
+    ], 792, 24, 19650, 590),
+    content: top20Content([
       { folder: 'Boards of Canada / Geogaddi', downloads: 2451, peers: 266 },
       { folder: 'Aphex Twin / SAW 85–92', downloads: 2194, peers: 241 },
       { folder: 'Burial / Untrue', downloads: 1892, peers: 204 },
       { folder: 'Autechre / Tri Repetae', downloads: 1707, peers: 197 },
       { folder: 'Biosphere / Substrata', downloads: 1328, peers: 162 },
-    ],
-    errors: [
+    ], 1240, 47, 156),
+    errors: top20Errors([
       { error: 'Peer disconnected', count: 241, lastSeen: '31m ago' },
       { error: 'Transfer timed out', count: 126, lastSeen: '4h ago' },
       { error: 'Connection failed', count: 73, lastSeen: '1d ago' },
       { error: 'File unavailable', count: 46, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 19, lastSeen: '9d ago' },
-    ],
+    ], 18),
     summary: { downloaded: '238 GB', downloadFiles: 2908, uploaded: '621 GB', uploadFiles: 14834, shareRatio: '2.61', ratioDelta: '+0.39' },
   },
 };
@@ -172,8 +274,8 @@ export function dashboardContractFor(range: DashboardRangeId, partialRetention =
     contract: 'proposed-dashboard-analytics-v1',
     range: { ...dashboardRangeContracts[range], partialRetention },
     semantics: {
-      peerBytes: 'terminal-and-progress-transfer-bytes-by-remote-username',
-      peerFiles: 'distinct-terminal-transfer-ids',
+      peerBytes: 'terminal-and-progress-transfer-by-direction-and-remote-username',
+      peerFiles: 'distinct-terminal-transfer-ids-by-direction',
       contentIdentity: 'logical-download-source-path',
       errorPopulation: 'terminal-transfer-attempt-failures',
       activityOrdering: 'occurred-at-descending',
@@ -181,7 +283,8 @@ export function dashboardContractFor(range: DashboardRangeId, partialRetention =
     },
     downloadMbps: data.downloadMbps,
     uploadMbps: data.uploadMbps,
-    peers: data.peers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
+    downloadPeers: data.downloadUsers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
+    uploadPeers: data.uploadUsers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
     content: data.content.map((item) => ({ identity: item.folder, displayPath: item.folder, downloadCount: item.downloads, distinctPeerCount: item.peers })),
     errors: data.errors.map((error, index) => ({ key: `error-${index}`, message: error.error, count: error.count, lastSeenUtc: '2026-08-07T07:44:00.000Z' })),
     summary: {

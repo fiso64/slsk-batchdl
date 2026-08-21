@@ -15,6 +15,7 @@
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
   import type { SearchDraft } from '../prototype/search';
+  import type { UserLinkActions } from '../prototype/navigation';
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
     buildSearchResultProjectionRequest,
@@ -35,7 +36,7 @@
     searches: SearchRecord[];
     view: SearchView;
     activeSearchId: string | null;
-    onopenuser: (username: string) => void;
+    userActions: UserLinkActions;
     onopenrecord: (record: SearchRecord) => void;
     onshowlist: () => void;
     onsearchagain: (record: SearchRecord) => void;
@@ -47,7 +48,7 @@
     searches = $bindable(),
     view = $bindable(),
     activeSearchId = $bindable(),
-    onopenuser,
+    userActions,
     onopenrecord,
     onshowlist,
     onsearchagain,
@@ -451,7 +452,7 @@
 </section>
 
 {#snippet peerGroup(group: PeerGroup)}
-  <PeerItemGroup peer={group.peer} itemCount={group.items.length} {onopenuser}>
+  <PeerItemGroup peer={group.peer} itemCount={group.items.length} {userActions}>
     {#each group.items as result (result.id)}
       {#if result.kind === 'track'}
         <FileItemCard

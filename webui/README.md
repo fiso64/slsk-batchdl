@@ -67,7 +67,7 @@ The shell currently has seven destinations:
 
 Shares live as a subview of **Users** rather than as a separate top-level destination. Transfer history lives in Downloads/Uploads, and other historical information should generally remain close to the feature that produced it.
 
-A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A shared icon mode control switches **Track / Album** (or **User / Shares** while browsing users): left-click toggles and right-click opens an explicit picker. `•••` opens advanced search conditions where applicable. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
+A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A shared icon mode picker sits at the left edge of the query bar for **Track / Album** (or **User / Shares** while browsing users); clicking it opens the explicit mode menu. `•••` opens advanced search conditions where applicable. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
 
 ### Morphing search
 
@@ -87,13 +87,13 @@ Search supports both the raw Soulseek model and a structured Sockseek model:
 
 ### Search configuration
 
-The shared search configuration popover has two sections: **Conditions** and **Ranking**. Conditions are hard filters; Ranking mirrors the documented explicit `pref-*` controls and changes preference/order without filtering candidates out. The ranking surface intentionally omits album track-count, required-track-title, missing-metadata, and strict-album-quality controls because the README's explicit preferred-option help does not expose counterparts for those controls.
+The shared search configuration popover has two sections: **Filtering** and **Ranking**. Filtering contains hard conditions; Ranking mirrors the documented explicit `pref-*` controls and changes preference/order without filtering candidates out. The ranking surface intentionally omits album track-count, required-track-title, missing-metadata, and strict-album-quality controls because the README's explicit preferred-option help does not expose counterparts for those controls.
 
-Common Conditions controls include formats, free min/max bitrate, exact sample rate, exact bit depth, metadata handling, strict artist matching, and peer allow/ban lists. Format shortcuts cover All, FLAC, MP3, OGG, OPUS, M4A, and WAV; **All** is active when no required format filter exists, while custom mode accepts comma-separated arbitrary formats. Track mode exposes title and duration-related controls. Album mode instead exposes album matching, album track-count limits, required track titles, and strict album quality.
+Common Filtering controls include formats, free min/max bitrate, min/max sample rate, min/max bit depth, metadata handling, strict artist matching, and peer allow/ban lists. Format shortcuts cover Any, FLAC, MP3, OGG, OPUS, M4A, and WAV; **Any** is active when no required format filter exists, while custom mode accepts comma-separated arbitrary formats. Track mode exposes title and duration-related controls. Album mode instead exposes album matching, album track-count limits, required track titles, and strict album quality.
 
 Ranking exposes preferred formats, min/max bitrate, min/max sample rate, min/max bit depth, matching preferences, peer preference/downranking, and track length tolerance where applicable. Prototype ranking defaults follow the documented Sockseek defaults (`pref-format=mp3`, bitrate 200–2500, max sample rate 48 kHz, title/album matching, and 3-second track tolerance).
 
-The Conditions UI treats sample rate and bit depth as exact values. A small adapter in `src/prototype/search-config.ts` demonstrates how those choices map to both the generated API's min and max fields, while Ranking maps to `preferredCond`.
+Filtering and Ranking both expose sample-rate and bit-depth ranges directly, matching the generated API's min/max condition fields. The adapter in `src/prototype/search-config.ts` maps Filtering to `necessaryCond` and Ranking to `preferredCond`.
 
 
 ## Search tab exploration
@@ -111,9 +111,9 @@ Prototype searches now start with neutral required conditions so fixture results
 
 ## Users exploration
 
-The Users destination has two subviews: **User** and **Shares**. While Users is active, the global search morphs into a username browser: it stays a single field, removes split/configuration controls, and repurposes the shared icon mode control as **User / Shares**. Left-click toggles the mode; right-click opens an explicit mode picker. The selected mode chooses which request/view Enter opens; it does not immediately switch the current subview.
+The Users destination has two subviews: **User** and **Shares**. While Users is active, the global search morphs into a username browser: it stays a single field, removes split/configuration controls, and uses the shared mode picker for **User / Shares** at the left edge of the query bar. Clicking the icon opens the explicit mode menu. The selected mode chooses which request/view Enter opens; it does not immediately switch the current subview.
 
-The User profile combines the distinct Soulseek concepts we will eventually request from user info/statistics/status calls: presence, optional profile picture and description, shared file/folder counts, average upload speed, lifetime upload count, slot count, queue depth, and free-slot state. Scenario fixtures deliberately cover missing pictures, missing descriptions, offline state, and long usernames. Usernames shown elsewhere in the prototype use one shared `UsernameLink` action: hovering underlines the name, and activation navigates directly to that peer's User profile without disturbing the originating page's state. The profile also exposes a Message action that opens or creates that user's private conversation in Chat.
+The User profile combines the distinct Soulseek concepts we will eventually request from user info/statistics/status calls: presence, optional profile picture and description, shared file/folder counts, average upload speed, lifetime upload count, slot count, queue depth, and free-slot state. Scenario fixtures deliberately cover missing pictures, missing descriptions, offline state, and long usernames. Usernames shown elsewhere in the prototype use one shared `UsernameLink` action: hovering underlines the name, and activation opens a compact action menu for **Profile**, **Shares**, or **Message** without forcing a profile navigation first. The profile also exposes a Message action that opens or creates that user's private conversation in Chat.
 
 Shares renders the browsed directory tree rather than forcing it through the flat Album presentation. Folders and files are independently selectable, folder checkboxes represent all descendants with indeterminate state, and folders can collapse. The filter bar requests a new daemon-owned mixed-tree projection across the complete browse artifact before pagination; the response preserves matching paths and ancestor context, supplies the total matching-file count, and has its own cursor. It does not filter only the currently loaded tree page. Total browse size is computed by the daemon for the browse artifact and displayed only in the Shares view because Soulseek user statistics provide share counts but not aggregate shared bytes. Search Results and Shares reuse the same filter control and selection/download toolbar.
 
@@ -225,15 +225,15 @@ src/
 
 The next iterations should continue to optimize for **learning what Sockseek should feel like**, not for preserving prototype code.
 
-The global Track/Album control is icon-only and shares the same `ModeIconToggle` component as the Users User/Shares control. Left-click cycles immediately; right-click opens a compact checked menu for explicit selection. The split/merge control remains embedded in the query bar.
+The global search-type control is icon-only and sits at the left edge of the query bar, replacing the generic search/user glyph. Search uses Track/Album and Users uses User/Shares through the same `ModeIconToggle` component. Clicking the icon opens a compact checked menu for explicit selection; modes are not cycled implicitly. The split/merge control remains embedded in the query bar.
 
 Applied search conditions appear in a focused overlay aligned to the query bar. Once engaged, the overlay remains open while interacting with the query controls, result-mode toggle, settings button, or settings panel; it closes on an outside click or Escape from the search controls. A source comment marks where future online metadata suggestions (for example MusicBrainz results) can be inserted beneath the pills once that workflow is supported.
 
 ## Dashboard exploration
 
-The prototype now opens on a Dashboard tab. Its history range control is intentionally dashboard-wide rather than chart-only: switching between 24h, 7d, 30d, and 90d updates the transfer activity chart, the Peers/Content/Errors ranking data, and the Transfer summary figures together. Current-rate cards, Recent activity, and Daemon health remain live/current-state views.
+The prototype now opens on a Dashboard tab. Its history range control is intentionally dashboard-wide rather than chart-only: switching between 24h, 7d, 30d, and 90d updates the transfer activity chart, the Downloads/Uploads/Content/Errors ranking data, and the Transfer summary figures together. Current-rate cards, Recent activity, and Daemon health remain live/current-state views.
 
-The lower dashboard uses independent vertical columns so panels size to their own content. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space.
+The lower dashboard uses independent vertical columns so panels size to their own content. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space. Download and upload user rankings are deliberately directional: Downloads ranks remote users we downloaded from, while Uploads ranks remote users we uploaded to. All four ranking tabs retain the top 20 rows for the selected history range and scroll inside the ranking panel.
 
 - Dashboard activity curves use bounded Bezier smoothing so sample values stay exact without angular joins.
 - The workspace itself owns vertical scrolling, so the scrollbar stays at the browser edge on every tab.

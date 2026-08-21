@@ -197,7 +197,6 @@ input[type="checkbox"]:indeterminate {
 }
 .search-bar.split { height: 54px; }
 .search-bar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.search-glyph { --app-icon-size: 20px; width: 44px; flex: 0 0 44px; display: grid; place-items: center; color: var(--muted); }
 .search-bar input {
   min-width: 0; flex: 1; border: 0; outline: 0; padding: 0 12px;
   background: transparent; color: var(--text); font-size: 0.86rem;
@@ -517,7 +516,7 @@ input[type="checkbox"]:indeterminate {
   position: absolute;
   z-index: 12;
   top: calc(100% + 5px);
-  right: 0;
+  left: 0;
   width: max-content;
   min-width: 160px;
   display: grid;
@@ -762,6 +761,10 @@ input[type="checkbox"]:indeterminate {
   font-size: 1rem;
   letter-spacing: 0.07em;
 }
+.search-settings-spacer {
+  width: 47px;
+  flex: 0 0 47px;
+}
 .search-result-mode-button:hover,
 .search-settings-button:hover,
 .search-settings-button.active { background: var(--surface-subtle); }
@@ -840,16 +843,13 @@ input[type="checkbox"]:indeterminate {
 }
 .search-config-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 8px;
 }
-.search-config-header strong,
-.search-config-header span { display: block; }
-.search-config-header strong { font-size: 0.95rem; font-weight: 650; }
-.search-config-header span { margin-top: 2px; color: var(--muted); font-size: 0.75rem; }
-.search-config-header > button {
+.search-config-header strong { display: block; font-size: 0.95rem; font-weight: 650; }
+.search-config-close {
+  margin-left: auto;
   border: 0;
   padding: 0 3px;
   background: transparent;
@@ -857,31 +857,35 @@ input[type="checkbox"]:indeterminate {
   font-size: 1.25rem;
 }
 .search-config-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 10px 0 0;
-  border-bottom: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
 }
 .search-config-tabs button {
-  min-height: 34px;
-  padding: 0 11px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
 }
-.search-config-tabs button:hover { color: var(--text); }
-.search-config-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
+.search-config-tabs button:hover { color: var(--text); background: var(--surface-raised); }
+.search-config-tabs button.active { background: var(--accent-soft); color: var(--accent-text); }
 .search-config-columns {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 300px;
   gap: 0 28px;
 }
 .search-config-section {
   padding: 16px 0;
   border-bottom: 1px solid var(--border);
 }
+.search-config-columns > div > .search-config-section:last-child { border-bottom: 0; }
 .search-config-section h3 { margin: 0 0 14px; font-size: 0.875rem; font-weight: 650; }
 .config-label {
   display: block;
@@ -896,7 +900,7 @@ input[type="checkbox"]:indeterminate {
   gap: 8px;
   margin-bottom: 11px;
 }
-.format-buttons { display: flex; flex: 1; flex-wrap: wrap; gap: 5px; }
+.format-buttons { display: flex; flex: 1; flex-wrap: nowrap; gap: 5px; }
 .format-buttons button,
 .format-view-button {
   min-height: 30px; padding: 5px 9px;
@@ -1027,6 +1031,7 @@ input[type="checkbox"]:indeterminate {
   .topbar-inner { padding-inline: 12px; }
   .search-config-columns { grid-template-columns: 1fr; }
   .search-config-popover { width: 100%; }
+  .format-buttons { flex-wrap: wrap; }
 }
 
 @media (max-width: 560px) {
@@ -1102,14 +1107,14 @@ input[type="checkbox"]:indeterminate {
 .ranking-tabs button { height: 32px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 0.72rem; }
 .ranking-tabs button:hover { color: var(--text); }.ranking-tabs button.active { border-color: var(--accent); color: var(--text); }
 .ranking-tabs > span { margin: 0 3px 10px auto; color: var(--faint); font-size: 0.64rem; }
-.dashboard-ranking-table { display: block; width: 100%; padding: 4px 12px 9px; }
+.dashboard-ranking-table { display: block; width: 100%; max-height: 250px; overflow-y: auto; scrollbar-gutter: stable; padding: 4px 12px 9px; }
 .dashboard-ranking-row { display: grid; width: 100%; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid var(--border); font-size: 0.74rem; }
 .dashboard-ranking-row:last-child { border-bottom: 0; }
-.dashboard-ranking-row.heading { color: var(--faint); font-size: 0.64rem; }
+.dashboard-ranking-row.heading { position: sticky; top: 0; z-index: 2; background: var(--surface); color: var(--faint); font-size: 0.64rem; }
 .dashboard-ranking-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .peers-table .dashboard-ranking-row { grid-template-columns: 24px minmax(0, 1fr) 92px 48px; }
 .content-table .dashboard-ranking-row { grid-template-columns: 24px minmax(0, 1fr) 78px 48px; }
-.errors-table .dashboard-ranking-row { grid-template-columns: minmax(0, 1fr) 60px 84px; }
+.errors-table .dashboard-ranking-row { grid-template-columns: 24px minmax(0, 1fr) 60px 84px; }
 .dashboard-ranking-row > span:nth-last-child(-n+2) { text-align: right; }
 .transfer-summary-panel, .recent-activity-panel, .health-panel { padding: 14px; }
 .summary-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 12px; }
@@ -1917,7 +1922,6 @@ input[type="checkbox"]:indeterminate {
 .transfer-card-footer.cancelled .transfer-progress-track > span { background: var(--muted); }
 
 /* User browser */
-.user-browser-global-search .search-glyph { color: var(--muted); }
 
 .user-browser-page { padding-bottom: 70px; }
 .user-browser-heading {
@@ -2282,6 +2286,12 @@ input[type="checkbox"]:indeterminate {
 }
 
 /* Clickable peer/user names */
+.username-link-control {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: baseline;
+}
 .username-link {
   display: inline;
   max-width: 100%;
@@ -2303,6 +2313,35 @@ input[type="checkbox"]:indeterminate {
 .username-link:hover,
 .username-link:focus-visible { text-decoration-color: currentColor; }
 .username-link:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: 2px; }
+.username-action-menu {
+  position: fixed;
+  z-index: 80;
+  width: 154px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+}
+.username-action-menu button {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.74rem;
+  text-align: left;
+}
+.username-action-menu button:hover,
+.username-action-menu button:focus-visible { background: var(--surface-subtle); outline: none; }
+.username-action-menu .app-icon { --app-icon-size: 16px; color: var(--muted); }
 
 /* The peer row stays a large collapse target while the username is its own link. */
 .result-peer-header { position: relative; }
@@ -2319,33 +2358,46 @@ input[type="checkbox"]:indeterminate {
 }
 .peer-header-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .result-peer-header > :not(.peer-header-toggle) { position: relative; z-index: 1; pointer-events: none; }
-.peer-identity > .username-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; font-weight: 650; pointer-events: auto; }
+.peer-identity > .username-link-control { min-width: 0; pointer-events: auto; }
+.peer-identity .username-link { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; font-weight: 650; }
 
+.dashboard-peer-name .username-link-control { display: block; width: 100%; }
 .dashboard-peer-name .username-link { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-feed p span .username-link { color: inherit; }
 
 
 /* Shared global-search mode picker */
 .mode-icon-toggle {
-  position: relative;
-  flex: 0 0 auto;
+  position: absolute;
+  z-index: 4;
+  top: 1px;
+  left: 1px;
+  width: 52px;
+  height: 52px;
 }
 .mode-icon-button {
-  width: 54px;
-  flex-basis: 54px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 11px 0 0 11px;
+  background: transparent;
+  color: var(--text);
 }
-.mode-icon-button .app-icon { --app-icon-size: 20px; }
+.mode-icon-button:hover,
 .mode-icon-button[aria-expanded="true"] {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
   background: var(--surface-subtle);
 }
+.search-bar.has-mode-picker { padding-left: 52px; }
+.mode-icon-button .app-icon { --app-icon-size: 20px; }
 .mode-icon-menu {
   position: absolute;
   z-index: 70;
   top: calc(100% + 7px);
-  right: 0;
+  left: 0;
   width: max-content;
   min-width: 150px;
   display: grid;
@@ -2388,7 +2440,9 @@ input[type="checkbox"]:indeterminate {
 .mode-icon-menu button.active .mode-menu-icon { color: var(--text); }
 
 @media (max-width: 560px) {
-  .mode-icon-button { width: 48px; flex-basis: 48px; }
+  .mode-icon-toggle,
+  .mode-icon-button { width: 48px; }
+  .search-bar.has-mode-picker { padding-left: 48px; }
 }
 
 /* Milestone 37: explicit backend/resource-state semantics */

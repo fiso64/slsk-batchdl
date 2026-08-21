@@ -8,13 +8,14 @@
   import PeerItemGroup from '../components/items/PeerItemGroup.svelte';
   import TransferItemActionButton from '../components/items/TransferItemActionButton.svelte';
   import type { PrototypeScenario } from '../mock/types';
+  import type { UserLinkActions } from '../prototype/navigation';
   import type { PrototypeMutationState, ProposedBulkActionRequestDto, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
   import { basename, type FolderItemFile, type TransferPresentation } from '../prototype/items';
   import { resourceStateForScenario } from '../prototype/resource-state';
   import { uploadsForScenario, type UploadEntry, type UploadFolderEntry } from '../prototype/uploads';
 
-  interface Props { scenario: PrototypeScenario; onopenuser: (username: string) => void; }
-  let { scenario, onopenuser }: Props = $props();
+  interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
+  let { scenario, userActions }: Props = $props();
 
   let cancelledTransfers = $state<Set<string>>(new Set());
   let removedTransfers = $state<Set<string>>(new Set());
@@ -119,7 +120,7 @@
   {:else}
     <div class="transfer-peer-list">
       {#each groups as group (group.key)}
-        <PeerItemGroup peer={{ username: group.peer }} itemCount={group.transferCount} itemNoun="upload" {onopenuser}>
+        <PeerItemGroup peer={{ username: group.peer }} itemCount={group.transferCount} itemNoun="upload" {userActions}>
           {#each group.items as item (item.id)}
             {#if item.kind === 'file'}
               <FileItemCard path={item.path} sizeBytes={item.sizeBytes} transfer={item.transfer}>

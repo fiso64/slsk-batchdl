@@ -52,7 +52,7 @@
 {#if view === 'buttons'}
   <div class="format-control-row">
     <div class="format-buttons">
-      <button type="button" class:active={values.length === 0} disabled={values.length === 0} onclick={clearFormats}>All</button>
+      <button type="button" class:active={values.length === 0} disabled={values.length === 0} onclick={clearFormats}>Any</button>
       {#each SEARCH_FORMATS as format}
         <button type="button" class:active={values.includes(format)} onclick={() => toggleFormat(format)}>{format}</button>
       {/each}

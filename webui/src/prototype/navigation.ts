@@ -11,3 +11,9 @@ export const navigationItems = [
 ] as const satisfies readonly { id: string; label: string; icon: AppIconName; placement: 'primary' | 'secondary' }[];
 
 export type PageId = (typeof navigationItems)[number]['id'];
+
+export interface UserLinkActions {
+  profile: (username: string) => void;
+  shares: (username: string) => void;
+  message: (username: string) => void;
+}

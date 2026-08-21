@@ -35,8 +35,8 @@ export interface ProposedDashboardAnalyticsDto {
     partialRetention: boolean;
   };
   semantics: {
-    peerBytes: 'terminal-and-progress-transfer-bytes-by-remote-username';
-    peerFiles: 'distinct-terminal-transfer-ids';
+    peerBytes: 'terminal-and-progress-transfer-by-direction-and-remote-username';
+    peerFiles: 'distinct-terminal-transfer-ids-by-direction';
     contentIdentity: 'logical-download-source-path';
     errorPopulation: 'terminal-transfer-attempt-failures';
     activityOrdering: 'occurred-at-descending';
@@ -44,7 +44,8 @@ export interface ProposedDashboardAnalyticsDto {
   };
   downloadMbps: number[];
   uploadMbps: number[];
-  peers: ProposedDashboardPeerAggregateDto[];
+  downloadPeers: ProposedDashboardPeerAggregateDto[];
+  uploadPeers: ProposedDashboardPeerAggregateDto[];
   content: ProposedDashboardContentAggregateDto[];
   errors: ProposedDashboardErrorAggregateDto[];
   summary: ProposedDashboardSummaryDto;
