@@ -1189,7 +1189,9 @@ public class RemoteCliBackendTests
             var firstPosition = monitor.ClientStore.GetPosition(StateStreamScopeDto.Daemon);
             Assert.IsNotNull(firstPosition);
 
-            await firstApp.DisposeAsync();
+            // Stop the host before disposing its service provider so SignalR can
+            // run the disconnect callback during this deliberate daemon restart.
+            await firstApp.StopAsync();
 
             await using var secondApp = BuildServer(options, url);
             await secondApp.StartAsync();

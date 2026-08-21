@@ -79,12 +79,20 @@ public class EngineStateStoreTests
             releaseFirstUpsert.Wait(TimeSpan.FromSeconds(5));
         };
 
-        var firstCompletion = Task.Run(() => ExecutionCompleted(server, first));
+        var firstCompletion = Task.Factory.StartNew(
+            () => ExecutionCompleted(server, first),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         var secondCompletion = Task.CompletedTask;
         try
         {
             Assert.IsTrue(firstUpsertEntered.Wait(TimeSpan.FromSeconds(5)));
-            secondCompletion = Task.Run(() => ExecutionCompleted(server, second));
+            secondCompletion = Task.Factory.StartNew(
+                () => ExecutionCompleted(server, second),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             await secondCompletion.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally

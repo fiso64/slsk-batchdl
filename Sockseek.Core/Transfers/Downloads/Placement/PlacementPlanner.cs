@@ -139,7 +139,10 @@ public sealed class PlacementPlanner
 
     private static string SafeComponent(string component, string replacement)
     {
-        string safe = component.ReplaceInvalidChars(replacement).Trim(' ', '.');
+        // Use one portable destination contract regardless of the daemon host.
+        // A share downloaded on Linux may later be accessed from Windows, and
+        // collision suffixes must not change with the test/runtime platform.
+        string safe = component.ReplaceInvalidChars(replacement, windows: true).Trim(' ', '.');
         if (safe.Length == 0 || safe is "." or "..")
             safe = "_";
 

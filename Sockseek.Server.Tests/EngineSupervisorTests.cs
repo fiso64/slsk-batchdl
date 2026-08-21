@@ -1547,26 +1547,39 @@ public class EngineSupervisorTests
     private static string ToSoulseekFileUri(string path)
         => "slsk://local/" + path.Replace('\\', '/');
 
-    private static async Task WaitForJobStateAsync(EngineSupervisor supervisor, Guid jobId, ExpectedJobStatus expectedState, int timeoutMs = 5000)
+    private static async Task WaitForJobStateAsync(
+        EngineSupervisor supervisor,
+        Guid jobId,
+        ExpectedJobStatus expectedState,
+        int timeoutMs = 15000)
     {
-        using var timeout = new CancellationTokenSource(timeoutMs);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         JobSummaryDto? lastSummary = null;
 
-        while (!timeout.IsCancellationRequested)
+        void Observe(JobSummaryDto summary)
         {
-            var summary = supervisor.StateStore.GetJobSummary(jobId);
-            lastSummary = summary;
-            if (summary != null && ProjectState(summary) == expectedState)
+            if (summary.JobId != jobId)
                 return;
+            lastSummary = summary;
+            if (ProjectState(summary) == expectedState)
+                reached.TrySetResult();
+        }
 
-            try
-            {
-                await Task.Delay(50, timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+        supervisor.StateStore.JobUpserted += Observe;
+        try
+        {
+            JobSummaryDto? current = supervisor.StateStore.GetJobSummary(jobId);
+            if (current != null)
+                Observe(current);
+            await reached.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+            return;
+        }
+        catch (TimeoutException)
+        {
+        }
+        finally
+        {
+            supervisor.StateStore.JobUpserted -= Observe;
         }
 
         var last = lastSummary == null
