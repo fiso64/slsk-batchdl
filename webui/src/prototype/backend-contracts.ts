@@ -117,21 +117,16 @@ export interface ProposedShareTreeFilterRequestDto {
 }
 
 /**
- * Proposed denormalized logical timeline projection. It is not a current API DTO;
- * its purpose is to make the prototype's card contract explicit.
+ * Proposed optional metadata carried by generic transfer DTOs in both directions.
+ * The daemon already knows these fields for download candidates and upload share
+ * catalog entries; production should expose them without WebUI fan-out.
  */
-export interface ProposedLogicalDownloadTimelineItemDto {
-  jobId: string;
-  workflowId: string | null;
-  parentJobId: string | null;
-  sourceJobId: string | null;
-  kind: 'track' | 'album' | 'remote-file' | 'remote-directory';
-  createdAtUtc: string;
-  username: string | null;
-  sourcePath: string;
-  lifetime: PrototypeDataLifetime;
-  detailAvailability: 'full' | 'summary-only';
-  availableActions: ResourceActionDto[];
+export interface ProposedTransferFileMetadataDto {
+  extension: string | null;
+  bitrateKbps: number | null;
+  bitDepth: number | null;
+  sampleRateHz: number | null;
+  lengthSeconds: number | null;
 }
 
 /** Proposed bulk mutation contract. Scope is deliberately explicit. */
@@ -140,7 +135,6 @@ export interface ProposedBulkActionRequestDto {
   scope: 'current-view';
   action: 'cancel' | 'archive-terminal';
   filter: 'all' | 'queued' | 'in-progress' | 'terminal';
-  logicalItems: boolean;
 }
 
 export interface ProposedBulkActionResponseDto {

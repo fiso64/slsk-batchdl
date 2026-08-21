@@ -6,7 +6,7 @@
   import Chat from './pages/Chat.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import Downloads from './pages/Downloads.svelte';
-  import Search from './pages/Search.svelte';
+  import Jobs from './pages/Jobs.svelte';
   import Settings from './pages/Settings.svelte';
   import Uploads from './pages/Uploads.svelte';
   import Users from './pages/Users.svelte';
@@ -38,12 +38,12 @@
     search = { ...next };
   }
 
-  function pagePath(page: Exclude<PageId, 'search' | 'users'>): string {
+  function pagePath(page: Exclude<PageId, 'jobs' | 'users'>): string {
     return `/${page}`;
   }
 
-  function searchResultPath(id: string): string {
-    return `/searches/${encodeURIComponent(id)}`;
+  function jobPath(id: string): string {
+    return `/jobs/${encodeURIComponent(id)}`;
   }
 
   function userPath(username: string, view: UserBrowseView): string {
@@ -74,25 +74,25 @@
     const segments = path.split('/').filter(Boolean);
     const root = segments[0] ?? '';
 
-    if (root === 'searches' && segments[1]) {
+    if (root === 'jobs' && segments[1]) {
       const id = decodeSegment(segments[1]);
       const record = searches.find((candidate) => candidate.id === id);
       if (record) {
-        activePage = 'search';
+        activePage = 'jobs';
         searchView = 'results';
         activeSearchId = record.id;
         search = { ...record.draft };
-        return searchResultPath(record.id);
+        return jobPath(record.id);
       }
-      activePage = 'search';
+      activePage = 'jobs';
       searchView = 'list';
-      return '/search';
+      return '/jobs';
     }
 
-    if (root === 'search') {
-      activePage = 'search';
+    if (root === 'jobs') {
+      activePage = 'jobs';
       searchView = 'list';
-      return '/search';
+      return '/jobs';
     }
 
     if (root === 'users') {
@@ -127,19 +127,19 @@
   });
 
   function navigate(page: PageId): void {
-    if (page === 'search') {
-      if (activePage === 'search' && searchView === 'results') {
+    if (page === 'jobs') {
+      if (activePage === 'jobs' && searchView === 'results') {
         searchView = 'list';
-        setBrowserPath('/search');
+        setBrowserPath('/jobs');
         return;
       }
 
-      activePage = 'search';
+      activePage = 'jobs';
       if (searchView === 'results' && activeSearchId && searches.some((record) => record.id === activeSearchId)) {
-        setBrowserPath(searchResultPath(activeSearchId));
+        setBrowserPath(jobPath(activeSearchId));
       } else {
         searchView = 'list';
-        setBrowserPath('/search');
+        setBrowserPath('/jobs');
       }
       return;
     }
@@ -163,7 +163,7 @@
     const nextUsername = getUserBrowseFixture(nextScenario).profile.username;
     userBrowse = { ...userBrowse, query: nextUsername };
     if (activePage === 'users') setBrowserPath(userPath(nextUsername, userView), true);
-    if (activePage === 'search') setBrowserPath(searchView === 'results' && activeSearchId ? searchResultPath(activeSearchId) : '/search', true);
+    if (activePage === 'jobs') setBrowserPath(searchView === 'results' && activeSearchId ? jobPath(activeSearchId) : '/jobs', true);
   }
 
   function useUserBrowse(next: UserBrowseDraft): void {
@@ -214,14 +214,14 @@
     activeSearchId = record.id;
     searchView = 'results';
     search = { ...record.draft };
-    activePage = 'search';
-    setBrowserPath(searchResultPath(record.id));
+    activePage = 'jobs';
+    setBrowserPath(jobPath(record.id));
   }
 
   function showSearchList(): void {
     searchView = 'list';
-    activePage = 'search';
-    setBrowserPath('/search');
+    activePage = 'jobs';
+    setBrowserPath('/jobs');
   }
 
   function submitSearch(next: SearchDraft, conditions: PrototypeSearchConditions): void {
@@ -239,8 +239,8 @@
     activeSearchId = rerun.id;
     searchView = 'results';
     search = { ...rerun.draft };
-    activePage = 'search';
-    setBrowserPath(searchResultPath(rerun.id), true);
+    activePage = 'jobs';
+    setBrowserPath(jobPath(rerun.id), true);
   }
 </script>
 
@@ -259,8 +259,8 @@
 >
   {#if activePage === 'dashboard'}
     <Dashboard {scenario} {userActions} />
-  {:else if activePage === 'search'}
-    <Search
+  {:else if activePage === 'jobs'}
+    <Jobs
       {search}
       {scenarioId}
       bind:searches

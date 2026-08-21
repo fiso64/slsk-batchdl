@@ -52,6 +52,7 @@
     aria-haspopup="menu"
     aria-expanded={menuOpen}
     title={`${current?.label ?? value} · choose mode`}
+    onpointerdown={(event) => event.preventDefault()}
     onclick={toggleMenu}
   >
     {#if current}

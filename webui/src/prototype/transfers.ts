@@ -1,4 +1,62 @@
 import type { TransferStateDto } from '../mock/types';
+import type { PrototypeDataLifetime } from './backend-contracts';
+import type { AudioAttributes, FolderItemFile, TransferPresentation } from './items';
+
+export interface TransferTimelineFileEntry {
+  kind: 'file';
+  id: string;
+  path: string;
+  sizeBytes: number;
+  audio?: AudioAttributes;
+  lifetime: PrototypeDataLifetime;
+  sourceTransferIds: string[];
+  transfer: TransferPresentation;
+}
+
+export interface TransferTimelineFolderEntry {
+  kind: 'folder';
+  id: string;
+  path: string;
+  sizeBytes: number;
+  files: FolderItemFile[];
+  totalFileCount?: number;
+  lifetime: PrototypeDataLifetime;
+  sourceTransferIds: string[];
+  transfer: TransferPresentation;
+}
+
+export type TransferTimelineEntry = TransferTimelineFileEntry | TransferTimelineFolderEntry;
+
+export interface TransferTimelinePeerGroup {
+  key: string;
+  peer: string;
+  /** Number of underlying file transfers represented by this adjacent run. */
+  transferCount: number;
+  items: TransferTimelineEntry[];
+}
+
+
+export function limitTransferGroups(groups: TransferTimelinePeerGroup[], itemLimit: number): TransferTimelinePeerGroup[] {
+  let remaining = Math.max(0, itemLimit);
+  const limited: TransferTimelinePeerGroup[] = [];
+  for (const group of groups) {
+    if (remaining <= 0) break;
+    const items = group.items.slice(0, remaining);
+    if (!items.length) continue;
+    const transferCount = items.reduce((total, item) => total + (item.kind === 'folder' ? (item.totalFileCount ?? item.files.length) : 1), 0);
+    limited.push({ ...group, items, transferCount });
+    remaining -= items.length;
+  }
+  return limited;
+}
+
+export function transferGroupItemCount(groups: TransferTimelinePeerGroup[]): number {
+  return groups.reduce((total, group) => total + group.items.length, 0);
+}
+
+export function isTerminalTransfer(transfer?: TransferPresentation): boolean {
+  return transfer?.tone === 'complete' || transfer?.tone === 'failed' || transfer?.tone === 'cancelled';
+}
 
 function numeric(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined) return null;

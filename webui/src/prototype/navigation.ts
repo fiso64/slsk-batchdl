@@ -2,7 +2,7 @@ import type { AppIconName } from './icons';
 
 export const navigationItems = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard', placement: 'primary' },
-  { id: 'search', label: 'Search', icon: 'search', placement: 'primary' },
+  { id: 'jobs', label: 'Jobs', icon: 'jobs', placement: 'primary' },
   { id: 'downloads', label: 'Downloads', icon: 'download', placement: 'primary' },
   { id: 'uploads', label: 'Uploads', icon: 'upload', placement: 'primary' },
   { id: 'users', label: 'Users', icon: 'user', placement: 'primary' },

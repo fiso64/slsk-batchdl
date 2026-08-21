@@ -1,8 +1,8 @@
 import type { PrototypeScenario, TransferStateDto } from '../mock/types';
 import { groupAdjacentBy } from './grouping';
-import type { FolderItemFile, TransferPresentation } from './items';
+import type { AudioAttributes, FolderItemFile, TransferPresentation } from './items';
 import type { PrototypeDataLifetime, ResourceActionDto } from './backend-contracts';
-import { formatEta, formatSpeed, progressPercent } from './transfers';
+import { formatEta, formatSpeed, progressPercent, type TransferTimelineEntry, type TransferTimelinePeerGroup } from './transfers';
 import { prototypeUuid } from './ids';
 
 interface UploadTransferView {
@@ -11,6 +11,7 @@ interface UploadTransferView {
   path: string;
   folderPath: string;
   sizeBytes: number;
+  audio?: AudioAttributes;
   transferredBytes: number;
   bytesPerSecond: number;
   requestedAtUtc: string;
@@ -19,35 +20,9 @@ interface UploadTransferView {
   transfer: TransferPresentation;
 }
 
-export interface UploadFileEntry {
-  kind: 'file';
-  id: string;
-  path: string;
-  sizeBytes: number;
-  lifetime: PrototypeDataLifetime;
-  sourceTransferIds: string[];
-  transfer: TransferPresentation;
-}
-
-export interface UploadFolderEntry {
-  kind: 'folder';
-  id: string;
-  path: string;
-  sizeBytes: number;
-  files: FolderItemFile[];
-  lifetime: PrototypeDataLifetime;
-  sourceTransferIds: string[];
-  transfer: TransferPresentation;
-}
-
-export type UploadEntry = UploadFileEntry | UploadFolderEntry;
-
-export interface UploadPeerGroup {
-  key: string;
-  peer: string;
-  transferCount: number;
-  items: UploadEntry[];
-}
+export type UploadEntry = TransferTimelineEntry;
+export type UploadFolderEntry = Extract<TransferTimelineEntry, { kind: 'folder' }>;
+export type UploadPeerGroup = TransferTimelinePeerGroup;
 
 function stableNumber(value: string): number {
   let hash = 2166136261;
@@ -229,6 +204,7 @@ function projectFolderRun(
       id: file.id,
       path: file.path,
       sizeBytes: file.sizeBytes,
+      audio: file.audio,
       lifetime: file.lifetime,
       sourceTransferIds: [file.id],
       transfer: file.transfer,
@@ -246,6 +222,7 @@ function projectFolderRun(
       id: file.id,
       relativePath: basename(file.path),
       sizeBytes: file.sizeBytes,
+      audio: file.audio,
       lifetime: file.lifetime,
       sourceTransferIds: [file.id],
       transfer: file.transfer,

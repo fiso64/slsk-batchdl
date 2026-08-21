@@ -55,8 +55,8 @@
   }
 
   const searchModeOptions = [
-    { value: 'track', label: 'Track', icon: 'track' as const },
-    { value: 'album', label: 'Album', icon: 'album' as const },
+    { value: 'track', label: 'Track Search', icon: 'track' as const },
+    { value: 'album', label: 'Album Search', icon: 'album' as const },
   ];
 
   const userBrowseModeOptions = [
@@ -207,7 +207,7 @@
       </div>
       <span class="search-settings-spacer" aria-hidden="true"></span>
     {:else}
-      <div class="search-entry" onfocusin={() => (searchEngaged = true)}>
+      <div class="search-entry">
         <ModeIconToggle
           value={value.resultMode}
           options={searchModeOptions}
@@ -215,7 +215,7 @@
           onchange={setResultMode}
         />
         {#if value.mode === 'simple'}
-          <div class="search-bar simple has-mode-picker">
+          <div class="search-bar simple has-mode-picker" onfocusin={() => (searchEngaged = true)}>
             <input
               id="global-search-simple"
               value={value.query}
@@ -230,7 +230,7 @@
             <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
           </div>
         {:else}
-          <div class="search-bar split has-mode-picker">
+          <div class="search-bar split has-mode-picker" onfocusin={() => (searchEngaged = true)}>
             <label class="search-field">
               <span>artist</span>
               <input

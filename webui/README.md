@@ -58,7 +58,7 @@ Durable UX rules:
 The shell currently has seven destinations:
 
 - **Dashboard**
-- **Search**
+- **Jobs**
 - **Downloads**
 - **Uploads**
 - **Users**
@@ -67,7 +67,7 @@ The shell currently has seven destinations:
 
 Shares live as a subview of **Users** rather than as a separate top-level destination. Transfer history lives in Downloads/Uploads, and other historical information should generally remain close to the feature that produced it.
 
-A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and returns to Search. A shared icon mode picker sits at the left edge of the query bar for **Track / Album** (or **User / Shares** while browsing users); clicking it opens the explicit mode menu. `•••` opens advanced search conditions where applicable. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
+A global search field remains available in the header on every page. Pressing `/` focuses it and Enter submits the current query and opens its job in Jobs. A shared icon mode picker sits at the left edge of the query bar for **Track Search / Album Search** (or **User / Shares** while browsing users); clicking it opens the explicit mode menu. `•••` opens advanced search conditions where applicable. Applied conditions appear as removable pills in a focused overlay aligned to the query bar.
 
 ### Morphing search
 
@@ -96,9 +96,9 @@ Ranking exposes preferred formats, min/max bitrate, min/max sample rate, min/max
 Filtering and Ranking both expose sample-rate and bit-depth ranges directly, matching the generated API's min/max condition fields. The adapter in `src/prototype/search-config.ts` maps Filtering to `necessaryCond` and Ranking to `preferredCond`.
 
 
-## Search tab exploration
+## Jobs exploration
 
-The Search tab now has persistent prototype state with two views: a newest-first Searches list and a projected Results view. Submitting the global search creates a search and opens its results; opening an existing search restores its Track or Album projection. The back button returns to Searches, and clicking Search in the sidebar while already viewing results does the same. Leaving Search and returning from another tab preserves the last Search subview.
+Jobs is the home for user-initiated daemon jobs. The current prototype renders search jobs only: a newest-first Jobs list and the selected search job's Results view. Search-job type labels are **Track Search** and **Album Search** so file/folder transfer terminology stays separate from job semantics. Submitting the global search creates a job and opens its results; the back button returns to Jobs, and leaving/returning preserves the last Jobs subview.
 
 Search result refinement is deliberately compact: text filtering, sorting, and a **Conditions** button share one row. Applied condition pills render only when needed and reserve no empty row when a search has no hard filters. The Conditions button opens the same `SearchConfigPanel` component used by the global search rather than a second ad-hoc UI; its Ranking tab is available there as well. Text, Conditions, Ranking, and Sort changes each request a new daemon-owned projection over the complete retained result set and reset result pagination; they are not client-side operations over pages already received. The mock adapter responds synchronously only because the prototype is unwired.
 
@@ -121,15 +121,15 @@ Opening/submitting the Shares view should itself acquire or reacquire the user's
 
 ## Downloads exploration
 
-Search and Downloads now share generic `FileItemCard` and `FolderItemCard` presentation primitives. Track is a file specialization and Album is a folder specialization in the domain/view-model layer rather than a separate visual implementation. Search composes selection/preference behavior around the primitives; Downloads composes transfer state, progress, speed, ETA, cancellation, and per-file transfer state around the same primitives.
+Downloads and Uploads are raw transfer views built from the same generic file/folder presentation model. `TransferTimeline`, `FileItemCard`, `FolderItemCard`, `PeerItemGroup`, transfer status/progress, contextual cancel/remove actions, and page limiting are shared. Optional file metadata is presentation data rather than a download-only assumption: cards render it when present and collapse cleanly when absent. Logical Song/Album job types belong in Jobs, not in transfer rendering.
 
-The Downloads page is one chronological stream sorted by job creation time, newest first. Track and Album jobs are intentionally mixed in that stream; there is no separate Active/Recent split. Adjacent jobs from the same peer share the same reusable collapsible peer group used by Search, but peers are never regrouped globally because that would disturb chronological order. Queued, active, completed, failed, and cancelled jobs remain in place and are distinguished on the cards themselves.
+Downloads is one newest-first chronological file/folder stream. Adjacent transfers from the same peer share a collapsible peer group but are never regrouped globally. Folder cards are a transfer presentation and must not require the renderer to know whether the originating job was an Album, remote directory, or another future job type. Queued, active, completed, failed, and cancelled transfers remain in place and are distinguished on the cards themselves.
 
 ## Uploads exploration
 
-Soulseek uploads are individual file transfers, so the WebUI does not invent an Album object for them. Uploads are sorted by request time and first grouped into adjacent peer runs. Inside each peer run, adjacent transfers with the same normalized remote parent path are projected as one folder card when there are two or more files; a one-file run remains a file card. Matching peers or folders separated by other timeline items are not merged.
+Uploads follows the same transfer timeline and rendering rules as Downloads. Soulseek exposes upload work as individual file transfers, so adjacent same-peer transfers with the same normalized remote parent path may be projected into a folder card; a one-file run remains a file. Matching peers or folders separated by other timeline items are not merged.
 
-This projection uses the same `FileItemCard`, `FolderItemCard`, `PeerItemGroup`, and transfer cancellation affordances as Downloads. Folder size/progress/speed are derived from the child transfers. Folder cancellation is a UI bulk action over currently cancellable child transfers, while individual rows cancel by transfer id. Cancellability comes from the transfer DTO's `availableActions` rather than being inferred from a status string; the daemon exposes `POST /api/transfers/{transferId}/cancel` for queued or active uploads.
+Folder size/progress/speed are derived from child transfers. Folder cancellation is a UI bulk action over cancellable children, while individual rows cancel by transfer id. Current upload DTOs do not carry audio attributes, so Uploads normally omits that metadata; the shared transfer model already accepts it if the daemon later exposes generic transfer file metadata.
 
 
 ## Chat exploration
@@ -172,6 +172,7 @@ src/
     ResultFilterControl.svelte
     SelectionToolbar.svelte
     TransferBulkActions.svelte
+    TransferTimeline.svelte
     UsernameLink.svelte
     SearchConditionPills.svelte
     SearchConfigPanel.svelte
@@ -190,7 +191,7 @@ src/
     types.ts
   pages/
     Dashboard.svelte
-    Search.svelte
+    Jobs.svelte
     Users.svelte
     Downloads.svelte
     Uploads.svelte
@@ -225,7 +226,7 @@ src/
 
 The next iterations should continue to optimize for **learning what Sockseek should feel like**, not for preserving prototype code.
 
-The global search-type control is icon-only and sits at the left edge of the query bar, replacing the generic search/user glyph. Search uses Track/Album and Users uses User/Shares through the same `ModeIconToggle` component. Clicking the icon opens a compact checked menu for explicit selection; modes are not cycled implicitly. The split/merge control remains embedded in the query bar.
+The global search-type control is icon-only and sits at the left edge of the query bar, replacing the generic search/user glyph. Content search uses Track Search/Album Search and Users uses User/Shares through the same `ModeIconToggle` component. Clicking the icon only opens the checked mode menu; it must not engage an otherwise unfocused query bar, and when the query is already focused the picker must not steal that focus. The picker menu renders above the focused-condition overlay. Modes are not cycled implicitly. The split/merge control remains embedded in the query bar.
 
 Applied search conditions appear in a focused overlay aligned to the query bar. Once engaged, the overlay remains open while interacting with the query controls, result-mode toggle, settings button, or settings panel; it closes on an outside click or Escape from the search controls. A source comment marks where future online metadata suggestions (for example MusicBrainz results) can be inserted beneath the pills once that workflow is supported.
 
@@ -253,6 +254,6 @@ Resource views should keep loading, empty, unavailable, offline, and terminal st
 
 ## Prototype URL/history behavior
 
-Top-level destinations now synchronize with the browser pathname (`/dashboard`, `/search`, `/downloads`, `/uploads`, `/users/...`, `/chat`, `/settings`) using the native History API. Search results use `/searches/{id}`. User profile/share subviews use `/users/{username}` and `/users/{username}/shares`. `popstate` restores the matching prototype view so browser Back/Forward works without a routing dependency. Dynamically created mock searches remain in-memory prototype state, so a hard reload of a newly generated `/searches/{id}` that is not one of the built-in fixtures falls back to `/search`.
+Top-level destinations now synchronize with the browser pathname (`/dashboard`, `/jobs`, `/downloads`, `/uploads`, `/users/...`, `/chat`, `/settings`) using the native History API. Job detail views use `/jobs/{id}`. User profile/share subviews use `/users/{username}` and `/users/{username}/shares`. `popstate` restores the matching prototype view so browser Back/Forward works without a routing dependency. Dynamically created mock jobs remain in-memory prototype state, so a hard reload of a newly generated `/jobs/{id}` that is not one of the built-in fixtures falls back to `/jobs`.
 
 Search Results and Shares no longer reserve a select-visible toolbar row. Selection remains per item/folder, and selected items produce a floating Download action with a neighboring Deselect all control. Downloads and Uploads share `TransferBulkActions` for remove-completed and scoped bulk cancellation, while individual terminal transfer entries reuse the same contextual action slot with a trash icon instead of a cancel icon.

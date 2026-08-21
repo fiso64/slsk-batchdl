@@ -141,7 +141,7 @@ input[type="checkbox"]:indeterminate {
 .sidebar-nav button:hover, .settings-nav:hover { background: var(--surface-subtle); color: var(--text); }
 .sidebar-nav button.active, .settings-nav.active { background: var(--accent-soft); color: var(--text); }
 .nav-icon { --app-icon-size: 20px; width: 20px; flex: 0 0 20px; display: grid; place-items: center; line-height: 1; }
-.nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nav-label { min-width: 0; white-space: nowrap; }
 .nav-count { margin-left: auto; color: var(--muted); font-size: 0.75rem; }
 .nav-count.unread {
   min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 999px;
@@ -2516,3 +2516,27 @@ input[type="checkbox"]:indeterminate {
 .draft-target .chat-destination-copy small { color: var(--accent); }
 .profile-section-states { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 22px 14px; color: var(--warning); font-size: 0.66rem; }
 .profile-section-states span { padding: 4px 7px; border-radius: 7px; background: color-mix(in srgb, var(--warning) 9%, var(--surface)); }
+
+/* Jobs: active search-job phases use the same blue activity treatment. */
+.search-status-badge.searching,
+.search-status-badge.receiving {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.search-status-badge.searching i,
+.search-status-badge.receiving i {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  background: transparent;
+  animation: search-job-spin 700ms linear infinite;
+}
+@keyframes search-job-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .search-status-badge.searching i,
+  .search-status-badge.receiving i { animation-duration: 1400ms; }
+}
+
+/* The mode chooser must sit above focused-condition pills/backdrop. */
+.mode-icon-toggle { z-index: 60; }

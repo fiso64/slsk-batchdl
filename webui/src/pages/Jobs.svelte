@@ -274,7 +274,7 @@
   {#if view === 'list'}
     <header class="page-heading search-list-heading">
       <p class="eyebrow">Discover</p>
-      <h1>Searches</h1>
+      <h1>Jobs</h1>
     </header>
 
     {#if listResourceState.blocking}
@@ -291,10 +291,10 @@
             <span class="search-history-context">
               {#if record.draft.resultMode === 'album'}
                 <svg class="search-kind-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h5l1.6 2H17v7H3zM3 6V4.5h5l1.3 1.5" /></svg>
-                <span>Album</span>
+                <span>Album Search</span>
               {:else}
                 <svg class="search-kind-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4v9M8 6l7-2v8M8 13c0 1.1-1.1 2-2.5 2S3 14.1 3 13s1.1-2 2.5-2S8 11.9 8 13zm7-1c0 1.1-1.1 2-2.5 2s-2.5-.9-2.5-2 1.1-2 2.5-2 2.5.9 2.5 2z" /></svg>
-                <span>Track</span>
+                <span>Track Search</span>
               {/if}
               <span class="stat-separator">·</span>
               <span>{record.when}</span>
@@ -312,11 +312,11 @@
           </button>
         </div>
       {:else}
-        <div class="empty-state">No searches yet.</div>
+        <div class="empty-state">No jobs yet.</div>
       {/each}
     </div>
     {#if searches.length > historyLimit}
-      <LoadMoreButton label="Load earlier searches" onclick={() => (historyLimit = Math.min(searches.length, historyLimit + 4))} />
+      <LoadMoreButton label="Load earlier jobs" onclick={() => (historyLimit = Math.min(searches.length, historyLimit + 4))} />
     {/if}
     {/if}
   {:else if activeRecord}
@@ -325,11 +325,11 @@
     {@const allVisibleResults = projection.items}
     {@const groups = groupAdjacent(allVisibleResults)}
     <header class="search-results-heading">
-      <button type="button" class="icon-button back-button" aria-label="Back to searches" onclick={onshowlist}>
+      <button type="button" class="icon-button back-button" aria-label="Back to jobs" onclick={onshowlist}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5L7 10l5.5 5.5M7.5 10H16" /></svg>
       </button>
       <div class="search-results-title">
-        <p class="eyebrow">{activeMode === 'album' ? 'Album search' : 'Track search'}</p>
+        <p class="eyebrow">{activeMode === 'album' ? 'Album Search' : 'Track Search'}</p>
         <h1>{activeRecord.displayQuery}</h1>
       </div>
       <div class="search-results-summary">
