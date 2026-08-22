@@ -1,5 +1,6 @@
 <script lang="ts">
   import SearchConditionPills from '../components/SearchConditionPills.svelte';
+  import UsernameLink from '../components/UsernameLink.svelte';
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import LoadMoreButton from '../components/LoadMoreButton.svelte';
   import MutationStatus from '../components/MutationStatus.svelte';
@@ -15,11 +16,14 @@
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
   import type { SearchDraft } from '../prototype/search';
+  import { isAggregateSearchMode, searchModeFamily, searchModeLabel } from '../prototype/search';
   import type { UserLinkActions } from '../prototype/navigation';
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
+    aggregateGroupsForRecord,
     buildSearchResultProjectionRequest,
     requestSearchResultProjection,
+    type AggregateSearchGroup,
     type AlbumFileResult,
     type AlbumSearchResult,
     type ProjectedSearchResult,
@@ -63,15 +67,24 @@
   let projectionRequestKey = '';
   let historyLimit = $state(4);
   let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
+  let aggregateRepresentativeIds = $state<Record<string, string>>({});
+  let selectedAggregateGroups = $state<Set<string>>(new Set());
+  let selectedAggregateFiles = $state<Set<string>>(new Set());
+  let aggregateOptionsGroupId = $state<string | null>(null);
 
   let activeRecord = $derived(searches.find((item) => item.id === activeSearchId) ?? null);
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
+  let aggregateMode = $derived(isAggregateSearchMode(activeMode));
   let listResourceState = $derived(resourceStateForScenario(scenarioId, 'search-list'));
 
   $effect(() => {
     scenarioId;
     historyLimit = 4;
     mutation = { phase: 'idle' };
+    aggregateRepresentativeIds = {};
+    selectedAggregateGroups = new Set();
+    selectedAggregateFiles = new Set();
+    aggregateOptionsGroupId = null;
   });
 
   $effect(() => {
@@ -92,6 +105,10 @@
     filterText = '';
     sort = 'relevance';
     selected = new Set();
+    selectedAggregateGroups = new Set();
+    selectedAggregateFiles = new Set();
+    aggregateRepresentativeIds = {};
+    aggregateOptionsGroupId = null;
     conditionsOpen = false;
     resultPagesRequested = 1;
   }
@@ -193,6 +210,136 @@
     selected = next;
   }
 
+
+  function aggregateGroups(record: SearchRecord): AggregateSearchGroup[] {
+    return aggregateGroupsForRecord(record, filterText);
+  }
+
+  function aggregateRepresentative(group: AggregateSearchGroup): TrackSearchResult | AlbumSearchResult {
+    const selectedId = aggregateRepresentativeIds[group.id];
+    return group.options.find((option) => option.id === selectedId) ?? group.options[0]!;
+  }
+
+  function aggregateAlbumFileKey(group: AggregateSearchGroup, file: AlbumFileResult): string {
+    return `aggregate:${group.id}:${file.id}`;
+  }
+
+  function aggregateGroupSelected(group: AggregateSearchGroup): boolean {
+    const representative = aggregateRepresentative(group);
+    if (representative.kind === 'track') return selectedAggregateGroups.has(group.id);
+    return representative.files.length > 0 && representative.files.every((file) => selectedAggregateFiles.has(aggregateAlbumFileKey(group, file)));
+  }
+
+  function aggregateGroupPartial(group: AggregateSearchGroup): boolean {
+    const representative = aggregateRepresentative(group);
+    if (representative.kind === 'track') return false;
+    const selectedCount = representative.files.filter((file) => selectedAggregateFiles.has(aggregateAlbumFileKey(group, file))).length;
+    return selectedCount > 0 && selectedCount < representative.files.length;
+  }
+
+  function aggregateSelectedFileIds(group: AggregateSearchGroup): Set<string> {
+    const representative = aggregateRepresentative(group);
+    if (representative.kind !== 'album') return new Set();
+    return new Set(representative.files.filter((file) => selectedAggregateFiles.has(aggregateAlbumFileKey(group, file))).map((file) => file.id));
+  }
+
+  function toggleAggregateGroup(group: AggregateSearchGroup, checked: boolean): void {
+    const representative = aggregateRepresentative(group);
+    if (representative.kind === 'track') {
+      const next = new Set(selectedAggregateGroups);
+      if (checked) next.add(group.id);
+      else next.delete(group.id);
+      selectedAggregateGroups = next;
+      return;
+    }
+
+    const next = new Set(selectedAggregateFiles);
+    for (const file of representative.files) {
+      const key = aggregateAlbumFileKey(group, file);
+      if (checked) next.add(key);
+      else next.delete(key);
+    }
+    selectedAggregateFiles = next;
+  }
+
+  function toggleAggregateAlbumFile(group: AggregateSearchGroup, file: AlbumFileResult, checked: boolean): void {
+    const next = new Set(selectedAggregateFiles);
+    const key = aggregateAlbumFileKey(group, file);
+    if (checked) next.add(key);
+    else next.delete(key);
+    selectedAggregateFiles = next;
+  }
+
+  function setAllAggregate(record: SearchRecord, checked: boolean): void {
+    const nextGroups = new Set(selectedAggregateGroups);
+    const nextFiles = new Set(selectedAggregateFiles);
+    for (const group of aggregateGroups(record)) {
+      const representative = aggregateRepresentative(group);
+      if (representative.kind === 'track') {
+        if (checked) nextGroups.add(group.id);
+        else nextGroups.delete(group.id);
+        continue;
+      }
+      for (const file of representative.files) {
+        const key = aggregateAlbumFileKey(group, file);
+        if (checked) nextFiles.add(key);
+        else nextFiles.delete(key);
+      }
+    }
+    selectedAggregateGroups = nextGroups;
+    selectedAggregateFiles = nextFiles;
+  }
+
+  function allAggregateSelected(record: SearchRecord): boolean {
+    const groups = aggregateGroups(record);
+    return groups.length > 0 && groups.every((group) => aggregateGroupSelected(group));
+  }
+
+  function chooseAggregateOption(group: AggregateSearchGroup, option: TrackSearchResult | AlbumSearchResult): void {
+    aggregateRepresentativeIds = { ...aggregateRepresentativeIds, [group.id]: option.id };
+    if (option.kind === 'track') {
+      const next = new Set(selectedAggregateGroups);
+      next.add(group.id);
+      selectedAggregateGroups = next;
+    } else {
+      const prefix = `aggregate:${group.id}:`;
+      const next = new Set([...selectedAggregateFiles].filter((key) => !key.startsWith(prefix)));
+      for (const file of option.files) next.add(aggregateAlbumFileKey(group, file));
+      selectedAggregateFiles = next;
+    }
+    aggregateOptionsGroupId = null;
+  }
+
+  function aggregateSelectionSummary(record: SearchRecord): PrototypeDownloadSelectionSummary {
+    let requestedCount = 0;
+    let lockedCount = 0;
+    for (const group of aggregateGroups(record)) {
+      const representative = aggregateRepresentative(group);
+      if (representative.kind === 'track') {
+        if (!selectedAggregateGroups.has(group.id)) continue;
+        requestedCount += 1;
+        if (representative.locked) lockedCount += 1;
+        continue;
+      }
+      for (const file of representative.files) {
+        if (!selectedAggregateFiles.has(aggregateAlbumFileKey(group, file))) continue;
+        requestedCount += 1;
+        if (representative.locked || file.locked) lockedCount += 1;
+      }
+    }
+    return {
+      requestedCount,
+      uniqueFileCount: requestedCount,
+      resolvablePublicCount: requestedCount - lockedCount,
+      lockedCount,
+      skippedCount: lockedCount,
+    };
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && aggregateOptionsGroupId) aggregateOptionsGroupId = null;
+  }
+
   function currentResultProjection(record: SearchRecord) {
     let cursor: string | null = null;
     let items: ProjectedSearchResult[] = [];
@@ -227,6 +374,7 @@
   }
 
   function selectionSummary(): PrototypeDownloadSelectionSummary {
+    if (activeRecord && isAggregateSearchMode(activeRecord.draft.resultMode)) return aggregateSelectionSummary(activeRecord);
     let requestedCount = 0;
     let lockedCount = 0;
     const received = activeRecord ? currentResultProjection(activeRecord).items : [];
@@ -252,12 +400,13 @@
   function requestSelectedDownload(): void {
     const summary = selectionSummary();
     if (!summary.resolvablePublicCount) {
-      mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected file${summary.lockedCount === 1 ? '' : 's'} locked.` };
+      mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected ${aggregateMode ? 'option' : 'file'}${summary.lockedCount === 1 ? '' : 's'} locked.` };
       return;
     }
-    mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} file${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
+    const unit = aggregateMode ? 'selection' : 'file';
+    mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} ${unit}${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
     mutation = summary.skippedCount
-      ? { phase: 'partially-succeeded', label: `${summary.resolvablePublicCount} requested`, detail: `${summary.skippedCount} locked file${summary.skippedCount === 1 ? '' : 's'} skipped.` }
+      ? { phase: 'partially-succeeded', label: `${summary.resolvablePublicCount} requested`, detail: `${summary.skippedCount} locked ${unit}${summary.skippedCount === 1 ? '' : 's'} skipped.` }
       : { phase: 'succeeded', label: `${summary.resolvablePublicCount} download${summary.resolvablePublicCount === 1 ? '' : 's'} requested` };
   }
 
@@ -269,6 +418,8 @@
     return groups.reduce((total, group) => total + group.items.length, 0);
   }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <section class="page page-search redesigned-search-page">
   {#if view === 'list'}
@@ -289,17 +440,16 @@
             <span class="search-history-query">{record.displayQuery}</span>
             <span class={`search-status-badge ${record.status}`}><i></i>{statusLabel(record.status)}</span>
             <span class="search-history-context">
-              {#if record.draft.resultMode === 'album'}
-                <svg class="search-kind-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h5l1.6 2H17v7H3zM3 6V4.5h5l1.3 1.5" /></svg>
-                <span>Album Search</span>
-              {:else}
-                <svg class="search-kind-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4v9M8 6l7-2v8M8 13c0 1.1-1.1 2-2.5 2S3 14.1 3 13s1.1-2 2.5-2S8 11.9 8 13zm7-1c0 1.1-1.1 2-2.5 2s-2.5-.9-2.5-2 1.1-2 2.5-2 2.5.9 2.5 2z" /></svg>
-                <span>Track Search</span>
-              {/if}
+              <Icon name={record.draft.resultMode} class="search-kind-icon" />
+              <span>{searchModeLabel(record.draft.resultMode)}</span>
               <span class="stat-separator">·</span>
               <span>{record.when}</span>
             </span>
             <span class="search-history-stats">
+              {#if isAggregateSearchMode(record.draft.resultMode)}
+                <span><strong>{record.aggregateGroupCount ?? 0}</strong> groups</span>
+                <span class="stat-separator">·</span>
+              {/if}
               <span><strong>{record.foundFiles}</strong> files</span>
               <span class="stat-separator">·</span>
               <span><strong>{record.lockedFiles}</strong> locked</span>
@@ -321,19 +471,21 @@
     {/if}
   {:else if activeRecord}
     {@const resultState = resultResourceState(activeRecord)}
-    {@const projection = currentResultProjection(activeRecord)}
-    {@const allVisibleResults = projection.items}
+    {@const aggregateResults = aggregateMode ? aggregateGroups(activeRecord) : []}
+    {@const projection = aggregateMode ? null : currentResultProjection(activeRecord)}
+    {@const allVisibleResults = projection?.items ?? []}
     {@const groups = groupAdjacent(allVisibleResults)}
     <header class="search-results-heading">
       <button type="button" class="icon-button back-button" aria-label="Back to jobs" onclick={onshowlist}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5L7 10l5.5 5.5M7.5 10H16" /></svg>
       </button>
       <div class="search-results-title">
-        <p class="eyebrow">{activeMode === 'album' ? 'Album Search' : 'Track Search'}</p>
+        <p class="eyebrow">{searchModeLabel(activeMode)}</p>
         <h1>{activeRecord.displayQuery}</h1>
       </div>
       <div class="search-results-summary">
         <span class={`search-status-badge ${activeRecord.status}`}><i></i>{statusLabel(activeRecord.status)}</span>
+        {#if aggregateMode}<span>{aggregateResults.length} groups</span>{/if}
         <span>{activeRecord.foundFiles} files</span>
         <span>{activeRecord.lockedFiles} locked</span>
         <span>{activeRecord.distinctPeers} peers</span>
@@ -360,34 +512,44 @@
       <div class="result-refine-row">
         <ResultFilterControl bind:value={filterText} placeholder="Filter results…" ariaLabel="Filter search results" />
 
-        <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
-          Conditions
-        </button>
+        {#if aggregateMode}
+          {@const allAggregatesSelected = allAggregateSelected(activeRecord)}
+          <button
+            type="button"
+            class="aggregate-select-all-button"
+            disabled={aggregateResults.length === 0}
+            onclick={() => setAllAggregate(activeRecord, !allAggregatesSelected)}
+          >{allAggregatesSelected ? 'Deselect all' : 'Select all'}</button>
+        {:else}
+          <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
+            Conditions
+          </button>
 
-        <div class="result-sort-control">
-          <label for="result-sort">Sort</label>
-          <select id="result-sort" bind:value={sort}>
-            <option value="relevance">Relevance</option>
-            <option value="speed">Upload speed</option>
-            <option value="queue">Queue depth</option>
-            <option value="size">Item size</option>
-          </select>
-          {#if sort === 'size'}
-            <button type="button" class="size-direction-button" aria-label="Reverse item size sort" onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
-              <svg class:ascending={sizeDirection === 'asc'} viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M6 8l4-4 4 4" /></svg>
-            </button>
-          {/if}
-        </div>
+          <div class="result-sort-control">
+            <label for="result-sort">Sort</label>
+            <select id="result-sort" bind:value={sort}>
+              <option value="relevance">Relevance</option>
+              <option value="speed">Upload speed</option>
+              <option value="queue">Queue depth</option>
+              <option value="size">Item size</option>
+            </select>
+            {#if sort === 'size'}
+              <button type="button" class="size-direction-button" aria-label="Reverse item size sort" onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
+                <svg class:ascending={sizeDirection === 'asc'} viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M6 8l4-4 4 4" /></svg>
+              </button>
+            {/if}
+          </div>
+        {/if}
       </div>
 
-      {#if hasAppliedConditions(activeMode, activeRecord.conditions)}
+      {#if !aggregateMode && hasAppliedConditions(activeMode, activeRecord.conditions)}
         <div class="result-condition-pills">
           <SearchConditionPills mode={activeMode} bind:conditions={activeRecord.conditions} />
         </div>
       {/if}
 
-      {#if conditionsOpen}
+      {#if !aggregateMode && conditionsOpen}
         <button type="button" class="results-config-backdrop" aria-label="Close search configuration" onclick={() => (conditionsOpen = false)}></button>
         <section class="search-config-popover results-config-popover" aria-label="Result search configuration">
           <SearchConfigPanel mode={activeMode} bind:conditions={activeRecord.conditions} title="Search configuration" initialTab="conditions" onclose={() => (conditionsOpen = false)} />
@@ -401,11 +563,28 @@
       floatingLabel={`Download ${selectedSummary.resolvablePublicCount}`}
       detail={selectedSummary.lockedCount ? `${selectedSummary.requestedCount} selected · ${selectedSummary.lockedCount} locked` : undefined}
       actionDisabled={selectedSummary.resolvablePublicCount === 0}
-      onclear={() => (selected = new Set())}
+      onclear={() => { selected = new Set(); selectedAggregateGroups = new Set(); selectedAggregateFiles = new Set(); }}
       onaction={requestSelectedDownload}
     />
 
-    {#if allVisibleResults.length === 0}
+    {#if aggregateMode}
+      {#if aggregateResults.length === 0 && resultState.phase === 'loading'}
+        <!-- The resource-state notice above is the loading treatment until the first group arrives. -->
+      {:else if aggregateResults.length === 0}
+        <div class="search-results-empty">
+          <strong>No matching groups</strong>
+          <span>Adjust the text filter.</span>
+        </div>
+      {:else}
+        <div class="aggregate-results-list">
+          {#each aggregateResults as aggregateGroup (aggregateGroup.id)}
+            {@render aggregateGroupCard(aggregateGroup)}
+          {/each}
+        </div>
+      {/if}
+    {:else if allVisibleResults.length === 0 && resultState.phase === 'loading'}
+      <!-- The resource-state notice above is the loading treatment until the first result arrives. -->
+    {:else if allVisibleResults.length === 0}
       <div class="search-results-empty">
         <strong>No matching results</strong>
         <span>Adjust the text filter or result conditions.</span>
@@ -443,13 +622,109 @@
       </div>
     {/if}
 
-    {#if projection.nextCursor}
+    {#if projection?.nextCursor}
       <LoadMoreButton label="Load more results" loadingLabel="Loading results…" onclick={() => (resultPagesRequested += 1)} />
     {/if}
     {/if}
 
   {/if}
 </section>
+
+{#if aggregateOptionsGroupId && activeRecord && aggregateMode}
+  {@const optionGroup = aggregateGroups(activeRecord).find((group) => group.id === aggregateOptionsGroupId)}
+  {#if optionGroup}
+    <div class="aggregate-options-modal">
+      <button type="button" class="aggregate-options-backdrop" aria-label="Close options" onclick={() => (aggregateOptionsGroupId = null)}></button>
+      <div class="aggregate-options-dialog" role="dialog" aria-modal="true" aria-label={`${optionGroup.itemName} options`}>
+        <header class="aggregate-options-header">
+          <div>
+            <strong>{optionGroup.itemName}</strong>
+            <small>{optionGroup.artist ? `${optionGroup.artist} · ` : ''}{optionGroup.shareCount} shares · {optionGroup.options.length} options</small>
+          </div>
+          <button type="button" class="aggregate-options-close" aria-label="Close options" onclick={() => (aggregateOptionsGroupId = null)}>×</button>
+        </header>
+        <div class="aggregate-options-list">
+          {#each optionGroup.options as option (option.id)}
+            <div class:current={aggregateRepresentative(optionGroup).id === option.id} class="aggregate-option">
+              <div class="aggregate-option-toolbar">
+                {@render aggregatePeerSummary(option.peer)}
+                <button type="button" class="aggregate-use-option" onclick={() => chooseAggregateOption(optionGroup, option)}>Use this option</button>
+              </div>
+              <div class="aggregate-option-card-wrap">
+                <button type="button" class="aggregate-option-card-picker" aria-label={`Use ${option.path}`} onclick={() => chooseAggregateOption(optionGroup, option)}></button>
+                {#if option.kind === 'track'}
+                  <FileItemCard path={option.path} sizeBytes={option.sizeBytes} audio={option.audio} locked={option.locked} />
+                {:else}
+                  <FolderItemCard path={option.path} sizeBytes={option.sizeBytes} files={option.files} totalFileCount={option.totalFileCount} filesComplete locked={option.locked} />
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
+{/if}
+
+
+{#snippet aggregatePeerSummary(peer: ProjectedSearchResult['peer'])}
+  <div class="aggregate-peer-summary">
+    <span class="aggregate-peer-username"><UsernameLink username={peer.username} actions={userActions} /></span>
+    <span class="aggregate-peer-speed"><strong>{peer.uploadSpeedMbps.toFixed(1)} MB/s</strong></span>
+    <span class:available={peer.freeUploadSlot} class="aggregate-peer-slot"><i></i>{peer.freeUploadSlot ? 'Free slot' : 'No free slot'}</span>
+  </div>
+{/snippet}
+
+{#snippet aggregateGroupCard(group: AggregateSearchGroup)}
+  {@const representative = aggregateRepresentative(group)}
+  <section class="aggregate-result-group" class:selected={aggregateGroupSelected(group)} class:partial={aggregateGroupPartial(group)}>
+    <header class="aggregate-result-header">
+      <button
+        type="button"
+        class="aggregate-header-select-button"
+        aria-label={`${aggregateGroupSelected(group) ? 'Deselect' : 'Select'} ${group.itemName}`}
+        aria-pressed={aggregateGroupSelected(group)}
+        onclick={() => toggleAggregateGroup(group, !aggregateGroupSelected(group))}
+      ></button>
+      <div class="aggregate-result-identity">
+        <strong>{group.itemName}</strong>
+        {#if group.artist}<small>{group.artist}</small>{/if}
+      </div>
+      <div class="aggregate-result-source">
+        {@render aggregatePeerSummary(representative.peer)}
+      </div>
+      <div class="aggregate-result-stats">
+        <button type="button" class="aggregate-options-button" onclick={() => (aggregateOptionsGroupId = group.id)}>{group.options.length} options</button>
+      </div>
+    </header>
+    {#if representative.kind === 'track'}
+      <FileItemCard
+        path={representative.path}
+        sizeBytes={representative.sizeBytes}
+        audio={representative.audio}
+        locked={representative.locked}
+        selected={aggregateGroupSelected(group)}
+        selectable
+        onselect={(checked) => toggleAggregateGroup(group, checked)}
+      />
+    {:else}
+      <FolderItemCard
+        path={representative.path}
+        sizeBytes={representative.sizeBytes}
+        files={representative.files}
+        totalFileCount={representative.totalFileCount}
+        filesComplete
+        locked={representative.locked}
+        selected={aggregateGroupSelected(group)}
+        partial={aggregateGroupPartial(group)}
+        selectable
+        selectedFileIds={aggregateSelectedFileIds(group)}
+        onselectall={(checked) => toggleAggregateGroup(group, checked)}
+        onselectfile={(file, checked) => { const original = representative.files.find((candidate) => candidate.id === file.id); if (original) toggleAggregateAlbumFile(group, original, checked); }}
+      />
+    {/if}
+  </section>
+{/snippet}
 
 {#snippet peerGroup(group: PeerGroup)}
   <PeerItemGroup peer={group.peer} itemCount={group.items.length} {userActions}>

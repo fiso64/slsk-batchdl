@@ -25,6 +25,17 @@ export function resourceStateForScenario(scenario: ScenarioId, resource: Prototy
     return { phase: 'offline', title: 'Daemon unavailable', blocking: true };
   }
 
+
+  if (scenario === 'loading') {
+    if (resource === 'search-list' || resource === 'chat') return { phase: 'ready' };
+    if (resource === 'search-results') return { phase: 'loading', title: 'Waiting for results' };
+    if (resource === 'downloads') return { phase: 'loading', title: 'Loading downloads', blocking: true };
+    if (resource === 'uploads') return { phase: 'loading', title: 'Loading uploads', blocking: true };
+    if (resource === 'profile') return { phase: 'loading', title: 'Loading profile', blocking: true };
+    if (resource === 'shares') return { phase: 'loading', title: 'Loading shares', blocking: true };
+    return { phase: 'loading', title: 'Loading' };
+  }
+
   if (scenario === 'empty') {
     if (resource === 'search-list') return { phase: 'empty', title: 'No searches', blocking: true };
     if (resource === 'downloads') return { phase: 'empty', title: 'No downloads', blocking: true };

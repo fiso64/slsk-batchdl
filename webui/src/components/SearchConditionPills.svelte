@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PrototypeSearchConditions } from '../prototype/search-config';
   import type { SearchResultMode } from '../prototype/search';
+  import { searchModeFamily } from '../prototype/search';
 
   interface Props {
     mode: SearchResultMode;
@@ -17,6 +18,7 @@
   };
 
   let { mode, conditions = $bindable() }: Props = $props();
+  let family = $derived(searchModeFamily(mode));
 
   function removeFormat(format: string): void {
     conditions.common.formats = conditions.common.formats.filter((item) => item !== format);
@@ -51,7 +53,7 @@
   <span class="search-condition-pill">reject unknown metadata<button type="button" onclick={() => (conditions.common.rejectUnknownMetadata = false)}>×</button></span>
 {/if}
 
-{#if mode === 'track'}
+{#if family === 'track'}
   {#if conditions.track.strictTitle}
     <span class="search-condition-pill">strict title<button type="button" onclick={() => (conditions.track.strictTitle = false)}>×</button></span>
   {/if}

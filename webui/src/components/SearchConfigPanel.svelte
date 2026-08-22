@@ -11,6 +11,7 @@
     type SearchConfigTab as ConfigTab,
   } from '../prototype/search-config-schema';
   import type { SearchResultMode } from '../prototype/search';
+  import { searchModeFamily } from '../prototype/search';
   import SearchFormatControl from './SearchFormatControl.svelte';
 
   interface Props {
@@ -29,6 +30,7 @@
     onclose,
   }: Props = $props();
 
+  let family = $derived(searchModeFamily(mode));
   let activeTab = $state<ConfigTab>('conditions');
   $effect(() => { activeTab = initialTab; });
   let requiredTrackTitle = $state('');
@@ -125,7 +127,7 @@
         </div>
 
         <label class="config-check"><input type="checkbox" bind:checked={conditions.common.rejectUnknownMetadata} /> {searchConfigLabel('rejectUnknownMetadata', 'conditions')}</label>
-        {#if mode === 'album'}
+        {#if family === 'album'}
           <label class="config-check"><input type="checkbox" bind:checked={conditions.album.strictAlbumQuality} /> {searchConfigLabel('strictAlbumQuality', 'conditions')}</label>
         {/if}
       </section>
@@ -133,7 +135,7 @@
       <section class="search-config-section">
         <h3>Matching</h3>
         <label class="config-check"><input type="checkbox" bind:checked={conditions.common.strictArtist} /> {searchConfigLabel('strictArtist', 'conditions')}</label>
-        {#if mode === 'track'}
+        {#if family === 'track'}
           <label class="config-check"><input type="checkbox" bind:checked={conditions.track.strictTitle} /> {searchConfigLabel('strictTitle', 'conditions')}</label>
           <div class="config-grid config-grid-spaced">
             <label>
@@ -153,7 +155,7 @@
     </div>
 
     <div>
-      {#if mode === 'album'}
+      {#if family === 'album'}
         <section class="search-config-section">
           <h3>Album structure</h3>
           <div class="config-grid">
@@ -250,7 +252,7 @@
       <section class="search-config-section">
         <h3>Matching</h3>
         <label class="config-check"><input type="checkbox" bind:checked={conditions.ranking.common.strictArtist} /> {searchConfigLabel('strictArtist', 'ranking')}</label>
-        {#if mode === 'track'}
+        {#if family === 'track'}
           <label class="config-check"><input type="checkbox" bind:checked={conditions.ranking.track.strictTitle} /> {searchConfigLabel('strictTitle', 'ranking')}</label>
           <div class="config-grid config-grid-spaced single-config-field">
             <label><span>{searchConfigLabel('lengthTolerance', 'ranking')} <small>sec</small></span><input type="number" min="0" bind:value={conditions.ranking.track.lengthTolerance} placeholder="Disabled" /></label>

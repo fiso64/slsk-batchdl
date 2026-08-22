@@ -135,7 +135,7 @@ function shareFolderFixture(sequence: number, stress = false): DownloadFolderEnt
 }
 
 export function downloadsForScenario(id: ScenarioId): DownloadItem[] {
-  if (id === 'empty' || id === 'offline') return [];
+  if (id === 'loading' || id === 'empty' || id === 'offline') return [];
   if (id === 'normal') return [...normalDownloads].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const extras = Array.from({ length: id === 'stress' ? 28 : 8 }, (_, index) => extraFile(index));
   const shareDownloads: DownloadItem[] = [shareFileFixture(900), shareFolderFixture(901, id === 'stress')];

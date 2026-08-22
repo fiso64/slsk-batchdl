@@ -1,5 +1,6 @@
 import type { components } from '../api/generated';
 import type { SearchResultMode } from './search';
+import { searchModeFamily } from './search';
 
 export interface CommonSearchConditions {
   formats: string[];
@@ -165,6 +166,7 @@ export function toNecessarySearchPatch(
   resultMode: SearchResultMode,
   conditions: PrototypeSearchConditions,
 ): SearchSettingsPatchDto {
+  const family = searchModeFamily(resultMode);
   const allowedUsers = csv(conditions.common.allowedUsers);
   const bannedUsers = csv(conditions.common.bannedUsers);
 
@@ -176,14 +178,14 @@ export function toNecessarySearchPatch(
     minBitDepth: numberOrNull(conditions.common.minBitDepth),
     maxBitDepth: numberOrNull(conditions.common.maxBitDepth),
     strictArtist: conditions.common.strictArtist || null,
-    strictTitle: resultMode === 'track' ? conditions.track.strictTitle || null : null,
-    strictAlbum: resultMode === 'album' ? conditions.album.strictAlbum || null : null,
+    strictTitle: family === 'track' ? conditions.track.strictTitle || null : null,
+    strictAlbum: family === 'album' ? conditions.album.strictAlbum || null : null,
     formats: collectionOrNull(conditions.common.formats),
     allowedUsers: collectionOrNull(allowedUsers),
     bannedUsers: collectionOrNull(bannedUsers),
-    acceptNoLength: resultMode === 'track' ? conditions.track.acceptNoLength : null,
+    acceptNoLength: family === 'track' ? conditions.track.acceptNoLength : null,
     acceptMissingProps: conditions.common.rejectUnknownMetadata ? false : null,
-    lengthTolerance: resultMode === 'track' ? numberOrNull(conditions.track.lengthTolerance) : null,
+    lengthTolerance: family === 'track' ? numberOrNull(conditions.track.lengthTolerance) : null,
   };
 
   const ranking = conditions.ranking;
@@ -197,27 +199,28 @@ export function toNecessarySearchPatch(
     minBitDepth: numberOrNull(ranking.common.minBitDepth),
     maxBitDepth: numberOrNull(ranking.common.maxBitDepth),
     strictArtist: ranking.common.strictArtist || null,
-    strictTitle: resultMode === 'track' ? ranking.track.strictTitle || null : null,
-    strictAlbum: resultMode === 'album' ? ranking.album.strictAlbum || null : null,
+    strictTitle: family === 'track' ? ranking.track.strictTitle || null : null,
+    strictAlbum: family === 'album' ? ranking.album.strictAlbum || null : null,
     formats: collectionOrNull(ranking.common.formats),
     allowedUsers: collectionOrNull(preferredAllowedUsers),
     bannedUsers: collectionOrNull(preferredBannedUsers),
-    lengthTolerance: resultMode === 'track' ? numberOrNull(ranking.track.lengthTolerance) : null,
+    lengthTolerance: family === 'track' ? numberOrNull(ranking.track.lengthTolerance) : null,
   };
 
   return {
     necessaryCond,
     preferredCond,
-    necessaryFolderCond: resultMode === 'album' ? {
+    necessaryFolderCond: family === 'album' ? {
       minTrackCount: numberOrNull(conditions.album.minTrackCount),
       maxTrackCount: numberOrNull(conditions.album.maxTrackCount),
       requiredTrackTitles: collectionOrNull(conditions.album.requiredTrackTitles),
     } : null,
-    strictAlbumQuality: resultMode === 'album' ? conditions.album.strictAlbumQuality || null : null,
+    strictAlbumQuality: family === 'album' ? conditions.album.strictAlbumQuality || null : null,
   };
 }
 
 export function hasAppliedConditions(mode: SearchResultMode, conditions: PrototypeSearchConditions): boolean {
+  const family = searchModeFamily(mode);
   return Boolean(
     conditions.common.formats.length
       || conditions.common.minBitrate
@@ -230,7 +233,7 @@ export function hasAppliedConditions(mode: SearchResultMode, conditions: Prototy
       || conditions.common.rejectUnknownMetadata
       || conditions.common.allowedUsers.trim()
       || conditions.common.bannedUsers.trim()
-      || (mode === 'track'
+      || (family === 'track'
         ? conditions.track.strictTitle || conditions.track.expectedLength
         : conditions.album.strictAlbum
           || conditions.album.minTrackCount

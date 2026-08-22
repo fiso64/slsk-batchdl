@@ -13,32 +13,38 @@
     options: ModeIconOption[];
     ariaLabel: string;
     onchange: (value: string) => void;
+    onopenchange?: (open: boolean) => void;
   }
 
-  let { value, options, ariaLabel, onchange }: Props = $props();
+  let { value, options, ariaLabel, onchange, onopenchange }: Props = $props();
   let menuOpen = $state(false);
   let root: HTMLDivElement;
 
   let current = $derived(options.find((option) => option.value === value) ?? options[0]);
 
+  function setMenuOpen(open: boolean): void {
+    menuOpen = open;
+    onopenchange?.(open);
+  }
+
   function choose(nextValue: string): void {
     onchange(nextValue);
-    menuOpen = false;
+    setMenuOpen(false);
   }
 
   function toggleMenu(): void {
-    menuOpen = !menuOpen;
+    setMenuOpen(!menuOpen);
   }
 
   function handleWindowPointerDown(event: PointerEvent): void {
     if (!menuOpen) return;
     const target = event.target as Node | null;
     if (target && root?.contains(target)) return;
-    menuOpen = false;
+    setMenuOpen(false);
   }
 
   function handleWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && menuOpen) menuOpen = false;
+    if (event.key === 'Escape' && menuOpen) setMenuOpen(false);
   }
 </script>
 
@@ -68,6 +74,7 @@
           role="menuitemradio"
           aria-checked={option.value === value}
           class:active={option.value === value}
+          onpointerdown={(event) => event.preventDefault()}
           onclick={() => choose(option.value)}
         >
           <span class="mode-menu-check" aria-hidden="true">{option.value === value ? '✓' : ''}</span>

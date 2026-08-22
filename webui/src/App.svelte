@@ -31,6 +31,7 @@
   let searchView = $state<SearchView>('list');
   let activeSearchId = $state<string | null>(defaultSearchId);
   let userBrowse = $state<UserBrowseDraft>({ query: getUserBrowseFixture('normal').profile.username, mode: 'user' });
+  let activeUsername = $state<string>(getUserBrowseFixture('normal').profile.username);
   let userView = $state<UserBrowseView>('user');
   let chatInitialUsername = $state<string | null>(null);
 
@@ -81,7 +82,6 @@
         activePage = 'jobs';
         searchView = 'results';
         activeSearchId = record.id;
-        search = { ...record.draft };
         return jobPath(record.id);
       }
       activePage = 'jobs';
@@ -96,11 +96,12 @@
     }
 
     if (root === 'users') {
-      const username = decodeSegment(segments[1]) || userBrowse.query || getUserBrowseFixture(scenarioId).profile.username;
+      const username = decodeSegment(segments[1]) || activeUsername || getUserBrowseFixture(scenarioId).profile.username;
       const nextView: UserBrowseView = segments[2] === 'shares' ? 'shares' : 'user';
       activePage = 'users';
+      activeUsername = username;
       userView = nextView;
-      userBrowse = { query: username, mode: nextView };
+      userBrowse = { ...userBrowse, mode: nextView };
       return segments[1] ? userPath(username, nextView) : '/users';
     }
 
@@ -146,7 +147,7 @@
 
     if (page === 'users') {
       activePage = 'users';
-      setBrowserPath(userPath(userBrowse.query, userView));
+      setBrowserPath(userPath(activeUsername, userView));
       return;
     }
 
@@ -158,10 +159,9 @@
     scenarioId = nextScenario;
     searches = createInitialSearches(nextScenario);
     activeSearchId = searches.find((record) => record.fixture === 'boards')?.id ?? searches[0]?.id ?? null;
-    if (searchView === 'results' && activeSearchId) search = { ...searches.find((record) => record.id === activeSearchId)!.draft };
     if (searchView === 'results' && !activeSearchId) searchView = 'list';
     const nextUsername = getUserBrowseFixture(nextScenario).profile.username;
-    userBrowse = { ...userBrowse, query: nextUsername };
+    activeUsername = nextUsername;
     if (activePage === 'users') setBrowserPath(userPath(nextUsername, userView), true);
     if (activePage === 'jobs') setBrowserPath(searchView === 'results' && activeSearchId ? jobPath(activeSearchId) : '/jobs', true);
   }
@@ -171,14 +171,16 @@
   }
 
   function openUser(username: string): void {
-    userBrowse = { query: username, mode: 'user' };
+    activeUsername = username;
+    userBrowse = { ...userBrowse, mode: 'user' };
     userView = 'user';
     activePage = 'users';
     setBrowserPath(userPath(username, 'user'));
   }
 
   function openUserShares(username: string): void {
-    userBrowse = { query: username, mode: 'shares' };
+    activeUsername = username;
+    userBrowse = { ...userBrowse, mode: 'shares' };
     userView = 'shares';
     activePage = 'users';
     setBrowserPath(userPath(username, 'shares'));
@@ -198,22 +200,22 @@
 
   function submitUserBrowse(next: UserBrowseDraft): void {
     useUserBrowse(next);
+    activeUsername = next.query.trim() || getUserBrowseFixture(scenarioId).profile.username;
     userView = next.mode;
     activePage = 'users';
-    setBrowserPath(userPath(next.query, next.mode));
+    setBrowserPath(userPath(activeUsername, next.mode));
   }
 
   function changeUserView(next: UserBrowseView): void {
     userView = next;
     userBrowse = { ...userBrowse, mode: next };
     activePage = 'users';
-    setBrowserPath(userPath(userBrowse.query, next));
+    setBrowserPath(userPath(activeUsername, next));
   }
 
   function openSearchRecord(record: SearchRecord): void {
     activeSearchId = record.id;
     searchView = 'results';
-    search = { ...record.draft };
     activePage = 'jobs';
     setBrowserPath(jobPath(record.id));
   }
@@ -238,7 +240,6 @@
     searches = searches.map((item) => item.id === record.id ? rerun : item);
     activeSearchId = rerun.id;
     searchView = 'results';
-    search = { ...rerun.draft };
     activePage = 'jobs';
     setBrowserPath(jobPath(rerun.id), true);
   }
@@ -272,7 +273,7 @@
       onsearchagain={searchAgain}
     />
   {:else if activePage === 'users'}
-    <Users {scenarioId} username={userBrowse.query} view={userView} onviewchange={changeUserView} onmessageuser={openChatUser} />
+    <Users {scenarioId} username={activeUsername} view={userView} onviewchange={changeUserView} onmessageuser={openChatUser} />
   {:else if activePage === 'downloads'}
     <Downloads {scenario} {userActions} />
   {:else if activePage === 'uploads'}

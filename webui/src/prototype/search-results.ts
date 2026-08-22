@@ -1,5 +1,6 @@
 import type { components } from '../api/generated';
 import type { SearchDraft, SearchResultMode } from './search';
+import { isAggregateSearchMode, searchModeFamily } from './search';
 import type { AudioAttributes, ItemPeerInfo } from './items';
 import { basename, extension } from './items';
 import type {
@@ -48,6 +49,7 @@ export interface SearchRecord {
   foundFiles: number;
   lockedFiles: number;
   distinctPeers: number;
+  aggregateGroupCount?: number;
   when: string;
   conditions: PrototypeSearchConditions;
   submittedConditions: PrototypeSearchConditions;
@@ -60,6 +62,12 @@ export type { AudioAttributes };
 
 type FileCandidateRefDto = components['schemas']['FileCandidateRefDto'];
 type AlbumFolderRefDto = components['schemas']['AlbumFolderRefDto'];
+type AggregateTrackProjectionRequestDto = components['schemas']['AggregateTrackProjectionRequestDto'];
+type AggregateAlbumProjectionRequestDto = components['schemas']['AggregateAlbumProjectionRequestDto'];
+
+export type AggregateSearchProjectionRequest =
+  | { kind: 'song-aggregate'; request: AggregateTrackProjectionRequestDto }
+  | { kind: 'album-aggregate'; request: AggregateAlbumProjectionRequestDto };
 
 export type PeerInfo = ItemPeerInfo & {
   uploadSpeedMbps: number;
@@ -106,6 +114,29 @@ export interface AlbumSearchResult {
 }
 
 export type ProjectedSearchResult = TrackSearchResult | AlbumSearchResult;
+
+export interface SongAggregateGroup {
+  kind: 'song-aggregate';
+  id: string;
+  artist: string;
+  title: string;
+  itemName: string;
+  shareCount: number;
+  options: TrackSearchResult[];
+}
+
+export interface AlbumAggregateGroup {
+  kind: 'album-aggregate';
+  id: string;
+  artist: string;
+  album: string;
+  itemName: string;
+  shareCount: number;
+  options: AlbumSearchResult[];
+}
+
+export type AggregateSearchGroup = SongAggregateGroup | AlbumAggregateGroup;
+
 
 const nightshift: PeerInfo = { username: 'nightshift', uploadSpeedMbps: 12.8, freeUploadSlot: true, queueLength: 0 };
 const cassetteculture: PeerInfo = { username: 'cassetteculture', uploadSpeedMbps: 8.4, freeUploadSlot: false, queueLength: 2 };
@@ -170,6 +201,179 @@ export const albumResults: AlbumSearchResult[] = [
 ];
 
 
+function aggregateTrackOption(
+  groupIndex: number,
+  optionIndex: number,
+  peer: PeerInfo,
+  path: string,
+  sizeBytes: number,
+  audio: AudioAttributes,
+): TrackSearchResult {
+  return {
+    kind: 'track',
+    id: prototypeUuid(0x56000000 + groupIndex, optionIndex),
+    candidateRef: { username: peer.username, filename: path },
+    peer,
+    path,
+    locked: false,
+    sizeBytes,
+    audio,
+    preferred: optionIndex === 1,
+    preference: {
+      candidateKey: `${peer.username}:${path}`,
+      tier: optionIndex === 1 ? 'preferred' : 'other',
+      matchedPreferenceKeys: optionIndex === 1 ? ['relevance'] : [],
+    },
+  };
+}
+
+function aggregateAlbumOption(
+  groupIndex: number,
+  optionIndex: number,
+  peer: PeerInfo,
+  path: string,
+  trackNames: string[],
+  quality: 'flac' | 'mp3' | 'hires' = 'flac',
+): AlbumSearchResult {
+  const bitrateKbps = quality === 'mp3' ? 320 : quality === 'hires' ? 2050 : 930;
+  const sampleRateHz = quality === 'hires' ? 96_000 : 44_100;
+  const bitDepth = quality === 'mp3' ? undefined : quality === 'hires' ? 24 : 16;
+  const extensionName = quality === 'mp3' ? 'mp3' : 'flac';
+  const files: AlbumFileResult[] = trackNames.map((trackName, fileIndex) => {
+    const lengthSeconds = 220 + ((groupIndex * 37 + fileIndex * 29) % 190);
+    const sizeBytes = quality === 'mp3'
+      ? 10_000_000 + fileIndex * 1_100_000
+      : quality === 'hires'
+        ? 82_000_000 + fileIndex * 5_500_000
+        : 34_000_000 + fileIndex * 2_700_000;
+    return {
+      id: prototypeUuid(0x57000000 + groupIndex * 16 + optionIndex, fileIndex + 1),
+      relativePath: `${String(fileIndex + 1).padStart(2, '0')} - ${trackName}.${extensionName}`,
+      locked: false,
+      sizeBytes,
+      audio: { bitrateKbps, sampleRateHz, bitDepth, lengthSeconds },
+    };
+  });
+  const sizeBytes = files.reduce((total, file) => total + file.sizeBytes, 0) + 1_800_000;
+  return {
+    kind: 'album',
+    id: prototypeUuid(0x58000000 + groupIndex, optionIndex),
+    candidateRef: { username: peer.username, folderPath: path },
+    peer,
+    path,
+    locked: false,
+    sizeBytes,
+    files,
+    preferred: optionIndex === 1,
+    preference: {
+      candidateKey: `${peer.username}:${path}`,
+      tier: optionIndex === 1 ? 'preferred' : 'other',
+      matchedPreferenceKeys: optionIndex === 1 ? ['relevance'] : [],
+    },
+    retrievalState: 'idle',
+    totalFileCount: files.length,
+  };
+}
+
+export const songAggregateGroups: SongAggregateGroup[] = [
+  {
+    kind: 'song-aggregate', id: prototypeUuid(0x59000000, 1), artist: 'Casiopea', title: 'Asayake', itemName: 'Asayake', shareCount: 5,
+    options: [
+      aggregateTrackOption(1, 1, nightshift, 'Jazz/Casiopea/Mint Jams/02 - Asayake.flac', 48_900_000, { bitrateKbps: 1010, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 296 }),
+      aggregateTrackOption(1, 2, cassetteculture, 'Casiopea/1982 Mint Jams/02 Asayake.flac', 47_300_000, { bitrateKbps: 978, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 296 }),
+      aggregateTrackOption(1, 3, cloudarchive, 'Fusion/Casiopea/Asayake.mp3', 11_800_000, { bitrateKbps: 320, sampleRateHz: 44_100, lengthSeconds: 295 }),
+      aggregateTrackOption(1, 4, silvermachine, 'lossless/casiopea/asayake.wav', 61_200_000, { sampleRateHz: 48_000, bitDepth: 24, lengthSeconds: 296 }),
+      aggregateTrackOption(1, 5, tapeLoop, 'incoming/Casiopea - Asayake.flac', 46_700_000, { bitrateKbps: 962, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 297 }),
+    ],
+  },
+  {
+    kind: 'song-aggregate', id: prototypeUuid(0x59000000, 2), artist: 'Casiopea', title: 'Midnight Rendezvous', itemName: 'Midnight Rendezvous', shareCount: 4,
+    options: [
+      aggregateTrackOption(2, 1, cassetteculture, 'Casiopea/Casiopea/03 - Midnight Rendezvous.flac', 42_100_000, { bitrateKbps: 955, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 309 }),
+      aggregateTrackOption(2, 2, nightshift, 'Jazz/Casiopea/Casiopea/03 Midnight Rendezvous.flac', 43_900_000, { bitrateKbps: 989, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 310 }),
+      aggregateTrackOption(2, 3, cloudarchive, 'Fusion/Casiopea/Midnight Rendezvous.m4a', 9_900_000, { bitrateKbps: 256, sampleRateHz: 44_100, lengthSeconds: 309 }),
+      aggregateTrackOption(2, 4, tapeLoop, 'Casiopea - Midnight Rendezvous.mp3', 12_000_000, { bitrateKbps: 320, sampleRateHz: 44_100, lengthSeconds: 310 }),
+    ],
+  },
+  {
+    kind: 'song-aggregate', id: prototypeUuid(0x59000000, 3), artist: 'Casiopea', title: 'Galactic Funk', itemName: 'Galactic Funk', shareCount: 3,
+    options: [
+      aggregateTrackOption(3, 1, nightshift, 'Jazz/Casiopea/Mint Jams/04 - Galactic Funk.flac', 53_200_000, { bitrateKbps: 1004, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 384 }),
+      aggregateTrackOption(3, 2, silvermachine, 'Casiopea/Mint Jams/Galactic Funk.flac', 51_600_000, { bitrateKbps: 971, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 383 }),
+      aggregateTrackOption(3, 3, cloudarchive, 'Fusion/Casiopea/Galactic Funk.mp3', 14_900_000, { bitrateKbps: 320, sampleRateHz: 44_100, lengthSeconds: 384 }),
+    ],
+  },
+];
+
+export const albumAggregateGroups: AlbumAggregateGroup[] = [
+  {
+    kind: 'album-aggregate', id: prototypeUuid(0x5a000000, 1), artist: 'Casiopea', album: 'Mint Jams', itemName: 'Mint Jams', shareCount: 5,
+    options: [
+      aggregateAlbumOption(1, 1, nightshift, 'Jazz/Casiopea/1982 - Mint Jams', ['Take Me', 'Asayake', 'Midnight Rendezvous', 'Time Limit'], 'flac'),
+      aggregateAlbumOption(1, 2, cassetteculture, 'Casiopea/Mint Jams [Japan]', ['Take Me', 'Asayake', 'Midnight Rendezvous', 'Time Limit'], 'flac'),
+      aggregateAlbumOption(1, 3, silvermachine, 'lossless/Casiopea/Mint Jams 24-96', ['Take Me', 'Asayake', 'Midnight Rendezvous', 'Time Limit'], 'hires'),
+      aggregateAlbumOption(1, 4, cloudarchive, 'Fusion/Casiopea/Mint Jams MP3', ['Take Me', 'Asayake', 'Midnight Rendezvous', 'Time Limit'], 'mp3'),
+      aggregateAlbumOption(1, 5, tapeLoop, 'incoming/Casiopea - Mint Jams', ['Take Me', 'Asayake', 'Midnight Rendezvous', 'Time Limit'], 'flac'),
+    ],
+  },
+  {
+    kind: 'album-aggregate', id: prototypeUuid(0x5a000000, 2), artist: 'Casiopea', album: 'Make Up City', itemName: 'Make Up City', shareCount: 4,
+    options: [
+      aggregateAlbumOption(2, 1, cassetteculture, 'Casiopea/1980 - Make Up City', ['Gypsy Wind', 'Eyes of Mind', 'Reflections of You', 'Ripple Dance'], 'flac'),
+      aggregateAlbumOption(2, 2, nightshift, 'Jazz/Casiopea/Make Up City', ['Gypsy Wind', 'Eyes of Mind', 'Reflections of You', 'Ripple Dance'], 'flac'),
+      aggregateAlbumOption(2, 3, cloudarchive, 'Fusion/Casiopea/Make Up City', ['Gypsy Wind', 'Eyes of Mind', 'Reflections of You', 'Ripple Dance'], 'mp3'),
+      aggregateAlbumOption(2, 4, tapeLoop, 'incoming/Casiopea Make Up City', ['Gypsy Wind', 'Eyes of Mind', 'Reflections of You', 'Ripple Dance'], 'flac'),
+    ],
+  },
+  {
+    kind: 'album-aggregate', id: prototypeUuid(0x5a000000, 3), artist: 'Casiopea', album: 'Eyes of the Mind', itemName: 'Eyes of the Mind', shareCount: 3,
+    options: [
+      aggregateAlbumOption(3, 1, nightshift, 'Jazz/Casiopea/1981 - Eyes of the Mind', ['A Place in the Sun', 'Take Me', 'Eyes of the Mind', 'Swallow'], 'flac'),
+      aggregateAlbumOption(3, 2, silvermachine, 'lossless/Casiopea/Eyes of the Mind', ['A Place in the Sun', 'Take Me', 'Eyes of the Mind', 'Swallow'], 'hires'),
+      aggregateAlbumOption(3, 3, cloudarchive, 'Fusion/Casiopea/Eyes of the Mind MP3', ['A Place in the Sun', 'Take Me', 'Eyes of the Mind', 'Swallow'], 'mp3'),
+    ],
+  },
+  {
+    kind: 'album-aggregate', id: prototypeUuid(0x5a000000, 4), artist: 'Casiopea', album: 'Super Flight', itemName: 'Super Flight', shareCount: 2,
+    options: [
+      aggregateAlbumOption(4, 1, cassetteculture, 'Casiopea/1979 - Super Flight', ['Take Me', 'Sailing Alone', 'Olion', 'Magic Ray'], 'flac'),
+      aggregateAlbumOption(4, 2, tapeLoop, 'Casiopea/Super Flight', ['Take Me', 'Sailing Alone', 'Olion', 'Magic Ray'], 'flac'),
+    ],
+  },
+];
+
+export function buildAggregateSearchProjectionRequest(
+  record: SearchRecord,
+  includeOptions = false,
+): AggregateSearchProjectionRequest {
+  if (record.submission.kind === 'song-aggregate') {
+    return {
+      kind: 'song-aggregate',
+      request: { songQuery: record.submission.request.songQuery, includeCandidates: includeOptions },
+    };
+  }
+  if (record.submission.kind === 'album-aggregate') {
+    return {
+      kind: 'album-aggregate',
+      request: { albumQuery: record.submission.request.albumQuery, includeFolders: includeOptions },
+    };
+  }
+  throw new Error('Aggregate projection requested for a non-aggregate search view.');
+}
+
+export function aggregateGroupsForRecord(record: SearchRecord, filterText = ''): AggregateSearchGroup[] {
+  if (!isAggregateSearchMode(record.draft.resultMode)) return [];
+  if ((record.status === 'pending' || record.status === 'searching') && record.foundFiles === 0) return [];
+  // Aggregate modes are SearchJob projections, not AggregateJob/AlbumAggregateJob submissions.
+  const projection = buildAggregateSearchProjectionRequest(record, false);
+  const source: AggregateSearchGroup[] = projection.kind === 'album-aggregate' ? albumAggregateGroups : songAggregateGroups;
+  const query = filterText.trim().toLowerCase();
+  return source
+    .filter((group) => !query || `${group.artist} ${group.itemName} ${group.options.map((option) => option.path).join(' ')}`.toLowerCase().includes(query))
+    .sort((a, b) => b.shareCount - a.shareCount);
+}
+
+
 function alternateTrackResult(result: TrackSearchResult, index: number): TrackSearchResult {
   const path = `Mirrors/Page 2/${result.path}`;
   return {
@@ -200,9 +404,9 @@ const trackNextPageResults = trackResults.map(alternateTrackResult);
 const albumNextPageResults = albumResults.map(alternateAlbumResult);
 
 function availableSearchResultCorpus(record: SearchRecord): ProjectedSearchResult[] {
-  const firstPage: ProjectedSearchResult[] = record.draft.resultMode === 'album' ? albumResults : trackResults;
+  const firstPage: ProjectedSearchResult[] = searchModeFamily(record.draft.resultMode) === 'album' ? albumResults : trackResults;
   if (!record.pagination.resultHasMore && record.pagination.resultPagesLoaded <= 1) return [...firstPage];
-  const secondPage: ProjectedSearchResult[] = record.draft.resultMode === 'album' ? albumNextPageResults : trackNextPageResults;
+  const secondPage: ProjectedSearchResult[] = searchModeFamily(record.draft.resultMode) === 'album' ? albumNextPageResults : trackNextPageResults;
   return [...firstPage, ...secondPage];
 }
 
@@ -259,7 +463,7 @@ function fileMatchesPatch(
   if (record.draft.mode === 'split' && patch.strictTitle && record.draft.title && !basename(path).toLowerCase().includes(record.draft.title.toLowerCase())) return false;
   if (record.draft.mode === 'split' && patch.strictAlbum && record.draft.title && !normalized.includes(record.draft.title.toLowerCase())) return false;
 
-  if (record.submission.kind === 'track') {
+  if (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate') {
     if (expectedLength !== undefined) {
       const tolerance = numeric(patch.lengthTolerance) ?? 0;
       if (audio?.lengthSeconds === undefined || Math.abs(audio.lengthSeconds - expectedLength) > tolerance) return false;
@@ -344,7 +548,7 @@ export function buildSearchResultProjectionRequest(
   cursor: string | null,
   limit: number,
 ): ProposedSearchResultProjectionRequestDto {
-  const projection: ProposedSearchResultProjectionRequestDto['projection'] = record.submission.kind === 'track'
+  const projection: ProposedSearchResultProjectionRequestDto['projection'] = (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate')
     ? {
         kind: 'track',
         request: {
@@ -383,6 +587,10 @@ export function requestSearchResultProjection(
   record: SearchRecord,
   request: ProposedSearchResultProjectionRequestDto,
 ): SearchResultProjectionPage {
+  if ((record.status === 'pending' || record.status === 'searching') && record.foundFiles === 0) {
+    return { items: [], totalCount: 0, nextCursor: null, request };
+  }
+
   const projected = availableSearchResultCorpus(record)
     .filter((result) => matchesNecessaryProjection(record, result, request))
     .map((result) => withProjectedPreference(record, result, request));
@@ -436,22 +644,28 @@ function makeRecord(
     foundFiles,
     lockedFiles,
     distinctPeers,
+    aggregateGroupCount: draft.resultMode === 'album-aggregate' ? albumAggregateGroups.length : draft.resultMode === 'song-aggregate' ? songAggregateGroups.length : undefined,
     when,
     conditions: cloneSearchConditions(conditions),
     submittedConditions: immutableSubmittedConditions(conditions),
     submission: cloneSearchSubmission(submission),
     fixture,
-    pagination: { resultPageSize: draft.resultMode === 'album' ? albumResults.length : trackResults.length, resultHasMore: false, resultPagesLoaded: 1, historyPage: index <= 4 ? 1 : 2 },
+    pagination: { resultPageSize: searchModeFamily(draft.resultMode) === 'album' ? albumResults.length : trackResults.length, resultHasMore: false, resultPagesLoaded: 1, historyPage: index <= 4 ? 1 : 2 },
   };
 }
 
 export const defaultSearchId = prototypeUuid(0x50000000, 2);
 
-export function createInitialSearches(scenario: 'normal' | 'busy' | 'empty' | 'offline' | 'stress' = 'normal'): SearchRecord[] {
+export function createInitialSearches(scenario: 'normal' | 'busy' | 'loading' | 'empty' | 'offline' | 'stress' = 'normal'): SearchRecord[] {
   if (scenario === 'empty') return [];
+  if (scenario === 'loading') {
+    return [makeRecord(2, { mode: 'split', resultMode: 'album', query: '', artist: 'Boards of Canada', title: 'Geogaddi' }, 'searching', 0, 0, 0, 'just now', 'boards', 'available', 'live')];
+  }
   const records: SearchRecord[] = [
     makeRecord(1, { mode: 'split', resultMode: 'track', query: '', artist: 'Autechre', title: 'Gantz Graf' }, 'searching', 187, 14, 42, 'just now', 'autechre'),
     makeRecord(2, { mode: 'split', resultMode: 'album', query: '', artist: 'Boards of Canada', title: 'Geogaddi' }, 'receiving', 412, 27, 68, '4 min ago', 'boards'),
+    makeRecord(6, { mode: 'split', resultMode: 'album-aggregate', query: '', artist: 'Casiopea', title: '' }, 'complete', 536, 8, 91, '11 min ago', 'generic'),
+    makeRecord(7, { mode: 'split', resultMode: 'song-aggregate', query: '', artist: 'Casiopea', title: '' }, 'complete', 684, 6, 104, '18 min ago', 'generic'),
     makeRecord(3, { mode: 'split', resultMode: 'track', query: '', artist: 'Aphex Twin', title: 'Xtal' }, 'complete', 93, 5, 31, '26 min ago', 'aphex'),
     makeRecord(4, { mode: 'split', resultMode: 'album', query: '', artist: 'Burial', title: 'Untrue' }, 'complete', 221, 18, 57, '1 h ago', 'burial'),
     makeRecord(5, { mode: 'split', resultMode: 'track', query: '', artist: 'Biosphere', title: 'Poa Alpina' }, 'complete', 64, 2, 19, 'Yesterday', 'historical'),
@@ -482,6 +696,9 @@ let createdSearchSequence = 100;
 export function createSearchRecord(draft: SearchDraft, conditions: PrototypeSearchConditions): SearchRecord {
   createdSearchSequence += 1;
   const submission = buildSearchSubmission(draft, conditions);
+  const family = searchModeFamily(draft.resultMode);
+  const aggregate = isAggregateSearchMode(draft.resultMode);
+  const aggregateGroupCount = draft.resultMode === 'album-aggregate' ? albumAggregateGroups.length : draft.resultMode === 'song-aggregate' ? songAggregateGroups.length : undefined;
   return {
     id: prototypeUuid(0x50000000, createdSearchSequence),
     workflowId: prototypeUuid(0x50010000, createdSearchSequence),
@@ -493,15 +710,16 @@ export function createSearchRecord(draft: SearchDraft, conditions: PrototypeSear
     resultState: 'available',
     lifetime: 'live',
     createdAtUtc: new Date().toISOString(),
-    foundFiles: draft.resultMode === 'album' ? 128 : 187,
-    lockedFiles: draft.resultMode === 'album' ? 9 : 14,
-    distinctPeers: draft.resultMode === 'album' ? 24 : 42,
+    foundFiles: family === 'album' ? 128 : 187,
+    lockedFiles: family === 'album' ? 9 : 14,
+    distinctPeers: family === 'album' ? 24 : 42,
+    aggregateGroupCount,
     when: 'just now',
     conditions: cloneSearchConditions(conditions),
     submittedConditions: immutableSubmittedConditions(conditions),
     submission: cloneSearchSubmission(submission),
     fixture: 'generic',
-    pagination: { resultPageSize: draft.resultMode === 'album' ? albumResults.length : trackResults.length, resultHasMore: true, resultPagesLoaded: 1, historyPage: 1 },
+    pagination: { resultPageSize: family === 'album' ? albumResults.length : trackResults.length, resultHasMore: aggregate ? false : true, resultPagesLoaded: 1, historyPage: 1 },
   };
 }
 

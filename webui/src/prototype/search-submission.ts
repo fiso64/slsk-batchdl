@@ -1,6 +1,6 @@
 import type { components } from '../api/generated';
 import type { SearchDraft } from './search';
-import { networkQuery } from './search';
+import { networkQuery, searchModeFamily } from './search';
 import { cloneSearchConditions, toNecessarySearchPatch, type PrototypeSearchConditions } from './search-config';
 
 export type SubmitTrackSearchJobRequestDto = components['schemas']['SubmitTrackSearchJobRequestDto'];
@@ -8,7 +8,9 @@ export type SubmitAlbumSearchJobRequestDto = components['schemas']['SubmitAlbumS
 
 export type PrototypeSearchSubmission =
   | { kind: 'track'; request: SubmitTrackSearchJobRequestDto }
-  | { kind: 'album'; request: SubmitAlbumSearchJobRequestDto };
+  | { kind: 'album'; request: SubmitAlbumSearchJobRequestDto }
+  | { kind: 'song-aggregate'; request: SubmitTrackSearchJobRequestDto }
+  | { kind: 'album-aggregate'; request: SubmitAlbumSearchJobRequestDto };
 
 function numberOrUndefined(value: string): number | undefined {
   if (!value.trim()) return undefined;
@@ -16,54 +18,65 @@ function numberOrUndefined(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function songQuery(draft: SearchDraft, conditions: PrototypeSearchConditions) {
+  return draft.mode === 'split'
+    ? {
+        artist: draft.artist.trim() || null,
+        title: draft.title.trim() || null,
+        album: null,
+        uri: null,
+        length: numberOrUndefined(conditions.track.expectedLength) ?? null,
+        artistMaybeWrong: false,
+      }
+    : {
+        artist: null,
+        title: networkQuery(draft) || null,
+        album: null,
+        uri: null,
+        length: numberOrUndefined(conditions.track.expectedLength) ?? null,
+        artistMaybeWrong: false,
+      };
+}
+
+function albumQuery(draft: SearchDraft) {
+  return draft.mode === 'split'
+    ? {
+        artist: draft.artist.trim() || null,
+        album: draft.title.trim() || null,
+        searchHint: null,
+        uri: null,
+        artistMaybeWrong: false,
+      }
+    : {
+        artist: null,
+        album: null,
+        searchHint: networkQuery(draft) || null,
+        uri: null,
+        artistMaybeWrong: false,
+      };
+}
+
 export function buildSearchSubmission(draft: SearchDraft, conditions: PrototypeSearchConditions): PrototypeSearchSubmission {
   const searchPatch = toNecessarySearchPatch(draft.resultMode, conditions);
   const options = { downloadSettings: { search: searchPatch } };
+  const family = searchModeFamily(draft.resultMode);
 
-  if (draft.resultMode === 'track') {
+  if (family === 'track') {
+    // Both Track Search and Song Aggregate are projections of the same discovery SearchJob.
     const request: SubmitTrackSearchJobRequestDto = {
-      songQuery: draft.mode === 'split'
-        ? {
-            artist: draft.artist.trim() || null,
-            title: draft.title.trim() || null,
-            album: null,
-            uri: null,
-            length: numberOrUndefined(conditions.track.expectedLength) ?? null,
-            artistMaybeWrong: false,
-          }
-        : {
-            artist: null,
-            title: networkQuery(draft) || null,
-            album: null,
-            uri: null,
-            length: numberOrUndefined(conditions.track.expectedLength) ?? null,
-            artistMaybeWrong: false,
-          },
+      songQuery: songQuery(draft, conditions),
       includeFullResults: true,
       options,
     };
-    return { kind: 'track', request };
+    return { kind: draft.resultMode === 'song-aggregate' ? 'song-aggregate' : 'track', request };
   }
 
+  // Both Album Search and Album Aggregate are projections of the same discovery SearchJob.
   const request: SubmitAlbumSearchJobRequestDto = {
-    albumQuery: draft.mode === 'split'
-      ? {
-          artist: draft.artist.trim() || null,
-          album: draft.title.trim() || null,
-          searchHint: null,
-          uri: null,
-          artistMaybeWrong: false,
-        }
-      : {
-          artist: null,
-          album: null,
-          searchHint: networkQuery(draft) || null,
-          uri: null,
-          artistMaybeWrong: false,
-        },
+    albumQuery: albumQuery(draft),
     options,
   };
-  return { kind: 'album', request };
+  return { kind: draft.resultMode === 'album-aggregate' ? 'album-aggregate' : 'album', request };
 }
 
 export function cloneSearchSubmission(submission: PrototypeSearchSubmission): PrototypeSearchSubmission {

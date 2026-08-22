@@ -56,7 +56,7 @@
     if (value?.tone === 'complete') return 'check';
     if (value?.tone === 'active') return value.direction === 'upload' ? 'upload' : 'download';
     if (value?.tone === 'failed' || value?.tone === 'cancelled') return 'x';
-    return 'clock';
+    return value ? 'clock' : 'file';
   }
 
   function fileTransferPrimary(value: TransferPresentation): string {
@@ -75,6 +75,7 @@
   class:selected
   class:partial
   class:preferred
+  class:selectable
   class:transfer-card={Boolean(transfer)}
 >
   <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class="folder-item-summary folder-result-summary">

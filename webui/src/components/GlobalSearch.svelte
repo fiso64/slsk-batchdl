@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SearchDraft } from '../prototype/search';
+  import { searchModeFamily } from '../prototype/search';
   import type { UserBrowseDraft } from '../prototype/users';
   import {
     cloneSearchConditions,
@@ -33,10 +34,16 @@
   let suppressAutoSplit = $state(false);
   let settingsOpen = $state(false);
   let searchEngaged = $state(false);
+  let modeMenuOpen = $state(false);
   let searchRoot: HTMLDivElement;
   let searchControlsRow: HTMLDivElement;
   let conditionOverlayHeight = $state(0);
   let conditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions());
+
+  $effect(() => {
+    variant;
+    modeMenuOpen = false;
+  });
 
   function findDelimiter(input: string): { index: number; length: number } | null {
     const candidates = [' — ', ' - ']
@@ -57,6 +64,8 @@
   const searchModeOptions = [
     { value: 'track', label: 'Track Search', icon: 'track' as const },
     { value: 'album', label: 'Album Search', icon: 'album' as const },
+    { value: 'song-aggregate', label: 'Song Aggregate', icon: 'song-aggregate' as const },
+    { value: 'album-aggregate', label: 'Album Aggregate', icon: 'album-aggregate' as const },
   ];
 
   const userBrowseModeOptions = [
@@ -65,8 +74,21 @@
   ];
 
   function setResultMode(nextMode: string): void {
-    if (nextMode !== 'track' && nextMode !== 'album') return;
+    if (nextMode !== 'track' && nextMode !== 'album' && nextMode !== 'song-aggregate' && nextMode !== 'album-aggregate') return;
     onchange({ ...value, resultMode: nextMode });
+  }
+
+  function contentPlaceholder(): string {
+    switch (value.resultMode) {
+      case 'track': return 'Search songs…';
+      case 'album': return 'Search albums…';
+      case 'song-aggregate': return 'Search song aggregates…';
+      case 'album-aggregate': return 'Search album aggregates…';
+    }
+  }
+
+  function contentAriaLabel(): string {
+    return contentPlaceholder().replace('…', '');
   }
 
   function setUserBrowseMode(nextMode: string): void {
@@ -132,11 +154,17 @@
   }
 
   function submitOnEnter(event: KeyboardEvent): void {
-    if (event.key === 'Enter') onsubmit(value, cloneSearchConditions(conditions));
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    onsubmit(value, cloneSearchConditions(conditions));
+    dismissFocusedSearch();
   }
 
   function submitUserOnEnter(event: KeyboardEvent): void {
-    if (event.key === 'Enter') onusersubmit(userValue);
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    onusersubmit(userValue);
+    dismissFocusedSearch();
   }
 
   function focusSearch(event: KeyboardEvent): void {
@@ -181,7 +209,7 @@
 
 <svelte:window onkeydown={focusSearch} onpointerdown={handleWindowPointerDown} />
 
-<div class="global-search" aria-label={variant === 'user' ? 'Browse Soulseek user' : 'Global Sockseek search'} bind:this={searchRoot}>
+<div class:mode-menu-open={modeMenuOpen} class="global-search" aria-label={variant === 'user' ? 'Browse Soulseek user' : 'Global Sockseek search'} bind:this={searchRoot}>
   <div class="search-controls-row" bind:this={searchControlsRow}>
     {#if variant === 'user'}
       <div class="search-entry">
@@ -190,6 +218,7 @@
           options={userBrowseModeOptions}
           ariaLabel="User browse mode"
           onchange={setUserBrowseMode}
+          onopenchange={(open) => (modeMenuOpen = open)}
         />
         <div class="search-bar simple has-mode-picker user-browser-global-search">
           <input
@@ -213,16 +242,17 @@
           options={searchModeOptions}
           ariaLabel="Search result mode"
           onchange={setResultMode}
+          onopenchange={(open) => (modeMenuOpen = open)}
         />
         {#if value.mode === 'simple'}
           <div class="search-bar simple has-mode-picker" onfocusin={() => (searchEngaged = true)}>
             <input
               id="global-search-simple"
               value={value.query}
-              placeholder={value.resultMode === 'album' ? 'Search albums…' : 'Search songs…'}
+              placeholder={contentPlaceholder()}
               autocomplete="off"
               spellcheck="false"
-              aria-label={value.resultMode === 'album' ? 'Search albums' : 'Search songs'}
+              aria-label={contentAriaLabel()}
               oninput={handleSimpleInput}
               onkeydown={submitOnEnter}
             />
@@ -245,11 +275,11 @@
             </label>
             <span class="search-divider" aria-hidden="true"></span>
             <label class="search-field">
-              <span>{value.resultMode === 'album' ? 'album' : 'track'}</span>
+              <span>{searchModeFamily(value.resultMode) === 'album' ? 'album' : 'track'}</span>
               <input
                 id="global-search-title"
                 value={value.title}
-                placeholder={value.resultMode === 'album' ? 'album…' : 'track…'}
+                placeholder={searchModeFamily(value.resultMode) === 'album' ? 'album…' : 'track…'}
                 autocomplete="off"
                 spellcheck="false"
                 oninput={(event) => setSplit(value.artist, (event.currentTarget as HTMLInputElement).value)}

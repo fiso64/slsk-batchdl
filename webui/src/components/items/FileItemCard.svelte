@@ -37,6 +37,7 @@
   class:locked
   class:selected
   class:preferred
+  class:selectable
   class:transfer-card={Boolean(transfer)}
   class:has-audio={Boolean(audio)}
 >

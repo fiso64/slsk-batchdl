@@ -68,5 +68,14 @@
     <rect x="4" y="4" width="16" height="16" rx="2.5" />
     <circle cx="12" cy="12" r="4.2" />
     <circle cx="12" cy="12" r="1" />
+  {:else if name === 'song-aggregate'}
+    <path d="M8 17V7l7-1.6v9.7" />
+    <circle cx="5.8" cy="17" r="2.2" />
+    <circle cx="12.8" cy="15.2" r="2.2" />
+    <path d="M17.5 7.5h2M18.5 6.5v2" />
+  {:else if name === 'album-aggregate'}
+    <rect x="3.5" y="5.5" width="14" height="14" rx="2.2" />
+    <circle cx="10.5" cy="12.5" r="3.3" />
+    <path d="M7 3.5h11a2.5 2.5 0 0 1 2.5 2.5v11" />
   {/if}
 </svg>

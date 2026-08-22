@@ -161,6 +161,8 @@
 
   {#if scenario.connection === 'offline'}
     <div class="empty-state"><strong>Daemon unavailable</strong><p>Current download state cannot be loaded while the daemon is offline.</p></div>
+  {:else if resourceState.blocking}
+    <ResourceStateNotice state={resourceState} />
   {:else if allVisibleDownloads.length === 0}
     <div class="empty-state"><strong>No downloads</strong><p>Downloaded files and folders will appear here in creation order.</p></div>
   {:else}

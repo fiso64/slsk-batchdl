@@ -211,6 +211,26 @@ const fixtures: Record<ScenarioId, RawUserBrowseFixture> = {
       ] },
     ],
   },
+  loading: {
+    profile: {
+      username: 'buffering_peer',
+      presence: 'online',
+      description: 'Profile and shares requests are intentionally left in flight in this scenario.',
+      averageUploadSpeed: 6_700_000,
+      uploadCount: 12_440,
+      uploadSlots: 2,
+      queuedUploads: 3,
+      hasFreeUploadSlot: false,
+    },
+    shares: [
+      { id: 'loading-music', name: 'Music', folders: [
+        { id: 'loading-collection', name: 'Collection', files: [
+          file('l-01', '01 - pending browse.flac', 34),
+          file('l-02', '02 - pending browse.flac', 39),
+        ] },
+      ] },
+    ],
+  },
   empty: {
     profile: {
       username: 'quiet_catalogue',
@@ -326,14 +346,14 @@ function materializeFixture(id: ScenarioId, raw: RawUserBrowseFixture): UserBrow
     picture: raw.profile.imageUrl ? { url: raw.profile.imageUrl, mediaType: 'image/jpeg', byteLength: 149437, eTag: 'prototype-normal-picture' } : null,
     observedAt,
   };
-  const browseState = id === 'busy' ? 'running' : id === 'offline' ? 'failed' : id === 'stress' ? 'failed' : 'complete';
+  const browseState = id === 'loading' || id === 'busy' ? 'running' : id === 'offline' ? 'failed' : id === 'stress' ? 'failed' : 'complete';
   const browseDto: UserBrowseDto = {
     browseId: prototypeUuid(0x71000000, stableNumber(raw.profile.username)),
     username: raw.profile.username,
     state: browseState,
-    phase: id === 'busy' ? 'indexing' : 'ready',
-    compressedBytesReceived: id === 'busy' ? 64000 : 128000,
-    compressedBytesExpected: id === 'busy' ? 160000 : 128000,
+    phase: id === 'loading' ? 'waiting-for-peer' : id === 'busy' ? 'indexing' : 'ready',
+    compressedBytesReceived: id === 'loading' ? 0 : id === 'busy' ? 64000 : 128000,
+    compressedBytesExpected: id === 'loading' ? null : id === 'busy' ? 160000 : 128000,
     directoryCount: metrics.folders, fileCount: metrics.files, totalFileBytes: metrics.sizeBytes,
     createdAt: '2026-08-07T08:10:00.000Z', updatedAt: observedAt,
     expiresAt: id === 'stress' ? '2026-08-07T08:14:00.000Z' : '2026-08-08T08:15:00.000Z',
@@ -350,7 +370,7 @@ function materializeFixture(id: ScenarioId, raw: RawUserBrowseFixture): UserBrow
     fileId: row.fileId!, directoryId: row.parentDirectoryId ?? '0', visibility: row.visibility,
     file: { name: row.name, size: row.sizeBytes, extension: row.name.includes('.') ? row.name.split('.').at(-1) ?? null : null, bitRate: null, bitDepth: null, sampleRate: null, length: null, attributes: null },
   }));
-  const result: UserBrowseFixture = { ...raw, profileDto, browseDto, directoryDtos, fileDtos, profileLifetime: 'live-only', browseLifetime: id === 'stress' ? 'expired' : id === 'busy' ? 'live' : 'retained' };
+  const result: UserBrowseFixture = { ...raw, profileDto, browseDto, directoryDtos, fileDtos, profileLifetime: 'live-only', browseLifetime: id === 'stress' ? 'expired' : id === 'loading' || id === 'busy' ? 'live' : 'retained' };
   materializedFixtures.set(key, result);
   return result;
 }

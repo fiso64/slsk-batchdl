@@ -178,6 +178,7 @@
   {#if view === 'user'}
     <ResourceStateNotice state={profileState} />
     <MutationStatus state={mutation} />
+    {#if !profileState.blocking}
     <article class="user-profile-card">
       <div class="user-profile-primary">
         {#if profile.picture?.url}
@@ -254,12 +255,17 @@
         </div>
       </div>
     </article>
+    {/if}
   {:else}
     {@const visibleRows = visibleShareRows(shareProjection.rows)}
     {#if sharesState.blocking}
-      <div class="empty-state">
-        <strong>{sharesState.title}</strong><p>{sharesState.detail}</p>
-      </div>
+      {#if sharesState.phase === 'loading'}
+        <ResourceStateNotice state={sharesState} />
+      {:else}
+        <div class="empty-state">
+          <strong>{sharesState.title}</strong><p>{sharesState.detail}</p>
+        </div>
+      {/if}
     {:else}
       <ResourceStateNotice state={sharesState} />
       <MutationStatus state={mutation} />

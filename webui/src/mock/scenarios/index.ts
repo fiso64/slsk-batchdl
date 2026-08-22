@@ -36,6 +36,14 @@ export const scenarios = [
     snapshot: snapshot(128, busyTransfers),
   },
   {
+    id: 'loading',
+    label: 'Loading',
+    description: 'Requests are in flight so loading and no-results-yet states can be inspected.',
+    connection: 'connected',
+    soulseek: 'ready',
+    snapshot: snapshot(64, []),
+  },
+  {
     id: 'empty',
     label: 'Empty',
     description: 'A healthy daemon with no current transfers or other activity.',
