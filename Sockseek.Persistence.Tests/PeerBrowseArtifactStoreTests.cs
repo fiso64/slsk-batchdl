@@ -591,6 +591,9 @@ public sealed class PeerBrowseArtifactStoreTests
         Assert.AreEqual(1, resolution.CanonicalDirectoryRoots);
     }
 
+    // TODO: This exceeded the five-second threshold once on shared CI (5.161 s:
+    // 4.673 s ingestion, 0.489 s completion) and passed the next two runs. Decide
+    // whether this performance check should be isolated, revised, or removed.
     [TestMethod]
     [TestCategory("Load")]
     public async Task HundredThousandFileArtifactIndexesWithBoundedPerFileState()
