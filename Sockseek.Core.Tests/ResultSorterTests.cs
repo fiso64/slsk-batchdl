@@ -518,5 +518,23 @@ namespace Tests.ResultSorterTests
                 expected.Select(x => x.response.Username + "\\" + x.file.Filename).ToList(),
                 actual.Select(x => x.Response.Username + "\\" + x.File.Filename).ToList());
         }
+
+        [TestMethod]
+        public void IncrementalResultSorter_DistinguishesSeparatorBearingIdentityComponents()
+        {
+            var firstFile = TestHelpers.CreateSlFile(@"beta\Artist - Track.mp3", length: 180);
+            var secondFile = TestHelpers.CreateSlFile("Artist - Track.mp3", length: 181);
+            var first = CreateResponse("alpha", files: firstFile);
+            var second = CreateResponse(@"alpha\beta", files: secondFile);
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var sorter = new IncrementalResultSorter(
+                TestHelpers.CreateQuery(artist: "Artist", title: "Track"),
+                config.Search,
+                new ConcurrentDictionary<string, int>());
+
+            sorter.AddRange([(first, firstFile), (second, secondFile)]);
+
+            Assert.AreEqual(2, sorter.Count);
+        }
     }
 }

@@ -10,6 +10,32 @@ namespace Tests.Core;
 public class LocalFilesSoulseekClientTests
 {
     [TestMethod]
+    public async Task ResponseHandlerSearch_PropagatesCancellationWithoutAggregateException()
+    {
+        var indexedFile = new Soulseek.File(
+            code: 1,
+            filename: @"Artist\Track.mp3",
+            size: 4,
+            extension: "mp3");
+        var response = new SearchResponse(
+            username: "local",
+            token: 1,
+            hasFreeUploadSlot: true,
+            uploadSpeed: 100,
+            queueLength: 0,
+            fileList: [indexedFile]);
+        var client = new LocalFilesSoulseekClient([response]);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() =>
+            client.SearchAsync(
+                new SearchQuery("Track"),
+                responseHandler: _ => { },
+                cancellationToken: cancellation.Token));
+    }
+
+    [TestMethod]
     public async Task FromLocalPaths_UsesSoulseekRelativeIdentityAndDownloadsFromLocalSource()
     {
         string root = Path.Combine(Path.GetTempPath(), "Sockseek-local-files-identity-" + Guid.NewGuid());

@@ -9,6 +9,8 @@ namespace Sockseek.Core.Settings;
 // (e.g. Sharing, Username & Password). Split EngineSettings and reorganize.
 public class EngineSettings
 {
+    internal EngineSettings ShallowClone() => (EngineSettings)MemberwiseClone();
+
     // ── Soulseek connection ───────────────────────────────────────────────────
 
     public string? Username { get; set; }

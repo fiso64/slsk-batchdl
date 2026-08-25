@@ -352,6 +352,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
 
         while (e != null)
         {
+            if (e is OperationCanceledException) return true;
             if (e is Soulseek.AddressException || e is System.TimeoutException || e is System.Net.Sockets.SocketException) return true;
             if (e.GetType().Name.Contains("ConnectionException")) return true;
             if (e.GetType().Name.Contains("SoulseekClientException")) return true;
@@ -419,7 +420,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
                 retryDelay = 1;
                 SoulseekLogMessages.Reconnected(logger);
             }
-            catch (OperationCanceledException) { break; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 if (!IsTransient(ex))
@@ -609,7 +610,7 @@ public class SoulseekClientManager : IDisposable, IAsyncDisposable
     {
         if (Interlocked.Exchange(ref _disposeState, 1) != 0)
             return;
-        _monitorCts?.Cancel();
+        MarkFatal(new ObjectDisposedException(nameof(SoulseekClientManager)));
         if (_client != null)
         {
             _client.KickedFromServer -= OnKickedFromServer;

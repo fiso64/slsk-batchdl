@@ -103,6 +103,24 @@ public sealed class ShareScannerTests
             && error.RelativePath == "collision.txt"));
     }
 
+    [TestMethod]
+    public async Task ScanAsync_WriterFailureCancelsTheBoundedPipeline()
+    {
+        await using var fixture = new ScannerFixture();
+        for (int index = 0; index < 300; index++)
+            await File.WriteAllTextAsync(Path.Combine(fixture.RootPath, $"file-{index:D3}.txt"), "data");
+
+        Task<ShareScanResult> scan = new ShareScanner().ScanAsync(
+            fixture.Settings,
+            new FailingWriter(fixture.DatabasePath),
+            Guid.NewGuid(),
+            "settings").AsTask();
+
+        InvalidOperationException failure = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => scan.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.AreEqual("Synthetic writer failure.", failure.Message);
+    }
+
     private sealed class RecordingWriter(string databasePath)
         : IShareCatalogGenerationWriter
     {
@@ -149,6 +167,29 @@ public sealed class ShareScannerTests
         public ValueTask CompleteAsync(
             ShareCatalogMetadata metadata,
             CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class FailingWriter(string databasePath)
+        : IShareCatalogGenerationWriter
+    {
+        public string DatabasePath { get; } = databasePath;
+
+        public ValueTask AddRootAsync(ShareCatalogRoot root, CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("Synthetic writer failure."));
+
+        public ValueTask AddDirectoryAsync(ShareCatalogDirectory directory, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask AddFileAsync(ShareCatalogFile file, CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask PrepareForReadAsync(CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        public ValueTask CompleteAsync(ShareCatalogMetadata metadata, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

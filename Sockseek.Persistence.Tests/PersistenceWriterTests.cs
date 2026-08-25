@@ -323,7 +323,48 @@ public sealed class PersistenceWriterTests
     }
 
     [TestMethod]
-    public void SimulatedWeekLongOutage_WithManyEntities_RemainsWithinEveryConfiguredBound()
+    public void IncompleteSearchTrackingOverflow_DoesNotPoisonUnrelatedCompletions()
+    {
+        var options = new PersistenceWriterOptions
+        {
+            SearchResultCapacityPerSearch = 1,
+            SearchResultGlobalCapacity = 1,
+            IncompleteSearchTrackingCapacity = 1,
+        };
+        var inbox = new PersistenceInbox(options, new PersistenceHealth());
+        Guid runtimeId = Guid.NewGuid();
+
+        foreach (Guid searchId in new[] { Guid.NewGuid(), Guid.NewGuid() })
+        {
+            Assert.IsFalse(inbox.TryEnqueue(new SearchResultsPersistenceMutation(
+                runtimeId,
+                1,
+                DateTimeOffset.UtcNow,
+                searchId,
+                1,
+                [Result(1), Result(2)])));
+        }
+
+        Guid unaffectedSearchId = Guid.NewGuid();
+        Assert.IsTrue(inbox.TryEnqueue(new SearchCompletionPersistenceMutation(
+            runtimeId,
+            2,
+            DateTimeOffset.UtcNow,
+            unaffectedSearchId,
+            2,
+            "unaffected",
+            0,
+            0,
+            "Complete")));
+
+        PersistenceMutation mutation = inbox.DrainBatch().Single();
+        Assert.IsInstanceOfType<SearchTerminalPersistenceMutation>(mutation);
+        var terminal = (SearchTerminalPersistenceMutation)mutation;
+        Assert.AreEqual("Complete", terminal.Completion.ResultPersistenceState);
+    }
+
+    [TestMethod]
+    public void SimulatedWeekLongOutage_LossyBuffersRemainBoundedWithoutDiscardingIncompleteSearchIds()
     {
         var options = new PersistenceWriterOptions
         {
@@ -358,7 +399,7 @@ public sealed class PersistenceWriterTests
         Assert.IsTrue(inbox.ProgressCount <= options.ProgressEntityCapacity);
         Assert.IsTrue(inbox.DegradedCount <= options.DegradedProjectionCapacity);
         Assert.IsTrue(inbox.BufferedSearchResultCount <= options.SearchResultGlobalCapacity);
-        Assert.IsTrue(inbox.IncompleteSearchTrackingCount <= options.IncompleteSearchTrackingCapacity);
+        Assert.IsTrue(inbox.IncompleteSearchTrackingCount > options.IncompleteSearchTrackingCapacity);
         Assert.IsTrue(inbox.IncompleteSearchTrackingOverflowed);
         Assert.IsTrue(snapshot.DroppedProgressCount > 0);
         Assert.IsTrue(snapshot.DroppedSearchResultCount > 0);
@@ -591,6 +632,8 @@ public sealed class PersistenceWriterTests
         CollectionAssert.AreEqual(ids.Skip(2).ToArray(), second.Items.Select(job => job.Id).ToArray());
         Assert.IsNull(second.NextCursor);
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetJobsAsync(new JobHistoryQuery(Cursor: "bad", Limit: 2)));
+        await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetJobsAsync(new JobHistoryQuery(
+            Cursor: first.NextCursor + new string(' ', 128), Limit: 2)));
         await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(() => reader.GetJobsAsync(new JobHistoryQuery(Limit: JobHistoryReader.MaximumPageSize + 1)));
 
         var workflowPage1 = await reader.GetWorkflowsAsync(limit: 2);
@@ -601,6 +644,8 @@ public sealed class PersistenceWriterTests
         Assert.AreEqual(ids[1], (await reader.GetJobByDisplayIdAsync(workflowIds[1], 2))?.Id);
         Assert.AreEqual(1, (await reader.GetWorkflowJobsAsync(workflowIds[0])).Count);
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetWorkflowsAsync("bad", 2));
+        await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetWorkflowsAsync(
+            workflowPage1.NextCursor + new string(' ', 128), 2));
         await runtimeSession.StopAsync();
     }
 
@@ -683,6 +728,8 @@ public sealed class PersistenceWriterTests
         Assert.IsNull(attempts2.NextAttemptNumber);
 
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetTransfersAsync(new TransferHistoryQuery("bad", 2)));
+        await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetTransfersAsync(new TransferHistoryQuery(
+            first.NextCursor + new string(' ', 129), 2)));
         await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(() => reader.GetAttemptsAsync(ids[0], 0, TransferHistoryReader.MaximumPageSize + 1));
         await runtimeSession.StopAsync();
     }

@@ -37,6 +37,7 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadStartsAsync;
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
+        public Func<SearchQuery, CancellationToken, Task>? BeforeSearchAsync;
         public Func<CancellationToken, Task>? AfterFirstSearchResponseAsync;
         public bool BrowseReturnsBasenames { get; set; }
         public BrowseResponse? BrowseResponseOverride { get; set; }
@@ -280,6 +281,9 @@ namespace Tests.ClientTests
             var totalLockedFileCount = 0;
             var ct = cancellationToken ?? CancellationToken.None;
             bool firstResponse = true;
+
+            if (BeforeSearchAsync is not null)
+                await BeforeSearchAsync(query, ct);
 
             foreach (var user in index)
             {

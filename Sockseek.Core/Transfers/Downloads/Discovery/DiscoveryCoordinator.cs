@@ -12,6 +12,7 @@ using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Transfers.Downloads.Skipping;
 using Sockseek.Core.Transfers.Downloads.SourceMutations;
 using Sockseek.Core.Extractors;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
@@ -74,11 +75,11 @@ internal sealed class DiscoveryCoordinator
                 return result;
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             return new(JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken)), null, extractor);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e)
         {
             return new(DownloadOutcomes.ExtractionFailed(e), null, extractor);
         }
@@ -287,7 +288,7 @@ internal sealed class DiscoveryCoordinator
             var result = await RunSearchWithReconnect(job.Cts!.Token, searchAction);
             return (result, null);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             var outcome = JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken));
             JobOutcomeCommitter.Commit(job, outcome);
@@ -306,10 +307,9 @@ internal sealed class DiscoveryCoordinator
 
     public async Task<JobOutcome> ProcessRetrieveFolderJob(RetrieveFolderJob job, CancellationToken parentToken)
     {
-        await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
-
         try
         {
+            await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
             job.UpdateActivity(JobActivityPhase.RetrievingFolder);
             job.Result = await context.Runtime.Searcher.RetrieveDirectory(job.Directory, job.Cts!.Token);
             job.NewFilesFoundCount = job.ResultObserver?.Invoke(job.Result) ?? job.Result.Files.Count;
@@ -319,7 +319,7 @@ internal sealed class DiscoveryCoordinator
             JobOutcomeCommitter.Commit(job, outcome);
             return outcome;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             job.Discovery = new DiscoverySummary { RawResultCount = 0, LockedFileCount = 0 };
             job.RetrievalOutcome = FolderRetrievalOutcome.Cancelled;
@@ -327,6 +327,10 @@ internal sealed class DiscoveryCoordinator
             JobOutcomeCommitter.Commit(job, outcome);
             context.Events.RaiseJobStatus(job, "cancelled");
             return outcome;
+        }
+        catch (Exception e)
+        {
+            return CommitFolderRetrievalFailure(job, e);
         }
     }
 
@@ -686,7 +690,7 @@ internal sealed class DiscoveryCoordinator
                 count);
             return rfJob;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(rfJob, parentJob.Cts!.Token))
         {
             // Suppress upward exception so cancelling this retrieval job doesn't cancel its parent.
             rfJob.RetrievalOutcome = FolderRetrievalOutcome.Cancelled;
@@ -697,6 +701,11 @@ internal sealed class DiscoveryCoordinator
                 LogLevel.Information,
                 null,
                 "folder retrieval cancelled");
+            return rfJob;
+        }
+        catch (Exception e)
+        {
+            CommitFolderRetrievalFailure(rfJob, e);
             return rfJob;
         }
         finally
@@ -711,6 +720,19 @@ internal sealed class DiscoveryCoordinator
             rfJob.Discovery = new DiscoverySummary { RawResultCount = count, LockedFileCount = 0 };
             context.Events.RaiseJobExecutionCompleted(rfJob);
         }
+    }
+
+    private JobOutcome CommitFolderRetrievalFailure(RetrieveFolderJob job, Exception exception)
+    {
+        job.Discovery = new DiscoverySummary { RawResultCount = 0, LockedFileCount = 0 };
+        job.RetrievalOutcome = FolderRetrievalOutcome.Failed;
+        var outcome = DownloadOutcomes.ExceptionFailure(JobFailureReason.Other, exception);
+        JobOutcomeCommitter.Commit(job, outcome);
+        DownloadLogMessages.FolderCompletionFailed(
+            logger,
+            exception,
+            LogIdentity.Hash(job.Directory.Username + "\0" + job.Directory.FolderPath));
+        return outcome;
     }
 
 

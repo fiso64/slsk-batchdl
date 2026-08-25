@@ -319,7 +319,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsDelta()
+    public async Task RemoteCliBackend_SubmitExtract_UsesClientDownloadSettingsPatch()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-album-test-" + Guid.NewGuid());
         string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-remote-backend-album-out-" + Guid.NewGuid());

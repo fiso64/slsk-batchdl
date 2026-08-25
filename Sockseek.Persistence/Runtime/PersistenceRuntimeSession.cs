@@ -36,107 +36,108 @@ public sealed class PersistenceRuntimeSession(
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-        var unfinishedSessions = await context.RuntimeSessions
+        var unfinishedIds = await context.RuntimeSessions
+            .AsNoTracking()
             .Where(session => session.StoppedAtUtc == null)
+            .Select(session => session.Id)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        var unfinishedIds = unfinishedSessions.Select(session => session.Id).ToHashSet();
-
-        context.RuntimeSessions.Add(new RuntimeSessionEntity
-        {
-            Id = runtime.RuntimeId,
-            StartedAtUtc = now,
-            Version = version,
-        });
-
-        foreach (var unfinished in unfinishedSessions)
-        {
-            unfinished.StoppedAtUtc = now;
-            unfinished.ShutdownKind = "Unclean";
-        }
 
         int interruptedJobs = 0;
         int interruptedTransfers = 0;
         int interruptedAttempts = 0;
         int interruptedSearches = 0;
 
+        // LastRuntimeId is a foreign key, so the replacement runtime must exist before
+        // the set-based reconciliation points interrupted rows at it.
+        context.RuntimeSessions.Add(new RuntimeSessionEntity
+        {
+            Id = runtime.RuntimeId,
+            StartedAtUtc = now,
+            Version = version,
+        });
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
         if (unfinishedIds.Count > 0)
         {
-            var jobs = await context.Jobs
+            interruptedSearches = await context.SearchJobs
+                .Where(search => !search.IsComplete && context.Jobs.Any(job =>
+                    job.Id == search.JobId
+                    && unfinishedIds.Contains(job.LastRuntimeId)
+                    && job.LifecycleState != "Terminal"))
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(search => search.IsComplete, true)
+                        .SetProperty(search => search.CompletedAtUtc, now)
+                        .SetProperty(search => search.ResultPersistenceState, "Interrupted")
+                        .SetProperty(search => search.Revision, search => search.Revision + 1),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            interruptedJobs = await context.Jobs
                 .Where(job => unfinishedIds.Contains(job.LastRuntimeId) && job.LifecycleState != "Terminal")
-                .ToListAsync(cancellationToken)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(job => job.LastRuntimeId, runtime.RuntimeId)
+                        .SetProperty(job => job.LastSequence, 0)
+                        .SetProperty(job => job.LifecycleState, "Terminal")
+                        .SetProperty(job => job.ActivityPhase, "None")
+                        .SetProperty(job => job.ActivityUntilUtc, (long?)null)
+                        .SetProperty(job => job.TerminalOutcome, "Failed")
+                        .SetProperty(job => job.FailureReason, "Interrupted")
+                        .SetProperty(job => job.FailureMessage, "Interrupted by an unclean daemon shutdown.")
+                        .SetProperty(job => job.UpdatedAtUtc, job => job.UpdatedAtUtc > now ? job.UpdatedAtUtc : now)
+                        .SetProperty(job => job.CompletedAtUtc, now)
+                        .SetProperty(job => job.Revision, job => job.Revision + 1),
+                    cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var job in jobs)
-            {
-                job.LastRuntimeId = runtime.RuntimeId;
-                job.LastSequence = 0;
-                job.LifecycleState = "Terminal";
-                job.ActivityPhase = "None";
-                job.ActivityUntilUtc = null;
-                job.TerminalOutcome = "Failed";
-                job.FailureReason = "Interrupted";
-                job.FailureMessage = "Interrupted by an unclean daemon shutdown.";
-                job.UpdatedAtUtc = Math.Max(job.UpdatedAtUtc, now);
-                job.CompletedAtUtc = now;
-                job.Revision = checked(job.Revision + 1);
-            }
-            interruptedJobs = jobs.Count;
 
-            var searches = await context.SearchJobs
-                .Where(search => !search.IsComplete && jobs.Select(job => job.Id).Contains(search.JobId))
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-            foreach (var search in searches)
-            {
-                search.IsComplete = true;
-                search.CompletedAtUtc = now;
-                search.ResultPersistenceState = "Interrupted";
-                search.Revision = checked(search.Revision + 1);
-            }
-            interruptedSearches = searches.Count;
-
-            var transfers = await context.Transfers
+            interruptedTransfers = await context.Transfers
                 .Where(transfer => unfinishedIds.Contains(transfer.LastRuntimeId) && transfer.TerminalOutcome == "None")
-                .ToListAsync(cancellationToken)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(transfer => transfer.LastRuntimeId, runtime.RuntimeId)
+                        .SetProperty(transfer => transfer.LastSequence, 0)
+                        .SetProperty(transfer => transfer.State, "Interrupted")
+                        .SetProperty(transfer => transfer.TerminalOutcome, "Interrupted")
+                        .SetProperty(transfer => transfer.FailureReason, "Interrupted")
+                        .SetProperty(transfer => transfer.FailureMessage, "Interrupted by an unclean daemon shutdown.")
+                        .SetProperty(transfer => transfer.CancellationSource, "DaemonShutdown")
+                        .SetProperty(transfer => transfer.CompletedAtUtc, now)
+                        .SetProperty(transfer => transfer.Revision, transfer => transfer.Revision + 1),
+                    cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var transfer in transfers)
-            {
-                transfer.LastRuntimeId = runtime.RuntimeId;
-                transfer.LastSequence = 0;
-                transfer.State = "Interrupted";
-                transfer.TerminalOutcome = "Interrupted";
-                transfer.FailureReason = "Interrupted";
-                transfer.FailureMessage = "Interrupted by an unclean daemon shutdown.";
-                transfer.CancellationSource = "DaemonShutdown";
-                transfer.CompletedAtUtc = now;
-                transfer.Revision = checked(transfer.Revision + 1);
-            }
-            interruptedTransfers = transfers.Count;
 
-            var attempts = await context.TransferAttempts
+            interruptedAttempts = await context.TransferAttempts
                 .Where(attempt => unfinishedIds.Contains(attempt.LastRuntimeId) && attempt.CompletedAtUtc == null)
-                .ToListAsync(cancellationToken)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(attempt => attempt.LastRuntimeId, runtime.RuntimeId)
+                        .SetProperty(attempt => attempt.LastSequence, 0)
+                        .SetProperty(attempt => attempt.State, "Interrupted")
+                        .SetProperty(attempt => attempt.FailureReason, "Interrupted")
+                        .SetProperty(attempt => attempt.FailureMessage, "Interrupted by an unclean daemon shutdown.")
+                        .SetProperty(attempt => attempt.CompletedAtUtc, now)
+                        .SetProperty(attempt => attempt.Revision, attempt => attempt.Revision + 1),
+                    cancellationToken)
                 .ConfigureAwait(false);
-            foreach (var attempt in attempts)
-            {
-                attempt.LastRuntimeId = runtime.RuntimeId;
-                attempt.LastSequence = 0;
-                attempt.State = "Interrupted";
-                attempt.FailureReason = "Interrupted";
-                attempt.FailureMessage = "Interrupted by an unclean daemon shutdown.";
-                attempt.CompletedAtUtc = now;
-                attempt.Revision = checked(attempt.Revision + 1);
-            }
-            interruptedAttempts = attempts.Count;
+
+            await context.RuntimeSessions
+                .Where(session => unfinishedIds.Contains(session.Id))
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(session => session.StoppedAtUtc, now)
+                        .SetProperty(session => session.ShutdownKind, "Unclean"),
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         Volatile.Write(ref current, runtime);
 
         return new StartupReconciliationResult(
             runtime,
-            unfinishedSessions.Count,
+            unfinishedIds.Count,
             interruptedJobs,
             interruptedTransfers,
             interruptedAttempts,

@@ -150,39 +150,13 @@ public sealed class ChatRuntime : IAsyncDisposable
         Guid targetId, string? cursor, int limit, CancellationToken cancellationToken)
         => store.GetMessagesAsync(Account, targetId, cursor, limit, cancellationToken);
 
-    public async Task<ChatTargetSnapshotDto?> GetConversationSnapshotAsync(
+    public Task<ChatTargetSnapshotDto?> GetConversationSnapshotAsync(
         Guid conversationId, CancellationToken cancellationToken)
-    {
-        var conversation = await store.GetConversationAsync(Account, conversationId, cancellationToken).ConfigureAwait(false);
-        if (conversation is null)
-            return null;
-        var messages = await store.GetMessagesAsync(
-            Account, conversationId, null, ChatLimits.LiveMessageTailSize, cancellationToken).ConfigureAwait(false);
-        return new ChatTargetSnapshotDto(
-            ChatTargetKind.Direct,
-            conversationId,
-            ChatDtoMapper.ToDto(conversation),
-            null,
-            messages.Items.Select(ChatDtoMapper.ToDto).ToArray(),
-            messages.NextCursor is not null);
-    }
+        => GetTargetSnapshotAsync(ChatTargetKind.Direct, conversationId, cancellationToken);
 
-    public async Task<ChatTargetSnapshotDto?> GetRoomSnapshotAsync(
+    public Task<ChatTargetSnapshotDto?> GetRoomSnapshotAsync(
         Guid roomId, CancellationToken cancellationToken)
-    {
-        var room = await store.GetRoomAsync(Account, roomId, cancellationToken).ConfigureAwait(false);
-        if (room is null)
-            return null;
-        var messages = await store.GetMessagesAsync(
-            Account, roomId, null, ChatLimits.LiveMessageTailSize, cancellationToken).ConfigureAwait(false);
-        return new ChatTargetSnapshotDto(
-            ChatTargetKind.Room,
-            roomId,
-            null,
-            MapRoom(room),
-            messages.Items.Select(ChatDtoMapper.ToDto).ToArray(),
-            messages.NextCursor is not null);
-    }
+        => GetTargetSnapshotAsync(ChatTargetKind.Room, roomId, cancellationToken);
 
     public async Task<ChatMessageRecord> SendPrivateMessageAsync(
         string username, Guid messageId, string text, CancellationToken cancellationToken)
@@ -214,21 +188,8 @@ public sealed class ChatRuntime : IAsyncDisposable
             conversation.DisplayUsername, messageId, text, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task MarkConversationReadAsync(Guid id, Guid throughMessageId, CancellationToken cancellationToken)
-    {
-        await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await store.MarkConversationReadAsync(Account, id, throughMessageId, cancellationToken).ConfigureAwait(false);
-            await PublishConversationAsync(id, null, CancellationToken.None).ConfigureAwait(false);
-            await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
-            ChatLogMessages.HistoryDeleted(logger, "direct", id);
-        }
-        finally
-        {
-            summaryMutationGate.Release();
-        }
-    }
+    public Task MarkConversationReadAsync(Guid id, Guid throughMessageId, CancellationToken cancellationToken)
+        => MarkTargetReadAsync(ChatTargetKind.Direct, id, throughMessageId, cancellationToken);
 
     public async Task ArchiveConversationAsync(Guid id, bool archived, CancellationToken cancellationToken)
     {
@@ -237,20 +198,8 @@ public sealed class ChatRuntime : IAsyncDisposable
         PublishCurrentSummary();
     }
 
-    public async Task DeleteConversationHistoryAsync(Guid id, CancellationToken cancellationToken)
-    {
-        await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await store.DeleteHistoryAsync(Account, id, ChatTargetKind.Direct, cancellationToken).ConfigureAwait(false);
-            await PublishConversationReplacementAsync(id, CancellationToken.None).ConfigureAwait(false);
-            await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
-        }
-        finally
-        {
-            summaryMutationGate.Release();
-        }
-    }
+    public Task DeleteConversationHistoryAsync(Guid id, CancellationToken cancellationToken)
+        => DeleteTargetHistoryAsync(ChatTargetKind.Direct, id, cancellationToken);
 
     public async Task<AvailableRoomPageDto> GetAvailableRoomsAsync(
         ChatRoomKind? kind, string? cursor, int limit, bool refresh, CancellationToken cancellationToken)
@@ -452,15 +401,68 @@ public sealed class ChatRuntime : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task MarkRoomReadAsync(Guid id, Guid throughMessageId, CancellationToken cancellationToken)
+    public Task MarkRoomReadAsync(Guid id, Guid throughMessageId, CancellationToken cancellationToken)
+        => MarkTargetReadAsync(ChatTargetKind.Room, id, throughMessageId, cancellationToken);
+
+    public Task DeleteRoomHistoryAsync(Guid id, CancellationToken cancellationToken)
+        => DeleteTargetHistoryAsync(ChatTargetKind.Room, id, cancellationToken);
+
+    private async Task<ChatTargetSnapshotDto?> GetTargetSnapshotAsync(
+        ChatTargetKind kind,
+        Guid targetId,
+        CancellationToken cancellationToken)
+    {
+        ConversationSummaryDto? conversation = null;
+        ChatRoomSummaryDto? room = null;
+        if (kind == ChatTargetKind.Direct)
+        {
+            ConversationRecord? record = await store.GetConversationAsync(
+                Account, targetId, cancellationToken).ConfigureAwait(false);
+            if (record is null)
+                return null;
+            conversation = ChatDtoMapper.ToDto(record);
+        }
+        else
+        {
+            RoomSubscriptionRecord? record = await store.GetRoomAsync(
+                Account, targetId, cancellationToken).ConfigureAwait(false);
+            if (record is null)
+                return null;
+            room = MapRoom(record);
+        }
+
+        ChatPage<ChatMessageRecord> messages = await store.GetMessagesAsync(
+            Account,
+            targetId,
+            cursor: null,
+            ChatLimits.LiveMessageTailSize,
+            cancellationToken).ConfigureAwait(false);
+        return new ChatTargetSnapshotDto(
+            kind,
+            targetId,
+            conversation,
+            room,
+            messages.Items.Select(ChatDtoMapper.ToDto).ToArray(),
+            messages.NextCursor is not null);
+    }
+
+    private async Task MarkTargetReadAsync(
+        ChatTargetKind kind,
+        Guid targetId,
+        Guid throughMessageId,
+        CancellationToken cancellationToken)
     {
         await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await store.MarkRoomReadAsync(Account, id, throughMessageId, cancellationToken).ConfigureAwait(false);
-            await PublishRoomAsync(id, null, CancellationToken.None).ConfigureAwait(false);
+            if (kind == ChatTargetKind.Direct)
+                await store.MarkConversationReadAsync(
+                    Account, targetId, throughMessageId, cancellationToken).ConfigureAwait(false);
+            else
+                await store.MarkRoomReadAsync(
+                    Account, targetId, throughMessageId, cancellationToken).ConfigureAwait(false);
+            await PublishTargetAsync(kind, targetId, null, CancellationToken.None).ConfigureAwait(false);
             await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
-            ChatLogMessages.HistoryDeleted(logger, "room", id);
         }
         finally
         {
@@ -468,14 +470,21 @@ public sealed class ChatRuntime : IAsyncDisposable
         }
     }
 
-    public async Task DeleteRoomHistoryAsync(Guid id, CancellationToken cancellationToken)
+    private async Task DeleteTargetHistoryAsync(
+        ChatTargetKind kind,
+        Guid targetId,
+        CancellationToken cancellationToken)
     {
         await summaryMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await store.DeleteHistoryAsync(Account, id, ChatTargetKind.Room, cancellationToken).ConfigureAwait(false);
-            await PublishRoomReplacementAsync(id, CancellationToken.None).ConfigureAwait(false);
+            await store.DeleteHistoryAsync(
+                Account, targetId, kind, cancellationToken).ConfigureAwait(false);
+            await PublishTargetReplacementAsync(
+                kind, targetId, CancellationToken.None).ConfigureAwait(false);
             await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
+            ChatLogMessages.HistoryDeleted(
+                logger, kind == ChatTargetKind.Direct ? "direct" : "room", targetId);
         }
         finally
         {
@@ -491,14 +500,8 @@ public sealed class ChatRuntime : IAsyncDisposable
         try
         {
             foreach (ChatRetentionTarget target in result.AffectedTargets)
-            {
-                if (target.Kind == ChatTargetKind.Direct)
-                    await PublishConversationReplacementAsync(
-                        target.TargetId, CancellationToken.None).ConfigureAwait(false);
-                else
-                    await PublishRoomReplacementAsync(
-                        target.TargetId, CancellationToken.None).ConfigureAwait(false);
-            }
+                await PublishTargetReplacementAsync(
+                    target.Kind, target.TargetId, CancellationToken.None).ConfigureAwait(false);
             await RefreshSummaryAsync(null, CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -1642,15 +1645,20 @@ public sealed class ChatRuntime : IAsyncDisposable
             [ChatDtoMapper.ToDto(message)]));
     }
 
-    private async Task PublishMessageTargetAsync(
+    private Task PublishMessageTargetAsync(
         ChatMessageRecord message,
         CancellationToken cancellationToken)
-    {
-        if (message.TargetKind == ChatTargetKind.Direct)
-            await PublishConversationAsync(message.TargetId, message, cancellationToken).ConfigureAwait(false);
-        else
-            await PublishRoomAsync(message.TargetId, message, cancellationToken).ConfigureAwait(false);
-    }
+        => PublishTargetAsync(
+            message.TargetKind, message.TargetId, message, cancellationToken);
+
+    private Task PublishTargetAsync(
+        ChatTargetKind kind,
+        Guid targetId,
+        ChatMessageRecord? message,
+        CancellationToken cancellationToken)
+        => kind == ChatTargetKind.Direct
+            ? PublishConversationAsync(targetId, message, cancellationToken)
+            : PublishRoomAsync(targetId, message, cancellationToken);
 
     private async Task PublishConversationAsync(
         Guid conversationId,
@@ -1669,19 +1677,20 @@ public sealed class ChatRuntime : IAsyncDisposable
             message is null ? null : [ChatDtoMapper.ToDto(message)]));
     }
 
-    private async Task PublishConversationReplacementAsync(
-        Guid conversationId,
+    private async Task PublishTargetReplacementAsync(
+        ChatTargetKind kind,
+        Guid targetId,
         CancellationToken cancellationToken)
     {
-        ChatTargetSnapshotDto? snapshot = await GetConversationSnapshotAsync(
-            conversationId, cancellationToken).ConfigureAwait(false);
+        ChatTargetSnapshotDto? snapshot = await GetTargetSnapshotAsync(
+            kind, targetId, cancellationToken).ConfigureAwait(false);
         if (snapshot is null)
             return;
         PublishTarget(new ChatTargetDeltaDto(
-            ChatTargetKind.Direct,
-            conversationId,
+            kind,
+            targetId,
             snapshot.Conversation,
-            null,
+            snapshot.Room,
             snapshot.Messages,
             ReplaceMessages: true,
             HasEarlierMessages: snapshot.HasEarlierMessages));
@@ -1701,24 +1710,6 @@ public sealed class ChatRuntime : IAsyncDisposable
             null,
             MapRoom(room),
             message is null ? null : [ChatDtoMapper.ToDto(message)]));
-    }
-
-    private async Task PublishRoomReplacementAsync(
-        Guid roomId,
-        CancellationToken cancellationToken)
-    {
-        ChatTargetSnapshotDto? snapshot = await GetRoomSnapshotAsync(
-            roomId, cancellationToken).ConfigureAwait(false);
-        if (snapshot is null)
-            return;
-        PublishTarget(new ChatTargetDeltaDto(
-            ChatTargetKind.Room,
-            roomId,
-            null,
-            snapshot.Room,
-            snapshot.Messages,
-            ReplaceMessages: true,
-            HasEarlierMessages: snapshot.HasEarlierMessages));
     }
 
     private async Task PublishRoomByNameAsync(string roomName, CancellationToken cancellationToken)

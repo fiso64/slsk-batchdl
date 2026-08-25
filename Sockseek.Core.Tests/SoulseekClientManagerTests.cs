@@ -146,6 +146,50 @@ public class SoulseekClientManagerTests
     }
 
     [TestMethod]
+    public async Task DisposeAsync_WakesPendingReadinessWaiters()
+    {
+        var mockClient = new MockSoulseekClient([], initialState: SoulseekClientStates.None);
+        var manager = new SoulseekClientManager(
+            new EngineSettings(),
+            mockClient,
+            inboundRouter: null,
+            monitorDelay: static (_, cancellationToken) => Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+        Task waiter = manager.WaitUntilReadyAsync();
+
+        await manager.DisposeAsync();
+
+        await Assert.ThrowsExactlyAsync<ObjectDisposedException>(
+            () => waiter.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
+
+    [TestMethod]
+    public async Task MonitorContinuesAfterCancellationExceptionNotRequestedByItsToken()
+    {
+        var mockClient = new MockSoulseekClient([], initialState: SoulseekClientStates.None);
+        var secondDelayStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int delayCalls = 0;
+        var manager = new SoulseekClientManager(
+            new EngineSettings(),
+            mockClient,
+            inboundRouter: null,
+            monitorDelay: (_, cancellationToken) => Interlocked.Increment(ref delayCalls) == 1
+                ? Task.FromException(new OperationCanceledException("transport timeout"))
+                : WaitForDisposal(cancellationToken));
+
+        async Task WaitForDisposal(CancellationToken cancellationToken)
+        {
+            secondDelayStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        await secondDelayStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.IsFalse(manager.HasFatalError);
+        Assert.IsTrue(Volatile.Read(ref delayCalls) >= 2);
+
+        await manager.DisposeAsync();
+    }
+
+    [TestMethod]
     public async Task WaitUntilReadyAsync_FaultsAfterPermanentLoginFailure()
     {
         var settings = new EngineSettings

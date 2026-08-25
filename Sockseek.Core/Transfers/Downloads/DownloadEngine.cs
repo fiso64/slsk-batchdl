@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -323,10 +324,27 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
     public async Task RunAsync(CancellationToken ct)
     {
-        var rootTasks = new List<Task>();
-
         DownloadLogMessages.EngineStage(logger, engineId, "reading-job-channel");
-        await foreach (var queuedJob in _jobQueue.ReadAllAsync(ct))
+        await BoundedAsync.ForEachAsync(
+            ReadPreparedRootJobs(ct),
+            _runtime.ConcurrentSchedulingLimit,
+            _orchestrator.ProcessRootJob,
+            ct);
+        DownloadLogMessages.EngineStage(logger, engineId, "root-jobs-completed");
+
+        CleanupEmptyStagingDirectories();
+
+        if (Queue.Jobs.Any(ContainsDownloadableJob))
+            Events.RaiseEngineCompleted(Queue);
+
+        DownloadLogMessages.EngineStage(logger, engineId, "stopped");
+        await _runtime.CancelAsync();
+    }
+
+    private async IAsyncEnumerable<Job> ReadPreparedRootJobs(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var queuedJob in _jobQueue.ReadAllAsync(cancellationToken))
         {
             var rootJob = queuedJob.Job;
             var settings = queuedJob.Settings;
@@ -352,23 +370,13 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
             if (ContainsLoginRequiredJob(rootJob))
             {
-                await _runtime.EnsureServicesInitializedAsync(ct, AutomaticStaleChecksEnabled);
+                await _runtime.EnsureServicesInitializedAsync(cancellationToken, AutomaticStaleChecksEnabled);
             }
 
-            rootTasks.Add(_orchestrator.ProcessRootJob(rootJob));
+            yield return rootJob;
         }
 
         DownloadLogMessages.EngineStage(logger, engineId, "waiting-for-root-jobs");
-        await Task.WhenAll(rootTasks);
-        DownloadLogMessages.EngineStage(logger, engineId, "root-jobs-completed");
-
-        CleanupEmptyStagingDirectories();
-
-        if (Queue.Jobs.Any(ContainsDownloadableJob))
-            Events.RaiseEngineCompleted(Queue);
-
-        DownloadLogMessages.EngineStage(logger, engineId, "stopped");
-        await _runtime.CancelAsync();
     }
 
     private void CleanupEmptyStagingDirectories()

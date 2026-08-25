@@ -6,6 +6,8 @@ namespace Sockseek.Core.Settings;
 /// </summary>
 public sealed class PeerAccessSettings
 {
+    internal PeerAccessSettings ShallowClone() => (PeerAccessSettings)MemberwiseClone();
+
     public List<string> BlockedUsernames { get; set; } = [];
 
     public List<string> BlockedIpAddresses { get; set; } = [];

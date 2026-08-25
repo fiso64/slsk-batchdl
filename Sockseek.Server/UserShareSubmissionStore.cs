@@ -72,10 +72,22 @@ public sealed class UserShareSubmissionStore
         if (!StringComparer.Ordinal.Equals(entry.Fingerprint, fingerprint))
             throw new IdempotencyConflictException();
 
+        Task<StartUserShareDownloadsResponseDto> submission;
+        try
+        {
+            submission = entry.Response.Value
+                ?? throw new InvalidOperationException("The submission returned no task.");
+        }
+        catch
+        {
+            entries.TryRemove(new KeyValuePair<Guid, Entry>(requestId, entry));
+            throw;
+        }
+
         try
         {
             StartUserShareDownloadsResponseDto response =
-                await entry.Response.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await submission.WaitAsync(cancellationToken).ConfigureAwait(false);
             Evict();
             return response;
         }
@@ -84,9 +96,7 @@ public sealed class UserShareSubmissionStore
             // A caller cancelling its wait does not own or cancel the shared
             // submission. Only a terminally failed/cancelled submission is
             // forgotten so a later retry can make a fresh attempt.
-            if (entry.Response.IsValueCreated
-                && entry.Response.Value.IsCompleted
-                && !entry.Response.Value.IsCompletedSuccessfully)
+            if (submission.IsCompleted && !submission.IsCompletedSuccessfully)
             {
                 entries.TryRemove(new KeyValuePair<Guid, Entry>(requestId, entry));
             }

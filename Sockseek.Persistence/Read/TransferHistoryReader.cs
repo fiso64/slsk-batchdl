@@ -165,6 +165,9 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
 
     private static (long CreatedAtUtc, Guid Id)? DecodeCursor(string? cursor)
     {
+        if (cursor is null) return null;
+        if (cursor.Length > 128)
+            throw new ArgumentException("The transfer cursor is malformed.", nameof(cursor));
         if (string.IsNullOrWhiteSpace(cursor)) return null;
         try
         {

@@ -14,6 +14,8 @@ internal sealed class AutoProfileWorkflowReporter
         this.events = events;
     }
 
+    internal int RetainedWorkflowCount => stateByWorkflow.Count;
+
     public void ObservePreparedRoot(Job preparedRoot)
     {
         // Auto-profile logs are edge-triggered per workflow: announce profile names the
@@ -77,7 +79,7 @@ internal sealed class AutoProfileWorkflowReporter
 
     public void EmitFinalSummary(Job rootJob)
     {
-        if (!stateByWorkflow.TryGetValue(rootJob.WorkflowId, out var state))
+        if (!stateByWorkflow.TryRemove(rootJob.WorkflowId, out var state))
             return;
 
         string? summary;

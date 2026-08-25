@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Sockseek.Api;
 using Sockseek.Core.Diagnostics;
@@ -62,7 +61,7 @@ public sealed class UserProfileService : IAsyncDisposable
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<ProfileKey, Task<CachedProfile>> active = [];
     private readonly Dictionary<ProfileKey, CachedProfile> cache = [];
-    private readonly Channel<int> networkSlots;
+    private readonly SemaphoreSlim networkGate;
     private readonly CancellationTokenSource lifetime = new();
     private readonly object sessionSync = new();
     private readonly object connectionSync = new();
@@ -93,15 +92,7 @@ public sealed class UserProfileService : IAsyncDisposable
         if (this.sectionTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(sectionTimeout));
 
-        networkSlots = Channel.CreateBounded<int>(new BoundedChannelOptions(networkConcurrency)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = false,
-            SingleWriter = false,
-            AllowSynchronousContinuations = false,
-        });
-        for (int index = 0; index < networkConcurrency; index++)
-            networkSlots.Writer.TryWrite(index);
+        networkGate = new SemaphoreSlim(networkConcurrency, networkConcurrency);
     }
 
     public async Task<UserProfileDto> GetAsync(
@@ -236,13 +227,14 @@ public sealed class UserProfileService : IAsyncDisposable
     {
         using OperationLogScope operationLog = OperationLogScope.Start(
             logger, "user-profile.fetch", peerHash);
-        int slot = -1;
+        bool networkAcquired = false;
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(
             lifetime.Token,
             connectionToken);
         try
         {
-            slot = await networkSlots.Reader.ReadAsync(operation.Token).ConfigureAwait(false);
+            await networkGate.WaitAsync(operation.Token).ConfigureAwait(false);
+            networkAcquired = true;
             Task<SectionResult<UserStatus>> statusTask = CaptureAsync(
                 token => transport.GetStatusAsync(key.Username, token),
                 operation.Token,
@@ -354,8 +346,8 @@ public sealed class UserProfileService : IAsyncDisposable
         }
         finally
         {
-            if (slot >= 0)
-                networkSlots.Writer.TryWrite(slot);
+            if (networkAcquired)
+                networkGate.Release();
             await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
@@ -505,6 +497,7 @@ public sealed class UserProfileService : IAsyncDisposable
         connection.Dispose();
         connectionLifetime.Dispose();
         lifetime.Dispose();
+        networkGate.Dispose();
         gate.Dispose();
     }
 

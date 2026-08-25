@@ -514,21 +514,23 @@ internal sealed class AlbumDownloadExecutor
         AlbumFolder folder,
         CancellationTokenSource cts)
     {
-        var tasks = job.EnsureTrackJobs(folder).Select(async af =>
-        {
-            if (af.LifecycleState != JobLifecycleState.Pending) return;
-            if (af.ResolvedTarget != null && af.Candidates == null)
-                af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
-            await songDownloads.DownloadEmbeddedSong(
-                af,
-                job,
-                config,
-                organizer,
-                cts,
-                cancelGroupOnFail: !af.IsNotAudio,
-                finalizePlacement: !af.IsNotAudio);
-        });
-        await Task.WhenAll(tasks);
+        await BoundedAsync.ForEachAsync(
+            job.EnsureTrackJobs(folder),
+            context.Runtime.ConcurrentJobLimit,
+            async af =>
+            {
+                if (af.LifecycleState != JobLifecycleState.Pending) return;
+                if (af.ResolvedTarget != null && af.Candidates == null)
+                    af.Candidates = new List<FileCandidate> { af.ResolvedTarget };
+                await songDownloads.DownloadEmbeddedSong(
+                    af,
+                    job,
+                    config,
+                    organizer,
+                    cts,
+                    cancelGroupOnFail: !af.IsNotAudio,
+                    finalizePlacement: !af.IsNotAudio);
+            });
     }
 
     AlbumAudioDownloadResult ReturnSelectedFolderToManualPicker(

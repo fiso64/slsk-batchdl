@@ -207,9 +207,16 @@ namespace Sockseek.Core.Services
             return SearchAsyncInternal(query, null, scope, token, options, cancellationToken);
         }
 
-        public Task<Search> SearchAsync(SearchQuery query, Action<SearchResponse> responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
+        public async Task<Search> SearchAsync(SearchQuery query, Action<SearchResponse> responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)
         {
-            return SearchAsyncInternal(query, responseHandler, scope, token, options, cancellationToken).ContinueWith(t => t.Result.Search);
+            var result = await SearchAsyncInternal(
+                query,
+                responseHandler,
+                scope,
+                token,
+                options,
+                cancellationToken).ConfigureAwait(false);
+            return result.Search;
         }
 
         private async Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsyncInternal(SearchQuery query, Action<SearchResponse>? responseHandler, SearchScope scope = null, int? token = null, SearchOptions options = null, CancellationToken? cancellationToken = null)

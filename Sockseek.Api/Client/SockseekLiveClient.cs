@@ -68,78 +68,27 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         connection.Reconnected += _ => RecoverAfterReconnectAsync();
     }
 
-    public async Task StartDaemonAsync(CancellationToken ct = default)
-    {
-        await lifecycleGate.WaitAsync(ct);
-        try
-        {
-            ThrowIfDisposed();
-            if (Mode == LiveSubscriptionMode.Workflow)
-                throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions on one live client.");
-            if (Mode is LiveSubscriptionMode.Daemon or LiveSubscriptionMode.DaemonAndChat)
-                return;
-
-            await EnsureConnectedAsync(ct);
-            Mode = Mode == LiveSubscriptionMode.Chat
+    public Task StartDaemonAsync(CancellationToken ct = default)
+        => StartScopeAsync(
+            StateStreamScopeDto.Daemon,
+            static mode => mode != LiveSubscriptionMode.Workflow,
+            static mode => mode is LiveSubscriptionMode.Daemon or LiveSubscriptionMode.DaemonAndChat,
+            static mode => mode == LiveSubscriptionMode.Chat
                 ? LiveSubscriptionMode.DaemonAndChat
-                : LiveSubscriptionMode.Daemon;
-            var scope = StateStreamScopeDto.Daemon;
-            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
-            bool subscribed = false;
-            try
-            {
-                session.BeginBuffering();
-                await connection.InvokeAsync("SubscribeAll", ct);
-                subscribed = true;
-                await RecoverScopeAsync(scope, ct);
-            }
-            catch
-            {
-                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
-                throw;
-            }
-        }
-        finally
-        {
-            lifecycleGate.Release();
-        }
-    }
+                : LiveSubscriptionMode.Daemon,
+            "Cannot mix daemon and workflow subscriptions on one live client.",
+            token => connection.InvokeAsync("SubscribeAll", token),
+            ct);
 
-    public async Task StartWorkflowAsync(Guid workflowId, CancellationToken ct = default)
-    {
-        await lifecycleGate.WaitAsync(ct);
-        try
-        {
-            ThrowIfDisposed();
-            if (Mode is not (LiveSubscriptionMode.None or LiveSubscriptionMode.Workflow))
-                throw new InvalidOperationException("Cannot mix workflow and daemon/chat subscriptions on one live client.");
-
-            await EnsureConnectedAsync(ct);
-            Mode = LiveSubscriptionMode.Workflow;
-            var scope = StateStreamScopeDto.Workflow(workflowId);
-            if (sessions.ContainsKey(scope))
-                return;
-
-            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
-            bool subscribed = false;
-            try
-            {
-                session.BeginBuffering();
-                await connection.InvokeAsync("SubscribeWorkflow", workflowId, ct);
-                subscribed = true;
-                await RecoverScopeAsync(scope, ct);
-            }
-            catch
-            {
-                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
-                throw;
-            }
-        }
-        finally
-        {
-            lifecycleGate.Release();
-        }
-    }
+    public Task StartWorkflowAsync(Guid workflowId, CancellationToken ct = default)
+        => StartScopeAsync(
+            StateStreamScopeDto.Workflow(workflowId),
+            static mode => mode is LiveSubscriptionMode.None or LiveSubscriptionMode.Workflow,
+            static _ => false,
+            static _ => LiveSubscriptionMode.Workflow,
+            "Cannot mix workflow and daemon/chat subscriptions on one live client.",
+            token => connection.InvokeAsync("SubscribeWorkflow", workflowId, token),
+            ct);
 
     public Task StartConversationAsync(Guid conversationId, CancellationToken ct = default)
         => StartChatAsync(StateStreamScopeDto.ChatConversation(conversationId), ct);
@@ -147,43 +96,12 @@ public sealed class SockseekLiveClient : IAsyncDisposable
     public Task StartRoomAsync(Guid roomId, CancellationToken ct = default)
         => StartChatAsync(StateStreamScopeDto.ChatRoom(roomId), ct);
 
-    public async Task StartUserBrowseAsync(Guid browseId, CancellationToken ct = default)
-    {
-        var scope = StateStreamScopeDto.UserBrowse(browseId);
-        await lifecycleGate.WaitAsync(ct);
-        try
-        {
-            ThrowIfDisposed();
-            if (Mode == LiveSubscriptionMode.Workflow)
-                throw new InvalidOperationException("Cannot mix user-browse and workflow subscriptions on one live client.");
-            await EnsureConnectedAsync(ct);
-            Mode = Mode == LiveSubscriptionMode.Daemon
-                ? LiveSubscriptionMode.DaemonAndChat
-                : Mode == LiveSubscriptionMode.None
-                    ? LiveSubscriptionMode.Chat
-                    : Mode;
-            if (sessions.ContainsKey(scope))
-                return;
-            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
-            bool subscribed = false;
-            try
-            {
-                session.BeginBuffering();
-                await connection.InvokeAsync("SubscribeUserBrowse", browseId, ct);
-                subscribed = true;
-                await RecoverScopeAsync(scope, ct);
-            }
-            catch
-            {
-                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
-                throw;
-            }
-        }
-        finally
-        {
-            lifecycleGate.Release();
-        }
-    }
+    public Task StartUserBrowseAsync(Guid browseId, CancellationToken ct = default)
+        => StartAuxiliaryScopeAsync(
+            StateStreamScopeDto.UserBrowse(browseId),
+            "Cannot mix user-browse and workflow subscriptions on one live client.",
+            token => connection.InvokeAsync("SubscribeUserBrowse", browseId, token),
+            ct);
 
     public async Task StopUserBrowseAsync(Guid browseId, CancellationToken ct = default)
     {
@@ -206,34 +124,66 @@ public sealed class SockseekLiveClient : IAsyncDisposable
         }
     }
 
-    private async Task StartChatAsync(StateStreamScopeDto scope, CancellationToken ct)
+    private Task StartChatAsync(StateStreamScopeDto scope, CancellationToken ct)
+        => StartAuxiliaryScopeAsync(
+            scope,
+            "Cannot mix chat and workflow subscriptions on one live client.",
+            token => connection.InvokeAsync("SubscribeChat", scope, token),
+            ct);
+
+    private Task StartAuxiliaryScopeAsync(
+        StateStreamScopeDto scope,
+        string incompatibleModeMessage,
+        Func<CancellationToken, Task> subscribe,
+        CancellationToken cancellationToken)
+        => StartScopeAsync(
+            scope,
+            static mode => mode != LiveSubscriptionMode.Workflow,
+            static _ => false,
+            static mode => mode == LiveSubscriptionMode.Daemon
+                ? LiveSubscriptionMode.DaemonAndChat
+                : mode == LiveSubscriptionMode.None
+                    ? LiveSubscriptionMode.Chat
+                    : mode,
+            incompatibleModeMessage,
+            subscribe,
+            cancellationToken);
+
+    private async Task StartScopeAsync(
+        StateStreamScopeDto scope,
+        Func<LiveSubscriptionMode, bool> isCompatible,
+        Func<LiveSubscriptionMode, bool> isAlreadySubscribed,
+        Func<LiveSubscriptionMode, LiveSubscriptionMode> nextMode,
+        string incompatibleModeMessage,
+        Func<CancellationToken, Task> subscribe,
+        CancellationToken cancellationToken)
     {
-        await lifecycleGate.WaitAsync(ct);
+        await lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ThrowIfDisposed();
-            if (Mode == LiveSubscriptionMode.Workflow)
-                throw new InvalidOperationException("Cannot mix chat and workflow subscriptions on one live client.");
-            await EnsureConnectedAsync(ct);
-            Mode = Mode == LiveSubscriptionMode.Daemon
-                ? LiveSubscriptionMode.DaemonAndChat
-                : Mode == LiveSubscriptionMode.None
-                    ? LiveSubscriptionMode.Chat
-                    : Mode;
+            if (!isCompatible(Mode))
+                throw new InvalidOperationException(incompatibleModeMessage);
+            if (isAlreadySubscribed(Mode))
+                return;
+
+            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            Mode = nextMode(Mode);
             if (sessions.ContainsKey(scope))
                 return;
-            var session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
+
+            ScopeSession session = sessions.GetOrAdd(scope, static _ => new ScopeSession());
             bool subscribed = false;
             try
             {
                 session.BeginBuffering();
-                await connection.InvokeAsync("SubscribeChat", scope, ct);
+                await subscribe(cancellationToken).ConfigureAwait(false);
                 subscribed = true;
-                await RecoverScopeAsync(scope, ct);
+                await RecoverScopeAsync(scope, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                await RollBackInitialSubscriptionAsync(scope, session, subscribed);
+                await RollBackInitialSubscriptionAsync(scope, session, subscribed).ConfigureAwait(false);
                 throw;
             }
         }

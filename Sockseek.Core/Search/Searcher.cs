@@ -11,7 +11,6 @@ using Sockseek.Core;
 using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
-using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
 using Sockseek.Core.Snapshots;
@@ -84,10 +83,6 @@ public partial class Searcher : IDisposable
 
         job.Discovery.RawResultCount = count;
         job.Discovery.LockedFileCount = locked;
-        // TODO [PERFORMANCE]: This currently publishes one discovery update per raw
-        // search result. Large real searches have shown measurable local CPU cost in
-        // the state-store/update path. Coalesce near this source by time/count, while
-        // still publishing an exact final update when the search completes.
         downloadEvents.RaiseJobDiscoveryChanged(job);
     }
 
@@ -114,9 +109,9 @@ public partial class Searcher : IDisposable
         session.ObserverFailed += OnObserverFailed;
         var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
-        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(activityJob, session);
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(activityJob, session);
         void OnSearchChange(CoreChange change) => downloadEvents.RaiseSearchChange(ChangeOwner(change, activityJob.Id));
-        session.RawResultAdded += OnRawResultAdded;
+        session.ResultsAdded += OnResultsAdded;
         session.ChangePublished += OnSearchChange;
 
         try
@@ -132,15 +127,15 @@ public partial class Searcher : IDisposable
 
             activityJob.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
             await concurrencySemaphore.WaitAsync(ct);
-            try { await RunSearches(job.NetworkQuery, session.Results, getOpts, session.AddResponse, search, ct, onSearch, activityJob); }
+            try { await RunSearches(job.NetworkQuery, session, getOpts, session.AddResponse, search, ct, onSearch, activityJob); }
             finally { concurrencySemaphore.Release(); }
 
             activityJob.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
-            responseData.resultCount = session.Results.Count;
+            responseData.resultCount = session.ResultCount;
             responseData.lockedFilesCount += session.LockedFileCount;
             UpdateDiscoveryProgress(activityJob, session);
             if (!ReferenceEquals(activityJob, job))
-                job.Discovery = new DiscoverySummary { RawResultCount = session.Results.Count, LockedFileCount = session.LockedFileCount };
+                job.Discovery = new DiscoverySummary { RawResultCount = session.ResultCount, LockedFileCount = session.LockedFileCount };
             session.Complete();
             return JobOutcome.Done();
         }
@@ -157,7 +152,7 @@ public partial class Searcher : IDisposable
         }
         finally
         {
-            session.RawResultAdded -= OnRawResultAdded;
+            session.ResultsAdded -= OnResultsAdded;
             session.ChangePublished -= OnSearchChange;
             session.ObserverFailed -= OnObserverFailed;
         }
@@ -186,8 +181,8 @@ public partial class Searcher : IDisposable
             => LogSessionObserverFailure(name, ex, session.JobId);
         session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(song);
-        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(song, session);
-        session.RawResultAdded += OnRawResultAdded;
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(song, session);
+        session.ResultsAdded += OnResultsAdded;
         session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         void responseHandler(SearchResponse r)
@@ -221,12 +216,12 @@ public partial class Searcher : IDisposable
         await concurrencySemaphore.WaitAsync(ct);
         try
         {
-            await RunSearches(song.Query, session.Results, getOpts, responseHandler, search, ct, onSearch, song);
+            await RunSearches(song.Query, session, getOpts, responseHandler, search, ct, onSearch, song);
         }
         finally
         {
             session.Complete();
-            session.RawResultAdded -= OnRawResultAdded;
+            session.ResultsAdded -= OnResultsAdded;
             session.ChangePublished -= downloadEvents.RaiseSearchChange;
             session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
@@ -235,10 +230,10 @@ public partial class Searcher : IDisposable
         song.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
         responseData.lockedFilesCount += session.LockedFileCount;
 
-        responseData.resultCount = session.Results.Count;
+        responseData.resultCount = session.ResultCount;
         UpdateDiscoveryProgress(song, session);
 
-        DownloadLogMessages.SearchCompleted(logger, song.Id, session.Results.Count);
+        DownloadLogMessages.SearchCompleted(logger, song.Id, session.ResultCount);
 
         song.Candidates = SearchResultProjector.SortedTrackCandidates(
             session.Snapshot(),
@@ -274,8 +269,8 @@ public partial class Searcher : IDisposable
             => LogSessionObserverFailure(name, ex, session.JobId);
         session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(job);
-        void OnRawResultAdded(SearchRawResult _) => UpdateDiscoveryProgress(job, session);
-        session.RawResultAdded += OnRawResultAdded;
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(job, session);
+        session.ResultsAdded += OnResultsAdded;
         session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
@@ -289,18 +284,18 @@ public partial class Searcher : IDisposable
 
         job.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
         await concurrencySemaphore.WaitAsync(ct);
-        try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct, ownerJob: job); }
+        try { await RunSearches(job.Query, session, getOpts, session.AddResponse, search, ct, ownerJob: job); }
         finally
         {
             session.Complete();
-            session.RawResultAdded -= OnRawResultAdded;
+            session.ResultsAdded -= OnResultsAdded;
             session.ChangePublished -= downloadEvents.RaiseSearchChange;
             session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
         }
 
         responseData.lockedFilesCount += session.LockedFileCount;
-        responseData.resultCount = session.Results.Count;
+        responseData.resultCount = session.ResultCount;
         UpdateDiscoveryProgress(job, session);
         job.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
         job.Songs = SearchResultProjector.AggregateTracks(session.Snapshot(), job.Query, search, userStats.UserSuccessCounts);
@@ -654,7 +649,7 @@ public partial class Searcher : IDisposable
 
     // ── internal search plumbing ──────────────────────────────────────────────
 
-    public async Task RunSearches(SongQuery query, SlDictionary results,
+    private async Task RunSearches(SongQuery query, SearchSession session,
         Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
         Action<SearchResponse> responseHandler, SearchSettings search,
         CancellationToken? ct = null, Action? onSearch = null, Job? ownerJob = null)
@@ -675,7 +670,7 @@ public partial class Searcher : IDisposable
 
         await Task.WhenAll(searchTasks);
 
-        if (results.IsEmpty && query.ArtistMaybeWrong && title)
+        if (session.ResultCount == 0 && query.ArtistMaybeWrong && title)
         {
             var inferred = InferSongQuery(query.Title, new SongQuery());
             var cond = new FileConditions(search.NecessaryCond) { StrictTitle = inferred.Title == query.Title, StrictArtist = false };
@@ -687,7 +682,7 @@ public partial class Searcher : IDisposable
         {
             await Task.WhenAll(searchTasks);
 
-            if (results.IsEmpty && !query.ArtistMaybeWrong)
+            if (session.ResultCount == 0 && !query.ArtistMaybeWrong)
             {
                 if (artist && album && title)
                 {
@@ -707,7 +702,7 @@ public partial class Searcher : IDisposable
 
             await Task.WhenAll(searchTasks);
 
-            if (results.IsEmpty)
+            if (session.ResultCount == 0)
             {
                 var q2 = query.ArtistMaybeWrong ? InferSongQuery(query.Title, new SongQuery()) : query;
 

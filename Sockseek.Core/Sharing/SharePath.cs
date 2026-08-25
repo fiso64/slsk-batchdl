@@ -107,8 +107,8 @@ public sealed class RemotePathKey : IEquatable<RemotePathKey>
         ValidateWellFormedUnicode(segment, "Remote path segment");
         if (segment is "." or "..")
             throw Invalid("Remote path cannot contain '.' or '..' segments.");
-        if (segment.EnumerateRunes().Any(static rune => Rune.IsControl(rune)))
-            throw Invalid("Remote path cannot contain control characters.");
+        if (segment.Contains('\0'))
+            throw Invalid("Remote path cannot contain NUL characters.");
 
         return segment.Normalize(NormalizationForm.FormC);
     }

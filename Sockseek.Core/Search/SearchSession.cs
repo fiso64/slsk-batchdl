@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Sockseek.Core.Events;
@@ -12,17 +11,17 @@ public sealed class SearchSession
 {
     private readonly object admissionGate = new();
     private readonly List<SearchRawResult> rawResults = [];
+    private readonly HashSet<PeerPathKey> resultKeys = [];
     private TimeProvider timeProvider;
     private int _revision;
+    private int _resultCount;
     private int _lockedFileCount;
     private long _sequence;
     private int _isComplete;
 
     public Guid JobId { get; }
     public string QueryText { get; }
-    internal ConcurrentDictionary<string, (SearchResponse Response, Soulseek.File File)> Results { get; } = new();
-
-    public int ResultCount => Results.Count;
+    public int ResultCount => Volatile.Read(ref _resultCount);
     public int Revision => Volatile.Read(ref _revision);
     public int LockedFileCount => Volatile.Read(ref _lockedFileCount);
     public bool IsComplete => Volatile.Read(ref _isComplete) != 0;
@@ -59,7 +58,10 @@ public sealed class SearchSession
     }
 
     internal IReadOnlyCollection<(SearchResponse Response, Soulseek.File File)> Snapshot()
-        => Results.Values.ToList();
+    {
+        lock (admissionGate)
+            return rawResults.Select(result => (result.Response, result.File)).ToList();
+    }
 
     public IReadOnlyList<SearchRawResult> RawSnapshot(long afterSequence = 0)
     {
@@ -142,12 +144,13 @@ public sealed class SearchSession
             int revision = _revision;
             foreach (var file in response.Files)
             {
-                if (Results.TryAdd(response.Username + '\\' + file.Filename, (response, file)))
+                if (resultKeys.Add(new PeerPathKey(response.Username, file.Filename)))
                 {
                     revision = ++_revision;
                     long sequence = ++_sequence;
                     var rawResult = new SearchRawResult(sequence, revision, response, file, timeProvider.GetUtcNow());
                     rawResults.Add(rawResult);
+                    _resultCount++;
                     added.Add(CoreSnapshotFactory.CreateSearchResult(rawResult));
 
                     InvokeObservers(RawResultReceived, rawResult, nameof(RawResultReceived));
@@ -182,7 +185,7 @@ public sealed class SearchSession
                 JobId,
                 completionRevision,
                 QueryText,
-                Results.Count,
+                _resultCount,
                 _lockedFileCount));
             InvokeObservers(Completed, nameof(Completed));
         }

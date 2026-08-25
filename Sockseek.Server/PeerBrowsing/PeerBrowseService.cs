@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Sockseek.Core;
@@ -29,7 +28,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
     private readonly Dictionary<AcquisitionKey, ActiveBrowse> activeByKey = [];
     private readonly Dictionary<Guid, ActiveBrowse> activeById = [];
     private readonly HashSet<ActiveBrowse> activeExecutions = [];
-    private readonly Channel<int> networkSlots;
+    private readonly SemaphoreSlim networkGate;
     private readonly CancellationTokenSource lifetime = new();
     private readonly object connectionGate = new();
     private CancellationTokenSource connectionLifetime = new();
@@ -52,15 +51,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         if (networkConcurrency <= 0)
             throw new ArgumentOutOfRangeException(nameof(networkConcurrency));
 
-        networkSlots = Channel.CreateBounded<int>(new BoundedChannelOptions(networkConcurrency)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = false,
-            SingleWriter = false,
-            AllowSynchronousContinuations = false,
-        });
-        for (int slot = 0; slot < networkConcurrency; slot++)
-            networkSlots.Writer.TryWrite(slot);
+        networkGate = new SemaphoreSlim(networkConcurrency, networkConcurrency);
         store.ResourceRemoved += OnResourceRemoved;
     }
 
@@ -396,10 +387,11 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
             lifetime.Token,
             active.ConnectionToken);
         CancellationToken token = cancellation.Token;
-        int? slot = null;
+        bool networkAcquired = false;
         try
         {
-            slot = await networkSlots.Reader.ReadAsync(token).ConfigureAwait(false);
+            await networkGate.WaitAsync(token).ConfigureAwait(false);
+            networkAcquired = true;
             if (active.MarkRunning())
                 PeerBrowseTelemetry.RecordRunning();
             await store.MarkRunningAsync(active.BrowseId, token).ConfigureAwait(false);
@@ -463,8 +455,8 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         }
         finally
         {
-            if (slot is { } value)
-                networkSlots.Writer.TryWrite(value);
+            if (networkAcquired)
+                networkGate.Release();
             await active.WaitForProgressFlushAsync().ConfigureAwait(false);
             PeerBrowseResource? observed = null;
             try
@@ -685,6 +677,7 @@ public sealed class PeerBrowseService : IPeerDirectorySource, IAsyncDisposable
         connection.Cancel();
         connection.Dispose();
         lifetime.Dispose();
+        networkGate.Dispose();
         stateGate.Dispose();
     }
 

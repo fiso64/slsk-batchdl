@@ -5,6 +5,8 @@ namespace Sockseek.Core.Settings;
 /// </summary>
 public sealed class SharingSettings
 {
+    internal SharingSettings ShallowClone() => (SharingSettings)MemberwiseClone();
+
     public List<ShareRootSettings> Roots { get; set; } = [];
 
     public List<string> ExcludedDirectories { get; set; } = [];

@@ -91,20 +91,29 @@ public sealed class RetentionService(
         searchesQuery = searchCutoff.HasValue
             ? searchesQuery.Where(search => context.Jobs.Any(job => job.Id == search.JobId && job.CompletedAtUtc < searchCutoff))
             : searchesQuery.Where(_ => false);
-        var searchesToPrune = await searchesQuery
+        var searchIdsToPrune = await searchesQuery
+            .AsNoTracking()
             .OrderBy(search => search.CompletedAtUtc)
+            .Select(search => search.JobId)
             .Take(options.BatchSize)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         int prunedResults = 0;
-        foreach (var search in searchesToPrune)
+        int searchesMarkedPruned = 0;
+        if (searchIdsToPrune.Count > 0)
         {
-            prunedResults += await context.SearchResults
-                .Where(result => result.SearchJobId == search.JobId)
+            prunedResults = await context.SearchResults
+                .Where(result => searchIdsToPrune.Contains(result.SearchJobId))
                 .ExecuteDeleteAsync(cancellationToken)
                 .ConfigureAwait(false);
-            search.ResultPersistenceState = "Pruned";
-            search.ResultsPrunedAtUtc = now;
+            searchesMarkedPruned = await context.SearchJobs
+                .Where(search => searchIdsToPrune.Contains(search.JobId))
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(search => search.ResultPersistenceState, "Pruned")
+                        .SetProperty(search => search.ResultsPrunedAtUtc, now),
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         int prunedAttempts = 0;
@@ -130,7 +139,12 @@ public sealed class RetentionService(
 
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return new RetentionResult(prunedJobs, prunedResults, searchesToPrune.Count, prunedTransfers, prunedAttempts);
+        return new RetentionResult(
+            prunedJobs,
+            prunedResults,
+            searchesMarkedPruned,
+            prunedTransfers,
+            prunedAttempts);
     }
 
     private static long? Cutoff(long now, TimeSpan? age)

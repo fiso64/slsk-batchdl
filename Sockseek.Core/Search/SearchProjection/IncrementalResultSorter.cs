@@ -13,7 +13,7 @@ public sealed class IncrementalResultSorter
     private readonly SearchSettings search;
     private readonly bool requireFileSatisfies;
     private List<ResultSorter.SortEntry> entries = [];
-    private readonly HashSet<string> seen = new(StringComparer.Ordinal);
+    private readonly HashSet<PeerPathKey> seen = [];
     private int nextOriginalIndex;
 
     public IncrementalResultSorter(
@@ -53,7 +53,7 @@ public sealed class IncrementalResultSorter
         var newEntries = new List<ResultSorter.SortEntry>();
         foreach (var (response, file) in results)
         {
-            string key = response.Username + '\\' + file.Filename;
+            var key = new PeerPathKey(response.Username, file.Filename);
             if (!seen.Add(key))
                 continue;
 
@@ -80,7 +80,7 @@ public sealed class IncrementalResultSorter
         var newEntries = new List<ResultSorter.SortEntry>();
         foreach (var input in results)
         {
-            string key = input.Username + '\\' + input.Filename;
+            var key = new PeerPathKey(input.Username, input.Filename);
             if (!seen.Add(key))
                 continue;
             if (requireFileSatisfies

@@ -960,7 +960,7 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
-    public async Task SubmitJobAsync_AppliesClientDownloadSettingsDeltaAfterProfiles()
+    public async Task SubmitJobAsync_AppliesClientDownloadSettingsPatchAfterProfiles()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
         string trackDir = Path.Combine(musicRoot, "Artist");

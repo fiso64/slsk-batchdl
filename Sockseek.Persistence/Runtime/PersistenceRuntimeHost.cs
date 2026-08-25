@@ -155,6 +155,10 @@ public sealed class PersistenceRuntimeHost
                     new InvalidDataException($"SQLite integrity check failed: {result.Result}"));
             return result;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
@@ -173,6 +177,10 @@ public sealed class PersistenceRuntimeHost
         try
         {
             return await maintenance!.BackupAsync(backupPath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -193,6 +201,10 @@ public sealed class PersistenceRuntimeHost
         {
             return await maintenance!.CheckpointAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
@@ -211,6 +223,10 @@ public sealed class PersistenceRuntimeHost
         try
         {
             return await retention!.RunBatchAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -243,6 +259,16 @@ public sealed class PersistenceRuntimeHost
             if (runtimeSession?.Current != null)
                 await runtimeSession.StopAsync("Clean", cancellationToken).ConfigureAwait(false);
             return new PersistenceRuntimeStop(true, runtimeId, SnapshotQueue());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            writerStop?.Cancel();
+            if (writerTask != null)
+            {
+                try { await writerTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+            throw;
         }
         catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
         {

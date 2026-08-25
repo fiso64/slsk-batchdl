@@ -318,7 +318,7 @@ internal sealed class JobOrchestrator
 
         if (config.PrintJobs)
         {
-            await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, jl.Cts!.Token, childParentJob)));
+            await ProcessChildren(jl, childParentJob);
             SetJobListTerminalState(jl, parentToken);
             return;
         }
@@ -384,23 +384,26 @@ internal sealed class JobOrchestrator
                         jl.WorkflowId)
                     : null;
 
-                await Task.WhenAll(jl.Jobs.ToList().Select(async child =>
-                {
-                    bool wasInitial = child is SongJob s && s.LifecycleState == JobLifecycleState.Pending;
-                    await ProcessJob(child, jl.Cts!.Token, childParentJob);
-
-                    if (wasInitial && child is SongJob song)
+                await BoundedAsync.ForEachAsync(
+                    jl.Jobs.ToList(),
+                    context.Runtime.ConcurrentSchedulingLimit,
+                    async child =>
                     {
-                        context.Ctx(song).IndexEditor?.Update();
-                        context.Ctx(song).PlaylistEditor?.Update();
-                        intervalReporter?.MaybeReport(song);
-                        int dl = directSongs.Count(IsSubtreeSuccessful);
-                        int fl = directSongs.Count(IsSubtreeUnsuccessful);
-                        context.Events.RaiseOverallProgress(dl, fl, directSongs.Count);
+                        bool wasInitial = child is SongJob s && s.LifecycleState == JobLifecycleState.Pending;
+                        await ProcessJob(child, jl.Cts!.Token, childParentJob);
 
-                        await MaybeRemoveFromSource(song, song.Config);
-                    }
-                }));
+                        if (wasInitial && child is SongJob song)
+                        {
+                            context.Ctx(song).IndexEditor?.Update();
+                            context.Ctx(song).PlaylistEditor?.Update();
+                            intervalReporter?.MaybeReport(song);
+                            int dl = directSongs.Count(IsSubtreeSuccessful);
+                            int fl = directSongs.Count(IsSubtreeUnsuccessful);
+                            context.Events.RaiseOverallProgress(dl, fl, directSongs.Count);
+
+                            await MaybeRemoveFromSource(song, song.Config);
+                        }
+                    });
 
                 int dlFinal = directSongs.Count(IsSubtreeSuccessful);
                 int flFinal = directSongs.Count(IsSubtreeUnsuccessful);
@@ -408,7 +411,7 @@ internal sealed class JobOrchestrator
             }
             else
             {
-                await Task.WhenAll(jl.Jobs.ToList().Select(child => ProcessJob(child, jl.Cts!.Token, childParentJob)));
+                await ProcessChildren(jl, childParentJob);
 
                 foreach (var child in jl.Jobs)
                     await MaybeRemoveFromSource(child, child.Config);
@@ -420,6 +423,12 @@ internal sealed class JobOrchestrator
 
         SetJobListTerminalState(jl, parentToken);
     }
+
+    private Task ProcessChildren(JobList list, Job? parentJob)
+        => BoundedAsync.ForEachAsync(
+            list.Jobs.ToList(),
+            context.Runtime.ConcurrentSchedulingLimit,
+            child => ProcessJob(child, list.Cts!.Token, parentJob));
 
     internal static bool IsSubtreeSuccessful(Job? job)
     {

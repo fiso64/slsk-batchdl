@@ -225,8 +225,6 @@ namespace Sockseek.Api;
 [JsonSerializable(typeof(CollectionPatchDto<string>))]
 [JsonSerializable(typeof(CollectionPatchDto<RegexRuleDto>))]
 
-[JsonSerializable(typeof(DownloadSettingsDeltaDto))]
-[JsonSerializable(typeof(DownloadSettingOperationDto))]
 [JsonSerializable(typeof(RegexRuleDto))]
 [JsonSerializable(typeof(RegexFieldsDto))]
 

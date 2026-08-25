@@ -11,6 +11,18 @@ namespace Sockseek.Persistence.Tests;
 public sealed class ShareCatalogManagerTests
 {
     [TestMethod]
+    public async Task Initialize_PropagatesCallerCancellationWithoutAManifest()
+    {
+        await using var directory = new TemporaryDirectory();
+        await using var manager = new ShareCatalogManager(directory.Path);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsExceptionAsync<OperationCanceledException>(
+            () => manager.InitializeAsync("settings", cancellation.Token).AsTask());
+    }
+
+    [TestMethod]
     public async Task Publish_ObsoleteGenerationWaitsForOutstandingLease()
     {
         await using var directory = new TemporaryDirectory();

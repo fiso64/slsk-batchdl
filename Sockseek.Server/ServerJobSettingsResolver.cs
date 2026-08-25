@@ -45,42 +45,20 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
         if (inherited.PrintOption != PrintOption.None)
             return SettingsCloner.Clone(inherited);
 
-        var options = submissionOptions.GetOptions(job);
-        var context = ToProfileContext(options?.ProfileContext);
-        var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
-        var conditionSettings = SettingsCloner.Clone(inherited);
-        catalog.DefaultProfile?.Download.ApplyTo(conditionSettings);
-        foreach (var profile in namedProfiles)
-            profile.Download.ApplyTo(conditionSettings);
-        DownloadSettingsPatchDtoMapper.ApplyTo(conditionSettings, launchDownloadSettings);
-        submissionOptions.ApplyTo(conditionSettings, options, job.Id);
-
-        var matchingAutoProfiles = catalog.AutoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, conditionSettings, job, context))
-            .ToList();
-
-        var settings = SettingsCloner.Clone(baseDefaults);
-        catalog.DefaultProfile?.Download.ApplyTo(settings);
-
-        foreach (var profile in matchingAutoProfiles)
-            profile.Download.ApplyTo(settings);
-
-        foreach (var profile in namedProfiles)
-            profile.Download.ApplyTo(settings);
-
-        DownloadSettingsPatchDtoMapper.ApplyTo(settings, launchDownloadSettings);
-        submissionOptions.ApplyTo(settings, options, job.Id);
-
-        settings.AppliedAutoProfiles = [.. matchingAutoProfiles.Select(p => p.Name)];
-        NormalizeForServer(settings, pathContext);
-        return settings;
+        return ResolveCore(job, submissionOptions.GetOptions(job), inherited);
     }
 
     public DownloadSettings ResolveFollowUp(Job job, SubmissionOptionsDto? options)
+        => ResolveCore(job, options, baseDefaults);
+
+    private DownloadSettings ResolveCore(
+        Job job,
+        SubmissionOptionsDto? options,
+        DownloadSettings conditionBaseline)
     {
         var context = ToProfileContext(options?.ProfileContext);
         var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
-        var conditionSettings = SettingsCloner.Clone(baseDefaults);
+        var conditionSettings = SettingsCloner.Clone(conditionBaseline);
         catalog.DefaultProfile?.Download.ApplyTo(conditionSettings);
         foreach (var profile in namedProfiles)
             profile.Download.ApplyTo(conditionSettings);

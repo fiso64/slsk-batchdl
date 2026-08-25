@@ -15,7 +15,7 @@ public sealed class IncrementalAggregateTrackProjector
     private readonly SongQueryComparer comparer;
     private readonly Dictionary<SongQuery, AggregateTrackBucket> buckets;
     private readonly List<AggregateTrackBucket> bucketOrder = [];
-    private readonly HashSet<string> seen = new(StringComparer.Ordinal);
+    private readonly HashSet<PeerPathKey> seen = [];
 
     public IncrementalAggregateTrackProjector(
         SongQuery query,
@@ -47,7 +47,7 @@ public sealed class IncrementalAggregateTrackProjector
         int added = 0;
         foreach (var input in results)
         {
-            string seenKey = input.Username + '\\' + input.Filename;
+            var seenKey = new PeerPathKey(input.Username, input.Filename);
             if (!seen.Add(seenKey))
                 continue;
 

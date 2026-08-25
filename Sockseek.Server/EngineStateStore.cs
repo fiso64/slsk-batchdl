@@ -20,6 +20,8 @@ public sealed class EngineStateStore
     private bool publishingStateBatches;
     // Keep records and workflow aggregate indexes in sync only through UpdateJobRecord.
     private readonly Dictionary<Guid, JobSnapshot> jobs = [];
+    private readonly Dictionary<Guid, HashSet<Guid>> nestedJobIdsByContainer = [];
+    private readonly Dictionary<Guid, HashSet<Guid>> containerIdsByNestedJob = [];
     private readonly Dictionary<Guid, JobRecord> records = [];
     private readonly Dictionary<Guid, WorkflowStateRecord> workflows = [];
     private readonly Dictionary<Guid, Guid?> parentJobIds = [];
@@ -692,7 +694,7 @@ public sealed class EngineStateStore
 
             foreach (var failedJob in failedJobs)
             {
-                jobs[failedJob.Id] = failedJob;
+                StoreJob(failedJob);
                 UpdateJobRecord(failedJob);
             }
 
@@ -753,7 +755,7 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
-            jobs[change.Job.Id] = change.Job;
+            StoreJob(change.Job);
             parentJobIds[change.Job.Id] = change.ParentJobId;
             if (change.SourceJobId is Guid sourceJobId)
                 sourceJobIds[change.Job.Id] = sourceJobId;
@@ -779,19 +781,19 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
-            jobs[change.ExtractJob.Id] = change.ExtractJob;
+            StoreJob(change.ExtractJob);
             resultJobIds[change.ExtractJob.Id] = change.ResultJob.Id;
 
             changedJobs.Add(UpdateJobRecord(change.ExtractJob).Summary);
 
             if (jobs.ContainsKey(change.ResultJob.Id))
             {
-                jobs[change.ResultJob.Id] = change.ResultJob;
+                StoreJob(change.ResultJob);
                 changedJobs.Add(UpdateJobRecord(change.ResultJob).Summary);
             }
             else if (change.ExtractJob.Payload is ExtractJobSnapshotPayload { AutoProcessResult: true })
             {
-                jobs[change.ResultJob.Id] = change.ResultJob;
+                StoreJob(change.ResultJob);
                 parentJobIds[change.ResultJob.Id] = parentJobIds.GetValueOrDefault(change.ExtractJob.Id);
                 changedJobs.Add(UpdateJobRecord(change.ResultJob).Summary);
             }
@@ -826,7 +828,7 @@ public sealed class EngineStateStore
             if (ServerSnapshotMapper.IsRunningOrPending(change.Job))
                 executionCompletedJobs.Remove(change.Job.Id);
 
-            jobs[change.Job.Id] = change.Job;
+            StoreJob(change.Job);
             var changedRecords = UpdateRecordsContainingJob(change.Job.Id);
             changedRecords.Add(UpdateJobRecord(change.Job));
             summaries = changedRecords
@@ -859,7 +861,7 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
-            jobs[change.Job.Id] = change.Job;
+            StoreJob(change.Job);
             var changedRecords = UpdateRecordsContainingJob(change.Job.Id);
             changedRecords.Add(UpdateJobRecord(change.Job));
             summaries.AddRange(changedRecords
@@ -890,7 +892,7 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
-            jobs[change.Job.Id] = change.Job;
+            StoreJob(change.Job);
             executionCompletedJobs.Add(change.Job.Id);
             summary = UpdateJobRecord(change.Job).Summary;
             workflowSummary = BuildWorkflowSummary(change.Job.WorkflowId);
@@ -913,7 +915,7 @@ public sealed class EngineStateStore
         lock (gate)
         {
             songTransferStates[change.Song.Id] = change.State;
-            jobs[change.Song.Id] = change.Song;
+            StoreJob(change.Song);
             UpdateJobRecord(change.Song);
             UpdateRecordsContainingJob(change.Song.Id);
             var transferDelta = UpsertTransfer(change.Transfer, isTerminal: false);
@@ -936,7 +938,7 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
-            jobs[change.Song.Id] = change.Song;
+            StoreJob(change.Song);
             var containingRecords = UpdateRecordsContainingJob(change.Song.Id);
             summaries = containingRecords.Select(record => record.Summary).ToList();
             workflowSummaries = containingRecords
@@ -1647,10 +1649,39 @@ public sealed class EngineStateStore
     }
 
     private List<JobRecord> UpdateRecordsContainingJob(Guid jobId)
-        => jobs.Values
-            .Where(job => job.Id != jobId && ServerSnapshotMapper.ContainsNestedJob(job, jobId))
-            .Select(UpdateJobRecord)
-            .ToList();
+        => containerIdsByNestedJob.TryGetValue(jobId, out HashSet<Guid>? containerIds)
+            ? containerIds.Select(id => UpdateJobRecord(jobs[id])).ToList()
+            : [];
+
+    private void StoreJob(JobSnapshot job)
+    {
+        if (nestedJobIdsByContainer.Remove(job.Id, out HashSet<Guid>? previousIds))
+        {
+            foreach (Guid nestedId in previousIds)
+            {
+                HashSet<Guid> containers = containerIdsByNestedJob[nestedId];
+                containers.Remove(job.Id);
+                if (containers.Count == 0)
+                    containerIdsByNestedJob.Remove(nestedId);
+            }
+        }
+
+        HashSet<Guid> nestedIds = ServerSnapshotMapper.NestedJobIds(job)
+            .Where(id => id != job.Id)
+            .ToHashSet();
+        if (nestedIds.Count > 0)
+        {
+            nestedJobIdsByContainer[job.Id] = nestedIds;
+            foreach (Guid nestedId in nestedIds)
+            {
+                if (!containerIdsByNestedJob.TryGetValue(nestedId, out HashSet<Guid>? containers))
+                    containerIdsByNestedJob[nestedId] = containers = [];
+                containers.Add(job.Id);
+            }
+        }
+
+        jobs[job.Id] = job;
+    }
 
     private JobSnapshot RefreshNestedSnapshots(JobSnapshot job)
     {

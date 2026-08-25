@@ -62,6 +62,18 @@ internal sealed class DownloadRunScope : IDisposable, IAsyncDisposable
 
     public CancellationToken Token => appCts.Token;
     public bool IsCancellationRequested => appCts.IsCancellationRequested;
+    public int ConcurrentJobLimit => settings.ConcurrentJobs;
+
+    // This bounds orchestration callbacks, not leaf or network concurrency. Using
+    // the larger value lets extractor-only work reach ConcurrentExtractors when it
+    // exceeds ConcurrentJobs; resulting leaf work still acquires jobSemaphore, and
+    // Soulseek searches separately obey Searcher's ConcurrentSearches semaphore.
+    // TODO [LOW PRIORITY][PERFORMANCE]: The window is per fan-out. Concurrently
+    // extracted nested JobLists can therefore each admit a window of registered or
+    // waiting children, multiplying bookkeeping without exceeding the leaf/search
+    // limits. Consider phase-specific scheduling only if load tests show this is
+    // material in practice.
+    public int ConcurrentSchedulingLimit => Math.Max(settings.ConcurrentJobs, settings.ConcurrentExtractors);
 
     public Searcher Searcher => searcher
         ?? throw new InvalidOperationException("Engine search services have not been initialized.");

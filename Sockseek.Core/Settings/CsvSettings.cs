@@ -2,6 +2,8 @@ namespace Sockseek.Core.Settings;
 
 public class CsvSettings
 {
+    internal CsvSettings ShallowClone() => (CsvSettings)MemberwiseClone();
+
     public string ArtistCol { get; set; } = "";
 
     public string AlbumCol { get; set; } = "";

@@ -24,9 +24,29 @@ namespace Tests.Unit
             session.AddResponse(response);
             session.AddResponse(response);
 
-            Assert.AreEqual(1, session.Results.Count, "Duplicate raw result keys should not be added twice.");
+            Assert.AreEqual(1, session.ResultCount, "Duplicate raw result keys should not be added twice.");
             Assert.AreEqual(1, session.Revision, "Revision should change only when a new raw result is added.");
             Assert.AreEqual(1, rawEvents, "Raw result event should fire only for newly added files.");
+        }
+
+        [TestMethod]
+        public void SearchSession_DistinguishesPeerAndFilenameComponentsThatContainSeparators()
+        {
+            var session = new SearchSession();
+            session.AddResponse(new SearchResponse("alpha", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"beta\track.mp3", length: 180),
+            ]));
+            session.AddResponse(new SearchResponse(@"alpha\beta", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile("track.mp3", length: 181),
+            ]));
+
+            Assert.AreEqual(2, session.ResultCount,
+                "Exact peer/file identities must not collide when either component contains a path separator.");
+            CollectionAssert.AreEquivalent(
+                new[] { "alpha", @"alpha\beta" },
+                session.RawSnapshot().Select(result => result.Username).ToArray());
         }
 
         [TestMethod]
@@ -111,7 +131,7 @@ namespace Tests.Unit
             await Task.WhenAll(completeTask, addTask);
 
             Assert.IsTrue(session.IsComplete);
-            Assert.AreEqual(0, session.Results.Count);
+            Assert.AreEqual(0, session.ResultCount);
             Assert.AreEqual(1, session.Revision);
             Assert.AreEqual(0, session.LockedFileCount);
         }
@@ -146,6 +166,25 @@ namespace Tests.Unit
             Assert.AreEqual(1, first.Items.Count);
             Assert.AreEqual(2, third.Items.Count);
             Assert.AreNotSame(first, third);
+        }
+
+        [TestMethod]
+        public void SearchJob_ProjectionCacheDoesNotAliasDistinctDelimiterBearingQueries()
+        {
+            var job = new SearchJob("cache identity");
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            var userSuccessCounts = new ConcurrentDictionary<string, int>();
+            var first = job.GetSortedTrackCandidates(
+                new FileSearchProjection(new SongQuery { Artist = "a\0b", Title = "c" }, true),
+                search,
+                userSuccessCounts);
+            var second = job.GetSortedTrackCandidates(
+                new FileSearchProjection(new SongQuery { Artist = "a", Title = "b\0c" }, true),
+                search,
+                userSuccessCounts);
+
+            Assert.AreNotSame(first, second,
+                "Distinct query components must not alias the same incremental projector state.");
         }
 
         [TestMethod]

@@ -283,7 +283,9 @@ public sealed class UploadCoordinator : IAsyncDisposable
                 request.TransferId,
                 UploadAdmissionRejection.None);
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            deadline.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
         {
             return Rejected(UploadAdmissionRejection.Unavailable, peerHash);
         }
@@ -301,18 +303,7 @@ public sealed class UploadCoordinator : IAsyncDisposable
         {
             string exactUsername = PeerUsername.Validate(username);
             var key = RemotePathKey.Create(remotePath);
-            lock (sync)
-            {
-                Work? existing = work.Values.FirstOrDefault(
-                    value => !IsTerminal(value.State)
-                             && value.Request.Username == exactUsername
-                             && value.Request.RemotePathKey.Equals(key));
-                return existing is null
-                    ? new UploadQueueEstimate(
-                        null,
-                        scheduler.GetRuntimeSnapshot().QueueRevision)
-                    : scheduler.Estimate(existing.Request.TransferId);
-            }
+            return scheduler.Estimate(exactUsername, key);
         }
         catch (ArgumentException)
         {

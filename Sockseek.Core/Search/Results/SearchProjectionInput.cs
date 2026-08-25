@@ -23,9 +23,6 @@ public sealed record SearchProjectionInput(
     IReadOnlyList<FileAttributeSnapshot>? Attributes,
     DateTimeOffset ObservedAtUtc)
 {
-    internal SearchResponse? LiveResponse { get; init; }
-    internal Soulseek.File? LiveFile { get; init; }
-
     public FileCandidate ToFileCandidate()
         => new(
             new PeerFileTarget(
@@ -51,11 +48,9 @@ public sealed record SearchProjectionInput(
             file.Filename, file.Size, file.BitRate, file.BitDepth,
             file.SampleRate, file.Length, file.Extension,
             response.UploadSpeed, response.HasFreeUploadSlot,
-            file.Attributes?.Select(attribute => new FileAttributeSnapshot(
-                attribute.Type.ToString(), attribute.Value, (int)attribute.Type)).ToArray(),
-            observedAtUtc)
-        {
-            LiveResponse = response,
-            LiveFile = file,
-        };
+            file.Attributes is null
+                ? null
+                : Array.AsReadOnly(file.Attributes.Select(attribute => new FileAttributeSnapshot(
+                    attribute.Type.ToString(), attribute.Value, (int)attribute.Type)).ToArray()),
+            observedAtUtc);
 }

@@ -172,6 +172,28 @@ public sealed class UploadCoordinatorTests
         Assert.IsTrue(observed >= 2);
     }
 
+    [TestMethod]
+    public async Task AdmissionPropagatesCallerCancellation()
+    {
+        var catalogs = new BlockingCatalogProvider();
+        await using var coordinator = new UploadCoordinator(
+            catalogs,
+            new ReadingProtocolInvoker(startOffset: 0),
+            new PeerAccessPolicy(new PeerAccessSettings()),
+            new UploadScheduler(new UploadSettings { Slots = 1 }));
+        using var cancellation = new CancellationTokenSource();
+
+        Task<UploadCoordinatorAdmission> admission = coordinator.AdmitAsync(
+            "alice",
+            endpoint: null,
+            @"Public\Track.bin",
+            cancellation.Token).AsTask();
+        await catalogs.ResolveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(() => admission);
+    }
+
     private static UploadCoordinator CreateCoordinator(
         CatalogFixture fixture,
         IUploadProtocolInvoker protocol,
@@ -397,6 +419,61 @@ public sealed class UploadCoordinatorTests
             public ShareBrowseStream OpenBrowseStream(
                 TimeSpan idleTimeout,
                 Action? releasePermit = null) => throw new NotSupportedException();
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingCatalogProvider : IShareCatalogProvider
+    {
+        public TaskCompletionSource ResolveStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool TryAcquire(out IShareCatalogLease? lease)
+        {
+            lease = new BlockingLease(this);
+            return true;
+        }
+
+        private sealed class BlockingLease(BlockingCatalogProvider owner) :
+            IShareCatalogLease,
+            IShareCatalogReader
+        {
+            public IShareCatalogReader Reader => this;
+            public ShareCatalogMetadata Metadata => throw new NotSupportedException();
+
+            public async ValueTask<ShareCatalogResolvedFile?> ResolveFileAsync(
+                RemotePathKey remotePath,
+                CancellationToken cancellationToken = default)
+            {
+                owner.ResolveStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return null;
+            }
+
+            public ValueTask<IReadOnlyList<ShareCatalogFile>> SearchAsync(
+                string query,
+                int limit,
+                CancellationToken cancellationToken = default)
+                => throw new NotSupportedException();
+
+            public ValueTask<ShareCatalogBrowseDirectory?> GetDirectoryAsync(
+                RemotePathKey remotePath,
+                CancellationToken cancellationToken = default)
+                => throw new NotSupportedException();
+
+            public async IAsyncEnumerable<ShareCatalogBrowseDirectory> EnumerateBrowseAsync(
+                [System.Runtime.CompilerServices.EnumeratorCancellation]
+                CancellationToken cancellationToken = default)
+            {
+                await Task.CompletedTask;
+                yield break;
+            }
+
+            public ShareBrowseStream OpenBrowseStream(
+                TimeSpan idleTimeout,
+                Action? releasePermit = null) => throw new NotSupportedException();
+
             public void Dispose() { }
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }

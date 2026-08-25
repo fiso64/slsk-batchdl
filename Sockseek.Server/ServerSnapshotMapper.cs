@@ -305,15 +305,28 @@ public static class ServerSnapshotMapper
     public static ServerFolderRetrievalOutcome ToServerFolderRetrievalOutcome(FolderRetrievalOutcome outcome)
         => Enum.Parse<ServerFolderRetrievalOutcome>(outcome.ToString());
 
-    public static bool ContainsNestedJob(JobSnapshot container, Guid jobId)
+    public static IEnumerable<Guid> NestedJobIds(JobSnapshot container)
+        => DirectNestedJobs(container).SelectMany(EnumerateSubtreeIds);
+
+    private static IEnumerable<JobSnapshot> DirectNestedJobs(JobSnapshot container)
         => container.Payload switch
         {
-            AlbumJobSnapshotPayload album => album.TrackJobs.Any(song => song.Id == jobId),
-            RemoteDirectoryJobSnapshotPayload directory => directory.FileJobs.Any(file => file.Id == jobId),
-            AggregateJobSnapshotPayload aggregate => aggregate.Songs.Any(song => song.Id == jobId),
-            JobListSnapshotPayload list => list.Jobs.Any(job => job.Id == jobId || ContainsNestedJob(job, jobId)),
-            _ => false,
+            AlbumJobSnapshotPayload album => album.TrackJobs,
+            RemoteDirectoryJobSnapshotPayload directory => directory.FileJobs,
+            AggregateJobSnapshotPayload aggregate => aggregate.Songs,
+            JobListSnapshotPayload list => list.Jobs,
+            _ => [],
         };
+
+    private static IEnumerable<Guid> EnumerateSubtreeIds(JobSnapshot job)
+    {
+        yield return job.Id;
+        foreach (JobSnapshot child in DirectNestedJobs(job))
+        {
+            foreach (Guid id in EnumerateSubtreeIds(child))
+                yield return id;
+        }
+    }
 
     public static bool IsRunningOrPending(JobSnapshot job)
         => job.LifecycleState is JobLifecycleState.Pending or JobLifecycleState.Running;

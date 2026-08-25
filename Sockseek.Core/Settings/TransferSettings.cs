@@ -3,6 +3,8 @@ namespace Sockseek.Core.Settings;
 /// Controls file transfer behaviour: retries and incomplete-file handling.
 public class TransferSettings
 {
+    internal TransferSettings ShallowClone() => (TransferSettings)MemberwiseClone();
+
     /// Maximum inactivity window for an established peer transfer.
     public int MaxStaleTime { get; set; } = 30_000;
 

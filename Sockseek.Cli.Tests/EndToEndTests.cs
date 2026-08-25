@@ -258,6 +258,7 @@ public class CliEndToEndTests
         try
         {
             var secondNewPromptSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstAlbumAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var client = new MockSoulseekClient(
             [
                 SearchResponse("failuser", @"Source One\Shared Album\01. Artist - Track.mp3"),
@@ -265,6 +266,11 @@ public class CliEndToEndTests
                 SearchResponse("skipuser", @"Artist Two\Album Two\01. Artist Two - Track Two.mp3"),
             ])
             {
+                BeforeSearchAsync = async (query, ct) =>
+                {
+                    if (query.Terms.Any(term => string.Equals(term, "Artist", StringComparison.OrdinalIgnoreCase)))
+                        await firstAlbumAccepted.Task.WaitAsync(ct);
+                },
                 BeforeDownloadCompletesAsync = async (username, _, ct) =>
                 {
                     if (!string.Equals(username, "failuser", StringComparison.OrdinalIgnoreCase))
@@ -289,6 +295,7 @@ public class CliEndToEndTests
                     {
                         Assert.AreEqual(InteractiveAlbumPromptPurpose.NewAlbumPrompt, request.Purpose);
                         var doomed = request.Folders.Single(folder => folder.Username == "failuser");
+                        firstAlbumAccepted.TrySetResult();
                         return Task.FromResult(new InteractiveModeManager.RunResult(
                             InteractiveModeManager.RunAction.Accept,
                             request.Folders.IndexOf(doomed),

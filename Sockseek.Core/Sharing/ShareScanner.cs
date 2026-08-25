@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Sockseek.Core.Settings;
@@ -77,6 +78,8 @@ public sealed class ShareScanner
         var counters = new ScanCounters();
         var errors = new ConcurrentQueue<ShareScanError>();
         var progressReporter = new ScanProgressReporter(counters, errors, progress);
+        using var pipelineStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        CancellationToken pipelineToken = pipelineStop.Token;
 
         Task writerTask = WriteRecordsAsync(
             writer,
@@ -84,7 +87,7 @@ public sealed class ShareScanner
             counters,
             errors,
             progressReporter,
-            cancellationToken);
+            pipelineToken);
         Task[] workers = Enumerable.Range(0, MetadataWorkerCount)
             .Select(_ => ReadMetadataAsync(
                 candidates.Reader,
@@ -92,8 +95,11 @@ public sealed class ShareScanner
                 counters,
                 errors,
                 progressReporter,
-                cancellationToken))
+                pipelineToken))
             .ToArray();
+        Task allWorkers = Task.WhenAll(workers);
+        Task writerFailureMonitor = CancelPipelineOnFailureAsync(writerTask, pipelineStop);
+        Task workerFailureMonitor = CancelPipelineOnFailureAsync(allWorkers, pipelineStop);
 
         Exception? discoveryFailure = null;
         try
@@ -107,7 +113,7 @@ public sealed class ShareScanner
                 counters,
                 errors,
                 progressReporter,
-                cancellationToken).ConfigureAwait(false);
+                pipelineToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -121,7 +127,7 @@ public sealed class ShareScanner
         Exception? workerFailure = null;
         try
         {
-            await Task.WhenAll(workers).ConfigureAwait(false);
+            await allWorkers.ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -131,7 +137,21 @@ public sealed class ShareScanner
         {
             records.Writer.TryComplete(discoveryFailure ?? workerFailure);
         }
-        await writerTask.ConfigureAwait(false);
+        Exception? writerFailure = null;
+        try
+        {
+            await writerTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            writerFailure = ex;
+        }
+        await Task.WhenAll(writerFailureMonitor, workerFailureMonitor).ConfigureAwait(false);
+
+        Exception? failure = FirstPipelineFailure(writerFailure, workerFailure, discoveryFailure);
+        if (failure is not null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        cancellationToken.ThrowIfCancellationRequested();
         progressReporter.Report(force: true);
 
         started.Stop();
@@ -159,6 +179,24 @@ public sealed class ShareScanner
             started.Elapsed,
             errors.ToArray());
     }
+
+    private static async Task CancelPipelineOnFailureAsync(
+        Task stage,
+        CancellationTokenSource pipelineStop)
+    {
+        try
+        {
+            await stage.ConfigureAwait(false);
+        }
+        catch
+        {
+            pipelineStop.Cancel();
+        }
+    }
+
+    private static Exception? FirstPipelineFailure(params Exception?[] failures)
+        => failures.FirstOrDefault(failure => failure is not null and not OperationCanceledException)
+           ?? failures.FirstOrDefault(failure => failure is not null);
 
     private static async Task DiscoverAsync(
         SharingSettings settings,

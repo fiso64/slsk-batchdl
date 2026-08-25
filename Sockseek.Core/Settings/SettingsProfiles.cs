@@ -397,56 +397,26 @@ public static partial class ProfileConditionEvaluator
 
 public static class SettingsCloner
 {
-    public static EngineSettings Clone(EngineSettings source) => new()
+    public static EngineSettings Clone(EngineSettings source)
     {
-        Username = source.Username,
-        Password = source.Password,
-        UseRandomLogin = source.UseRandomLogin,
-        ListenPort = source.ListenPort,
-        ConnectTimeout = source.ConnectTimeout,
-        AutoReconnectAfterKickedFromServer = source.AutoReconnectAfterKickedFromServer,
-        UserDescription = source.UserDescription,
-        UserPicturePath = source.UserPicturePath,
-        Sharing = new SharingSettings
+        var clone = source.ShallowClone();
+        clone.Sharing = source.Sharing.ShallowClone();
+        clone.Sharing.Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings
         {
-            Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings
-            {
-                LocalPath = root.LocalPath,
-                Alias = root.Alias,
-                EffectiveAlias = root.EffectiveAlias,
-            })],
-            ExcludedDirectories = [.. source.Sharing.ExcludedDirectories],
-            Filters = [.. source.Sharing.Filters],
-            ScanOnStart = source.Sharing.ScanOnStart,
-            RescanInterval = source.Sharing.RescanInterval,
-        },
-        Uploads = new UploadSettings
-        {
-            Slots = source.Uploads.Slots,
-            SpeedLimitKiBPerSecond = source.Uploads.SpeedLimitKiBPerSecond,
-        },
-        PeerAccess = new PeerAccessSettings
-        {
-            BlockedUsernames = [.. source.PeerAccess.BlockedUsernames],
-            BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses],
-        },
-        Chat = new ChatSettings
-        {
-            AutoJoinRooms = [.. source.Chat.AutoJoinRooms],
-        },
-        ConcurrentJobs = source.ConcurrentJobs,
-        ConcurrentSearches = source.ConcurrentSearches,
-        ConcurrentExtractors = source.ConcurrentExtractors,
-        SearchesPerTime = source.SearchesPerTime,
-        SearchRenewTime = source.SearchRenewTime,
-        LogLevel = source.LogLevel,
-        ReportIntervalProgress = source.ReportIntervalProgress,
-        LogFilePath = source.LogFilePath,
-        MockFilesDir = source.MockFilesDir,
-        MockFilesReadTags = source.MockFilesReadTags,
-        MockFilesSlow = source.MockFilesSlow,
-        MockFilesFailDownloads = source.MockFilesFailDownloads,
-    };
+            LocalPath = root.LocalPath,
+            Alias = root.Alias,
+            EffectiveAlias = root.EffectiveAlias,
+        })];
+        clone.Sharing.ExcludedDirectories = [.. source.Sharing.ExcludedDirectories];
+        clone.Sharing.Filters = [.. source.Sharing.Filters];
+        clone.Uploads = source.Uploads.ShallowClone();
+        clone.PeerAccess = source.PeerAccess.ShallowClone();
+        clone.PeerAccess.BlockedUsernames = [.. source.PeerAccess.BlockedUsernames];
+        clone.PeerAccess.BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses];
+        clone.Chat = source.Chat.ShallowClone();
+        clone.Chat.AutoJoinRooms = [.. source.Chat.AutoJoinRooms];
+        return clone;
+    }
 
     public static DownloadSettings Clone(DownloadSettings source) => new()
     {
@@ -466,69 +436,36 @@ public static class SettingsCloner
         RuntimePathContext = source.RuntimePathContext,
     };
 
-    public static OutputSettings Clone(OutputSettings source) => new()
+    public static OutputSettings Clone(OutputSettings source)
     {
-        ParentDir = source.ParentDir,
-        NameFormat = source.NameFormat,
-        InvalidReplaceStr = source.InvalidReplaceStr,
-        WritePlaylist = source.WritePlaylist,
-        WriteIndex = source.WriteIndex,
-        HasConfiguredIndex = source.HasConfiguredIndex,
-        M3uFilePath = source.M3uFilePath,
-        IndexFilePath = source.IndexFilePath,
-        IncompleteAlbumAction = new IncompleteAlbumActionSettings
+        var clone = source.ShallowClone();
+        clone.IncompleteAlbumAction = new IncompleteAlbumActionSettings
         {
             Kind = source.IncompleteAlbumAction.Kind,
             Path = source.IncompleteAlbumAction.Path,
-        },
-        OnComplete = source.OnComplete?.ToList(),
-        AlbumArtOnly = source.AlbumArtOnly,
-        AlbumArtOption = source.AlbumArtOption,
-    };
+        };
+        clone.OnComplete = source.OnComplete?.ToList();
+        return clone;
+    }
 
-    public static SearchSettings Clone(SearchSettings source) => new()
+    public static SearchSettings Clone(SearchSettings source)
     {
-        NecessaryCond = new FileConditions(source.NecessaryCond),
-        PreferredCond = new FileConditions(source.PreferredCond),
-        NecessaryFolderCond = new FolderConditions(source.NecessaryFolderCond),
-        PreferredFolderCond = new FolderConditions(source.PreferredFolderCond),
-        StrictAlbumQuality = source.StrictAlbumQuality,
-        SearchTimeout = source.SearchTimeout,
-        DownrankOn = source.DownrankOn,
-        IgnoreOn = source.IgnoreOn,
-        FastSearch = source.FastSearch,
-        FastSearchDelay = source.FastSearchDelay,
-        FastSearchMinUpSpeed = source.FastSearchMinUpSpeed,
-        DesperateSearch = source.DesperateSearch,
-        NoRemoveSpecialChars = source.NoRemoveSpecialChars,
-        RemoveSingleCharSearchTerms = source.RemoveSingleCharSearchTerms,
-        NoBrowseFolder = source.NoBrowseFolder,
-        Relax = source.Relax,
-        ArtistMaybeWrong = source.ArtistMaybeWrong,
-        IsAggregate = source.IsAggregate,
-        MinSharesAggregate = source.MinSharesAggregate,
-        AggregateLengthTol = source.AggregateLengthTol,
-    };
+        var clone = source.ShallowClone();
+        clone.NecessaryCond = new FileConditions(source.NecessaryCond);
+        clone.PreferredCond = new FileConditions(source.PreferredCond);
+        clone.NecessaryFolderCond = new FolderConditions(source.NecessaryFolderCond);
+        clone.PreferredFolderCond = new FolderConditions(source.PreferredFolderCond);
+        return clone;
+    }
 
-    public static SkipSettings Clone(SkipSettings source) => new()
-    {
-        SkipExisting = source.SkipExisting,
-        SkipNotFound = source.SkipNotFound,
-        SkipMode = source.SkipMode,
-        SkipMusicDir = source.SkipMusicDir,
-        SkipModeMusicDir = source.SkipModeMusicDir,
-        SkipCheckCond = source.SkipCheckCond,
-        SkipCheckPrefCond = source.SkipCheckPrefCond,
-    };
+    public static SkipSettings Clone(SkipSettings source) => source.ShallowClone();
 
-    public static PreprocessSettings Clone(PreprocessSettings source) => new()
+    public static PreprocessSettings Clone(PreprocessSettings source)
     {
-        RemoveFt = source.RemoveFt,
-        RemoveBrackets = source.RemoveBrackets,
-        ExtractArtist = source.ExtractArtist,
-        ParseTitleTemplate = source.ParseTitleTemplate,
-        Regex = source.Regex?.Select(x => (Clone(x.Item1), Clone(x.Item2))).ToList(),
-    };
+        var clone = source.ShallowClone();
+        clone.Regex = source.Regex?.Select(x => (Clone(x.Item1), Clone(x.Item2))).ToList();
+        return clone;
+    }
 
     private static RegexFields Clone(RegexFields source) => new()
     {
@@ -537,65 +474,17 @@ public static class SettingsCloner
         Album = source.Album,
     };
 
-    public static ExtractionSettings Clone(ExtractionSettings source) => new()
-    {
-        Input = source.Input,
-        InputType = source.InputType,
-        MaxTracks = source.MaxTracks,
-        Offset = source.Offset,
-        Reverse = source.Reverse,
-        RemoveTracksFromSource = source.RemoveTracksFromSource,
-        RequestedMode = source.RequestedMode,
-        UpgradeToAlbum = source.UpgradeToAlbum,
-        SetAlbumMinTrackCount = source.SetAlbumMinTrackCount,
-        SetAlbumMaxTrackCount = source.SetAlbumMaxTrackCount,
-    };
+    public static ExtractionSettings Clone(ExtractionSettings source) => source.ShallowClone();
 
-    public static TransferSettings Clone(TransferSettings source) => new()
-    {
-        MaxStaleTime = source.MaxStaleTime,
-        MaxDownloadRetries = source.MaxDownloadRetries,
-        UnknownErrorRetries = source.UnknownErrorRetries,
-        NoIncompleteExt = source.NoIncompleteExt,
-        AlbumTrackCountMaxRetries = source.AlbumTrackCountMaxRetries,
-    };
+    public static TransferSettings Clone(TransferSettings source) => source.ShallowClone();
 
-    public static SpotifySettings Clone(SpotifySettings source) => new()
-    {
-        ClientId = source.ClientId,
-        ClientSecret = source.ClientSecret,
-        Token = source.Token,
-        Refresh = source.Refresh,
-    };
+    public static SpotifySettings Clone(SpotifySettings source) => source.ShallowClone();
 
-    public static YouTubeSettings Clone(YouTubeSettings source) => new()
-    {
-        ApiKey = source.ApiKey,
-        GetDeleted = source.GetDeleted,
-        DeletedOnly = source.DeletedOnly,
-    };
+    public static YouTubeSettings Clone(YouTubeSettings source) => source.ShallowClone();
 
-    public static YtDlpSettings Clone(YtDlpSettings source) => new()
-    {
-        UseYtdlp = source.UseYtdlp,
-        YtdlpArgument = source.YtdlpArgument,
-    };
+    public static YtDlpSettings Clone(YtDlpSettings source) => source.ShallowClone();
 
-    public static CsvSettings Clone(CsvSettings source) => new()
-    {
-        ArtistCol = source.ArtistCol,
-        AlbumCol = source.AlbumCol,
-        TitleCol = source.TitleCol,
-        YtIdCol = source.YtIdCol,
-        DescCol = source.DescCol,
-        TrackCountCol = source.TrackCountCol,
-        LengthCol = source.LengthCol,
-        TimeUnit = source.TimeUnit,
-        YtParse = source.YtParse,
-    };
+    public static CsvSettings Clone(CsvSettings source) => source.ShallowClone();
 
-    public static BandcampSettings Clone(BandcampSettings source) => new()
-    {
-        HtmlFromFile = source.HtmlFromFile,
-    };
+    public static BandcampSettings Clone(BandcampSettings source) => source.ShallowClone();
 }

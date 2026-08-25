@@ -59,6 +59,20 @@ public sealed class UploadSchedulerTests
     }
 
     [TestMethod]
+    public void QueueEstimate_ResolvesExactPeerAndPathFromTheSchedulerIndex()
+    {
+        var scheduler = CreateScheduler(slots: 1);
+        _ = Admit(scheduler, "Alice", "active");
+        var queued = Admit(scheduler, "Alice", "queued");
+
+        Assert.AreEqual(
+            scheduler.Estimate(queued.Id),
+            scheduler.Estimate("Alice", RemotePathKey.Create(@"Music\queued.flac")));
+        Assert.IsNull(scheduler.Estimate("alice", RemotePathKey.Create(@"Music\queued.flac")).AheadCount);
+        Assert.IsNull(scheduler.Estimate("Alice", RemotePathKey.Create(@"Music\missing.flac")).AheadCount);
+    }
+
+    [TestMethod]
     public void Scheduler_TreatsExactUsernameSpellingsAsDistinctPeers()
     {
         var scheduler = CreateScheduler(slots: 4);

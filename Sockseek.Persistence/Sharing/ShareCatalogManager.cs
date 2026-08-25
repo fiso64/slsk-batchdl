@@ -174,6 +174,7 @@ public sealed class ShareCatalogManager : IAsyncDisposable, IShareCatalogProvide
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        cancellationToken.ThrowIfCancellationRequested();
         OwnerOnlyFilePermissions.EnsureDirectory(directory);
         if (!File.Exists(manifestPath))
         {
@@ -200,6 +201,10 @@ public sealed class ShareCatalogManager : IAsyncDisposable, IShareCatalogProvide
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException("Share catalog manifest is empty.");
             ValidateManifestVersion(manifest);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch
         {
@@ -395,6 +400,10 @@ public sealed class ShareCatalogManager : IAsyncDisposable, IShareCatalogProvide
                 expectedSettingsHash,
                 cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
             return null;
@@ -495,6 +504,7 @@ public sealed class ShareCatalogManager : IAsyncDisposable, IShareCatalogProvide
         IReadOnlyCollection<Guid> retained,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!Directory.Exists(directory))
             return;
 

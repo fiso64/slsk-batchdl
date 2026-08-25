@@ -38,6 +38,17 @@ public sealed class SharingSettingsTests
     }
 
     [TestMethod]
+    public void RemotePathKey_PreservesNonNulControlCharacters()
+    {
+        const string path = "Alias\\line\n\tfile.flac";
+
+        var key = RemotePathKey.Create(path);
+
+        Assert.AreEqual(key, RemotePathKey.Create(path));
+        Assert.AreNotEqual(key, RemotePathKey.Create("Alias\\line file.flac"));
+    }
+
+    [TestMethod]
     public void RemotePathKey_DoesNotImposeSockseekOnlyEncodedLength()
     {
         string longPath = "Alias\\" + new string('x', 32 * 1_024);
@@ -251,5 +262,53 @@ public sealed class SharingSettingsTests
         Assert.AreEqual("root", original.Sharing.Roots[0].LocalPath);
         CollectionAssert.AreEqual(new[] { "one" }, original.Sharing.Filters);
         CollectionAssert.AreEqual(new[] { "alice" }, original.PeerAccess.BlockedUsernames);
+    }
+
+    [TestMethod]
+    public void SettingsClone_DoesNotShareMutableDownloadState()
+    {
+        var original = new DownloadSettings
+        {
+            Output = new OutputSettings
+            {
+                OnComplete = ["first"],
+                IncompleteAlbumAction = new IncompleteAlbumActionSettings
+                {
+                    Kind = IncompleteAlbumActionKind.Move,
+                    Path = "incomplete",
+                },
+            },
+            Search = new SearchSettings
+            {
+                NecessaryCond = new FileConditions { Formats = ["flac"] },
+                NecessaryFolderCond = new FolderConditions { RequiredTrackTitles = ["intro"] },
+            },
+            Preprocess = new PreprocessSettings
+            {
+                Regex = [(new RegexFields { Title = "before" }, new RegexFields { Title = "after" })],
+            },
+            AppliedAutoProfiles = ["lossless"],
+        };
+
+        DownloadSettings clone = SettingsCloner.Clone(original);
+        Assert.AreNotSame(
+            original.Preprocess.Regex![0].Item1,
+            clone.Preprocess.Regex![0].Item1);
+        clone.Output.OnComplete!.Add("second");
+        clone.Output.IncompleteAlbumAction.Path = "changed";
+        clone.Search.NecessaryCond.Formats[0] = "mp3";
+        clone.Search.NecessaryFolderCond.RequiredTrackTitles[0] = "outro";
+        clone.Preprocess.Regex[0] = (
+            new RegexFields { Title = "changed" },
+            clone.Preprocess.Regex[0].Item2);
+        clone.AppliedAutoProfiles.Add("portable");
+
+        CollectionAssert.AreEqual(new[] { "first" }, original.Output.OnComplete);
+        Assert.AreEqual("incomplete", original.Output.IncompleteAlbumAction.Path);
+        CollectionAssert.AreEqual(new[] { "flac" }, original.Search.NecessaryCond.Formats);
+        CollectionAssert.AreEqual(
+            new[] { "intro" }, original.Search.NecessaryFolderCond.RequiredTrackTitles);
+        Assert.AreEqual("before", original.Preprocess.Regex[0].Item1.Title);
+        CollectionAssert.AreEquivalent(new[] { "lossless" }, original.AppliedAutoProfiles.ToArray());
     }
 }

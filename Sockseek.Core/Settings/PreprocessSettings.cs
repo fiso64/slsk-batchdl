@@ -8,6 +8,8 @@ namespace Sockseek.Core.Settings;
 /// in the binder for --regex (which supports a target prefix T:/A:/L: and append mode).
 public class PreprocessSettings
 {
+    internal PreprocessSettings ShallowClone() => (PreprocessSettings)MemberwiseClone();
+
     public bool RemoveFt { get; set; }
 
     public bool RemoveBrackets { get; set; }

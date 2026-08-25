@@ -1,4 +1,6 @@
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -129,6 +131,40 @@ public sealed class SqliteInitializationTests
     }
 
     [TestMethod]
+    public async Task RuntimeStopPropagatesCallerCancellationAndReleasesOwnership()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "sockseek-runtime-stop-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var options = new SockseekSqliteOptions(Path.Combine(directory, "sockseek.db"));
+        var host = new PersistenceRuntimeHost(
+            options,
+            new Persistence.Write.PersistenceWriterOptions(),
+            new PersistenceRetentionOptions(),
+            "test");
+        try
+        {
+            await host.StartAsync();
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+
+            await Assert.ThrowsExceptionAsync<TaskCanceledException>(() =>
+                host.StopAsync(TimeSpan.FromSeconds(1), cancellation.Token));
+
+            Assert.IsFalse(host.IsStarted);
+            using SqliteDatabaseOwner reacquired = SqliteDatabaseOwner.Acquire(options);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task Restart_ReconcilesUnfinishedRuntime_AndCleanRestartDoesNotReinterruptRows()
     {
         await using var database = new TemporaryDatabase();
@@ -237,6 +273,94 @@ public sealed class SqliteInitializationTests
         Assert.AreEqual(0, cleanRestart.UnfinishedRuntimeCount);
         Assert.AreEqual(0, cleanRestart.InterruptedJobCount);
         await thirdRuntime.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task Restart_ReconcilesUnfinishedRowsWithConstantDatabaseCommands()
+    {
+        await using var database = new TemporaryDatabase(countCommands: true);
+        await database.Initializer.InitializeAsync();
+        var clock = new MutableTimeProvider(new DateTimeOffset(2035, 1, 2, 3, 4, 5, TimeSpan.Zero));
+        var firstRuntime = new PersistenceRuntimeSession(database.Factory, clock);
+        var first = await firstRuntime.StartAsync("test-1");
+
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            for (int index = 0; index < 50; index++)
+            {
+                Guid jobId = Guid.NewGuid();
+                Guid transferId = Guid.NewGuid();
+                context.Jobs.Add(new JobEntity
+                {
+                    Id = jobId,
+                    WorkflowId = Guid.NewGuid(),
+                    LastRuntimeId = first.Runtime.RuntimeId,
+                    LastSequence = index + 1,
+                    DisplayId = index + 1,
+                    Kind = "Search",
+                    LifecycleState = "Running",
+                    ActivityPhase = "Searching",
+                    TerminalOutcome = "None",
+                    SkipReason = "None",
+                    CancellationSource = "None",
+                    FailureReason = "None",
+                    CreatedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    StartedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    UpdatedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    Revision = 1,
+                    PayloadSchemaVersion = 1,
+                });
+                context.SearchJobs.Add(new SearchJobEntity
+                {
+                    JobId = jobId,
+                    Query = $"unfinished-{index}",
+                    Revision = 1,
+                    ResultPersistenceState = "Incomplete",
+                });
+                context.Transfers.Add(new TransferEntity
+                {
+                    Id = transferId,
+                    JobId = jobId,
+                    LastRuntimeId = first.Runtime.RuntimeId,
+                    LastSequence = index + 1,
+                    Direction = "Download",
+                    Source = "SoulseekPeer",
+                    State = "InProgress",
+                    TerminalOutcome = "None",
+                    FailureReason = "None",
+                    CreatedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    StartedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    Revision = 1,
+                });
+                context.TransferAttempts.Add(new TransferAttemptEntity
+                {
+                    Id = Guid.NewGuid(),
+                    TransferId = transferId,
+                    LastRuntimeId = first.Runtime.RuntimeId,
+                    LastSequence = index + 1,
+                    AttemptNumber = 1,
+                    Source = "SoulseekPeer",
+                    State = "InProgress",
+                    FailureReason = "None",
+                    StartedAtUtc = clock.GetUtcNow().ToUnixTimeMilliseconds(),
+                    Revision = 1,
+                });
+            }
+            await context.SaveChangesAsync();
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        database.CommandCounter!.Reset();
+        var secondRuntime = new PersistenceRuntimeSession(database.Factory, clock);
+        StartupReconciliationResult reconciled = await secondRuntime.StartAsync("test-2");
+
+        Assert.AreEqual(50, reconciled.InterruptedJobCount);
+        Assert.AreEqual(50, reconciled.InterruptedSearchCount);
+        Assert.AreEqual(50, reconciled.InterruptedTransferCount);
+        Assert.AreEqual(50, reconciled.InterruptedAttemptCount);
+        Assert.IsTrue(
+            database.CommandCounter.Executed <= 12,
+            $"Startup reconciliation executed {database.CommandCounter.Executed} database commands.");
     }
 
     [TestMethod]
@@ -491,6 +615,78 @@ public sealed class SqliteInitializationTests
         Assert.AreEqual(4, await verify.Jobs.CountAsync());
     }
 
+    [TestMethod]
+    public async Task RetentionPrunesSearchBatchWithConstantDatabaseCommands()
+    {
+        await using var database = new TemporaryDatabase(countCommands: true);
+        await database.Initializer.InitializeAsync();
+        var now = new DateTimeOffset(2035, 8, 1, 0, 0, 0, TimeSpan.Zero);
+        Guid runtimeId = Guid.NewGuid();
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.RuntimeSessions.Add(new RuntimeSessionEntity
+            {
+                Id = runtimeId,
+                StartedAtUtc = now.AddDays(-60).ToUnixTimeMilliseconds(),
+                Version = "test",
+            });
+            for (int index = 0; index < 50; index++)
+            {
+                Guid searchId = Guid.NewGuid();
+                context.Jobs.Add(JobRow(
+                    searchId,
+                    runtimeId,
+                    index + 1,
+                    "Terminal",
+                    now.AddDays(-40),
+                    now.AddDays(-40),
+                    "Search"));
+                context.SearchJobs.Add(new SearchJobEntity
+                {
+                    JobId = searchId,
+                    Query = $"query-{index}",
+                    Revision = 2,
+                    ResultCount = 1,
+                    IsComplete = true,
+                    CompletedAtUtc = now.AddDays(-40).ToUnixTimeMilliseconds(),
+                    ResultPersistenceState = "Complete",
+                });
+                context.SearchResults.Add(new SearchResultEntity
+                {
+                    Id = Guid.NewGuid(),
+                    SearchJobId = searchId,
+                    Sequence = 1,
+                    Revision = 1,
+                    Username = "peer",
+                    RemoteFilename = $"file-{index}.mp3",
+                    SizeBytes = 1,
+                    Extension = ".mp3",
+                    ObservedAtUtc = now.AddDays(-40).ToUnixTimeMilliseconds(),
+                });
+            }
+            await context.SaveChangesAsync();
+        }
+
+        database.CommandCounter!.Reset();
+        var retention = new RetentionService(database.Factory, new PersistenceRetentionOptions
+        {
+            CompletedJobHistoryAge = null,
+            UnsuccessfulJobHistoryAge = null,
+            MaximumRetainedJobs = null,
+            SearchResultAge = TimeSpan.FromDays(30),
+            TransferHistoryAge = null,
+            BatchSize = 50,
+        }, new FixedTimeProvider(now));
+
+        RetentionResult result = await retention.RunBatchAsync();
+
+        Assert.AreEqual(50, result.PrunedSearchResults);
+        Assert.AreEqual(50, result.SearchesMarkedPruned);
+        Assert.IsTrue(
+            database.CommandCounter.Executed <= 8,
+            $"Search retention executed {database.CommandCounter.Executed} database commands.");
+    }
+
     private static string Scalar(SockseekDbContext context, string sql)
     {
         using var command = context.Database.GetDbConnection().CreateCommand();
@@ -543,13 +739,21 @@ public sealed class SqliteInitializationTests
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "sockseek-persistence-tests", Guid.NewGuid().ToString("N"));
 
-        public TemporaryDatabase()
+        public TemporaryDatabase(bool countCommands = false)
         {
             Directory.CreateDirectory(directory);
             var options = new SockseekSqliteOptions(Path.Combine(directory, "sockseek.db"));
             Options = options;
             Owner = SqliteDatabaseOwner.Acquire(options);
-            Factory = new SockseekDbContextFactory(SockseekDbContextOptions.Create(options));
+            DbContextOptions<SockseekDbContext> contextOptions = SockseekDbContextOptions.Create(options);
+            if (countCommands)
+            {
+                CommandCounter = new CountingCommandInterceptor();
+                contextOptions = new DbContextOptionsBuilder<SockseekDbContext>(contextOptions)
+                    .AddInterceptors(CommandCounter)
+                    .Options;
+            }
+            Factory = new SockseekDbContextFactory(contextOptions);
             Initializer = new SqliteInitializer(Factory, options, Owner);
         }
 
@@ -557,6 +761,7 @@ public sealed class SqliteInitializationTests
         public SqliteDatabaseOwner Owner { get; }
         public SockseekDbContextFactory Factory { get; }
         public SqliteInitializer Initializer { get; }
+        public CountingCommandInterceptor? CommandCounter { get; }
 
         public ValueTask DisposeAsync()
         {
@@ -565,6 +770,72 @@ public sealed class SqliteInitializationTests
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class CountingCommandInterceptor : DbCommandInterceptor
+    {
+        private int executed;
+
+        public int Executed => Volatile.Read(ref executed);
+
+        public void Reset() => Volatile.Write(ref executed, 0);
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result)
+        {
+            Interlocked.Increment(ref executed);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result)
+        {
+            Interlocked.Increment(ref executed);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<object> ScalarExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result)
+        {
+            Interlocked.Increment(ref executed);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            return ValueTask.FromResult(result);
         }
     }
 

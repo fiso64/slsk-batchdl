@@ -247,38 +247,52 @@ public sealed class UploadScheduler
     public UploadQueueEstimate Estimate(Guid transferId)
     {
         lock (sync)
+            return EstimateLocked(transferId);
+    }
+
+    public UploadQueueEstimate Estimate(string username, RemotePathKey remotePathKey)
+    {
+        username = PeerUsername.Validate(username);
+        lock (sync)
         {
-            if (!entries.TryGetValue(transferId, out var target)
-                || target.State != UploadSchedulerEntryState.Queued)
-            {
-                return new UploadQueueEstimate(
-                    null,
-                    queueRevision);
-            }
+            return duplicateIndex.TryGetValue(new DuplicateKey(username, remotePathKey), out Guid transferId)
+                ? EstimateLocked(transferId)
+                : new UploadQueueEstimate(null, queueRevision);
+        }
+    }
 
-            int localPosition = 0;
-            UserState targetUser = users[target.Username];
-            foreach (Guid id in targetUser.Waiting)
-            {
-                if (id == target.TransferId)
-                    break;
-                localPosition++;
-            }
-
-            // This deliberately remains a cheap, best-effort queue hint. It
-            // counts earlier files for the same user and users currently ahead
-            // in the ready ring; transfer durations are unknowable.
-            int readyAhead = 0;
-            foreach (string username in readyUsers)
-            {
-                if (StringComparer.Ordinal.Equals(username, target.Username))
-                    break;
-                readyAhead++;
-            }
+    private UploadQueueEstimate EstimateLocked(Guid transferId)
+    {
+        if (!entries.TryGetValue(transferId, out var target)
+            || target.State != UploadSchedulerEntryState.Queued)
+        {
             return new UploadQueueEstimate(
-                checked(localPosition + readyAhead),
+                null,
                 queueRevision);
         }
+
+        int localPosition = 0;
+        UserState targetUser = users[target.Username];
+        foreach (Guid id in targetUser.Waiting)
+        {
+            if (id == target.TransferId)
+                break;
+            localPosition++;
+        }
+
+        // This deliberately remains a cheap, best-effort queue hint. It
+        // counts earlier files for the same user and users currently ahead
+        // in the ready ring; transfer durations are unknowable.
+        int readyAhead = 0;
+        foreach (string username in readyUsers)
+        {
+            if (StringComparer.Ordinal.Equals(username, target.Username))
+                break;
+            readyAhead++;
+        }
+        return new UploadQueueEstimate(
+            checked(localPosition + readyAhead),
+            queueRevision);
     }
 
     public UploadQueuePage GetPage(

@@ -3,6 +3,7 @@ using Sockseek.Core;
 using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Soulseek;
@@ -1035,6 +1036,62 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public async Task AlbumFolderCompletionFailure_PreservesKnownSelectionAndFailsOnlyTheRetrievalJob(bool throwsCancellation)
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-album-failed-folder-completion-" + Guid.NewGuid());
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var files = AlbumFiles(1, @"Music\Artist\known-selection");
+                var response = new SearchResponse("browse-failure-user", 1, true, 100_000, 0, files);
+                var folder = AlbumFolderFromSearch(response, files);
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" })
+                {
+                    Results = [folder],
+                };
+
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var client = new ClientTests.MockSoulseekClient([response]);
+                var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
+                Exception retrievalFailure = throwsCancellation
+                    ? new OperationCanceledException("browse transport ended early")
+                    : new IOException("browse transport failed");
+                var directorySource = new ThrowingDirectorySource(retrievalFailure);
+                var engine = new DownloadEngine(
+                    engineSettings,
+                    clientManager,
+                    directorySource: directorySource);
+                RetrieveFolderJob? retrieveJob = null;
+                engine.Events.JobRegistered += change =>
+                {
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.RetrieveFolder)
+                        retrieveJob = (RetrieveFolderJob)engine.GetJob(change.Job.Id)!;
+                };
+
+                engine.Enqueue(album, AlbumDownloadSettings(outputDir));
+                engine.CompleteEnqueue();
+
+                await engine.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome,
+                    "A failed best-effort folder completion must not discard the exact files already found by search.");
+                Assert.AreEqual(1, client.DownloadCallCount);
+                Assert.IsNotNull(retrieveJob);
+                Assert.AreEqual(FolderRetrievalOutcome.Failed, retrieveJob.RetrievalOutcome);
+                Assert.AreEqual(JobTerminalOutcome.Failed, retrieveJob.TerminalOutcome);
+                Assert.AreNotEqual(JobFailureReason.Cancelled, retrieveJob.FailureReason);
+            }
+            finally
+            {
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task AlbumFolderRetrievalBeforeTrackCountDownload_SetsParentAlbumActivityWhileBrowsing()
             => await AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(postDownloadBrowse: false);
 
@@ -1148,6 +1205,14 @@ namespace Tests.Eventing
         private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
         {
             public override DateTimeOffset GetUtcNow() => utcNow;
+        }
+
+        private sealed class ThrowingDirectorySource(Exception exception) : IPeerDirectorySource
+        {
+            public Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+                PeerDirectoryIdentity directory,
+                CancellationToken cancellationToken = default)
+                => Task.FromException<PeerDirectorySnapshot>(exception);
         }
 
         [TestMethod]

@@ -50,7 +50,10 @@ internal sealed class DirectoryTransferRunner
             directory.MaterializeDirectoryChildren(work.Select(item => item.Job));
         directory.BeginDirectoryTransfer();
 
-        await Task.WhenAll(work.Select(item => RunChild(directory, item, config)));
+        await BoundedAsync.ForEachAsync(
+            work,
+            context.Runtime.ConcurrentJobLimit,
+            item => RunChild(directory, item, config));
         return AggregateOutcome(directory.FileJobs);
     }
 
@@ -99,7 +102,7 @@ internal sealed class DirectoryTransferRunner
                 JobOutcomeCommitter.Commit(child, outcome);
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (child.Cts?.IsCancellationRequested == true)
         {
             var source = child.CancellationSource != JobCancellationSource.None
                 ? child.CancellationSource

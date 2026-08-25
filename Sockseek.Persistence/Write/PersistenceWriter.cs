@@ -366,9 +366,11 @@ public sealed class PersistenceWriter(
 
         var sequences = mutation.Results.Select(result => result.Sequence).Distinct().ToArray();
         var usernames = mutation.Results.Select(result => result.Username).Distinct().ToArray();
+        var remoteFilenames = mutation.Results.Select(result => result.RemoteFilename).Distinct().ToArray();
         var existingRows = await context.SearchResults
             .Where(row => row.SearchJobId == mutation.SearchJobId
-                && (sequences.Contains(row.Sequence) || usernames.Contains(row.Username)))
+                && (sequences.Contains(row.Sequence)
+                    || usernames.Contains(row.Username) && remoteFilenames.Contains(row.RemoteFilename)))
             .Select(row => new { row.Sequence, row.Username, row.RemoteFilename })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -464,8 +466,19 @@ public sealed class PersistenceWriter(
     private async Task<int> ApplySearchTerminalAsync(SockseekDbContext context, SearchTerminalPersistenceMutation mutation, CancellationToken cancellationToken)
     {
         int rows = 0;
-        foreach (var results in mutation.PendingResultBatches.OrderBy(batch => batch.Sequence))
-            rows += await ApplySearchResultsAsync(context, results, cancellationToken).ConfigureAwait(false);
+        if (mutation.PendingResultBatches.Count > 0)
+        {
+            SearchResultsPersistenceMutation[] ordered = mutation.PendingResultBatches
+                .OrderBy(batch => batch.Sequence)
+                .ToArray();
+            SearchResultsPersistenceMutation last = ordered[^1];
+            var combined = last with
+            {
+                Revision = ordered.Max(batch => batch.Revision),
+                Results = ordered.SelectMany(batch => batch.Results).ToArray(),
+            };
+            rows += await ApplySearchResultsAsync(context, combined, cancellationToken).ConfigureAwait(false);
+        }
         rows += await ApplySearchCompletionAsync(context, mutation.Completion, cancellationToken).ConfigureAwait(false);
         return rows;
     }

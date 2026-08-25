@@ -9,6 +9,8 @@ namespace Sockseek.Core.Settings;
 /// --format/--min-bitrate/etc. flags.
 public class SearchSettings
 {
+    internal SearchSettings ShallowClone() => (SearchSettings)MemberwiseClone();
+
     // ── Conditions ────────────────────────────────────────────────────────────
 
     public FileConditions NecessaryCond { get; set; } = new()

@@ -1,3 +1,6 @@
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core.Chat;
 using Sockseek.Persistence;
@@ -114,6 +117,59 @@ public sealed class ChatPersistenceStoreTests
     }
 
     [TestMethod]
+    public async Task ReadOperationsUpdateManyNotificationsWithConstantDatabaseCommands()
+    {
+        await using var database = await ChatDatabase.CreateAsync(countCommands: true);
+        DateTimeOffset sentAt = DateTimeOffset.Parse("2026-08-06T20:00:00Z");
+        ChatInboundMessage[] messages = Enumerable.Range(1, 200)
+            .Select(index => (ChatInboundMessage)new PrivateChatInboundMessage(
+                "local",
+                index <= 100 ? "Alice" : "Bob",
+                $"message-{index}",
+                index,
+                sentAt.AddSeconds(index)))
+            .ToArray();
+        database.CommandCounter!.Reset();
+        IReadOnlyList<IncomingChatCommitResult> accepted =
+            await database.Store.AcceptIncomingMessagesAsync(messages);
+        Assert.IsTrue(database.CommandCounter.SelectCommands <= 10,
+            $"Persisting one inbound batch executed {database.CommandCounter.SelectCommands} select commands.");
+
+        database.CommandCounter.Reset();
+        await database.Store.MarkConversationReadAsync(
+            "local",
+            accepted[99].Message.TargetId,
+            accepted[99].Message.MessageId);
+
+        Assert.IsTrue(database.CommandCounter.Executed <= 5,
+            $"Marking 100 related notifications read executed {database.CommandCounter.Executed} database commands.");
+        Assert.AreEqual(100, (await database.Store.GetSummaryAsync("local")).UnreadNotifications);
+
+        database.CommandCounter.Reset();
+        await database.Store.MarkNotificationsReadAsync(
+            "local", accepted[^1].Notification!.Sequence, ids: null);
+
+        Assert.IsTrue(database.CommandCounter.Executed <= 3,
+            $"Marking 100 remaining notifications read executed {database.CommandCounter.Executed} database commands.");
+        Assert.AreEqual(0, (await database.Store.GetSummaryAsync("local")).UnreadNotifications);
+    }
+
+    [TestMethod]
+    public async Task InboundSnapshotCountsOnlyMessagesAfterReadWatermark()
+    {
+        await using var database = await ChatDatabase.CreateAsync();
+        var first = await database.Store.AcceptPrivateMessageAsync(
+            "local", "Alice", "read", 1, DateTimeOffset.UtcNow);
+        await database.Store.MarkConversationReadAsync(
+            "local", first.Message.TargetId, first.Message.MessageId);
+
+        var second = await database.Store.AcceptPrivateMessageAsync(
+            "local", "Alice", "unread", 2, DateTimeOffset.UtcNow.AddSeconds(1));
+
+        Assert.AreEqual(1, second.Conversation!.UnreadCount);
+    }
+
+    [TestMethod]
     public async Task SequencesRemainMonotonicAfterNewestHistoryIsDeleted()
     {
         await using var database = await ChatDatabase.CreateAsync();
@@ -203,6 +259,23 @@ public sealed class ChatPersistenceStoreTests
     }
 
     [TestMethod]
+    public async Task StartupReconciliationUsesConstantDatabaseCommands()
+    {
+        await using var database = await ChatDatabase.CreateAsync(countCommands: true);
+        for (int index = 0; index < 50; index++)
+        {
+            await database.Store.PrepareOutgoingPrivateMessageAsync(
+                "local", "Alice", Guid.NewGuid(), $"message-{index}");
+        }
+
+        database.CommandCounter!.Reset();
+        Assert.AreEqual(50, await database.Store.ReconcilePendingMessagesAsync());
+
+        Assert.IsTrue(database.CommandCounter.Executed <= 3,
+            $"Pending-message reconciliation executed {database.CommandCounter.Executed} database commands.");
+    }
+
+    [TestMethod]
     public async Task RetentionRepairsTargetStateAndPreservesMonotonicSequences()
     {
         var clock = new MutableTimeProvider(
@@ -265,6 +338,32 @@ public sealed class ChatPersistenceStoreTests
         Assert.AreEqual(1, privateRetention.PrunedMessages);
         Assert.AreEqual(ChatTargetKind.Direct, privateRetention.AffectedTargets.Single().Kind);
         Assert.AreEqual(0, (await database.Store.GetSummaryAsync("local")).UnreadNotifications);
+    }
+
+    [TestMethod]
+    public async Task RetentionRepairsManyTargetsWithConstantDatabaseCommands()
+    {
+        var clock = new MutableTimeProvider(
+            DateTimeOffset.Parse("2026-08-06T20:00:00Z"));
+        await using var database = await ChatDatabase.CreateAsync(clock, countCommands: true);
+        const int targetCount = 12;
+        for (int index = 0; index < targetCount; index++)
+        {
+            await database.Store.AcceptPrivateMessageAsync(
+                "local", $"peer-{index}", "old", index, clock.GetUtcNow());
+        }
+
+        clock.Advance(TimeSpan.FromDays(2));
+        database.CommandCounter!.Reset();
+        ChatRetentionResult result = await database.Store.ApplyRetentionAsync(
+            privateMessageAge: TimeSpan.FromDays(1),
+            roomMessageAge: null,
+            batchSize: targetCount);
+
+        Assert.AreEqual(targetCount, result.PrunedMessages);
+        Assert.AreEqual(targetCount, result.AffectedTargets.Count);
+        Assert.IsTrue(database.CommandCounter.Executed <= 8,
+            $"Multi-target retention executed {database.CommandCounter.Executed} database commands.");
     }
 
     [TestMethod]
@@ -335,6 +434,48 @@ public sealed class ChatPersistenceStoreTests
         Assert.AreEqual(128, (await database.Store.GetSummaryAsync("local")).UnreadPrivateMessages);
     }
 
+    [TestMethod]
+    public async Task ConversationPageUsesConstantDatabaseQueries()
+    {
+        await using var database = await ChatDatabase.CreateAsync(countCommands: true);
+        DateTimeOffset sentAt = DateTimeOffset.Parse("2026-08-06T20:00:00Z");
+        for (int index = 0; index < 20; index++)
+        {
+            await database.Store.AcceptPrivateMessageAsync(
+                "local", $"peer-{index}", "hello", index, sentAt.AddSeconds(index));
+        }
+
+        database.CommandCounter!.Reset();
+        ChatPage<ConversationRecord> page = await database.Store.GetConversationsAsync(
+            "local", unread: null, archived: null, cursor: null, limit: 20);
+
+        Assert.AreEqual(20, page.Items.Count);
+        Assert.IsTrue(database.CommandCounter.Executed <= 3,
+            $"Conversation page executed {database.CommandCounter.Executed} database commands.");
+    }
+
+    [TestMethod]
+    public async Task DeleteHistoryUsesConstantDatabaseCommands()
+    {
+        await using var database = await ChatDatabase.CreateAsync(countCommands: true);
+        DateTimeOffset sentAt = DateTimeOffset.Parse("2026-08-06T20:00:00Z");
+        Guid targetId = Guid.Empty;
+        for (int index = 1; index <= 100; index++)
+        {
+            IncomingChatCommitResult accepted = await database.Store.AcceptPrivateMessageAsync(
+                "local", "Alice", $"message-{index}", index, sentAt.AddSeconds(index));
+            targetId = accepted.Message.TargetId;
+        }
+
+        database.CommandCounter!.Reset();
+        await database.Store.DeleteHistoryAsync("local", targetId, ChatTargetKind.Direct);
+
+        Assert.IsTrue(database.CommandCounter.Executed <= 4,
+            $"History deletion executed {database.CommandCounter.Executed} database commands.");
+        Assert.AreEqual(0, (await database.Store.GetMessagesAsync(
+            "local", targetId, cursor: null, limit: 10)).Items.Count);
+    }
+
     private sealed class ChatDatabase : IAsyncDisposable
     {
         private readonly string directory;
@@ -348,6 +489,7 @@ public sealed class ChatPersistenceStoreTests
             string directory,
             SqliteDatabaseOwner owner,
             SockseekDbContextFactory factory,
+            CountingCommandInterceptor? commandCounter,
             TimeProvider? timeProvider)
         {
             this.directory = directory;
@@ -357,21 +499,33 @@ public sealed class ChatPersistenceStoreTests
             inbox = new PersistenceInbox(options, health);
             writerTask = new PersistenceWriter(factory, inbox, health, options).RunAsync(stop.Token);
             Store = new ChatPersistenceStore(factory, inbox, timeProvider);
+            CommandCounter = commandCounter;
         }
 
         public ChatPersistenceStore Store { get; }
+        public CountingCommandInterceptor? CommandCounter { get; }
         public PersistenceHealthSnapshot HealthSnapshot => health.Snapshot(inbox);
 
-        public static async Task<ChatDatabase> CreateAsync(TimeProvider? timeProvider = null)
+        public static async Task<ChatDatabase> CreateAsync(
+            TimeProvider? timeProvider = null,
+            bool countCommands = false)
         {
             string directory = Path.Combine(
                 Path.GetTempPath(), "sockseek-chat-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             var sqlite = new SockseekSqliteOptions(Path.Combine(directory, "sockseek.db"));
             SqliteDatabaseOwner owner = SqliteDatabaseOwner.Acquire(sqlite);
-            var factory = new SockseekDbContextFactory(SockseekDbContextOptions.Create(sqlite));
+            var commandCounter = countCommands ? new CountingCommandInterceptor() : null;
+            DbContextOptions<SockseekDbContext> contextOptions = SockseekDbContextOptions.Create(sqlite);
+            if (commandCounter is not null)
+            {
+                contextOptions = new DbContextOptionsBuilder<SockseekDbContext>(contextOptions)
+                    .AddInterceptors(commandCounter)
+                    .Options;
+            }
+            var factory = new SockseekDbContextFactory(contextOptions);
             await new SqliteInitializer(factory, sqlite, owner).InitializeAsync();
-            return new ChatDatabase(directory, owner, factory, timeProvider);
+            return new ChatDatabase(directory, owner, factory, commandCounter, timeProvider);
         }
 
         public async ValueTask DisposeAsync()
@@ -383,6 +537,86 @@ public sealed class ChatPersistenceStoreTests
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class CountingCommandInterceptor : DbCommandInterceptor
+    {
+        private int executed;
+        private int selectCommands;
+
+        public int Executed => Volatile.Read(ref executed);
+        public int SelectCommands => Volatile.Read(ref selectCommands);
+
+        public void Reset()
+        {
+            Volatile.Write(ref executed, 0);
+            Volatile.Write(ref selectCommands, 0);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result)
+        {
+            Interlocked.Increment(ref executed);
+            CountSelect(command);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            CountSelect(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result)
+        {
+            Interlocked.Increment(ref executed);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<object> ScalarExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result)
+        {
+            Interlocked.Increment(ref executed);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<object> result,
+            CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref executed);
+            return ValueTask.FromResult(result);
+        }
+
+        private void CountSelect(DbCommand command)
+        {
+            if (command.CommandText.AsSpan().TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+                Interlocked.Increment(ref selectCommands);
         }
     }
 

@@ -14,7 +14,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     private readonly Channel<AwaitablePersistenceCommand> commands;
     private readonly Dictionary<Guid, TransferPersistenceMutation> progress = [];
     private readonly Dictionary<string, PersistenceMutation> degraded = [];
-    private readonly Dictionary<Guid, List<SearchResultsPersistenceMutation>> searchBuffers = [];
+    private readonly Dictionary<Guid, SearchResultBuffer> searchBuffers = [];
     private readonly HashSet<Guid> incompleteSearches = [];
     private readonly object progressGate = new();
     private readonly object degradedGate = new();
@@ -151,11 +151,13 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             while (batch.Count < Options.MaximumBatchSize && searchBuffers.Count > 0)
             {
                 var next = searchBuffers
-                    .Select(pair => (pair.Key, Mutation: pair.Value[0]))
+                    .Select(pair => (pair.Key, Mutation: pair.Value.Batches.Peek()))
                     .OrderBy(item => item.Mutation.Sequence)
                     .First();
-                searchBuffers[next.Key].RemoveAt(0);
-                if (searchBuffers[next.Key].Count == 0)
+                SearchResultBuffer buffer = searchBuffers[next.Key];
+                buffer.Batches.Dequeue();
+                buffer.ResultCount -= next.Mutation.Results.Count;
+                if (buffer.Batches.Count == 0)
                     searchBuffers.Remove(next.Key);
                 Interlocked.Add(ref bufferedSearchResultCount, -next.Mutation.Results.Count);
                 batch.Add(next.Mutation);
@@ -265,14 +267,13 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         lock (searchGate)
         {
             int perSearchCount = searchBuffers.TryGetValue(mutation.SearchJobId, out var existing)
-                ? existing.Sum(batch => batch.Results.Count)
+                ? existing.ResultCount
                 : 0;
             if (perSearchCount + mutation.Results.Count > Options.SearchResultCapacityPerSearch
                 || bufferedSearchResultCount + mutation.Results.Count > Options.SearchResultGlobalCapacity)
             {
-                if (incompleteSearches.Count < Options.IncompleteSearchTrackingCapacity)
-                    incompleteSearches.Add(mutation.SearchJobId);
-                else
+                incompleteSearches.Add(mutation.SearchJobId);
+                if (incompleteSearches.Count > Options.IncompleteSearchTrackingCapacity)
                     Volatile.Write(ref incompleteTrackingOverflowed, 1);
                 health.RecordDroppedSearchResults(mutation.Results.Count);
                 health.RecordIncompleteSearch();
@@ -281,10 +282,11 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 
             if (existing == null)
             {
-                existing = [];
+                existing = new SearchResultBuffer();
                 searchBuffers.Add(mutation.SearchJobId, existing);
             }
-            existing.Add(mutation);
+            existing.Batches.Enqueue(mutation);
+            existing.ResultCount += mutation.Results.Count;
             Interlocked.Add(ref bufferedSearchResultCount, mutation.Results.Count);
             flushThresholdReached = perSearchCount + mutation.Results.Count >= Options.SearchResultFlushCount;
         }
@@ -295,21 +297,20 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 
     private bool TryEnqueueSearchCompletion(SearchCompletionPersistenceMutation completion)
     {
-        List<SearchResultsPersistenceMutation> pending;
+        IReadOnlyList<SearchResultsPersistenceMutation> pending;
         bool incomplete;
         lock (searchGate)
         {
             if (searchBuffers.Remove(completion.SearchJobId, out var buffered))
             {
-                pending = buffered;
-                Interlocked.Add(ref bufferedSearchResultCount, -buffered.Sum(batch => batch.Results.Count));
+                pending = buffered.Batches.ToArray();
+                Interlocked.Add(ref bufferedSearchResultCount, -buffered.ResultCount);
             }
             else
             {
                 pending = [];
             }
-            incomplete = incompleteSearches.Remove(completion.SearchJobId)
-                || IncompleteSearchTrackingOverflowed;
+            incomplete = incompleteSearches.Remove(completion.SearchJobId);
         }
 
         if (incomplete)
@@ -361,5 +362,11 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         catch (SemaphoreFullException)
         {
         }
+    }
+
+    private sealed class SearchResultBuffer
+    {
+        public Queue<SearchResultsPersistenceMutation> Batches { get; } = new();
+        public int ResultCount { get; set; }
     }
 }

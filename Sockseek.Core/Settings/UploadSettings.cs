@@ -5,6 +5,8 @@ namespace Sockseek.Core.Settings;
 /// </summary>
 public sealed class UploadSettings
 {
+    internal UploadSettings ShallowClone() => (UploadSettings)MemberwiseClone();
+
     public int Slots { get; set; } = 10;
 
     /// <summary>

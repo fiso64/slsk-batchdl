@@ -9,46 +9,27 @@ public sealed record SearchRawResult
     internal Soulseek.File File { get; }
     public SearchProjectionInput ProjectionInput { get; }
 
-    public long Sequence { get; }
-    public int Revision { get; }
-    public string Username { get; }
-    public string Filename { get; }
-    public long Size { get; }
-    public int? BitRate { get; }
-    public int? BitDepth { get; }
-    public int ResponseFileCount { get; }
-    public int? SampleRate { get; }
-    public int? Length { get; }
-    public string Extension { get; }
-    public int? UploadSpeed { get; }
-    public bool? HasFreeUploadSlot { get; }
-    public IReadOnlyList<FileAttributeSnapshot>? Attributes { get; }
-    public DateTimeOffset ObservedAtUtc { get; }
+    public long Sequence => ProjectionInput.Sequence;
+    public int Revision => ProjectionInput.Revision;
+    public string Username => ProjectionInput.Username;
+    public string Filename => ProjectionInput.Filename;
+    public long Size => ProjectionInput.Size;
+    public int? BitRate => ProjectionInput.BitRate;
+    public int? BitDepth => ProjectionInput.BitDepth;
+    public int ResponseFileCount => ProjectionInput.ResponseFileCount;
+    public int? SampleRate => ProjectionInput.SampleRate;
+    public int? Length => ProjectionInput.Length;
+    public string Extension => ProjectionInput.Extension;
+    public int? UploadSpeed => ProjectionInput.UploadSpeed;
+    public bool? HasFreeUploadSlot => ProjectionInput.HasFreeUploadSlot;
+    public IReadOnlyList<FileAttributeSnapshot>? Attributes => ProjectionInput.Attributes;
+    public DateTimeOffset ObservedAtUtc => ProjectionInput.ObservedAtUtc;
 
     internal SearchRawResult(long sequence, int revision, SearchResponse response, Soulseek.File file, DateTimeOffset observedAtUtc)
     {
         Response = response;
         File = file;
-        Sequence = sequence;
-        Revision = revision;
-        Username = response.Username;
-        Filename = file.Filename;
-        Size = file.Size;
-        BitRate = file.BitRate;
-        BitDepth = file.BitDepth;
-        ResponseFileCount = response.Files.Count;
-        SampleRate = file.SampleRate;
-        Length = file.Length;
-        Extension = file.Extension;
-        UploadSpeed = response.UploadSpeed;
-        HasFreeUploadSlot = response.HasFreeUploadSlot;
-        ObservedAtUtc = observedAtUtc;
-        Attributes = file.Attributes == null
-            ? null
-            : Array.AsReadOnly(file.Attributes
-                .Select(attribute => new FileAttributeSnapshot(attribute.Type.ToString(), attribute.Value, (int)attribute.Type))
-                .ToArray());
         ProjectionInput = SearchProjectionInput.FromLive(
-            Sequence, Revision, response, file, ObservedAtUtc);
+            sequence, revision, response, file, observedAtUtc);
     }
 }

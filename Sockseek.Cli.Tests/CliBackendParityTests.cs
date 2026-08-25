@@ -19,47 +19,6 @@ public class CliBackendParityTests
     private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
 
     [TestMethod]
-    public async Task CliBackendParity_DaemonWideStores_ProjectEquivalentState()
-    {
-        var projections = new ConcurrentBag<string[]>();
-        await RunForEachBackendAsync(
-            seedMusic: musicRoot =>
-            {
-                string albumDir = Path.Combine(musicRoot, "Artist", "Album");
-                Directory.CreateDirectory(albumDir);
-                File.WriteAllText(Path.Combine(albumDir, "01. Artist - Track One.mp3"), "a");
-            },
-            scenario: async ctx =>
-            {
-                await ctx.Backend.SubscribeAllAsync(ctx.Token);
-                var summary = await ctx.Backend.SubmitAlbumJobAsync(
-                    new SubmitAlbumJobRequestDto(
-                        new AlbumQueryDto("Artist", "Album", "", "", false),
-                        DownloadBehavior: new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)),
-                    ctx.Token);
-                await WaitForJobStateAsync(
-                    ctx.Backend,
-                    summary.JobId,
-                    ExpectedJobStatus.AwaitingSelection);
-                await WaitForConditionAsync(
-                    () => ctx.Backend.ClientStore.GetJob(summary.JobId)?.LifecycleState
-                        == ServerJobLifecycleState.AwaitingSelection,
-                    $"{ctx.Name}: daemon store did not receive awaiting-selection state. " +
-                    $"Jobs: {string.Join(", ", ctx.Backend.ClientStore.GetJobs().Select(job => $"{job.JobId}:{job.LifecycleState}"))}");
-
-                projections.Add(ctx.Backend.ClientStore.GetJobs()
-                    .Select(job =>
-                        $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
-                    .OrderBy(value => value, StringComparer.Ordinal)
-                    .ToArray());
-            });
-
-        Assert.AreEqual(2, projections.Count);
-        var projectionArray = projections.ToArray();
-        CollectionAssert.AreEqual(projectionArray[0], projectionArray[1]);
-    }
-
-    [TestMethod]
     public async Task CliBackendParity_WorkflowStores_ProjectEquivalentState()
     {
         var projections = new ConcurrentBag<string[]>();

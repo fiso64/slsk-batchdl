@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core.Chat;
 using Sockseek.Core.Settings;
@@ -147,13 +148,18 @@ public sealed class ChatRuntimeTests
         await using var database = await ChatDatabase.CreateAsync();
         var fake = SoulseekClientProxy.Create();
         var settings = Settings();
+        var logger = new RecordingLogger<ChatRuntime>();
         await using var session = new DaemonSoulseekRuntime(settings, _ => fake.Client);
-        await using var chat = new ChatRuntime(settings, session, database.Host.Chat!);
+        await using var chat = new ChatRuntime(settings, session, database.Host.Chat!, logger);
         await chat.StartAsync(CancellationToken.None);
         ChatMessageRecord message = await chat.SendPrivateMessageAsync(
             "Alice", Guid.NewGuid(), "hello", CancellationToken.None);
         var changes = new System.Collections.Concurrent.ConcurrentQueue<ChatTargetDeltaDto>();
         chat.TargetChanged += changes.Enqueue;
+
+        await chat.MarkConversationReadAsync(
+            message.TargetId, message.MessageId, CancellationToken.None);
+        Assert.IsFalse(logger.Messages.Any(text => text.StartsWith("Deleted ", StringComparison.Ordinal)));
 
         await chat.DeleteConversationHistoryAsync(
             message.TargetId, CancellationToken.None);
@@ -162,6 +168,25 @@ public sealed class ChatRuntimeTests
         Assert.IsTrue(replacement.ReplaceMessages);
         Assert.AreEqual(0, replacement.Messages?.Count);
         Assert.AreEqual(false, replacement.HasEarlierMessages);
+        Assert.IsTrue(logger.Messages.Any(text => text.StartsWith(
+            "Deleted direct chat history", StringComparison.Ordinal)));
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Messages.Add(formatter(state, exception));
     }
 
     [TestMethod]

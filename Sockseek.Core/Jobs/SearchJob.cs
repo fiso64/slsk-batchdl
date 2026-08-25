@@ -17,7 +17,7 @@ public sealed record AggregateAlbumProjection(AlbumQuery Query);
 public class SearchJob : Job
 {
     private readonly Lock _projectionCacheLock = new();
-    private readonly Dictionary<string, object> _incrementalProjectionStates = [];
+    private readonly Dictionary<ProjectionCacheKey, object> _incrementalProjectionStates = [];
 
     public string QueryText { get; }
     public FileSearchProjection? DefaultFileProjection { get; init; }
@@ -186,7 +186,7 @@ public class SearchJob : Job
     }
 
     private TState GetOrCreateIncrementalProjectionState<TState>(
-        string key,
+        ProjectionCacheKey key,
         Func<TState> factory)
         where TState : class
     {
@@ -205,44 +205,70 @@ public class SearchJob : Job
     private static List<SearchProjectionInput> RawInputs(IReadOnlyList<SearchRawResult> rawResults)
         => rawResults.Select(result => result.ProjectionInput).ToList();
 
-    private static string ProjectionKey(string name, params object[] dependencies)
-        => name + ":" + string.Join(':', dependencies.Select(ProjectionDependencyKey));
+    private static ProjectionCacheKey ProjectionKey(
+        string name,
+        object projection,
+        SearchSettings search,
+        object? supplemental = null)
+        => new(name, ProjectionIdentity(projection), search, supplemental);
 
-    private static string ProjectionDependencyKey(object dependency)
-        => dependency switch
+    private static object ProjectionIdentity(object projection)
+        => projection switch
         {
-            FileSearchProjection projection => string.Join('\0',
-                "file",
-                ProjectionDependencyKey(projection.Query),
-                projection.IncludeFullResults),
-            FolderSearchProjection projection => string.Join('\0',
-                "folder",
-                ProjectionDependencyKey(projection.Query),
-                projection.IgnoreStringSortConditions,
-                projection.SortMode),
-            AggregateTrackProjection projection => string.Join('\0',
-                "aggregate-track",
-                ProjectionDependencyKey(projection.Query)),
-            AggregateAlbumProjection projection => string.Join('\0',
-                "aggregate-album",
-                ProjectionDependencyKey(projection.Query)),
-            SongQuery query => string.Join('\0',
-                "song",
+            FileSearchProjection value => new FileProjectionKey(
+                SongKey(value.Query),
+                value.IncludeFullResults),
+            FolderSearchProjection value => new FolderProjectionKey(
+                AlbumKey(value.Query),
+                value.IgnoreStringSortConditions,
+                value.SortMode),
+            AggregateTrackProjection value => new AggregateTrackProjectionKey(SongKey(value.Query)),
+            AggregateAlbumProjection value => new AggregateAlbumProjectionKey(AlbumKey(value.Query)),
+            _ => throw new ArgumentException("Unsupported search projection type.", nameof(projection)),
+        };
+
+    private static SongQueryKey SongKey(SongQuery query)
+        => new(
                 query.Artist,
                 query.Title,
                 query.Album,
                 query.URI,
                 query.Length,
-                query.ArtistMaybeWrong),
-            AlbumQuery query => string.Join('\0',
-                "album",
+                query.ArtistMaybeWrong);
+
+    private static AlbumQueryKey AlbumKey(AlbumQuery query)
+        => new(
                 query.Artist,
                 query.Album,
                 query.SearchHint,
                 query.URI,
-                query.ArtistMaybeWrong),
-            _ => dependency.GetHashCode().ToString(),
-        };
+                query.ArtistMaybeWrong);
+
+    private readonly record struct ProjectionCacheKey(
+        string Name,
+        object Projection,
+        SearchSettings Search,
+        object? Supplemental);
+    private sealed record FileProjectionKey(SongQueryKey Query, bool IncludeFullResults);
+    private sealed record FolderProjectionKey(
+        AlbumQueryKey Query,
+        bool IgnoreStringSortConditions,
+        FolderSortMode SortMode);
+    private sealed record AggregateTrackProjectionKey(SongQueryKey Query);
+    private sealed record AggregateAlbumProjectionKey(AlbumQueryKey Query);
+    private sealed record SongQueryKey(
+        string? Artist,
+        string? Title,
+        string? Album,
+        string? Uri,
+        int? Length,
+        bool ArtistMaybeWrong);
+    private sealed record AlbumQueryKey(
+        string? Artist,
+        string? Album,
+        string? SearchHint,
+        string? Uri,
+        bool ArtistMaybeWrong);
 
     private sealed class IncrementalNeutralProjectionState<TProjector, TItem>
     {

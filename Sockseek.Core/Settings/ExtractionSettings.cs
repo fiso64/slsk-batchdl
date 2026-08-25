@@ -5,6 +5,8 @@ namespace Sockseek.Core.Settings;
 /// Controls what is extracted and how.
 public class ExtractionSettings
 {
+    internal ExtractionSettings ShallowClone() => (ExtractionSettings)MemberwiseClone();
+
     public string? Input { get; set; }
 
     public InputType InputType { get; set; } = InputType.None;

@@ -5,6 +5,8 @@ namespace Sockseek.Core.Settings;
 /// Controls where and how results are written.
 public class OutputSettings
 {
+    internal OutputSettings ShallowClone() => (OutputSettings)MemberwiseClone();
+
     /// null resolves to Directory.GetCurrentDirectory() at bind time.
     public string? ParentDir { get; set; }
 

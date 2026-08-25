@@ -22,8 +22,8 @@ public sealed class IncrementalAlbumFolderProjector
     // and materializes already-built folders.
     private readonly AlbumFolderProjectionPlan projectionPlan;
     private readonly List<SearchProjectionInput> rawResults = [];
-    private readonly HashSet<RawResultKey> seen = [];
-    private readonly Dictionary<string, AlbumFolderSignature> previousSignatures = new(StringComparer.Ordinal);
+    private readonly HashSet<PeerPathKey> seen = [];
+    private readonly Dictionary<PeerPathKey, AlbumFolderSignature> previousSignatures = [];
     private List<AlbumFolder> previousSnapshot = [];
 
     public IncrementalAlbumFolderProjector(
@@ -53,7 +53,7 @@ public sealed class IncrementalAlbumFolderProjector
         int added = 0;
         foreach (var input in filtered)
         {
-            var key = new RawResultKey(input.Username, input.Filename);
+            var key = new PeerPathKey(input.Username, input.Filename);
             if (!seen.Add(key))
                 continue;
 
@@ -96,13 +96,13 @@ public sealed class IncrementalAlbumFolderProjector
     public AlbumFolderProjectionChanges GetChanges()
     {
         var folders = Snapshot();
-        var currentSignatures = new Dictionary<string, AlbumFolderSignature>(StringComparer.Ordinal);
+        var currentSignatures = new Dictionary<PeerPathKey, AlbumFolderSignature>();
         var added = new List<AlbumFolder>();
         var updated = new List<AlbumFolder>();
 
         foreach (var folder in folders)
         {
-            string key = FolderKey(folder);
+            PeerPathKey key = FolderKey(folder);
             var signature = AlbumFolderSignature.Create(folder);
             currentSignatures.Add(key, signature);
 
@@ -124,10 +124,8 @@ public sealed class IncrementalAlbumFolderProjector
         return new AlbumFolderProjectionChanges(folders, added, updated, removed);
     }
 
-    private static string FolderKey(AlbumFolder folder)
-        => folder.Username + '\\' + folder.FolderPath;
-
-    private readonly record struct RawResultKey(string Username, string Filename);
+    private static PeerPathKey FolderKey(AlbumFolder folder)
+        => new(folder.Username, folder.FolderPath);
 
     private readonly record struct AlbumFolderSignature(
         int FileCount,

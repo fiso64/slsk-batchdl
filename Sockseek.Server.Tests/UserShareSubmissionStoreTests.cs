@@ -89,6 +89,26 @@ public sealed class UserShareSubmissionStoreTests
     }
 
     [TestMethod]
+    public async Task SynchronouslyFailedSubmissionCanBeRetried()
+    {
+        var store = new UserShareSubmissionStore();
+        Guid requestId = Guid.NewGuid();
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => store.ExecuteAsync(
+            requestId,
+            "body",
+            () => throw new InvalidOperationException("failed before returning a task")));
+
+        StartUserShareDownloadsResponseDto expected = Response();
+        StartUserShareDownloadsResponseDto retried = await store.ExecuteAsync(
+            requestId,
+            "body",
+            () => Task.FromResult(expected));
+
+        Assert.AreSame(expected, retried);
+    }
+
+    [TestMethod]
     public async Task RetentionAndCapacityEvictCompletedEntriesWithoutRejectingNewWork()
     {
         DateTimeOffset now = DateTimeOffset.Parse("2026-08-12T00:00:00Z");

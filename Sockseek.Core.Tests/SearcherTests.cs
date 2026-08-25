@@ -113,13 +113,14 @@ namespace Tests.Unit
         }
 
         [TestMethod]
-        public async Task SearchAlbum_RaisesDiscoveryProgressOnVisibleAlbumJob()
+        public async Task SearchAlbum_CoalescesDiscoveryProgressPerResponseAndPublishesExactFinalCount()
         {
-            var response = new SearchResponse("User", 1, true, 1000, 0,
-            [
-                TestHelpers.CreateSlFile(@"ELO\Time\01. Track.mp3", length: 181),
-                TestHelpers.CreateSlFile(@"ELO\Time\02. Track.mp3", length: 182),
-            ]);
+            Soulseek.File[] files = Enumerable.Range(1, 256)
+                .Select(index => TestHelpers.CreateSlFile(
+                    $@"ELO\Time\{index:D3}. Track.mp3",
+                    length: 180 + index))
+                .ToArray();
+            var response = new SearchResponse("User", 1, true, 1000, 0, files);
             var client = CreateMockClient([response]);
             var settings = TestHelpers.CreateDefaultSettings().Download;
             var registry = TestHelpers.CreateUserSuccessTracker();
@@ -136,8 +137,8 @@ namespace Tests.Unit
 
             await searcher.SearchAlbum(album, settings.Search, new ResponseData(), CancellationToken.None);
 
-            CollectionAssert.AreEqual(new[] { 1, 2 }, counts);
-            Assert.AreEqual(2, album.Discovery?.RawResultCount);
+            CollectionAssert.AreEqual(new[] { files.Length }, counts);
+            Assert.AreEqual(files.Length, album.Discovery?.RawResultCount);
             Assert.AreEqual(1, album.Results.Count);
         }
 
@@ -473,6 +474,24 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public void IncrementalAlbumFolderChanges_DistinguishesSeparatorBearingIdentityComponents()
+        {
+            var firstFile = TestHelpers.CreateSlFile(@"beta\Album\01. Track.mp3", length: 180);
+            var secondFile = TestHelpers.CreateSlFile(@"Album\01. Track.mp3", length: 181);
+            var first = new SearchResponse("alpha", 1, true, 1000, 0, [firstFile]);
+            var second = new SearchResponse(@"alpha\beta", 1, true, 1000, 0, [secondFile]);
+            var query = new AlbumQuery { Album = "Album" };
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            var incremental = new IncrementalAlbumFolderProjector(query, search);
+
+            AlbumFolderProjectionChanges changes = incremental.AddRangeAndGetChanges(
+                [(first, firstFile), (second, secondFile)]);
+
+            Assert.AreEqual(2, changes.Folders.Count);
+            Assert.AreEqual(2, changes.Added.Count);
+        }
+
+        [TestMethod]
         public void IncrementalAlbumFolderChanges_ReportsRemovedFolderWhenNewFilesViolateTrackCount()
         {
             var track1 = TestHelpers.CreateSlFile(@"ELO\Time\01. Twilight.flac", length: 209);
@@ -507,6 +526,23 @@ namespace Tests.Unit
 
             Assert.AreEqual(0, folders.Count,
                 "A normal album search result with too few visible tracks should be filtered before slow folder browsing.");
+        }
+
+        [TestMethod]
+        public void AlbumFolders_IgnoresRootFilesAndKeepsTopLevelDiscFolders()
+        {
+            var rootFile = TestHelpers.CreateSlFile("Artist - Loose Track.mp3", length: 180);
+            var discFile = TestHelpers.CreateSlFile(@"CD 1\01. Artist - Track.mp3", length: 181);
+            var response = new SearchResponse("User1", 2, true, 1000, 0, [rootFile, discFile]);
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+
+            List<AlbumFolder> folders = SearchResultProjector.AlbumFolders(
+                [(response, rootFile), (response, discFile)],
+                new AlbumQuery { Artist = "Artist" },
+                search);
+
+            Assert.AreEqual(1, folders.Count);
+            Assert.AreEqual(@"CD 1", folders[0].FolderPath);
         }
 
         [TestMethod]
@@ -982,6 +1018,25 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public void IncrementalAggregateAlbums_DistinguishesSeparatorBearingIdentityComponents()
+        {
+            AlbumFolder[] folders =
+            [
+                AlbumFolder("alpha", @"beta\Album", [180]),
+                AlbumFolder(@"alpha\beta", "Album", [180]),
+            ];
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            search.MinSharesAggregate = 2;
+            var projector = new IncrementalAlbumAggregateProjector(
+                new AlbumQuery { Album = "Album" }, search);
+
+            projector.AddRange(folders);
+
+            Assert.AreEqual(2, projector.Count);
+            Assert.AreEqual(2, projector.Snapshot().Single().Results.Count);
+        }
+
+        [TestMethod]
         public void AggregateAlbums_UsesSearchMetadataWithoutMaterializingFiles()
         {
             List<AlbumFile> ThrowIfMaterialized() => throw new AssertFailedException("AggregateAlbums should not force AlbumFolder.Files when search metadata is available.");
@@ -1045,6 +1100,23 @@ namespace Tests.Unit
             CollectionAssert.AreEqual(
                 expected.SelectMany(x => x.Candidates!.Select(c => c.Username + "\\" + c.Filename)).ToList(),
                 actual.SelectMany(x => x.Candidates!.Select(c => c.Username + "\\" + c.Filename)).ToList());
+        }
+
+        [TestMethod]
+        public void IncrementalAggregateTracks_DistinguishesSeparatorBearingIdentityComponents()
+        {
+            var firstFile = TestHelpers.CreateSlFile(@"beta\Artist - Track.mp3", length: 180);
+            var secondFile = TestHelpers.CreateSlFile("Artist - Track.mp3", length: 180);
+            var first = new SearchResponse("alpha", 1, true, 1000, 0, [firstFile]);
+            var second = new SearchResponse(@"alpha\beta", 1, true, 1000, 0, [secondFile]);
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            search.MinSharesAggregate = 1;
+            var incremental = new IncrementalAggregateTrackProjector(
+                new SongQuery { Artist = "Artist", Title = "Track" }, search);
+
+            incremental.AddRange([(first, firstFile), (second, secondFile)]);
+
+            Assert.AreEqual(2, incremental.Count);
         }
 
         [TestMethod]

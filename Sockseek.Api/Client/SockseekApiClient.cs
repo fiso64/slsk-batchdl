@@ -101,45 +101,25 @@ public sealed class SockseekApiClient
     public static HttpClient CreateHttpClient(string serverUrl)
         => new() { BaseAddress = NormalizeServerUrl(serverUrl) };
 
-    public async Task<ServerInfoDto> GetServerInfoAsync(CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync("api/server/info", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ServerInfoDto>(response, ct);
-    }
+    public Task<ServerInfoDto> GetServerInfoAsync(CancellationToken ct = default)
+        => GetRequiredAsync<ServerInfoDto>("api/server/info", ct);
 
-    public async Task<StateSnapshotDto> GetDaemonSnapshotAsync(CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync("api/daemon/snapshot", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
-    }
+    public Task<StateSnapshotDto> GetDaemonSnapshotAsync(CancellationToken ct = default)
+        => GetRequiredAsync<StateSnapshotDto>("api/daemon/snapshot", ct);
 
-    public async Task<StateSnapshotDto> GetWorkflowSnapshotAsync(
+    public Task<StateSnapshotDto> GetWorkflowSnapshotAsync(
         Guid workflowId,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/workflows/{workflowId}/snapshot", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
-    }
+        => GetRequiredAsync<StateSnapshotDto>($"api/workflows/{workflowId}/snapshot", ct);
 
-    public async Task<StateSnapshotDto> GetConversationSnapshotAsync(
+    public Task<StateSnapshotDto> GetConversationSnapshotAsync(
         Guid conversationId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync(
+        => GetRequiredAsync<StateSnapshotDto>(
             $"api/chat/conversations/{conversationId}/snapshot", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
-    }
 
-    public async Task<StateSnapshotDto> GetRoomSnapshotAsync(
+    public Task<StateSnapshotDto> GetRoomSnapshotAsync(
         Guid roomId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/chat/rooms/{roomId}/snapshot", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
-    }
+        => GetRequiredAsync<StateSnapshotDto>($"api/chat/rooms/{roomId}/snapshot", ct);
 
     public async Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
         => await PostJobAsync("api/jobs/extract", request, ct);
@@ -201,38 +181,24 @@ public sealed class SockseekApiClient
         return await GetCursorPageAsync<JobSummaryDto>(url, ct);
     }
 
-    public async Task<JobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/jobs/{jobId}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobDetailDto>(response, ct);
-    }
+    public Task<JobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default)
+        => GetOptionalAsync<JobDetailDto>($"api/jobs/{jobId}", ct);
 
     public async Task<JobDetailDto?> GetJobDetailByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
         if (workflowId is not Guid id)
             return null;
 
-        using var response = await http.GetAsync($"api/workflows/{id}/jobs/display/{displayId}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobDetailDto>(response, ct);
+        return await GetOptionalAsync<JobDetailDto>(
+            $"api/workflows/{id}/jobs/display/{displayId}", ct);
     }
 
     public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
         => await GetWorkflowAsync(workflowId, includeAll: false, ct);
 
-    public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, bool includeAll, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/workflows/{workflowId}?includeAll={includeAll.ToString().ToLowerInvariant()}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<WorkflowDetailDto>(response, ct);
-    }
+    public Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, bool includeAll, CancellationToken ct = default)
+        => GetOptionalAsync<WorkflowDetailDto>(
+            $"api/workflows/{workflowId}?includeAll={includeAll.ToString().ToLowerInvariant()}", ct);
 
     public async Task<CursorPage<WorkflowSummaryDto>> GetWorkflowsPageAsync(
         string? cursor = null,
@@ -243,14 +209,8 @@ public sealed class SockseekApiClient
             + QueryPart("cursor", cursor),
             ct);
 
-    public async Task<WorkflowTreeDto?> GetWorkflowTreeAsync(Guid workflowId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/workflows/{workflowId}/tree", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<WorkflowTreeDto>(response, ct);
-    }
+    public Task<WorkflowTreeDto?> GetWorkflowTreeAsync(Guid workflowId, CancellationToken ct = default)
+        => GetOptionalAsync<WorkflowTreeDto>($"api/workflows/{workflowId}/tree", ct);
 
     public async Task<SequencePage<SearchRawResultDto>?> GetRawSearchResultsPageAsync(
         Guid jobId,
@@ -289,24 +249,15 @@ public sealed class SockseekApiClient
         return await GetCursorPageAsync<TransferHistoryDto>(url, ct);
     }
 
-    public async Task<TransferDetailDto?> GetTransferAsync(
+    public Task<TransferDetailDto?> GetTransferAsync(
         Guid transferId,
         int attemptLimit = 200,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/transfers/{transferId}?attemptLimit={attemptLimit}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<TransferDetailDto>(response, ct);
-    }
+        => GetOptionalAsync<TransferDetailDto>(
+            $"api/transfers/{transferId}?attemptLimit={attemptLimit}", ct);
 
-    public async Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync("api/sharing", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SharingStateDto>(response, ct);
-    }
+    public Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
+        => GetRequiredAsync<SharingStateDto>("api/sharing", ct);
 
     public async Task<StartShareScanResponseDto> StartShareScanAsync(
         CancellationToken ct = default)
@@ -314,16 +265,10 @@ public sealed class SockseekApiClient
             "api/sharing/scans",
             ct);
 
-    public async Task<ShareScanStateDto?> GetShareScanAsync(
+    public Task<ShareScanStateDto?> GetShareScanAsync(
         Guid scanId,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/sharing/scans/{scanId}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ShareScanStateDto>(response, ct);
-    }
+        => GetOptionalAsync<ShareScanStateDto>($"api/sharing/scans/{scanId}", ct);
 
     public async Task<ShareScanStateDto> CancelShareScanAsync(
         Guid scanId,
@@ -352,9 +297,7 @@ public sealed class SockseekApiClient
             + QueryPart("state", filter.State)
             + QueryPart("username", filter.Username)
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<LiveTransferPageDto>(response, ct);
+        return await GetRequiredAsync<LiveTransferPageDto>(url, ct);
     }
 
     public async Task<AttemptPage<TransferAttemptHistoryDto>?> GetTransferAttemptsPageAsync(
@@ -388,14 +331,9 @@ public sealed class SockseekApiClient
     public async Task<PersistenceRetentionResultDto> RunPersistenceRetentionAsync(CancellationToken ct = default)
         => await PostWithoutBodyAsync<PersistenceRetentionResultDto>("api/persistence/retention", ct);
 
-    public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/files", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchResultSnapshotDto<FileCandidateDto>>(response, ct);
-    }
+    public Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, CancellationToken ct = default)
+        => GetOptionalAsync<SearchResultSnapshotDto<FileCandidateDto>>(
+            $"api/jobs/{jobId}/results/files", ct);
 
     /// <summary>Projects a search job's raw results into file candidates using an explicit projection request.</summary>
     public async Task<SearchResultSnapshotDto<FileCandidateDto>?> ProjectFileResultsAsync(Guid jobId, FileSearchProjectionRequestDto request, CancellationToken ct = default)
@@ -405,14 +343,9 @@ public sealed class SockseekApiClient
     public async Task<SearchResultSnapshotDto<FileCandidateDto>?> GetFileResultsAsync(Guid jobId, FileSearchProjectionRequestDto request, CancellationToken ct = default)
         => await ProjectFileResultsAsync(jobId, request, ct);
 
-    public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/folders?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchResultSnapshotDto<AlbumFolderDto>>(response, ct);
-    }
+    public Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, bool includeFiles, CancellationToken ct = default)
+        => GetOptionalAsync<SearchResultSnapshotDto<AlbumFolderDto>>(
+            $"api/jobs/{jobId}/results/folders?includeFiles={includeFiles.ToString().ToLowerInvariant()}", ct);
 
     /// <summary>Projects a search job's raw results into album folders using an explicit projection request.</summary>
     public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> ProjectFolderResultsAsync(Guid jobId, FolderSearchProjectionRequestDto request, CancellationToken ct = default)
@@ -422,14 +355,9 @@ public sealed class SockseekApiClient
     public async Task<SearchResultSnapshotDto<AlbumFolderDto>?> GetFolderResultsAsync(Guid jobId, FolderSearchProjectionRequestDto request, CancellationToken ct = default)
         => await ProjectFolderResultsAsync(jobId, request, ct);
 
-    public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/aggregate-tracks", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>>(response, ct);
-    }
+    public Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, CancellationToken ct = default)
+        => GetOptionalAsync<SearchResultSnapshotDto<AggregateTrackCandidateDto>>(
+            $"api/jobs/{jobId}/results/aggregate-tracks", ct);
 
     /// <summary>Projects a search job's raw results into aggregate track candidates using an explicit projection request.</summary>
     public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> ProjectAggregateTrackResultsAsync(Guid jobId, AggregateTrackProjectionRequestDto request, CancellationToken ct = default)
@@ -439,14 +367,9 @@ public sealed class SockseekApiClient
     public async Task<SearchResultSnapshotDto<AggregateTrackCandidateDto>?> GetAggregateTrackResultsAsync(Guid jobId, AggregateTrackProjectionRequestDto request, CancellationToken ct = default)
         => await ProjectAggregateTrackResultsAsync(jobId, request, ct);
 
-    public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/jobs/{jobId}/results/aggregate-albums", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(response, ct);
-    }
+    public Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, CancellationToken ct = default)
+        => GetOptionalAsync<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>(
+            $"api/jobs/{jobId}/results/aggregate-albums", ct);
 
     /// <summary>Projects a search job's raw results into aggregate album candidates using an explicit projection request.</summary>
     public async Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> ProjectAggregateAlbumResultsAsync(Guid jobId, AggregateAlbumProjectionRequestDto request, CancellationToken ct = default)
@@ -485,42 +408,21 @@ public sealed class SockseekApiClient
     public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
         => await PostOptionalSummaryAsync($"api/jobs/{searchJobId}/downloads/folder", request, ct);
 
-    public async Task<bool> CompleteManualSelectionAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.PostAsync($"api/jobs/{jobId}/manual/complete", null, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return false;
-        await EnsureSuccessAsync(response, ct);
-        return true;
-    }
+    public Task<bool> CompleteManualSelectionAsync(Guid jobId, CancellationToken ct = default)
+        => PostIfFoundAsync($"api/jobs/{jobId}/manual/complete", ct);
 
-    public async Task<bool> SkipManualSelectionAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.PostAsync($"api/jobs/{jobId}/manual/skip", null, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return false;
-        await EnsureSuccessAsync(response, ct);
-        return true;
-    }
+    public Task<bool> SkipManualSelectionAsync(Guid jobId, CancellationToken ct = default)
+        => PostIfFoundAsync($"api/jobs/{jobId}/manual/skip", ct);
 
-    public async Task<bool> CancelJobAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.PostAsync($"api/jobs/{jobId}/cancel", null, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return false;
-        await EnsureSuccessAsync(response, ct);
-        return true;
-    }
+    public Task<bool> CancelJobAsync(Guid jobId, CancellationToken ct = default)
+        => PostIfFoundAsync($"api/jobs/{jobId}/cancel", ct);
 
     public async Task<bool> CancelJobByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
         if (workflowId is Guid id)
         {
-            using var response = await http.PostAsync($"api/workflows/{id}/jobs/display/{displayId}/cancel", null, ct);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-                return false;
-            await EnsureSuccessAsync(response, ct);
-            return true;
+            return await PostIfFoundAsync(
+                $"api/workflows/{id}/jobs/display/{displayId}/cancel", ct);
         }
 
         var jobs = await GetJobsAsync(new JobQuery(null, null, null, null, IncludeAll: true), ct);
@@ -547,24 +449,16 @@ public sealed class SockseekApiClient
         return result.Cancelled;
     }
 
-    public async Task<ChatRuntimeStateDto> GetChatStatusAsync(CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync("api/chat", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ChatRuntimeStateDto>(response, ct);
-    }
+    public Task<ChatRuntimeStateDto> GetChatStatusAsync(CancellationToken ct = default)
+        => GetRequiredAsync<ChatRuntimeStateDto>("api/chat", ct);
 
-    public async Task<UserProfileDto> GetUserProfileAsync(
+    public Task<UserProfileDto> GetUserProfileAsync(
         string username,
         bool refresh = false,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync(
+        => GetRequiredAsync<UserProfileDto>(
             $"api/users/{Uri.EscapeDataString(username)}/profile?refresh={refresh.ToString().ToLowerInvariant()}",
             ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<UserProfileDto>(response, ct);
-    }
 
     public async Task<UserPictureResponse> GetUserPictureAsync(
         string username,
@@ -615,28 +509,18 @@ public sealed class SockseekApiClient
             + QueryPart("username", username)
             + QueryPart("state", state is null ? null : UserBrowseStateWire(state.Value))
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<PageDto<UserBrowseDto>>(response, ct);
+        return await GetRequiredAsync<PageDto<UserBrowseDto>>(url, ct);
     }
 
-    public async Task<UserBrowseDto> GetUserBrowseAsync(
+    public Task<UserBrowseDto> GetUserBrowseAsync(
         Guid browseId,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/user-browses/{browseId}", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<UserBrowseDto>(response, ct);
-    }
+        => GetRequiredAsync<UserBrowseDto>($"api/user-browses/{browseId}", ct);
 
-    public async Task<StateSnapshotDto> GetUserBrowseSnapshotAsync(
+    public Task<StateSnapshotDto> GetUserBrowseSnapshotAsync(
         Guid browseId,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/user-browses/{browseId}/snapshot", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<StateSnapshotDto>(response, ct);
-    }
+        => GetRequiredAsync<StateSnapshotDto>($"api/user-browses/{browseId}/snapshot", ct);
 
     public Task<UserBrowseDto> CancelUserBrowseAsync(
         Guid browseId,
@@ -656,21 +540,15 @@ public sealed class SockseekApiClient
             + QueryPart("parentId", parentId?.ToString(System.Globalization.CultureInfo.InvariantCulture))
             + QueryPart("query", query)
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<PageDto<BrowseDirectoryEntryDto>>(response, ct);
+        return await GetRequiredAsync<PageDto<BrowseDirectoryEntryDto>>(url, ct);
     }
 
-    public async Task<BrowseDirectoryEntryDto> GetUserShareDirectoryAsync(
+    public Task<BrowseDirectoryEntryDto> GetUserShareDirectoryAsync(
         Guid browseId,
         long directoryId,
         CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync(
+        => GetRequiredAsync<BrowseDirectoryEntryDto>(
             $"api/user-browses/{browseId}/directories/{directoryId}", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<BrowseDirectoryEntryDto>(response, ct);
-    }
 
     public async Task<PageDto<BrowseFileEntryDto>> GetUserShareFilesAsync(
         Guid browseId,
@@ -683,9 +561,7 @@ public sealed class SockseekApiClient
         string url = $"api/user-browses/{browseId}/directories/{directoryId}/files?limit={limit}"
             + QueryPart("query", query)
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<PageDto<BrowseFileEntryDto>>(response, ct);
+        return await GetRequiredAsync<PageDto<BrowseFileEntryDto>>(url, ct);
     }
 
     public Task<StartUserShareDownloadsResponseDto> StartUserShareDownloadsAsync(
@@ -708,20 +584,13 @@ public sealed class SockseekApiClient
             + QueryPart("unread", unread?.ToString().ToLowerInvariant())
             + QueryPart("archived", archived?.ToString().ToLowerInvariant())
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ConversationPageDto>(response, ct);
+        return await GetRequiredAsync<ConversationPageDto>(url, ct);
     }
 
-    public async Task<ConversationSummaryDto?> GetConversationAsync(
+    public Task<ConversationSummaryDto?> GetConversationAsync(
         Guid conversationId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/chat/conversations/{conversationId}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ConversationSummaryDto>(response, ct);
-    }
+        => GetOptionalAsync<ConversationSummaryDto>(
+            $"api/chat/conversations/{conversationId}", ct);
 
     public Task<ChatMessageDto> SendPrivateMessageAsync(
         SendPrivateMessageRequestDto request, CancellationToken ct = default)
@@ -733,9 +602,9 @@ public sealed class SockseekApiClient
         => PostRequiredAsync<ChatMessageDto, SendChatMessageRequestDto>(
             $"api/chat/conversations/{conversationId}/messages", request, ct);
 
-    public async Task<ChatMessagePageDto> GetConversationMessagesAsync(
+    public Task<ChatMessagePageDto> GetConversationMessagesAsync(
         Guid conversationId, string? cursor = null, int limit = 100, CancellationToken ct = default)
-        => await GetChatMessagePageAsync(
+        => GetRequiredAsync<ChatMessagePageDto>(
             $"api/chat/conversations/{conversationId}/messages?limit={limit}"
             + QueryPart("cursor", cursor), ct);
 
@@ -764,9 +633,7 @@ public sealed class SockseekApiClient
         string url = $"api/chat/rooms/available?limit={limit}&refresh={refresh.ToString().ToLowerInvariant()}"
             + QueryPart("kind", kind?.ToString())
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<AvailableRoomPageDto>(response, ct);
+        return await GetRequiredAsync<AvailableRoomPageDto>(url, ct);
     }
 
     public async Task<ChatRoomPageDto> GetRoomsAsync(
@@ -778,9 +645,7 @@ public sealed class SockseekApiClient
         string url = $"api/chat/rooms?limit={limit}"
             + QueryPart("state", state)
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ChatRoomPageDto>(response, ct);
+        return await GetRequiredAsync<ChatRoomPageDto>(url, ct);
     }
 
     public Task<ChatRoomSummaryDto> JoinRoomAsync(
@@ -788,25 +653,15 @@ public sealed class SockseekApiClient
         => PostRequiredAsync<ChatRoomSummaryDto, JoinRoomRequestDto>(
             "api/chat/rooms", new JoinRoomRequestDto(roomName, remember), ct);
 
-    public async Task<ChatRoomDetailDto?> GetRoomAsync(Guid roomId, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/chat/rooms/{roomId}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ChatRoomDetailDto>(response, ct);
-    }
+    public Task<ChatRoomDetailDto?> GetRoomAsync(Guid roomId, CancellationToken ct = default)
+        => GetOptionalAsync<ChatRoomDetailDto>($"api/chat/rooms/{roomId}", ct);
 
-    public async Task<ChatRoomSummaryDto> LeaveRoomAsync(Guid roomId, CancellationToken ct = default)
-    {
-        using var response = await http.DeleteAsync($"api/chat/rooms/{roomId}", ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ChatRoomSummaryDto>(response, ct);
-    }
+    public Task<ChatRoomSummaryDto> LeaveRoomAsync(Guid roomId, CancellationToken ct = default)
+        => DeleteRequiredAsync<ChatRoomSummaryDto>($"api/chat/rooms/{roomId}", ct);
 
-    public async Task<ChatMessagePageDto> GetRoomMessagesAsync(
+    public Task<ChatMessagePageDto> GetRoomMessagesAsync(
         Guid roomId, string? cursor = null, int limit = 100, CancellationToken ct = default)
-        => await GetChatMessagePageAsync(
+        => GetRequiredAsync<ChatMessagePageDto>(
             $"api/chat/rooms/{roomId}/messages?limit={limit}" + QueryPart("cursor", cursor), ct);
 
     public Task<ChatMessageDto> SendRoomMessageAsync(
@@ -829,9 +684,7 @@ public sealed class SockseekApiClient
         string url = $"api/chat/rooms/{roomId}/members?limit={limit}"
             + QueryPart("cursor", cursor)
             + QueryPart("revision", revision?.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<RoomMemberPageDto>(response, ct);
+        return await GetRequiredAsync<RoomMemberPageDto>(url, ct);
     }
 
     public Task<ChatRoomDetailDto> AddPrivateRoomMemberAsync(
@@ -853,19 +706,11 @@ public sealed class SockseekApiClient
             + QueryPart("unread", unread?.ToString().ToLowerInvariant())
             + QueryPart("kind", kind?.ToString())
             + QueryPart("cursor", cursor);
-        using var response = await http.GetAsync(url, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<NotificationPageDto>(response, ct);
+        return await GetRequiredAsync<NotificationPageDto>(url, ct);
     }
 
-    public async Task<UserNotificationDto?> GetNotificationAsync(Guid id, CancellationToken ct = default)
-    {
-        using var response = await http.GetAsync($"api/notifications/{id}", ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<UserNotificationDto>(response, ct);
-    }
+    public Task<UserNotificationDto?> GetNotificationAsync(Guid id, CancellationToken ct = default)
+        => GetOptionalAsync<UserNotificationDto>($"api/notifications/{id}", ct);
 
     public Task<UserNotificationDto> MarkNotificationReadAsync(Guid id, CancellationToken ct = default)
         => PostWithoutBodyAsync<UserNotificationDto>($"api/notifications/{id}/read", ct);
@@ -875,24 +720,15 @@ public sealed class SockseekApiClient
         => PostRequiredAsync<NotificationSummaryDto, MarkNotificationsReadRequestDto>(
             "api/notifications/read", request, ct);
 
-    public async Task<bool> TryNextCandidateAsync(Guid jobId, CancellationToken ct = default)
-    {
-        using var response = await http.PostAsync($"api/jobs/{jobId}/next-candidate", null, ct);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return false;
-        await EnsureSuccessAsync(response, ct);
-        return true;
-    }
+    public Task<bool> TryNextCandidateAsync(Guid jobId, CancellationToken ct = default)
+        => PostIfFoundAsync($"api/jobs/{jobId}/next-candidate", ct);
 
     public async Task<bool> TryNextCandidateByDisplayIdAsync(int displayId, Guid? workflowId = null, CancellationToken ct = default)
     {
         if (workflowId is Guid id)
         {
-            using var response = await http.PostAsync($"api/workflows/{id}/jobs/display/{displayId}/next-candidate", null, ct);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-                return false;
-            await EnsureSuccessAsync(response, ct);
-            return true;
+            return await PostIfFoundAsync(
+                $"api/workflows/{id}/jobs/display/{displayId}/next-candidate", ct);
         }
 
         var jobs = await GetJobsAsync(new JobQuery(null, null, null, null, IncludeAll: true), ct);
@@ -900,15 +736,11 @@ public sealed class SockseekApiClient
         return match != null && await TryNextCandidateAsync(match.JobId, ct);
     }
 
-    private async Task<JobSummaryDto> PostJobAsync<TRequest>(string url, TRequest request, CancellationToken ct)
-    {
-        using var response = await http.PostAsJsonAsync(url, request, jsonOptions, ct);
-        await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<JobSummaryDto>(response, ct);
-    }
+    private Task<JobSummaryDto> PostJobAsync<TRequest>(string url, TRequest request, CancellationToken ct)
+        => PostRequiredAsync<JobSummaryDto, TRequest>(url, request, ct);
 
-    private async Task<JobSummaryDto?> PostOptionalSummaryAsync<T>(string url, T request, CancellationToken ct)
-        => await PostOptionalAsync<JobSummaryDto, T>(url, request, ct);
+    private Task<JobSummaryDto?> PostOptionalSummaryAsync<T>(string url, T request, CancellationToken ct)
+        => PostOptionalAsync<JobSummaryDto, T>(url, request, ct);
 
     private async Task<TResponse?> PostOptionalAsync<TResponse, TRequest>(string url, TRequest request, CancellationToken ct)
     {
@@ -933,17 +765,42 @@ public sealed class SockseekApiClient
         return await ReadRequiredAsync<TResponse>(response, ct);
     }
 
-    private async Task<ChatMessagePageDto> GetChatMessagePageAsync(string url, CancellationToken ct)
+    private async Task<T> GetRequiredAsync<T>(string url, CancellationToken ct)
     {
         using var response = await http.GetAsync(url, ct);
         await EnsureSuccessAsync(response, ct);
-        return await ReadRequiredAsync<ChatMessagePageDto>(response, ct);
+        return await ReadRequiredAsync<T>(response, ct);
+    }
+
+    private async Task<T?> GetOptionalAsync<T>(string url, CancellationToken ct)
+    {
+        using var response = await http.GetAsync(url, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return default;
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<T>(response, ct);
+    }
+
+    private async Task<bool> PostIfFoundAsync(string url, CancellationToken ct)
+    {
+        using var response = await http.PostAsync(url, content: null, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return false;
+        await EnsureSuccessAsync(response, ct);
+        return true;
     }
 
     private async Task DeleteRequiredAsync(string url, CancellationToken ct)
     {
         using var response = await http.DeleteAsync(url, ct);
         await EnsureSuccessAsync(response, ct);
+    }
+
+    private async Task<T> DeleteRequiredAsync<T>(string url, CancellationToken ct)
+    {
+        using var response = await http.DeleteAsync(url, ct);
+        await EnsureSuccessAsync(response, ct);
+        return await ReadRequiredAsync<T>(response, ct);
     }
 
     private async Task<CursorPage<T>> GetCursorPageAsync<T>(string url, CancellationToken ct)

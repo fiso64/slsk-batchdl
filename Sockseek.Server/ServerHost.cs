@@ -166,9 +166,7 @@ public static class ServerHost
             EngineStateStore stateStore,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 StateStreamScopeDto scope = StateStreamScopeDto.ChatConversation(conversationId);
                 StateStreamPositionDto position = stateStore.GetChatPosition(scope);
@@ -178,8 +176,7 @@ public static class ServerHost
                     ? ChatNotFound("The conversation was not found.")
                     : Results.Ok(new StateSnapshotDto(
                         scope, position, DateTimeOffset.UtcNow, null, [], [], [], [], target));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Live State")
@@ -192,9 +189,7 @@ public static class ServerHost
             EngineStateStore stateStore,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 StateStreamScopeDto scope = StateStreamScopeDto.ChatRoom(roomId);
                 StateStreamPositionDto position = stateStore.GetChatPosition(scope);
@@ -203,8 +198,7 @@ public static class ServerHost
                     ? ChatNotFound("The room was not found.")
                     : Results.Ok(new StateSnapshotDto(
                         scope, position, DateTimeOffset.UtcNow, null, [], [], [], [], target));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Live State")
@@ -275,16 +269,13 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 var page = await chat.GetConversationsAsync(
                     unread, archived, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken);
                 return Results.Ok(new ConversationPageDto(
                     page.Items.Select(ChatDtoMapper.ToDto).ToArray(), page.NextCursor));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -297,14 +288,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(ChatDtoMapper.ToDto(await chat.SendPrivateMessageAsync(
                     request.Username, request.MessageId, request.Text, cancellationToken)));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -317,16 +305,13 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 var conversation = await chat.GetConversationAsync(conversationId, cancellationToken);
                 return conversation is null
                     ? ChatNotFound("The conversation was not found.")
                     : Results.Ok(ChatDtoMapper.ToDto(conversation));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -341,9 +326,7 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 if (await chat.GetConversationAsync(conversationId, cancellationToken) is null)
                     return ChatNotFound("The conversation was not found.");
@@ -351,8 +334,7 @@ public static class ServerHost
                     conversationId, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken);
                 return Results.Ok(new ChatMessagePageDto(
                     page.Items.Select(ChatDtoMapper.ToDto).ToArray(), page.NextCursor));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -366,14 +348,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(ChatDtoMapper.ToDto(await chat.SendConversationMessageAsync(
                     conversationId, request.MessageId, request.Text, cancellationToken)));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -387,17 +366,14 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.MarkConversationReadAsync(
                     conversationId, request.ThroughMessageId, cancellationToken);
                 return Results.Ok(ChatDtoMapper.ToDto(
                     await chat.GetConversationAsync(conversationId, cancellationToken)
                     ?? throw new KeyNotFoundException("The conversation was not found.")));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -411,16 +387,13 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.ArchiveConversationAsync(conversationId, request.Archived, cancellationToken);
                 return Results.Ok(ChatDtoMapper.ToDto(
                     await chat.GetConversationAsync(conversationId, cancellationToken)
                     ?? throw new KeyNotFoundException("The conversation was not found.")));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -433,14 +406,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.DeleteConversationHistoryAsync(conversationId, cancellationToken);
                 return Results.NoContent();
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat")
@@ -456,14 +426,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(await chat.GetAvailableRoomsAsync(
                     kind, cursor, limit ?? ChatLimits.DefaultPageSize, refresh == true, cancellationToken));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -478,14 +445,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(await chat.GetRoomSummariesAsync(
                     state, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -498,14 +462,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(await chat.JoinRoomAsync(
                     request.RoomName, request.Remember, cancellationToken));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -518,14 +479,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 var room = await chat.GetRoomDetailAsync(roomId, cancellationToken);
                 return room is null ? ChatNotFound("The room was not found.") : Results.Ok(room);
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -538,10 +496,10 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try { return Results.Ok(await chat.LeaveRoomAsync(roomId, cancellationToken)); }
-            catch (Exception ex) { return ChatFailure(ex); }
+            return await WithChatAsync(supervisor, async chat =>
+            {
+                return Results.Ok(await chat.LeaveRoomAsync(roomId, cancellationToken));
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -556,9 +514,7 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 if (await chat.GetRoomSummaryAsync(roomId, cancellationToken) is null)
                     return ChatNotFound("The room was not found.");
@@ -566,8 +522,7 @@ public static class ServerHost
                     roomId, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken);
                 return Results.Ok(new ChatMessagePageDto(
                     page.Items.Select(ChatDtoMapper.ToDto).ToArray(), page.NextCursor));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -581,14 +536,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(ChatDtoMapper.ToDto(await chat.SendRoomMessageAsync(
                     roomId, request.MessageId, request.Text, cancellationToken)));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -602,15 +554,12 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.MarkRoomReadAsync(roomId, request.ThroughMessageId, cancellationToken);
                 return Results.Ok(await chat.GetRoomSummaryAsync(roomId, cancellationToken)
                                   ?? throw new KeyNotFoundException("The room was not found."));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -626,14 +575,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 return Results.Ok(await chat.GetRoomMembersAsync(
                     roomId, cursor, limit ?? ChatLimits.DefaultPageSize, revision, cancellationToken));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -647,14 +593,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.AddPrivateRoomMemberAsync(roomId, request.Username, cancellationToken);
                 return Results.Ok(await chat.GetRoomDetailAsync(roomId, cancellationToken));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -667,14 +610,11 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.DeleteRoomHistoryAsync(roomId, cancellationToken);
                 return Results.NoContent();
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Chat Rooms")
@@ -690,16 +630,13 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 var page = await chat.GetNotificationsAsync(
                     unread, kind, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken);
                 return Results.Ok(new NotificationPageDto(
                     page.Items.Select(ChatDtoMapper.ToDto).ToArray(), page.NextCursor));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Notifications")
@@ -712,16 +649,13 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 var notification = await chat.GetNotificationAsync(notificationId, cancellationToken);
                 return notification is null
                     ? ChatNotFound("The notification was not found.")
                     : Results.Ok(ChatDtoMapper.ToDto(notification));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Notifications")
@@ -734,9 +668,7 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 if (await chat.GetNotificationAsync(notificationId, cancellationToken) is null)
                     return ChatNotFound("The notification was not found.");
@@ -744,8 +676,7 @@ public static class ServerHost
                 return Results.Ok(ChatDtoMapper.ToDto(
                     await chat.GetNotificationAsync(notificationId, cancellationToken)
                     ?? throw new KeyNotFoundException("The notification was not found.")));
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Notifications")
@@ -758,15 +689,12 @@ public static class ServerHost
             EngineSupervisor supervisor,
             CancellationToken cancellationToken) =>
         {
-            if (supervisor.Chat is not { } chat)
-                return ChatUnavailable();
-            try
+            return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.MarkNotificationsReadAsync(
                     request.ThroughSequence, request.Ids, cancellationToken);
                 return Results.Ok(chat.GetNotificationSummary());
-            }
-            catch (Exception ex) { return ChatFailure(ex); }
+            });
         })
             .RequireOperator()
             .WithTags("Notifications")
@@ -1162,10 +1090,8 @@ public static class ServerHost
             Guid jobId,
             HistoricalQueryFacade queryFacade,
             CancellationToken cancellationToken) =>
-        {
-            var results = await queryFacade.GetFileResultsAsync(jobId, null, cancellationToken);
-            return results != null ? Results.Ok(results) : Results.NotFound();
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetFileResultsAsync(jobId, null, cancellationToken)))
             .WithTags("Search Results")
             .WithSummary("Gets file candidates for a search-like job.")
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
@@ -1176,10 +1102,8 @@ public static class ServerHost
             FileSearchProjectionRequestDto request,
             HistoricalQueryFacade queryFacade,
             CancellationToken cancellationToken) =>
-        {
-            var results = await queryFacade.GetFileResultsAsync(jobId, request, cancellationToken);
-            return results != null ? Results.Ok(results) : Results.NotFound();
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetFileResultsAsync(jobId, request, cancellationToken)))
             .WithTags("Search Results")
             .WithSummary("Projects search results as file candidates.")
             .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
@@ -1187,17 +1111,9 @@ public static class ServerHost
 
         app.MapGet("/api/jobs/{jobId:guid}/results/folders", async (
             Guid jobId, bool includeFiles, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            try
-            {
-                var results = await queryFacade.GetFolderResultsAsync(jobId, null, includeFiles, cancellationToken);
-                return results != null ? Results.Ok(results) : Results.NotFound();
-            }
-            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
-            {
-                return BadRequest(ex);
-            }
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetFolderResultsAsync(jobId, null, includeFiles, cancellationToken),
+                translateBadRequest: true))
             .WithTags("Search Results")
             .WithSummary("Gets folder candidates for an album search-like job.")
             .WithDescription("Set includeFiles=true only when the client needs selectable files. Folder file counts can come from search results and may not represent a full browse of the remote folder.")
@@ -1207,17 +1123,10 @@ public static class ServerHost
 
         app.MapPost("/api/jobs/{jobId:guid}/results/folders/project", async (
             Guid jobId, FolderSearchProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            try
-            {
-                var results = await queryFacade.GetFolderResultsAsync(jobId, request, request.IncludeFiles, cancellationToken);
-                return results != null ? Results.Ok(results) : Results.NotFound();
-            }
-            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
-            {
-                return BadRequest(ex);
-            }
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetFolderResultsAsync(
+                    jobId, request, request.IncludeFiles, cancellationToken),
+                translateBadRequest: true))
             .WithTags("Search Results")
             .WithSummary("Projects search results as album folders.")
             .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
@@ -1226,10 +1135,8 @@ public static class ServerHost
 
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", async (
             Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            var results = await queryFacade.GetAggregateTrackResultsAsync(jobId, null, cancellationToken);
-            return results != null ? Results.Ok(results) : Results.NotFound();
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetAggregateTrackResultsAsync(jobId, null, cancellationToken)))
             .WithTags("Search Results")
             .WithSummary("Gets aggregate track candidates.")
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
@@ -1237,10 +1144,8 @@ public static class ServerHost
 
         app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-tracks/project", async (
             Guid jobId, AggregateTrackProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            var results = await queryFacade.GetAggregateTrackResultsAsync(jobId, request, cancellationToken);
-            return results != null ? Results.Ok(results) : Results.NotFound();
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetAggregateTrackResultsAsync(jobId, request, cancellationToken)))
             .WithTags("Search Results")
             .WithSummary("Projects search results as aggregate track candidates.")
             .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
@@ -1248,17 +1153,9 @@ public static class ServerHost
 
         app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", async (
             Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            try
-            {
-                var results = await queryFacade.GetAggregateAlbumResultsAsync(jobId, null, cancellationToken);
-                return results != null ? Results.Ok(results) : Results.NotFound();
-            }
-            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
-            {
-                return BadRequest(ex);
-            }
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetAggregateAlbumResultsAsync(jobId, null, cancellationToken),
+                translateBadRequest: true))
             .WithTags("Search Results")
             .WithSummary("Gets aggregate album candidates.")
             .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
@@ -1267,17 +1164,9 @@ public static class ServerHost
 
         app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-albums/project", async (
             Guid jobId, AggregateAlbumProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            try
-            {
-                var results = await queryFacade.GetAggregateAlbumResultsAsync(jobId, request, cancellationToken);
-                return results != null ? Results.Ok(results) : Results.NotFound();
-            }
-            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
-            {
-                return BadRequest(ex);
-            }
-        })
+            await OptionalQueryAsync(
+                () => queryFacade.GetAggregateAlbumResultsAsync(jobId, request, cancellationToken),
+                translateBadRequest: true))
             .WithTags("Search Results")
             .WithSummary("Projects search results as aggregate album candidates.")
             .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
@@ -1586,6 +1475,23 @@ public static class ServerHost
         }
     }
 
+    private static async Task<IResult> OptionalQueryAsync<T>(
+        Func<Task<T?>> query,
+        bool translateBadRequest = false)
+        where T : class
+    {
+        try
+        {
+            T? result = await query().ConfigureAwait(false);
+            return result is null ? Results.NotFound() : Results.Ok(result);
+        }
+        catch (Exception exception) when (
+            translateBadRequest && TryCreateBadRequest(exception, out _))
+        {
+            return BadRequest(exception);
+        }
+    }
+
     private static IResult BadRequest(Exception ex)
     {
         TryCreateBadRequest(ex, out var error);
@@ -1601,6 +1507,22 @@ public static class ServerHost
                 "Chat is unavailable because daemon persistence is disabled or not started.",
                 "Unavailable"),
             statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    private static async Task<IResult> WithChatAsync(
+        EngineSupervisor supervisor,
+        Func<ChatRuntime, Task<IResult>> action)
+    {
+        if (supervisor.Chat is not { } chat)
+            return ChatUnavailable();
+        try
+        {
+            return await action(chat).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            return ChatFailure(exception);
+        }
+    }
 
     private static RouteHandlerBuilder WithChatErrors(this RouteHandlerBuilder builder)
         => builder

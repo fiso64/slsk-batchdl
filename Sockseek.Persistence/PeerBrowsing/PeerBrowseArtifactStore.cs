@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Sockseek.Core;
 using Sockseek.Core.IO;
@@ -266,30 +267,41 @@ public sealed class PeerBrowseArtifactStore
         localAccount = PeerIdentityValidator.ValidateUsername(localAccount);
         username = PeerIdentityValidator.ValidateUsername(username);
 
-        await using SqliteConnection connection = await OpenRegistryAsync(
-            SqliteOpenMode.ReadOnly,
-            cancellationToken).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-        command.CommandText =
-            ResourceSelect +
-            """
-             WHERE local_account = $account
-               AND username = $username
-               AND state = $complete
-               AND completed_at_utc > $cutoff
-               AND expires_at_utc > $now
-             ORDER BY completed_at_utc DESC
-             LIMIT 1;
-            """;
-        Add(command, "$account", localAccount);
-        Add(command, "$username", username);
-        Add(command, "$complete", (int)PeerBrowseState.Complete);
-        DateTimeOffset now = timeProvider.GetUtcNow();
-        Add(command, "$cutoff", Format(now - freshness));
-        Add(command, "$now", Format(now));
-        await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
-            ? ReadResource(reader)
+        PeerBrowseResource? resource;
+        string? artifactFile;
+        await using (SqliteConnection connection = await OpenRegistryAsync(
+                         SqliteOpenMode.ReadOnly,
+                         cancellationToken).ConfigureAwait(false))
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                ResourceSelect +
+                """
+                 WHERE local_account = $account
+                   AND username = $username
+                   AND state = $complete
+                   AND completed_at_utc > $cutoff
+                   AND expires_at_utc > $now
+                 ORDER BY completed_at_utc DESC
+                 LIMIT 1;
+                """;
+            Add(command, "$account", localAccount);
+            Add(command, "$username", username);
+            Add(command, "$complete", (int)PeerBrowseState.Complete);
+            DateTimeOffset now = timeProvider.GetUtcNow();
+            Add(command, "$cutoff", Format(now - freshness));
+            Add(command, "$now", Format(now));
+            await using SqliteDataReader reader = await command
+                .ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                return null;
+            resource = ReadResource(reader);
+            artifactFile = reader.IsDBNull(14) ? null : reader.GetString(14);
+        }
+
+        return artifactFile is not null
+               && File.Exists(ResolveArtifactPath(artifactFile))
+            ? resource
             : null;
     }
 
@@ -421,56 +433,15 @@ public sealed class PeerBrowseArtifactStore
 
         var targets = new List<PeerFileTarget>();
         await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        long? currentId = null;
-        string? filename = null;
-        long size = 0;
-        string? extension = null;
-        int? bitRate = null;
-        int? bitDepth = null;
-        int? sampleRate = null;
-        int? length = null;
-        List<FileAttributeSnapshot>? attributes = null;
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            long fileId = reader.GetInt64(0);
-            if (currentId != fileId)
-            {
-                AddCurrent();
-                currentId = fileId;
-                filename = reader.GetString(1);
-                size = reader.GetInt64(2);
-                extension = reader.IsDBNull(3) ? null : reader.GetString(3);
-                bitRate = NullableInt(reader, 4);
-                bitDepth = NullableInt(reader, 5);
-                sampleRate = NullableInt(reader, 6);
-                length = NullableInt(reader, 7);
-                attributes = null;
-            }
-
-            if (!reader.IsDBNull(8))
-            {
-                int type = reader.GetInt32(8);
-                attributes ??= [];
-                attributes.Add(new FileAttributeSnapshot(type.ToString(CultureInfo.InvariantCulture), reader.GetInt32(9), type));
-            }
-        }
-        AddCurrent();
+        await ReadPeerFileTargetsAsync(
+            reader,
+            identity.Username,
+            attributeTypeOrdinal: 8,
+            attributeValueOrdinal: 9,
+            static _ => false,
+            (target, _) => targets.Add(target),
+            cancellationToken).ConfigureAwait(false);
         return new PeerDirectorySnapshot(identity, targets, isComplete: true);
-
-        void AddCurrent()
-        {
-            if (currentId is null)
-                return;
-            targets.Add(new PeerFileTarget(
-                new PeerFileIdentity(identity.Username, filename!),
-                size,
-                extension,
-                bitRate,
-                bitDepth,
-                sampleRate,
-                length,
-                attributes));
-        }
     }
 
     public async Task<PeerBrowseDirectoryEntry?> ReadDirectoryEntryAsync(
@@ -782,17 +753,17 @@ public sealed class PeerBrowseArtifactStore
             throw new PeerBrowseSelectionException("Locked directories cannot be selected for download.");
 
         var canonicalDirectories = new List<SelectionDirectory>();
+        var canonicalDirectoryPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (SelectionDirectory directory in selectedDirectories)
         {
-            if (canonicalDirectories.Any(ancestor => PeerBrowsePath.IsSameOrDescendant(
-                    directory.IdentityPath,
-                    ancestor.IdentityPath)))
+            if (HasSameOrAncestor(canonicalDirectoryPaths, directory.IdentityPath))
             {
                 redundant = checked(redundant + 1);
             }
             else
             {
                 canonicalDirectories.Add(directory);
+                canonicalDirectoryPaths.Add(directory.IdentityPath);
             }
         }
 
@@ -808,9 +779,7 @@ public sealed class PeerBrowseArtifactStore
         var standaloneFiles = new List<SelectedFile>();
         foreach (SelectedFile file in selectedFiles)
         {
-            if (canonicalDirectories.Any(directory => PeerBrowsePath.IsSameOrDescendant(
-                    file.Directory.IdentityPath,
-                    directory.IdentityPath)))
+            if (HasSameOrAncestor(canonicalDirectoryPaths, file.Directory.IdentityPath))
             {
                 redundant = checked(redundant + 1);
             }
@@ -824,13 +793,14 @@ public sealed class PeerBrowseArtifactStore
         long totalFiles = 0;
         long totalBytes = 0;
         long lockedSkipped = 0;
+        IReadOnlyDictionary<long, DirectoryTransferPlan> directoryPlans = await ReadPlansAsync(
+            connection,
+            resource.Username,
+            canonicalDirectories,
+            cancellationToken).ConfigureAwait(false);
         foreach (SelectionDirectory directory in canonicalDirectories)
         {
-            DirectoryTransferPlan plan = await ReadPlanAsync(
-                connection,
-                resource.Username,
-                directory,
-                cancellationToken).ConfigureAwait(false);
+            DirectoryTransferPlan plan = directoryPlans[directory.DirectoryId];
             orderedPlans.Add(("0\0" + directory.DisplayPath, plan));
             totalFiles = checked(totalFiles + plan.Entries.Count);
             totalBytes = SaturatingAdd(totalBytes, plan.TotalKnownBytes);
@@ -873,19 +843,25 @@ public sealed class PeerBrowseArtifactStore
         IReadOnlyList<long> ids,
         CancellationToken cancellationToken)
     {
-        await using (var create = connection.CreateCommand())
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            $"CREATE TEMP TABLE {tableName}(id INTEGER PRIMARY KEY); "
+            + $"INSERT INTO {tableName}(id) SELECT CAST(value AS INTEGER) FROM json_each($ids);";
+        command.Parameters.AddWithValue("$ids", JsonSerializer.Serialize(ids));
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool HasSameOrAncestor(HashSet<string> candidates, string identityPath)
+    {
+        if (candidates.Contains(identityPath))
+            return true;
+        for (int separator = identityPath.LastIndexOf('\\'); separator > 0;
+             separator = identityPath.LastIndexOf('\\', separator - 1))
         {
-            create.CommandText = $"CREATE TEMP TABLE {tableName}(id INTEGER PRIMARY KEY);";
-            await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (candidates.Contains(identityPath[..separator]))
+                return true;
         }
-        await using var insert = connection.CreateCommand();
-        insert.CommandText = $"INSERT INTO {tableName}(id) VALUES($id);";
-        SqliteParameter parameter = insert.Parameters.Add("$id", SqliteType.Integer);
-        foreach (long id in ids)
-        {
-            parameter.Value = id;
-            await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        return false;
     }
 
     private static async Task<List<SelectedFile>> ReadSelectedFilesAsync(
@@ -909,107 +885,114 @@ public sealed class PeerBrowseArtifactStore
             """;
         var files = new List<SelectedFile>();
         await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        long? currentId = null;
-        string? wireFilename = null;
-        long size = 0;
-        string? extension = null;
-        int? bitRate = null;
-        int? bitDepth = null;
-        int? sampleRate = null;
-        int? length = null;
-        SelectionDirectory? directory = null;
-        PeerBrowseEntryVisibility fileVisibility = PeerBrowseEntryVisibility.Public;
-        List<FileAttributeSnapshot>? attributes = null;
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            long fileId = reader.GetInt64(0);
-            if (currentId != fileId)
-            {
-                AddCurrent();
-                currentId = fileId;
-                wireFilename = reader.GetString(1);
-                size = reader.GetInt64(2);
-                extension = reader.IsDBNull(3) ? null : reader.GetString(3);
-                bitRate = NullableInt(reader, 4);
-                bitDepth = NullableInt(reader, 5);
-                sampleRate = NullableInt(reader, 6);
-                length = NullableInt(reader, 7);
-                fileVisibility = (PeerBrowseEntryVisibility)reader.GetInt32(12);
-                directory = new SelectionDirectory(
-                    reader.GetInt64(8),
-                    reader.GetString(9),
-                    reader.GetString(10),
-                    reader.GetString(11),
-                    (PeerBrowseEntryVisibility)reader.GetInt32(13),
-                    reader.GetInt64(14));
-                attributes = null;
-            }
-            if (!reader.IsDBNull(15))
-            {
-                int type = reader.GetInt32(15);
-                attributes ??= [];
-                attributes.Add(new FileAttributeSnapshot(
-                    type.ToString(CultureInfo.InvariantCulture),
-                    reader.GetInt32(16),
-                    type));
-            }
-        }
-        AddCurrent();
+        await ReadPeerFileTargetsAsync(
+            reader,
+            username,
+            attributeTypeOrdinal: 15,
+            attributeValueOrdinal: 16,
+            row => new SelectedFileContext(
+                new SelectionDirectory(
+                    row.GetInt64(8),
+                    row.GetString(9),
+                    row.GetString(10),
+                    row.GetString(11),
+                    (PeerBrowseEntryVisibility)row.GetInt32(13),
+                    row.GetInt64(14)),
+                (PeerBrowseEntryVisibility)row.GetInt32(12)),
+            (target, context) => files.Add(new SelectedFile(
+                target,
+                context.Directory,
+                context.Visibility)),
+            cancellationToken).ConfigureAwait(false);
         return files;
-
-        void AddCurrent()
-        {
-            if (currentId is null)
-                return;
-            files.Add(new SelectedFile(
-                new PeerFileTarget(
-                    new PeerFileIdentity(username, wireFilename!),
-                    size,
-                    extension,
-                    bitRate,
-                    bitDepth,
-                    sampleRate,
-                    length,
-                    attributes),
-                directory!,
-                fileVisibility));
-        }
     }
 
-    private static async Task<DirectoryTransferPlan> ReadPlanAsync(
+    private static async Task<IReadOnlyDictionary<long, DirectoryTransferPlan>> ReadPlansAsync(
         SqliteConnection connection,
         string username,
-        SelectionDirectory root,
+        IReadOnlyList<SelectionDirectory> roots,
         CancellationToken cancellationToken)
     {
+        if (roots.Count == 0)
+            return new Dictionary<long, DirectoryTransferPlan>();
+
         await using var command = connection.CreateCommand();
         command.CommandText =
             """
+            WITH RECURSIVE selected_subtrees(root_id, directory_id) AS (
+                SELECT CAST(value AS INTEGER), CAST(value AS INTEGER)
+                FROM json_each($root_ids)
+                UNION ALL
+                SELECT selected_subtrees.root_id, child.directory_id
+                FROM selected_subtrees
+                JOIN directories child ON child.parent_id = selected_subtrees.directory_id
+            )
             SELECT f.file_id, f.wire_filename, f.size_bytes, f.extension,
                    f.bit_rate, f.bit_depth, f.sample_rate, f.length_seconds,
-                   d.identity_path, a.attribute_type, a.attribute_value
-            FROM files f
-            JOIN directories d ON d.directory_id = f.directory_id
+                   root.directory_id, root.identity_path, d.identity_path,
+                   a.attribute_type, a.attribute_value
+            FROM selected_subtrees selected
+            JOIN directories root ON root.directory_id = selected.root_id
+            JOIN directories d ON d.directory_id = selected.directory_id
+            JOIN files f ON f.directory_id = d.directory_id
             LEFT JOIN file_attributes a ON a.file_id = f.file_id
-            WHERE ordinal_same_or_descendant(d.identity_path, $path)
-              AND f.visibility = $public
-            ORDER BY f.file_id, a.attribute_ordinal;
+            WHERE f.visibility = $public
+            ORDER BY root.directory_id, f.file_id, a.attribute_ordinal;
             """;
-        Add(command, "$path", root.IdentityPath);
+        Add(command, "$root_ids", JsonSerializer.Serialize(roots.Select(root => root.DirectoryId)));
         Add(command, "$public", (int)PeerBrowseEntryVisibility.Public);
 
-        var entries = new List<DirectoryTransferEntry>();
+        var entriesByRoot = roots.ToDictionary(
+            root => root.DirectoryId,
+            static _ => new List<DirectoryTransferEntry>());
         await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        await ReadPeerFileTargetsAsync(
+            reader,
+            username,
+            attributeTypeOrdinal: 11,
+            attributeValueOrdinal: 12,
+            static row => new PlanFileContext(row.GetInt64(8), row.GetString(9), row.GetString(10)),
+            (target, context) =>
+            {
+                string[] relative = StringComparer.Ordinal.Equals(context.DirectoryPath, context.RootPath)
+                    ? []
+                    : context.DirectoryPath[(context.RootPath.Length + 1)..].Split('\\');
+                entriesByRoot[context.RootId].Add(new DirectoryTransferEntry(target, relative));
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        var plans = new Dictionary<long, DirectoryTransferPlan>(roots.Count);
+        foreach (SelectionDirectory root in roots)
+        {
+            List<DirectoryTransferEntry> entries = entriesByRoot[root.DirectoryId];
+            if (entries.Count == 0)
+                throw new PeerBrowseSelectionException(
+                    $"Selected directory '{root.Name}' contains no downloadable public files.");
+            plans.Add(root.DirectoryId, new DirectoryTransferPlan(PeerBrowsePath.Leaf(root.IdentityPath), entries));
+        }
+        return plans;
+    }
+
+    private static async Task ReadPeerFileTargetsAsync<TContext>(
+        SqliteDataReader reader,
+        string username,
+        int attributeTypeOrdinal,
+        int attributeValueOrdinal,
+        Func<SqliteDataReader, TContext> readContext,
+        Action<PeerFileTarget, TContext> addTarget,
+        CancellationToken cancellationToken)
+    {
         long? currentId = null;
-        string? wireFilename = null;
+        string? filename = null;
         long size = 0;
         string? extension = null;
         int? bitRate = null;
         int? bitDepth = null;
         int? sampleRate = null;
         int? length = null;
-        string? identityPath = null;
+        TContext context = default!;
         List<FileAttributeSnapshot>? attributes = null;
+
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             long fileId = reader.GetInt64(0);
@@ -1017,42 +1000,36 @@ public sealed class PeerBrowseArtifactStore
             {
                 AddCurrent();
                 currentId = fileId;
-                wireFilename = reader.GetString(1);
+                filename = reader.GetString(1);
                 size = reader.GetInt64(2);
                 extension = reader.IsDBNull(3) ? null : reader.GetString(3);
                 bitRate = NullableInt(reader, 4);
                 bitDepth = NullableInt(reader, 5);
                 sampleRate = NullableInt(reader, 6);
                 length = NullableInt(reader, 7);
-                identityPath = reader.GetString(8);
+                context = readContext(reader);
                 attributes = null;
             }
-            if (!reader.IsDBNull(9))
+
+            if (!reader.IsDBNull(attributeTypeOrdinal))
             {
-                int type = reader.GetInt32(9);
+                int type = reader.GetInt32(attributeTypeOrdinal);
                 attributes ??= [];
                 attributes.Add(new FileAttributeSnapshot(
                     type.ToString(CultureInfo.InvariantCulture),
-                    reader.GetInt32(10),
+                    reader.GetInt32(attributeValueOrdinal),
                     type));
             }
         }
         AddCurrent();
-        if (entries.Count == 0)
-            throw new PeerBrowseSelectionException(
-                $"Selected directory '{root.Name}' contains no downloadable public files.");
-        return new DirectoryTransferPlan(PeerBrowsePath.Leaf(root.IdentityPath), entries);
 
         void AddCurrent()
         {
             if (currentId is null)
                 return;
-            string[] relative = StringComparer.Ordinal.Equals(identityPath, root.IdentityPath)
-                ? []
-                : identityPath![(root.IdentityPath.Length + 1)..].Split('\\');
-            entries.Add(new DirectoryTransferEntry(
+            addTarget(
                 new PeerFileTarget(
-                    new PeerFileIdentity(username, wireFilename!),
+                    new PeerFileIdentity(username, filename!),
                     size,
                     extension,
                     bitRate,
@@ -1060,7 +1037,7 @@ public sealed class PeerBrowseArtifactStore
                     sampleRate,
                     length,
                     attributes),
-                relative));
+                context);
         }
     }
 
@@ -1676,6 +1653,15 @@ public sealed class PeerBrowseArtifactStore
         PeerFileTarget Target,
         SelectionDirectory Directory,
         PeerBrowseEntryVisibility Visibility);
+
+    private sealed record SelectedFileContext(
+        SelectionDirectory Directory,
+        PeerBrowseEntryVisibility Visibility);
+
+    private readonly record struct PlanFileContext(
+        long RootId,
+        string RootPath,
+        string DirectoryPath);
 
     private static async Task<bool> HasBrowseResourceColumnAsync(
         SqliteConnection connection,
