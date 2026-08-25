@@ -7,7 +7,6 @@
   import type { UserBrowseDraft } from '../prototype/users';
   import { chatRuntimeForScenario } from '../prototype/chat';
   import GlobalSearch from './GlobalSearch.svelte';
-  import Icon from './Icon.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
   import Sidebar from './Sidebar.svelte';
 
@@ -85,16 +84,14 @@
       </div>
     </div>
 
-    <button
-      type="button"
-      class:active={activePage === 'settings'}
-      class="settings-nav"
-      aria-current={activePage === 'settings' ? 'page' : undefined}
-      onclick={() => onnavigate('settings')}
-    >
-      <span class="nav-icon" aria-hidden="true"><Icon name="settings" /></span>
-      <span class="nav-label">Settings</span>
-    </button>
+    <Sidebar
+      {activePage}
+      {downloadCount}
+      {uploadCount}
+      {unreadChats}
+      placement="secondary"
+      {onnavigate}
+    />
   </aside>
 
   <div class="workspace">

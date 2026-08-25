@@ -21,11 +21,14 @@
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
     aggregateGroupsForRecord,
+    buildGenericFileDownloadRequest,
     buildSearchResultProjectionRequest,
     requestSearchResultProjection,
     type AggregateSearchGroup,
     type AlbumFileResult,
     type AlbumSearchResult,
+    type GenericDirectoryResult,
+    type GenericFileResult,
     type ProjectedSearchResult,
     type SearchRecord,
     type SearchSort,
@@ -63,9 +66,11 @@
   let sizeDirection = $state<SizeSortDirection>('desc');
   let selected = $state<Set<string>>(new Set());
   let conditionsOpen = $state(false);
+  const JOB_HISTORY_PAGE_SIZE = 8;
+
   let resultPagesRequested = $state(1);
   let projectionRequestKey = '';
-  let historyLimit = $state(4);
+  let historyLimit = $state(JOB_HISTORY_PAGE_SIZE);
   let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
   let aggregateRepresentativeIds = $state<Record<string, string>>({});
   let selectedAggregateGroups = $state<Set<string>>(new Set());
@@ -75,11 +80,12 @@
   let activeRecord = $derived(searches.find((item) => item.id === activeSearchId) ?? null);
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
   let aggregateMode = $derived(isAggregateSearchMode(activeMode));
+  let genericMode = $derived(activeMode === 'generic');
   let listResourceState = $derived(resourceStateForScenario(scenarioId, 'search-list'));
 
   $effect(() => {
     scenarioId;
-    historyLimit = 4;
+    historyLimit = JOB_HISTORY_PAGE_SIZE;
     mutation = { phase: 'idle' };
     aggregateRepresentativeIds = {};
     selectedAggregateGroups = new Set();
@@ -185,6 +191,39 @@
 
   function selectedFileIdsForAlbum(album: AlbumSearchResult): Set<string> {
     return new Set(album.files.filter((file) => selected.has(selectedAlbumFileKey(album, file))).map((file) => file.id));
+  }
+
+  function selectedGenericFileKey(directory: GenericDirectoryResult, file: GenericFileResult): string {
+    return `generic:${directory.id}:${file.id}`;
+  }
+
+  function isGenericDirectoryFullySelected(directory: GenericDirectoryResult): boolean {
+    return directory.files.length > 0 && directory.files.every((file) => selected.has(selectedGenericFileKey(directory, file)));
+  }
+
+  function isGenericDirectoryPartiallySelected(directory: GenericDirectoryResult): boolean {
+    const count = directory.files.filter((file) => selected.has(selectedGenericFileKey(directory, file))).length;
+    return count > 0 && count < directory.files.length;
+  }
+
+  function selectedFileIdsForGenericDirectory(directory: GenericDirectoryResult): Set<string> {
+    return new Set(directory.files.filter((file) => selected.has(selectedGenericFileKey(directory, file))).map((file) => file.id));
+  }
+
+  function toggleGenericFiles(directory: GenericDirectoryResult, files: Array<{ id: string }>, checked: boolean): void {
+    const fileIds = new Set(files.map((file) => file.id));
+    const next = new Set(selected);
+    for (const file of directory.files) {
+      if (!fileIds.has(file.id)) continue;
+      const key = selectedGenericFileKey(directory, file);
+      if (checked) next.add(key);
+      else next.delete(key);
+    }
+    selected = next;
+  }
+
+  function toggleGenericDirectory(directory: GenericDirectoryResult, checked: boolean): void {
+    toggleGenericFiles(directory, directory.files, checked);
   }
   function indeterminate(node: HTMLInputElement, value: boolean) {
     node.indeterminate = value;
@@ -384,6 +423,15 @@
         requestedCount += 1;
         if (result.locked) lockedCount += 1;
       }
+    } else if (activeMode === 'generic') {
+      for (const result of received) {
+        if (result.kind !== 'generic-directory') continue;
+        for (const file of result.files) {
+          if (!selected.has(selectedGenericFileKey(result, file))) continue;
+          requestedCount += 1;
+          if (file.locked) lockedCount += 1;
+        }
+      }
     } else {
       for (const result of received) {
         if (result.kind !== 'album') continue;
@@ -403,11 +451,28 @@
       mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected ${aggregateMode ? 'option' : 'file'}${summary.lockedCount === 1 ? '' : 's'} locked.` };
       return;
     }
+    if (activeRecord && activeMode === 'generic') {
+      const files = currentResultProjection(activeRecord).items
+        .filter((result): result is GenericDirectoryResult => result.kind === 'generic-directory')
+        .flatMap((directory) => directory.files
+          .filter((file) => selected.has(selectedGenericFileKey(directory, file)) && !file.locked)
+          .map((file) => file.candidateRef));
+      const request = buildGenericFileDownloadRequest(files);
+      void request;
+    }
     const unit = aggregateMode ? 'selection' : 'file';
     mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} ${unit}${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
     mutation = summary.skippedCount
       ? { phase: 'partially-succeeded', label: `${summary.resolvablePublicCount} requested`, detail: `${summary.skippedCount} locked ${unit}${summary.skippedCount === 1 ? '' : 's'} skipped.` }
       : { phase: 'succeeded', label: `${summary.resolvablePublicCount} download${summary.resolvablePublicCount === 1 ? '' : 's'} requested` };
+  }
+
+  function changeSort(event: Event): void {
+    const next = (event.currentTarget as HTMLSelectElement).value as SearchSort;
+    sort = next;
+    if (!genericMode) return;
+    if (next === 'name') sizeDirection = 'asc';
+    else if (next === 'size' || next === 'count') sizeDirection = 'desc';
   }
 
   function tierGroups(groups: PeerGroup[], preferred: boolean): PeerGroup[] {
@@ -466,7 +531,7 @@
       {/each}
     </div>
     {#if searches.length > historyLimit}
-      <LoadMoreButton label="Load earlier jobs" onclick={() => (historyLimit = Math.min(searches.length, historyLimit + 4))} />
+      <LoadMoreButton label="Load earlier jobs" onclick={() => (historyLimit = Math.min(searches.length, historyLimit + JOB_HISTORY_PAGE_SIZE))} />
     {/if}
     {/if}
   {:else if activeRecord}
@@ -485,6 +550,7 @@
       </div>
       <div class="search-results-summary">
         <span class={`search-status-badge ${activeRecord.status}`}><i></i>{statusLabel(activeRecord.status)}</span>
+        {#if genericMode}<span>{projection?.totalCount ?? 0} directories</span>{/if}
         {#if aggregateMode}<span>{aggregateResults.length} groups</span>{/if}
         <span>{activeRecord.foundFiles} files</span>
         <span>{activeRecord.lockedFiles} locked</span>
@@ -510,7 +576,7 @@
 
     <div class="result-refine-wrap">
       <div class="result-refine-row">
-        <ResultFilterControl bind:value={filterText} placeholder="Filter results…" ariaLabel="Filter search results" />
+        <ResultFilterControl bind:value={filterText} placeholder={genericMode ? "Filter files or directories…" : "Filter results…"} ariaLabel="Filter search results" />
 
         {#if aggregateMode}
           {@const allAggregatesSelected = allAggregateSelected(activeRecord)}
@@ -528,14 +594,20 @@
 
           <div class="result-sort-control">
             <label for="result-sort">Sort</label>
-            <select id="result-sort" bind:value={sort}>
+            <select id="result-sort" value={sort} onchange={changeSort}>
               <option value="relevance">Relevance</option>
               <option value="speed">Upload speed</option>
-              <option value="queue">Queue depth</option>
-              <option value="size">Item size</option>
+              {#if genericMode}
+                <option value="size">Directory size</option>
+                <option value="count">File count</option>
+                <option value="name">Directory name</option>
+              {:else}
+                <option value="queue">Queue depth</option>
+                <option value="size">Item size</option>
+              {/if}
             </select>
-            {#if sort === 'size'}
-              <button type="button" class="size-direction-button" aria-label="Reverse item size sort" onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
+            {#if sort === 'size' || (genericMode && (sort === 'count' || sort === 'name'))}
+              <button type="button" class="size-direction-button" aria-label={`Reverse ${genericMode ? 'directory' : 'item'} sort`} onclick={() => (sizeDirection = sizeDirection === 'desc' ? 'asc' : 'desc')}>
                 <svg class:ascending={sizeDirection === 'asc'} viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M6 8l4-4 4 4" /></svg>
               </button>
             {/if}
@@ -586,10 +658,10 @@
       <!-- The resource-state notice above is the loading treatment until the first result arrives. -->
     {:else if allVisibleResults.length === 0}
       <div class="search-results-empty">
-        <strong>No matching results</strong>
+        <strong>{genericMode ? 'No matching directories' : 'No matching results'}</strong>
         <span>Adjust the text filter or result conditions.</span>
       </div>
-    {:else if sort === 'relevance'}
+    {:else if sort === 'relevance' && !genericMode}
       {@const preferredGroups = tierGroups(groups, true)}
       {@const otherGroups = tierGroups(groups, false)}
       {#if preferredGroups.length}
@@ -727,7 +799,7 @@
 {/snippet}
 
 {#snippet peerGroup(group: PeerGroup)}
-  <PeerItemGroup peer={group.peer} itemCount={group.items.length} {userActions}>
+  <PeerItemGroup peer={group.peer} itemCount={group.items.length} itemNoun={genericMode ? 'directory' : 'result'} itemNounPlural={genericMode ? 'directories' : 'results'} {userActions}>
     {#each group.items as result (result.id)}
       {#if result.kind === 'track'}
         <FileItemCard
@@ -739,6 +811,23 @@
           preferred={group.preferred && sort === 'relevance'}
           selectable
           onselect={(checked) => toggleSelection(selectedKey(result), checked)}
+        />
+      {:else if result.kind === 'generic-directory'}
+        <FolderItemCard
+          path={result.path}
+          sizeBytes={result.sizeBytes}
+          files={result.files}
+          totalFileCount={result.totalFileCount}
+          filesComplete
+          fileLayout="tree"
+          locked={result.locked}
+          selected={isGenericDirectoryFullySelected(result)}
+          partial={isGenericDirectoryPartiallySelected(result)}
+          selectable
+          selectedFileIds={selectedFileIdsForGenericDirectory(result)}
+          onselectall={(checked) => toggleGenericDirectory(result, checked)}
+          onselectfiles={(files, checked) => toggleGenericFiles(result, files, checked)}
+          onselectfile={(file, checked) => { const original = result.files.find((candidate) => candidate.id === file.id); if (original) toggleSelection(selectedGenericFileKey(result, original), checked); }}
         />
       {:else}
         <FolderItemCard

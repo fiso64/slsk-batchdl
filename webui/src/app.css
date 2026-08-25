@@ -133,13 +133,13 @@ input[type="checkbox"]:indeterminate {
 .brand-copy span { color: var(--muted); font-size: 0.75rem; }
 
 .sidebar-nav { display: grid; gap: 3px; }
-.sidebar-nav button, .settings-nav {
+.sidebar-nav button {
   width: 100%; height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 10px;
   border: 0; border-radius: 9px; background: transparent; color: var(--muted);
   text-align: left; font-size: 0.875rem; line-height: 1;
 }
-.sidebar-nav button:hover, .settings-nav:hover { background: var(--surface-subtle); color: var(--text); }
-.sidebar-nav button.active, .settings-nav.active { background: var(--accent-soft); color: var(--text); }
+.sidebar-nav button:hover { background: var(--surface-subtle); color: var(--text); }
+.sidebar-nav button.active { background: var(--accent-soft); color: var(--text); }
 .nav-icon { --app-icon-size: 20px; width: 20px; flex: 0 0 20px; display: grid; place-items: center; line-height: 1; }
 .nav-label { min-width: 0; white-space: nowrap; }
 .nav-count { margin-left: auto; color: var(--muted); font-size: 0.75rem; }
@@ -659,7 +659,7 @@ input[type="checkbox"]:indeterminate {
   .sidebar { padding-inline: 7px; }
   .brand { justify-content: center; padding-inline: 0; }
   .brand-copy, .nav-label, .nav-count:not(.unread), .prototype-tools, .connection-status { display: none; }
-  .sidebar-nav button, .settings-nav { justify-content: center; padding-inline: 0; }
+  .sidebar-nav button { justify-content: center; padding-inline: 0; }
   .nav-icon { width: auto; flex-basis: auto; }
   .nav-count.unread { position: absolute; margin: -20px 0 0 19px; }
   .topbar-inner { padding-inline: 12px; }
@@ -1558,6 +1558,89 @@ input[type="checkbox"]:indeterminate {
 .folder-file-row:last-child { border-bottom: 0; }
 .folder-file-row:hover { background: var(--surface-subtle); }
 .folder-file-row.locked { color: var(--warning); }
+.folder-subfolder-row {
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 24px minmax(210px, 1fr) minmax(160px, auto) 76px 52px;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-subtle) 70%, var(--surface));
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.folder-subfolder-row.clickable { cursor: pointer; }
+.folder-subfolder-row:hover { background: var(--surface-subtle); }
+.folder-subfolder-icon { display: grid; place-items: center; color: var(--muted); }
+.folder-subfolder-icon .app-icon { --app-icon-size: 15px; }
+.folder-subfolder-path {
+  grid-column: 2 / 4;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding-left: calc(var(--folder-tree-depth, 0) * 18px);
+}
+.folder-subfolder-path strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 0.74rem; font-weight: 600; }
+.folder-subfolder-path small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 0.6rem; }
+.folder-subfolder-count, .folder-subfolder-size { text-align: right; white-space: nowrap; }
+.folder-subfolder-count { grid-column: 4; }
+.folder-subfolder-size { grid-column: 5; color: var(--text); }
+/* Generic directory trees keep folder rows as compact as their file rows. */
+.folder-item-card.tree-layout > .folder-result-summary {
+  min-height: 42px;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.folder-item-card.tree-layout > .folder-result-summary .result-path-block { gap: 0; }
+.folder-item-card.tree-layout > .folder-result-summary .result-path-block > small { display: none; }
+.folder-item-card.tree-layout > .folder-result-summary .result-name-line > strong {
+  font-size: 0.76rem;
+  font-weight: 550;
+}
+.folder-item-card.tree-layout > .folder-result-summary .tree-root-path {
+  display: inline;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-item-card.tree-layout > .folder-result-summary .tree-root-path > span {
+  color: var(--muted);
+  font-weight: 450;
+}
+.folder-item-card.tree-layout > .folder-result-summary .tree-root-path > b {
+  color: var(--text);
+  font-weight: 550;
+}
+.folder-item-card.tree-layout > .folder-result-summary .folder-summary-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.folder-item-card.tree-layout > .folder-result-summary .folder-summary-stat strong {
+  font-size: 0.72rem;
+  font-weight: 550;
+}
+.folder-item-card.tree-layout > .folder-result-summary .folder-summary-stat small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.folder-item-card.tree-layout .folder-subfolder-row {
+  min-height: 42px;
+  padding: 8px 10px;
+  font-size: 0.72rem;
+}
+.folder-item-card.tree-layout .folder-subfolder-path {
+  display: block;
+}
+.folder-item-card.tree-layout .folder-subfolder-path strong {
+  font-size: 0.76rem;
+  font-weight: 550;
+}
+.folder-item-card.tree-layout .folder-subfolder-path small { display: none; }
+.folder-file-row.tree-row .folder-file-path { padding-left: calc(var(--folder-tree-depth, 0) * 18px); }
 .folder-file-path { min-width: 0; display: grid; gap: 5px; }
 .folder-file-name-line { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
 .folder-file-path strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 0.76rem; font-weight: 520; }
@@ -1580,6 +1663,10 @@ input[type="checkbox"]:indeterminate {
   .file-result-row { grid-template-columns: 24px minmax(220px, 1fr) 82px 60px; }
   .file-result-row .audio-detail { grid-column: 2; text-align: left; }
   .folder-file-row { grid-template-columns: 24px minmax(180px, 1fr) 72px 52px; }
+  .folder-subfolder-row { grid-template-columns: 24px minmax(180px, 1fr) 72px 52px; }
+  .folder-subfolder-path { grid-column: 2; }
+  .folder-subfolder-count { grid-column: 3; }
+  .folder-subfolder-size { grid-column: 4; }
   .folder-file-audio { grid-column: 2; text-align: left; }
 }
 
@@ -1605,6 +1692,10 @@ input[type="checkbox"]:indeterminate {
   .folder-result-summary .folder-summary-stat:first-of-type { display: none; }
   .folder-files-table { margin-left: 39px; }
   .folder-file-row { grid-template-columns: 22px minmax(0, 1fr) 58px; gap: 7px; }
+  .folder-subfolder-row { grid-template-columns: 22px minmax(0, 1fr) 58px; gap: 7px; }
+  .folder-subfolder-path { grid-column: 2; }
+  .folder-subfolder-count { display: none; }
+  .folder-subfolder-size { grid-column: 3; }
   .folder-file-audio { grid-column: 2; }
   .folder-file-size { display: none; }
 }

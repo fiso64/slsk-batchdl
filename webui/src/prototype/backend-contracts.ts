@@ -97,14 +97,45 @@ export interface ProposedPreferredResultDto {
   matchedPreferenceKeys: string[];
 }
 
-/** Proposed server-owned filtering, reprojection, ordering, and pagination. */
+/** Proposed surviving file inside a generic directory-tree projection. */
+export interface ProposedGenericDirectoryFileDto {
+  relativePath: string;
+  candidate: components['schemas']['FileCandidateDto'];
+}
+
+/** Proposed generic directory-tree unit for a raw SearchJob projection. */
+export interface ProposedGenericDirectoryResultDto {
+  ref: { username: string; directoryPath: string };
+  peer: components['schemas']['PeerInfoDto'];
+  directoryPath: string;
+  /** Surviving descendants, with paths relative to the projected root. */
+  files: ProposedGenericDirectoryFileDto[];
+  matchingFileCount: number;
+  matchingBytes: number;
+  /** Highest-ranked surviving child determines root-directory relevance. */
+  bestFile: components['schemas']['FileCandidateRefDto'];
+}
+
+/** Proposed server-owned filtering, reprojection, grouping, ordering, and pagination. */
 export interface ProposedSearchResultProjectionRequestDto {
   filterText: string | null;
   projection:
+    | { kind: 'generic-directory'; request: { includeFiles: true; includeDescendants: true } }
     | { kind: 'track'; request: components['schemas']['FileSearchProjectionRequestDto'] }
     | { kind: 'album'; request: components['schemas']['FolderSearchProjectionRequestDto'] };
   search: components['schemas']['SearchSettingsPatchDto'];
-  order: 'relevance' | 'upload-speed' | 'queue-depth' | 'item-size-ascending' | 'item-size-descending';
+  order:
+    | 'relevance'
+    | 'upload-speed'
+    | 'queue-depth'
+    | 'item-size-ascending'
+    | 'item-size-descending'
+    | 'directory-size-ascending'
+    | 'directory-size-descending'
+    | 'file-count-ascending'
+    | 'file-count-descending'
+    | 'directory-name-ascending'
+    | 'directory-name-descending';
   cursor: string | null;
   limit: number;
 }

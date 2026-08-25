@@ -46,7 +46,7 @@
 {#if conditions.common.maxBitDepth}
   <span class="search-condition-pill">bit depth ≤ {conditions.common.maxBitDepth}-bit<button type="button" onclick={() => (conditions.common.maxBitDepth = '')}>×</button></span>
 {/if}
-{#if conditions.common.strictArtist}
+{#if family !== 'generic' && conditions.common.strictArtist}
   <span class="search-condition-pill">strict artist<button type="button" onclick={() => (conditions.common.strictArtist = false)}>×</button></span>
 {/if}
 {#if conditions.common.rejectUnknownMetadata}
@@ -60,7 +60,7 @@
   {#if conditions.track.expectedLength}
     <span class="search-condition-pill">length {conditions.track.expectedLength}s ±{conditions.track.lengthTolerance || '0'}s<button type="button" onclick={() => (conditions.track.expectedLength = '')}>×</button></span>
   {/if}
-{:else}
+{:else if family === 'album'}
   {#if conditions.album.strictAlbum}
     <span class="search-condition-pill">strict album<button type="button" onclick={() => (conditions.album.strictAlbum = false)}>×</button></span>
   {/if}

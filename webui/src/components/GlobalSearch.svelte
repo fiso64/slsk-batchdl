@@ -62,6 +62,7 @@
   }
 
   const searchModeOptions = [
+    { value: 'generic', label: 'File Search', icon: 'generic' as const },
     { value: 'track', label: 'Track Search', icon: 'track' as const },
     { value: 'album', label: 'Album Search', icon: 'album' as const },
     { value: 'song-aggregate', label: 'Song Aggregate', icon: 'song-aggregate' as const },
@@ -74,12 +75,25 @@
   ];
 
   function setResultMode(nextMode: string): void {
-    if (nextMode !== 'track' && nextMode !== 'album' && nextMode !== 'song-aggregate' && nextMode !== 'album-aggregate') return;
+    if (nextMode !== 'generic' && nextMode !== 'track' && nextMode !== 'album' && nextMode !== 'song-aggregate' && nextMode !== 'album-aggregate') return;
+    const previousFamily = searchModeFamily(value.resultMode);
+    const nextFamily = searchModeFamily(nextMode);
+    if (previousFamily === 'generic' || nextFamily === 'generic') {
+      conditions = createPrototypeSearchConditions(nextMode);
+    }
+    if (nextMode === 'generic') {
+      const query = value.mode === 'split'
+        ? [value.artist.trim(), value.title.trim()].filter(Boolean).join(' ')
+        : value.query;
+      onchange({ ...value, mode: 'simple', resultMode: nextMode, query, artist: '', title: '' });
+      return;
+    }
     onchange({ ...value, resultMode: nextMode });
   }
 
   function contentPlaceholder(): string {
     switch (value.resultMode) {
+      case 'generic': return 'Search files…';
       case 'track': return 'Search songs…';
       case 'album': return 'Search albums…';
       case 'song-aggregate': return 'Search song aggregates…';
@@ -107,6 +121,11 @@
 
   function handleSimpleInput(event: Event): void {
     const query = (event.currentTarget as HTMLInputElement).value;
+    if (value.resultMode === 'generic') {
+      suppressAutoSplit = false;
+      setSimple(query);
+      return;
+    }
     const delimiter = findDelimiter(query);
     if (!delimiter) {
       suppressAutoSplit = false;
@@ -257,7 +276,9 @@
               onkeydown={submitOnEnter}
             />
             <span class="search-shortcut" aria-hidden="true">/</span>
-            <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
+            {#if value.resultMode !== 'generic'}
+              <button type="button" class="search-mode-button" onclick={manualSplit}>split</button>
+            {/if}
           </div>
         {:else}
           <div class="search-bar split has-mode-picker" onfocusin={() => (searchEngaged = true)}>

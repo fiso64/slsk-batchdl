@@ -1,1 +1,1 @@
-export type AppIconName = 'dashboard' | 'jobs' | 'search' | 'user' | 'folder' | 'file' | 'download' | 'upload' | 'chat' | 'settings' | 'trash' | 'check' | 'clock' | 'x' | 'more' | 'track' | 'album' | 'song-aggregate' | 'album-aggregate';
+export type AppIconName = 'dashboard' | 'jobs' | 'search' | 'user' | 'folder' | 'file' | 'download' | 'upload' | 'chat' | 'settings' | 'trash' | 'check' | 'clock' | 'x' | 'more' | 'generic' | 'track' | 'album' | 'song-aggregate' | 'album-aggregate';

@@ -8,11 +8,12 @@
     downloadCount: number;
     uploadCount: number;
     unreadChats: number;
+    placement?: 'primary' | 'secondary';
     onnavigate: (page: PageId) => void;
   }
 
-  let { activePage, downloadCount, uploadCount, unreadChats, onnavigate }: Props = $props();
-  let primaryItems = navigationItems.filter((item) => item.placement === 'primary');
+  let { activePage, downloadCount, uploadCount, unreadChats, placement = 'primary', onnavigate }: Props = $props();
+  let items = $derived(navigationItems.filter((item) => item.placement === placement));
 
   function countFor(id: PageId): number | null {
     if (id === 'downloads') return downloadCount;
@@ -27,11 +28,10 @@
     if (id === 'chat') return displayCountDefinitions.chatSidebar.label;
     return undefined;
   }
-
 </script>
 
-<nav class="sidebar-nav" aria-label="Primary navigation">
-  {#each primaryItems as item}
+<nav class="sidebar-nav" aria-label={placement === 'primary' ? 'Primary navigation' : 'Secondary navigation'}>
+  {#each items as item}
     {@const count = countFor(item.id)}
     <button
       type="button"
