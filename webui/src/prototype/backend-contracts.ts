@@ -101,8 +101,15 @@ export interface ProposedGenericDirectoryResultDto {
   files: ProposedGenericDirectoryFileDto[];
   matchingFileCount: number;
   matchingBytes: number;
+  /** True once the peer directory itself has been browsed rather than inferred only from search hits. */
+  isFullyRetrieved: boolean;
   /** Highest-ranked surviving child determines root-directory relevance. */
   bestFile: components['schemas']['FileCandidateRefDto'];
+}
+
+/** Proposed generalization of the album-only retrieve-folder follow-up. */
+export interface ProposedGenericDirectoryRetrievalRequestDto {
+  directory: { username: string; directoryPath: string };
 }
 
 /** Proposed server-owned filtering, reprojection, grouping, ordering, and pagination. */

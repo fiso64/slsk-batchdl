@@ -5,6 +5,7 @@ import type { AudioAttributes, ItemPeerInfo } from './items';
 import { basename, extension } from './items';
 import type {
   PrototypeDataLifetime,
+  ProposedGenericDirectoryRetrievalRequestDto,
   ProposedPreferredResultDto,
   ProposedSearchResultProjectionRequestDto,
 } from './backend-contracts';
@@ -63,8 +64,10 @@ export type { AudioAttributes };
 type FileCandidateRefDto = components['schemas']['FileCandidateRefDto'];
 type StartFileDownloadsRequestDto = components['schemas']['StartFileDownloadsRequestDto'];
 type AlbumFolderRefDto = components['schemas']['AlbumFolderRefDto'];
+type AlbumQueryDto = components['schemas']['AlbumQueryDto'];
 type AggregateTrackProjectionRequestDto = components['schemas']['AggregateTrackProjectionRequestDto'];
 type AggregateAlbumProjectionRequestDto = components['schemas']['AggregateAlbumProjectionRequestDto'];
+type RetrieveFolderRequestDto = components['schemas']['RetrieveFolderRequestDto'];
 
 export type AggregateSearchProjectionRequest =
   | { kind: 'song-aggregate'; request: AggregateTrackProjectionRequestDto }
@@ -73,6 +76,37 @@ export type AggregateSearchProjectionRequest =
 /** Generic File Search must opt into General so selected files become RemoteFile jobs. */
 export function buildGenericFileDownloadRequest(files: FileCandidateRefDto[]): StartFileDownloadsRequestDto {
   return { files, requestedMode: 2 };
+}
+
+/** Album Search and Album Aggregate both use the daemon's existing retrieve-folder follow-up. */
+export function buildAlbumFolderRetrievalRequest(album: AlbumSearchResult, albumQuery?: AlbumQueryDto): RetrieveFolderRequestDto {
+  return { folder: album.candidateRef, albumQuery: albumQuery ?? null };
+}
+
+/** Generic File Search needs the same core directory browse through a generalized public follow-up contract. */
+export function buildGenericDirectoryRetrievalRequest(directory: GenericDirectoryResult): ProposedGenericDirectoryRetrievalRequestDto {
+  return { directory: { username: directory.peer.username, directoryPath: directory.path } };
+}
+
+/**
+ * Mock daemon follow-up: a full-folder browse may discover ancillary files that
+ * the search response did not include. Search-result selection remains per file.
+ */
+export function retrieveAlbumFolderFixture(album: AlbumSearchResult): AlbumSearchResult {
+  if (album.retrievalState === 'retrieved') return album;
+  const extras: AlbumFileResult[] = [
+    { id: `${album.id}:retrieved:booklet`, relativePath: 'Scans/booklet.pdf', locked: album.locked, sizeBytes: 7_600_000 },
+    { id: `${album.id}:retrieved:log`, relativePath: 'rip.log', locked: album.locked, sizeBytes: 58_000 },
+  ];
+  const existing = new Set(album.files.map((file) => file.relativePath.toLowerCase()));
+  const newFiles = extras.filter((file) => !existing.has(file.relativePath.toLowerCase()));
+  return {
+    ...album,
+    retrievalState: 'retrieved',
+    files: [...album.files, ...newFiles],
+    totalFileCount: album.files.length + newFiles.length,
+    sizeBytes: album.sizeBytes + newFiles.reduce((total, file) => total + file.sizeBytes, 0),
+  };
 }
 
 export type PeerInfo = ItemPeerInfo & {
@@ -134,6 +168,7 @@ export interface GenericDirectoryResult {
   sizeBytes: number;
   files: GenericFileResult[];
   totalFileCount: number;
+  retrievalState: 'idle' | 'retrieving' | 'retrieved' | 'failed';
   preferred: boolean;
   preference: ProposedPreferredResultDto;
 }
@@ -209,12 +244,31 @@ function genericDirectory(
     sizeBytes,
     files: projectedFiles,
     totalFileCount: projectedFiles.length,
+    retrievalState: 'idle',
     preferred: false,
     preference: {
       candidateKey: `${peer.username}:${path}`,
       tier: 'other',
       matchedPreferenceKeys: [],
     },
+  };
+}
+
+/** Mock generalized directory retrieval: newly browsed files still pass the generic per-file projection. */
+export function retrieveGenericDirectoryFixture(directory: GenericDirectoryResult): GenericDirectoryResult {
+  if (directory.retrievalState === 'retrieved') return directory;
+  const extras: GenericFileResult[] = [
+    genericFile(90, 1, directory.peer, directory.path, 'Supplemental/Errata.pdf', 860_000, undefined, directory.locked),
+    genericFile(90, 2, directory.peer, directory.path, 'Supplemental/Quick reference.epub', 1_420_000, undefined, directory.locked),
+  ].map((file, index) => ({ ...file, id: `${directory.id}:retrieved:${index + 1}` }));
+  const existing = new Set(directory.files.map((file) => file.relativePath.toLowerCase()));
+  const newFiles = extras.filter((file) => !existing.has(file.relativePath.toLowerCase()));
+  return {
+    ...directory,
+    retrievalState: 'retrieved',
+    files: [...directory.files, ...newFiles],
+    totalFileCount: directory.files.length + newFiles.length,
+    sizeBytes: directory.sizeBytes + newFiles.reduce((total, file) => total + file.sizeBytes, 0),
   };
 }
 

@@ -33,9 +33,13 @@
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
     aggregateGroupsForRecord,
+    buildAlbumFolderRetrievalRequest,
+    buildGenericDirectoryRetrievalRequest,
     buildGenericFileDownloadRequest,
     buildSearchResultProjectionRequest,
     requestSearchResultProjection,
+    retrieveAlbumFolderFixture,
+    retrieveGenericDirectoryFixture,
     type AggregateSearchGroup,
     type AlbumFileResult,
     type AlbumSearchResult,
@@ -94,6 +98,8 @@
   let selectedAggregateGroups = $state<Set<string>>(new Set());
   let selectedAggregateFiles = $state<Set<string>>(new Set());
   let aggregateOptionsGroupId = $state<string | null>(null);
+  let albumRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: AlbumSearchResult }>>({});
+  let genericRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: GenericDirectoryResult }>>({});
   let newJobOpen = $state(false);
 
   let activeRecord = $derived(searches.find((item) => item.id === activeJobId) ?? null);
@@ -117,6 +123,8 @@
     selectedAggregateGroups = new Set();
     selectedAggregateFiles = new Set();
     aggregateOptionsGroupId = null;
+    albumRetrievalOverrides = {};
+    genericRetrievalOverrides = {};
   });
 
   $effect(() => {
@@ -329,15 +337,119 @@
   }
 
   function toggleAlbum(album: AlbumSearchResult, checked: boolean): void {
+    const current = albumWithRetrieval(album);
     const next = new Set(selected);
-    for (const file of album.files) {
-      const key = selectedAlbumFileKey(album, file);
+    for (const file of current.files) {
+      const key = selectedAlbumFileKey(current, file);
       if (checked) next.add(key);
       else next.delete(key);
     }
     selected = next;
   }
 
+  function albumWithRetrieval(album: AlbumSearchResult): AlbumSearchResult {
+    const override = albumRetrievalOverrides[album.id];
+    if (!override) return album;
+    if (override.result) return override.result;
+    return { ...album, retrievalState: override.state };
+  }
+
+  function albumContentsState(album: AlbumSearchResult): 'partial' | 'retrieving' | 'complete' | 'failed' {
+    const state = albumWithRetrieval(album).retrievalState;
+    if (state === 'retrieved') return 'complete';
+    if (state === 'retrieving') return 'retrieving';
+    if (state === 'failed') return 'failed';
+    return 'partial';
+  }
+
+  function loadFullAlbumFolder(album: AlbumSearchResult, group?: AggregateSearchGroup): void {
+    const current = albumWithRetrieval(album);
+    if (current.retrievalState === 'retrieving' || current.retrievalState === 'retrieved') return;
+
+    const request = buildAlbumFolderRetrievalRequest(
+      current,
+      group?.kind === 'album-aggregate'
+        ? { artist: group.artist, album: group.album, artistMaybeWrong: false }
+        : undefined,
+    );
+    void request;
+
+    const preserveNormalSelection = !group && isAlbumFullySelected(current);
+    const preserveAggregateSelection = Boolean(group)
+      && aggregateRepresentative(group!).id === current.id
+      && aggregateGroupSelected(group!);
+
+    albumRetrievalOverrides = {
+      ...albumRetrievalOverrides,
+      [current.id]: { state: 'retrieving' },
+    };
+
+    const finish = () => {
+      const retrieved = retrieveAlbumFolderFixture(current);
+      albumRetrievalOverrides = {
+        ...albumRetrievalOverrides,
+        [current.id]: { state: 'retrieved', result: retrieved },
+      };
+
+      if (preserveNormalSelection) {
+        const next = new Set(selected);
+        for (const file of retrieved.files) next.add(selectedAlbumFileKey(retrieved, file));
+        selected = next;
+      }
+      if (group && preserveAggregateSelection) {
+        const next = new Set(selectedAggregateFiles);
+        for (const file of retrieved.files) next.add(aggregateAlbumFileKey(group, file));
+        selectedAggregateFiles = next;
+      }
+    };
+
+    if (typeof window === 'undefined') finish();
+    else window.setTimeout(finish, 650);
+  }
+
+  function genericWithRetrieval(directory: GenericDirectoryResult): GenericDirectoryResult {
+    const override = genericRetrievalOverrides[directory.id];
+    if (!override) return directory;
+    if (override.result) return override.result;
+    return { ...directory, retrievalState: override.state };
+  }
+
+  function genericContentsState(directory: GenericDirectoryResult): 'partial' | 'retrieving' | 'complete' | 'failed' {
+    const state = genericWithRetrieval(directory).retrievalState;
+    if (state === 'retrieved') return 'complete';
+    if (state === 'retrieving') return 'retrieving';
+    if (state === 'failed') return 'failed';
+    return 'partial';
+  }
+
+  function loadFullGenericDirectory(directory: GenericDirectoryResult): void {
+    const current = genericWithRetrieval(directory);
+    if (current.retrievalState === 'retrieving' || current.retrievalState === 'retrieved') return;
+
+    const request = buildGenericDirectoryRetrievalRequest(current);
+    void request;
+    const preserveSelection = isGenericDirectoryFullySelected(current);
+    genericRetrievalOverrides = {
+      ...genericRetrievalOverrides,
+      [current.id]: { state: 'retrieving' },
+    };
+
+    const finish = () => {
+      const retrieved = retrieveGenericDirectoryFixture(current);
+      genericRetrievalOverrides = {
+        ...genericRetrievalOverrides,
+        [current.id]: { state: 'retrieved', result: retrieved },
+      };
+      if (preserveSelection) {
+        const next = new Set(selected);
+        for (const file of retrieved.files) next.add(selectedGenericFileKey(retrieved, file));
+        selected = next;
+      }
+    };
+
+    if (typeof window === 'undefined') finish();
+    else window.setTimeout(finish, 650);
+  }
 
   function aggregateGroups(record: SearchRecord): AggregateSearchGroup[] {
     return aggregateGroupsForRecord(record, filterText);
@@ -345,7 +457,8 @@
 
   function aggregateRepresentative(group: AggregateSearchGroup): TrackSearchResult | AlbumSearchResult {
     const selectedId = aggregateRepresentativeIds[group.id];
-    return group.options.find((option) => option.id === selectedId) ?? group.options[0]!;
+    const option = group.options.find((candidate) => candidate.id === selectedId) ?? group.options[0]!;
+    return option.kind === 'album' ? albumWithRetrieval(option) : option;
   }
 
   function aggregateAlbumFileKey(group: AggregateSearchGroup, file: AlbumFileResult): string {
@@ -484,7 +597,7 @@
         record.pagination.resultPageSize,
       ),
     );
-    items = [...page.items];
+    items = page.items.map((result) => result.kind === 'album' ? albumWithRetrieval(result) : result.kind === 'generic-directory' ? genericWithRetrieval(result) : result);
     for (let pageIndex = 1; pageIndex < resultPagesRequested && page.nextCursor; pageIndex += 1) {
       cursor = page.nextCursor;
       page = requestSearchResultProjection(
@@ -498,7 +611,7 @@
           record.pagination.resultPageSize,
         ),
       );
-      items.push(...page.items);
+      items.push(...page.items.map((result) => result.kind === 'album' ? albumWithRetrieval(result) : result.kind === 'generic-directory' ? genericWithRetrieval(result) : result));
     }
     return { ...page, items };
   }
@@ -832,17 +945,27 @@
         </header>
         <div class="aggregate-options-list">
           {#each optionGroup.options as option (option.id)}
-            <div class:current={aggregateRepresentative(optionGroup).id === option.id} class="aggregate-option">
+            {@const displayOption = option.kind === 'album' ? albumWithRetrieval(option) : option}
+            <div class:current={aggregateRepresentative(optionGroup).id === displayOption.id} class="aggregate-option">
               <div class="aggregate-option-toolbar">
-                {@render aggregatePeerSummary(option.peer)}
-                <button type="button" class="aggregate-use-option" onclick={() => chooseAggregateOption(optionGroup, option)}>Use this option</button>
+                {@render aggregatePeerSummary(displayOption.peer)}
+                <button type="button" class="aggregate-use-option" onclick={() => chooseAggregateOption(optionGroup, displayOption)}>Use this option</button>
               </div>
               <div class="aggregate-option-card-wrap">
-                <button type="button" class="aggregate-option-card-picker" aria-label={`Use ${option.path}`} onclick={() => chooseAggregateOption(optionGroup, option)}></button>
-                {#if option.kind === 'track'}
-                  <FileItemCard path={option.path} sizeBytes={option.sizeBytes} audio={option.audio} locked={option.locked} />
+                <button type="button" class="aggregate-option-card-picker" aria-label={`Use ${displayOption.path}`} onclick={() => chooseAggregateOption(optionGroup, displayOption)}></button>
+                {#if displayOption.kind === 'track'}
+                  <FileItemCard path={displayOption.path} sizeBytes={displayOption.sizeBytes} audio={displayOption.audio} locked={displayOption.locked} />
                 {:else}
-                  <FolderItemCard path={option.path} sizeBytes={option.sizeBytes} files={option.files} totalFileCount={option.totalFileCount} filesComplete locked={option.locked} />
+                  <FolderItemCard
+                    path={displayOption.path}
+                    sizeBytes={displayOption.sizeBytes}
+                    files={displayOption.files}
+                    totalFileCount={displayOption.totalFileCount}
+                    filesComplete
+                    contentsState={albumContentsState(displayOption)}
+                    locked={displayOption.locked}
+                    onloadfullcontents={() => loadFullAlbumFolder(displayOption, optionGroup)}
+                  />
                 {/if}
               </div>
             </div>
@@ -901,6 +1024,7 @@
         files={representative.files}
         totalFileCount={representative.totalFileCount}
         filesComplete
+        contentsState={albumContentsState(representative)}
         locked={representative.locked}
         selected={aggregateGroupSelected(group)}
         partial={aggregateGroupPartial(group)}
@@ -908,6 +1032,7 @@
         selectedFileIds={aggregateSelectedFileIds(group)}
         onselectall={(checked) => toggleAggregateGroup(group, checked)}
         onselectfile={(file, checked) => { const original = representative.files.find((candidate) => candidate.id === file.id); if (original) toggleAggregateAlbumFile(group, original, checked); }}
+        onloadfullcontents={() => loadFullAlbumFolder(representative, group)}
       />
     {/if}
   </section>
@@ -935,6 +1060,7 @@
           totalFileCount={result.totalFileCount}
           filesComplete
           fileLayout="tree"
+          contentsState={genericContentsState(result)}
           locked={result.locked}
           selected={isGenericDirectoryFullySelected(result)}
           partial={isGenericDirectoryPartiallySelected(result)}
@@ -943,6 +1069,7 @@
           onselectall={(checked) => toggleGenericDirectory(result, checked)}
           onselectfiles={(files, checked) => toggleGenericFiles(result, files, checked)}
           onselectfile={(file, checked) => { const original = result.files.find((candidate) => candidate.id === file.id); if (original) toggleSelection(selectedGenericFileKey(result, original), checked); }}
+          onloadfullcontents={() => loadFullGenericDirectory(result)}
         />
       {:else}
         <FolderItemCard
@@ -951,7 +1078,7 @@
           files={result.files}
           totalFileCount={result.totalFileCount}
           filesComplete
-          dataStateLabel={result.retrievalState === 'retrieving' ? 'Retrieving folder…' : result.retrievalState === 'failed' ? 'Folder retrieval failed' : undefined}
+          contentsState={albumContentsState(result)}
           locked={result.locked}
           selected={isAlbumFullySelected(result)}
           partial={isAlbumPartiallySelected(result)}
@@ -960,6 +1087,7 @@
           selectedFileIds={selectedFileIdsForAlbum(result)}
           onselectall={(checked) => toggleAlbum(result, checked)}
           onselectfile={(file, checked) => { const original = result.files.find((candidate) => candidate.id === file.id); if (original) toggleSelection(selectedAlbumFileKey(result, original), checked); }}
+          onloadfullcontents={() => loadFullAlbumFolder(result)}
         />
       {/if}
     {/each}

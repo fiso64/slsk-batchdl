@@ -13,6 +13,7 @@
     filesComplete?: boolean;
     fileLayout?: 'flat' | 'tree';
     dataStateLabel?: string;
+    contentsState?: 'partial' | 'retrieving' | 'complete' | 'failed';
     locked?: boolean;
     selected?: boolean;
     partial?: boolean;
@@ -25,6 +26,7 @@
     onselectall?: (selected: boolean) => void;
     onselectfile?: (file: FolderItemFile, selected: boolean) => void;
     onselectfiles?: (files: FolderItemFile[], selected: boolean) => void;
+    onloadfullcontents?: () => void;
   }
 
   let {
@@ -35,6 +37,7 @@
     filesComplete = true,
     fileLayout = 'flat',
     dataStateLabel,
+    contentsState,
     locked = false,
     selected = false,
     partial = false,
@@ -47,6 +50,7 @@
     onselectall,
     onselectfile,
     onselectfiles,
+    onloadfullcontents,
   }: Props = $props();
 
   interface FolderTreeFile {
@@ -165,6 +169,31 @@
   }
 </script>
 
+
+{#snippet folderIdentity()}
+  <div class="item-path-block result-path-block" title={fileLayout === 'tree' ? path : undefined}>
+    <div class="item-name-line result-name-line">
+      {#if fileLayout === 'tree'}
+        <strong class="tree-root-path"><span>{parentPath(path)}</span><b>{basename(path)}</b></strong>
+      {:else}
+        <strong>{basename(path)}</strong>
+      {/if}
+      {#if locked}<span class="locked-badge">Locked</span>{/if}
+      {#if transfer}<span class={`transfer-state ${transfer.tone ?? ''} ${transferDirectionClass}`}>{transfer.state}</span>{/if}
+    </div>
+    <small>{path}</small>
+    {#if dataStateLabel}
+      <div class="item-data-state"><span>{dataStateLabel}</span>{#if !filesComplete}<small>{files.length} of {totalFileCount} files loaded</small>{/if}</div>
+    {/if}
+    {#if transfer}
+      <div class="transfer-subline">
+        {#if transfer.created}<span>{transfer.created}</span>{/if}
+        {#if transfer.detail}<span>{transfer.detail}</span>{/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <article
   class="item-card result-card folder-result-block folder-item-card"
   class:locked
@@ -175,45 +204,56 @@
   class:tree-layout={fileLayout === 'tree'}
   class:transfer-card={Boolean(transfer)}
 >
-  <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class:nonselectable={!selectable} class="folder-item-summary folder-result-summary">
+  <div
+    class="folder-item-summary folder-result-summary"
+    class:has-contents-control={Boolean(contentsState)}
+    class:has-card-action={Boolean(actions)}
+  >
     {#if selectable}
-      <input
-        type="checkbox"
-        checked={selected}
-        aria-label={`Select all files in ${basename(path)}`}
-        use:indeterminate={partial}
-        onchange={(event) => onselectall?.((event.currentTarget as HTMLInputElement).checked)}
-      />
+      <label class="folder-summary-select-target clickable">
+        <input
+          type="checkbox"
+          checked={selected}
+          aria-label={`Select all files in ${basename(path)}`}
+          use:indeterminate={partial}
+          onchange={(event) => onselectall?.((event.currentTarget as HTMLInputElement).checked)}
+        />
+        {@render folderIdentity()}
+      </label>
+    {:else}
+      <div class="folder-summary-select-target nonselectable">
+        {@render folderIdentity()}
+      </div>
     {/if}
 
-    <div class="item-path-block result-path-block" title={fileLayout === 'tree' ? path : undefined}>
-      <div class="item-name-line result-name-line">
-        {#if fileLayout === 'tree'}
-          <strong class="tree-root-path"><span>{parentPath(path)}</span><b>{basename(path)}</b></strong>
-        {:else}
-          <strong>{basename(path)}</strong>
-        {/if}
-        {#if locked}<span class="locked-badge">Locked</span>{/if}
-        {#if transfer}<span class={`transfer-state ${transfer.tone ?? ''} ${transferDirectionClass}`}>{transfer.state}</span>{/if}
-      </div>
-      <small>{path}</small>
-      {#if dataStateLabel}
-        <div class="item-data-state"><span>{dataStateLabel}</span>{#if !filesComplete}<small>{files.length} of {totalFileCount} files loaded</small>{/if}</div>
-      {/if}
-      {#if transfer}
-        <div class="transfer-subline">
-          {#if transfer.created}<span>{transfer.created}</span>{/if}
-          {#if transfer.detail}<span>{transfer.detail}</span>{/if}
-        </div>
-      {/if}
-    </div>
-
     <div class="folder-summary-stat folder-file-count"><strong>{filesComplete ? totalFileCount : `${files.length}/${totalFileCount}`}</strong><small>files</small></div>
+
+    {#if contentsState}
+      <div class="folder-contents-control-slot">
+        {#if contentsState === 'partial' || contentsState === 'failed'}
+          <button
+            type="button"
+            class:failed={contentsState === 'failed'}
+            class="folder-load-contents-button"
+            aria-label={contentsState === 'failed' ? 'Retry loading all files in this folder' : 'Load all files in this folder'}
+            title={contentsState === 'failed'
+              ? 'Folder retrieval failed. Try again.'
+              : 'Load all files in this folder in case the search omitted any.'}
+            onclick={() => onloadfullcontents?.()}
+          >+</button>
+        {:else if contentsState === 'retrieving'}
+          <span class="folder-contents-state retrieving" aria-label="Loading all files in this folder" title="Loading all files in this folder…"><i></i></span>
+        {:else}
+          <span class="folder-contents-state complete" aria-label="Full folder loaded" title="Full folder loaded"><Icon name="check" /></span>
+        {/if}
+      </div>
+    {/if}
+
     <div class="item-detail result-detail item-size-detail"><strong>{formatBytes(sizeBytes)}</strong></div>
     {#if actions}
       <div class="item-card-action">{@render actions()}</div>
     {/if}
-  </svelte:element>
+  </div>
 
   {#if transfer}
     <div class={`transfer-card-footer folder-transfer-footer ${transfer.tone ?? ''} ${transferDirectionClass}`}>
