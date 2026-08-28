@@ -12,16 +12,25 @@
     type SearchConfigTab as ConfigTab,
   } from '../prototype/search-config-schema';
   import type { SearchModeFamily, SearchResultMode } from '../prototype/search';
-  import { searchModeFamily } from '../prototype/search';
+  import { isAggregateSearchMode, searchModeFamily } from '../prototype/search';
+  import DownloadOptionsPanel from './DownloadOptionsPanel.svelte';
+  import { createPrototypeDownloadOptions, type DownloadOptionCapabilities, type PrototypeDownloadOptions } from '../prototype/download-options';
   import SearchFormatControl from './SearchFormatControl.svelte';
+
+
+  type PanelTab = ConfigTab | 'download';
 
   interface Props {
     mode: SearchResultMode;
     conditions: PrototypeSearchConditions;
     title?: string;
-    initialTab?: ConfigTab;
+    initialTab?: PanelTab;
+    section?: PanelTab;
+    embedded?: boolean;
     onclose?: () => void;
     configurationFamily?: SearchModeFamily | 'mixed';
+    downloadOptions?: PrototypeDownloadOptions;
+    downloadCapabilities?: DownloadOptionCapabilities;
   }
 
   let {
@@ -29,24 +38,32 @@
     conditions = $bindable(),
     title = 'Search configuration',
     initialTab = 'conditions',
+    section,
+    embedded = false,
     onclose,
     configurationFamily,
+    downloadOptions = $bindable(),
+    downloadCapabilities,
   }: Props = $props();
 
   let family = $derived(configurationFamily ?? searchModeFamily(mode));
   let genericMode = $derived(family === 'generic');
-  let activeTab = $state<ConfigTab>('conditions');
-  $effect(() => { activeTab = initialTab; });
+  let aggregateMode = $derived(isAggregateSearchMode(mode));
+  let hasDownloadTab = $derived(Boolean(downloadOptions && downloadCapabilities));
+  let activeTab = $state<PanelTab>('conditions');
+  $effect(() => { activeTab = section ?? initialTab; });
   let requiredTrackTitle = $state('');
 
   function clearActiveTab(): void {
     if (activeTab === 'conditions') {
       const ranking = conditions.ranking;
-      conditions = createEmptySearchConditions();
+      Object.assign(conditions, createEmptySearchConditions());
       conditions.ranking = ranking;
       requiredTrackTitle = '';
-    } else {
+    } else if (activeTab === 'ranking') {
       conditions.ranking = createEmptySearchRanking();
+    } else if (downloadOptions) {
+      Object.assign(downloadOptions, createPrototypeDownloadOptions());
     }
   }
 
@@ -62,16 +79,21 @@
   }
 </script>
 
-<header class="search-config-header">
-  <strong>{title}</strong>
-  <nav class="search-config-tabs" aria-label="Search configuration sections">
-    <button type="button" class:active={activeTab === 'conditions'} aria-current={activeTab === 'conditions' ? 'page' : undefined} onclick={() => (activeTab = 'conditions')}>Filtering</button>
-    <button type="button" class:active={activeTab === 'ranking'} aria-current={activeTab === 'ranking' ? 'page' : undefined} onclick={() => (activeTab = 'ranking')}>Ranking</button>
-  </nav>
-  {#if onclose}
-    <button type="button" class="search-config-close" aria-label="Close search configuration" onclick={onclose}>×</button>
-  {/if}
-</header>
+{#if !embedded}
+  <header class="search-config-header">
+    <strong>{title}</strong>
+    <nav class="search-config-tabs" aria-label="Search configuration sections">
+      <button type="button" class:active={activeTab === 'conditions'} aria-current={activeTab === 'conditions' ? 'page' : undefined} onclick={() => (activeTab = 'conditions')}>Filtering</button>
+      <button type="button" class:active={activeTab === 'ranking'} aria-current={activeTab === 'ranking' ? 'page' : undefined} onclick={() => (activeTab = 'ranking')}>Ranking</button>
+      {#if hasDownloadTab}
+        <button type="button" class:active={activeTab === 'download'} aria-current={activeTab === 'download' ? 'page' : undefined} onclick={() => (activeTab = 'download')}>Download</button>
+      {/if}
+    </nav>
+    {#if onclose}
+      <button type="button" class="search-config-close" aria-label="Close search configuration" onclick={onclose}>×</button>
+    {/if}
+  </header>
+{/if}
 
 {#if activeTab === 'conditions'}
   <div class="search-config-columns">
@@ -201,6 +223,17 @@
         </section>
       {/if}
 
+      {#if aggregateMode}
+        <section class="search-config-section">
+          <h3>Aggregate grouping</h3>
+          <div class="config-grid">
+            <label><span>Minimum sharers</span><input type="number" min="1" step="1" bind:value={conditions.aggregate.minShares} /></label>
+            <label><span>Grouping tolerance <small>sec</small></span><input type="number" min="0" step="1" bind:value={conditions.aggregate.lengthTolerance} /></label>
+          </div>
+          <p class="download-option-note">Groups must have at least this many distinct sharers; tolerance controls near-length grouping.</p>
+        </section>
+      {/if}
+
       <section class="search-config-section">
         <h3>Peers</h3>
         <div class="config-stack">
@@ -210,7 +243,7 @@
       </section>
     </div>
   </div>
-{:else}
+{:else if activeTab === 'ranking'}
   <div class="search-config-columns ranking-config-columns">
     <div>
       <section class="search-config-section">
@@ -295,8 +328,10 @@
       <p class="ranking-note">Ranking preferences change result order only; they never filter results out.</p>
     </div>
   </div>
+{:else if downloadOptions && downloadCapabilities}
+  <DownloadOptionsPanel bind:value={downloadOptions} capabilities={downloadCapabilities} separators={!embedded} />
 {/if}
 
-<footer class="search-config-footer">
-  <button type="button" onclick={clearActiveTab}>{activeTab === 'conditions' ? 'Clear filtering' : 'Clear ranking'}</button>
+<footer class:embedded class="search-config-footer">
+  <button type="button" onclick={clearActiveTab}>{activeTab === 'conditions' ? 'Clear filtering' : activeTab === 'ranking' ? 'Clear ranking' : 'Reset download options'}</button>
 </footer>

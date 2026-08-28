@@ -6,11 +6,13 @@
   import MutationStatus from '../components/MutationStatus.svelte';
   import ResultFilterControl from '../components/ResultFilterControl.svelte';
   import SelectionToolbar from '../components/SelectionToolbar.svelte';
+  import DownloadOptionsPanel from '../components/DownloadOptionsPanel.svelte';
   import FileItemCard from '../components/items/FileItemCard.svelte';
   import FolderItemCard from '../components/items/FolderItemCard.svelte';
   import PeerItemGroup from '../components/items/PeerItemGroup.svelte';
   import NewJobComposer from '../components/jobs/NewJobComposer.svelte';
   import JobCompactRow from '../components/jobs/JobCompactRow.svelte';
+  import JobTypeBadge from '../components/jobs/JobTypeBadge.svelte';
   import AutomaticJobDetail from '../components/jobs/AutomaticJobDetail.svelte';
   import SearchConfigPanel from '../components/SearchConfigPanel.svelte';
   import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
@@ -18,6 +20,7 @@
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
+  import { buildSubmissionOptions, createPrototypeDownloadOptions, downloadOptionsCustomized, type DownloadOptionCapabilities } from '../prototype/download-options';
   import type { SearchDraft } from '../prototype/search';
   import { isAggregateSearchMode, searchModeFamily, searchModeLabel } from '../prototype/search';
   import type { UserLinkActions } from '../prototype/navigation';
@@ -33,9 +36,11 @@
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
   import {
     aggregateGroupsForRecord,
+    buildAlbumFolderDownloadRequest,
     buildAlbumFolderRetrievalRequest,
     buildGenericDirectoryRetrievalRequest,
     buildGenericFileDownloadRequest,
+    buildTrackFileDownloadRequest,
     buildSearchResultProjectionRequest,
     requestSearchResultProjection,
     retrieveAlbumFolderFixture,
@@ -101,6 +106,8 @@
   let albumRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: AlbumSearchResult }>>({});
   let genericRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: GenericDirectoryResult }>>({});
   let newJobOpen = $state(false);
+  let downloadOptionsOpen = $state(false);
+  let downloadOptions = $state(createPrototypeDownloadOptions());
 
   let activeRecord = $derived(searches.find((item) => item.id === activeJobId) ?? null);
   let activeAutomaticJob = $derived(automaticJobs.find((item) => item.id === activeJobId) ?? null);
@@ -125,6 +132,8 @@
     aggregateOptionsGroupId = null;
     albumRetrievalOverrides = {};
     genericRetrievalOverrides = {};
+    downloadOptionsOpen = false;
+    downloadOptions = createPrototypeDownloadOptions();
   });
 
   $effect(() => {
@@ -150,6 +159,8 @@
     aggregateRepresentativeIds = {};
     aggregateOptionsGroupId = null;
     conditionsOpen = false;
+    downloadOptionsOpen = false;
+    downloadOptions = createPrototypeDownloadOptions();
     resultPagesRequested = 1;
   }
 
@@ -580,7 +591,7 @@
   function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return;
     if (aggregateOptionsGroupId) aggregateOptionsGroupId = null;
-    else if (newJobOpen) newJobOpen = false;
+    else if (downloadOptionsOpen) downloadOptionsOpen = false;
   }
 
   function currentResultProjection(record: SearchRecord) {
@@ -614,6 +625,14 @@
       items.push(...page.items.map((result) => result.kind === 'album' ? albumWithRetrieval(result) : result.kind === 'generic-directory' ? genericWithRetrieval(result) : result));
     }
     return { ...page, items };
+  }
+
+  function searchDownloadCapabilities(): DownloadOptionCapabilities {
+    return {
+      albumFolderEnrichment: activeMode === 'album' || activeMode === 'album-aggregate',
+      playlistOutput: false,
+      nameFormat: true,
+    };
   }
 
   function selectionSummary(): PrototypeDownloadSelectionSummary {
@@ -651,6 +670,7 @@
 
   function requestSelectedDownload(): void {
     const summary = selectionSummary();
+    const options = buildSubmissionOptions(downloadOptions, searchDownloadCapabilities());
     if (!summary.resolvablePublicCount) {
       mutation = { phase: 'rejected', label: 'Nothing downloadable', detail: `${summary.lockedCount} selected ${aggregateMode ? 'option' : 'file'}${summary.lockedCount === 1 ? '' : 's'} locked.` };
       return;
@@ -661,9 +681,50 @@
         .flatMap((directory) => directory.files
           .filter((file) => selected.has(selectedGenericFileKey(directory, file)) && !file.locked)
           .map((file) => file.candidateRef));
-      const request = buildGenericFileDownloadRequest(files);
+      const request = buildGenericFileDownloadRequest(files, options);
       void request;
+    } else if (activeRecord && activeMode === 'track') {
+      const files = currentResultProjection(activeRecord).items
+        .filter((result): result is TrackSearchResult => result.kind === 'track')
+        .filter((result) => selected.has(selectedKey(result)) && !result.locked)
+        .map((result) => result.candidateRef);
+      const request = buildTrackFileDownloadRequest(files, options);
+      void request;
+    } else if (activeRecord && activeMode === 'album') {
+      const requests = currentResultProjection(activeRecord).items
+        .filter((result): result is AlbumSearchResult => result.kind === 'album')
+        .map((album) => {
+          const current = albumWithRetrieval(album);
+          const selectedIds = selectedFileIdsForAlbum(current);
+          return selectedIds.size ? buildAlbumFolderDownloadRequest(current, selectedIds, options) : null;
+        })
+        .filter(Boolean);
+      void requests;
+    } else if (activeRecord && activeMode === 'song-aggregate') {
+      const files = aggregateGroups(activeRecord)
+        .filter((group) => selectedAggregateGroups.has(group.id))
+        .map((group) => aggregateRepresentative(group))
+        .filter((result): result is TrackSearchResult => result.kind === 'track' && !result.locked)
+        .map((result) => result.candidateRef);
+      const request = buildTrackFileDownloadRequest(files, options);
+      void request;
+    } else if (activeRecord && activeMode === 'album-aggregate') {
+      const requests = aggregateGroups(activeRecord).map((group) => {
+        if (group.kind !== 'album-aggregate') return null;
+        const representative = aggregateRepresentative(group);
+        if (representative.kind !== 'album') return null;
+        const selectedIds = aggregateSelectedFileIds(group);
+        if (!selectedIds.size) return null;
+        return buildAlbumFolderDownloadRequest(
+          representative,
+          selectedIds,
+          options,
+          { artist: group.artist, album: group.album, artistMaybeWrong: false },
+        );
+      }).filter(Boolean);
+      void requests;
     }
+    downloadOptionsOpen = false;
     const unit = aggregateMode ? 'selection' : 'file';
     mutation = { phase: 'pending', label: `Requesting ${summary.resolvablePublicCount} ${unit}${summary.resolvablePublicCount === 1 ? '' : 's'}…` };
     mutation = summary.skippedCount
@@ -711,8 +772,7 @@
               <span class="search-history-query">{record.displayQuery}</span>
               <span class={`search-status-badge ${record.status}`}><i></i>{statusLabel(record.status)}</span>
               <span class="search-history-context">
-                <Icon name={record.draft.resultMode} class="search-kind-icon" />
-                <span>{searchModeLabel(record.draft.resultMode)}</span>
+                <JobTypeBadge icon={record.draft.resultMode} label={searchModeLabel(record.draft.resultMode)} tone="search" />
                 <span class="stat-separator">·</span>
                 <span>{record.when}</span>
               </span>
@@ -738,6 +798,7 @@
             allJobs={automaticJobs}
             titleOverride={entry.root.title}
             contextOverride={entry.root.kind === 'extract' ? `${extractSourceLabel(entry.root.payload.sourceType)} import` : undefined}
+            typeToneOverride={entry.root.kind === 'extract' ? 'import' : undefined}
             whenOverride={entry.root.when}
             onclick={() => onopenjob(entry.job)}
             onaction={() => handleAutomaticJobAction(entry.job)}
@@ -795,6 +856,11 @@
       <div class="result-refine-row">
         <ResultFilterControl bind:value={filterText} placeholder={genericMode ? "Filter files or directories…" : "Filter results…"} ariaLabel="Filter search results" />
 
+        <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
+          Filtering
+        </button>
+
         {#if aggregateMode}
           {@const allAggregatesSelected = allAggregateSelected(activeRecord)}
           <button
@@ -804,11 +870,6 @@
             onclick={() => setAllAggregate(activeRecord, !allAggregatesSelected)}
           >{allAggregatesSelected ? 'Deselect all' : 'Select all'}</button>
         {:else}
-          <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
-            Conditions
-          </button>
-
           <div class="result-sort-control">
             <label for="result-sort">Sort</label>
             <select id="result-sort" value={sort} onchange={changeSort}>
@@ -832,13 +893,13 @@
         {/if}
       </div>
 
-      {#if !aggregateMode && hasAppliedConditions(activeMode, activeRecord.conditions)}
+      {#if hasAppliedConditions(activeMode, activeRecord.conditions)}
         <div class="result-condition-pills">
           <SearchConditionPills mode={activeMode} bind:conditions={activeRecord.conditions} />
         </div>
       {/if}
 
-      {#if !aggregateMode && conditionsOpen}
+      {#if conditionsOpen}
         <button type="button" class="results-config-backdrop" aria-label="Close search configuration" onclick={() => (conditionsOpen = false)}></button>
         <section class="search-config-popover results-config-popover" aria-label="Result search configuration">
           <SearchConfigPanel mode={activeMode} bind:conditions={activeRecord.conditions} title="Search configuration" initialTab="conditions" onclose={() => (conditionsOpen = false)} />
@@ -852,9 +913,20 @@
       floatingLabel={`Download ${selectedSummary.resolvablePublicCount}`}
       detail={selectedSummary.lockedCount ? `${selectedSummary.requestedCount} selected · ${selectedSummary.lockedCount} locked` : undefined}
       actionDisabled={selectedSummary.resolvablePublicCount === 0}
-      onclear={() => { selected = new Set(); selectedAggregateGroups = new Set(); selectedAggregateFiles = new Set(); }}
+      optionsOpen={downloadOptionsOpen}
+      optionsCustomized={downloadOptionsCustomized(downloadOptions, searchDownloadCapabilities())}
+      onclear={() => { selected = new Set(); selectedAggregateGroups = new Set(); selectedAggregateFiles = new Set(); downloadOptionsOpen = false; }}
+      onoptions={() => (downloadOptionsOpen = !downloadOptionsOpen)}
       onaction={requestSelectedDownload}
     />
+
+    {#if selectedSummary.requestedCount && downloadOptionsOpen}
+      <button type="button" class="floating-options-backdrop" aria-label="Close download options" onclick={() => (downloadOptionsOpen = false)}></button>
+      <section class="floating-download-options-popover" aria-label="Download options">
+        <header><strong>Download options</strong><button type="button" aria-label="Close download options" onclick={() => (downloadOptionsOpen = false)}>×</button></header>
+        <DownloadOptionsPanel bind:value={downloadOptions} capabilities={searchDownloadCapabilities()} compact />
+      </section>
+    {/if}
 
     {#if aggregateMode}
       {#if aggregateResults.length === 0 && resultState.phase === 'loading'}
@@ -939,7 +1011,7 @@
         <header class="aggregate-options-header">
           <div>
             <strong>{optionGroup.itemName}</strong>
-            <small>{optionGroup.artist ? `${optionGroup.artist} · ` : ''}{optionGroup.shareCount} shares · {optionGroup.options.length} options</small>
+            <small>{optionGroup.artist ? `${optionGroup.artist} · ` : ''}{optionGroup.shareCount} {optionGroup.shareCount === 1 ? 'share' : 'shares'} · {optionGroup.options.length} {optionGroup.options.length === 1 ? 'option' : 'options'}</small>
           </div>
           <button type="button" class="aggregate-options-close" aria-label="Close options" onclick={() => (aggregateOptionsGroupId = null)}>×</button>
         </header>
@@ -1004,7 +1076,7 @@
         {@render aggregatePeerSummary(representative.peer)}
       </div>
       <div class="aggregate-result-stats">
-        <button type="button" class="aggregate-options-button" onclick={() => (aggregateOptionsGroupId = group.id)}>{group.options.length} options</button>
+        <button type="button" class="aggregate-options-button" onclick={() => (aggregateOptionsGroupId = group.id)}>{group.options.length} {group.options.length === 1 ? 'option' : 'options'}</button>
       </div>
     </header>
     {#if representative.kind === 'track'}

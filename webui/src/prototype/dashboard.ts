@@ -1,5 +1,13 @@
-export const dashboardRangeIds = ['24h', '7d', '30d', '90d'] as const;
+export const dashboardRangeIds = ['24h', '7d', '30d', '90d', '1y', 'all'] as const;
 export type DashboardRangeId = (typeof dashboardRangeIds)[number];
+export const dashboardRangeLabels: Record<DashboardRangeId, string> = {
+  '24h': '24h',
+  '7d': '7d',
+  '30d': '30d',
+  '90d': '90d',
+  '1y': '1y',
+  all: 'All',
+};
 
 export interface DashboardPeerRow {
   peer: string;
@@ -248,7 +256,109 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
     ], 18),
     summary: { downloaded: '238 GB', downloadFiles: 2908, uploaded: '621 GB', uploadFiles: 14834, shareRatio: '2.61', ratioDelta: '+0.39' },
   },
+  '1y': {
+    label: 'Last 1 year',
+    chartLabels: ['Sep', 'Nov', 'Jan', 'Mar', 'May', 'Jul', 'Now'],
+    downloadMbps: [3.2, 4.6, 4.0, 5.4, 4.8, 6.2, 6.8, 5.9, 7.3, 6.7, 7.8, 7.1, 6.5, 7.5, 6.9],
+    uploadMbps: [4.1, 4.5, 5.0, 5.4, 5.9, 5.6, 6.5, 6.9, 6.6, 7.2, 7.8, 7.5, 8.0, 7.7, 8.4],
+    downloadUsers: top20Users([
+      { peer: 'cassetteculture', transferred: '3.84 TB', files: 51822 },
+      { peer: 'nightshift', transferred: '3.46 TB', files: 46718 },
+      { peer: 'silvermachine', transferred: '2.91 TB', files: 38107 },
+      { peer: 'tape_loop', transferred: '2.57 TB', files: 33614 },
+      { peer: 'cloudarchive', transferred: '2.28 TB', files: 30195 },
+    ], 2100, 61, 27800, 810),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '5.32 TB', files: 129844 },
+      { peer: 'neonrain', transferred: '4.71 TB', files: 114382 },
+      { peer: 'bitrot', transferred: '4.08 TB', files: 99874 },
+      { peer: 'deepcatalog', transferred: '3.62 TB', files: 88416 },
+      { peer: 'orbiting', transferred: '3.31 TB', files: 80691 },
+    ], 2980, 83, 74200, 2050),
+    content: top20Content([
+      { folder: 'Boards of Canada / Geogaddi', downloads: 8927, peers: 742 },
+      { folder: 'Aphex Twin / SAW 85–92', downloads: 8144, peers: 681 },
+      { folder: 'Burial / Untrue', downloads: 7231, peers: 612 },
+      { folder: 'Autechre / Tri Repetae', downloads: 6918, peers: 584 },
+      { folder: 'Biosphere / Substrata', downloads: 5327, peers: 491 },
+    ], 5010, 185, 468),
+    errors: top20Errors([
+      { error: 'Peer disconnected', count: 1084, lastSeen: '31m ago' },
+      { error: 'Transfer timed out', count: 564, lastSeen: '4h ago' },
+      { error: 'Connection failed', count: 331, lastSeen: '1d ago' },
+      { error: 'File unavailable', count: 207, lastSeen: '3d ago' },
+      { error: 'File no longer shared', count: 91, lastSeen: '9d ago' },
+    ], 42),
+    summary: { downloaded: '1.12 TB', downloadFiles: 13820, uploaded: '2.78 TB', uploadFiles: 67422, shareRatio: '2.48', ratioDelta: '+0.31' },
+  },
+  all: {
+    label: 'All retained history',
+    chartLabels: ['2024', 'Late 2024', '2025', 'Late 2025', 'Early 2026', 'Summer', 'Now'],
+    downloadMbps: [2.9, 3.8, 4.5, 4.1, 5.2, 5.8, 6.1, 5.6, 6.9, 6.4, 7.2, 6.8, 7.5, 7.0, 7.4],
+    uploadMbps: [3.6, 4.2, 4.8, 5.1, 5.5, 6.0, 6.4, 6.1, 7.0, 7.4, 7.1, 7.8, 8.1, 7.7, 8.3],
+    downloadUsers: top20Users([
+      { peer: 'cassetteculture', transferred: '7.92 TB', files: 107384 },
+      { peer: 'nightshift', transferred: '7.16 TB', files: 95820 },
+      { peer: 'silvermachine', transferred: '6.08 TB', files: 79931 },
+      { peer: 'tape_loop', transferred: '5.44 TB', files: 71302 },
+      { peer: 'cloudarchive', transferred: '4.83 TB', files: 63844 },
+    ], 4490, 127, 59800, 1670),
+    uploadUsers: top20Users([
+      { peer: 'silvermachine', transferred: '11.4 TB', files: 276412 },
+      { peer: 'neonrain', transferred: '9.87 TB', files: 241109 },
+      { peer: 'bitrot', transferred: '8.91 TB', files: 218735 },
+      { peer: 'deepcatalog', transferred: '7.86 TB', files: 193006 },
+      { peer: 'orbiting', transferred: '7.19 TB', files: 176248 },
+    ], 6510, 177, 161000, 4320),
+    content: top20Content([
+      { folder: 'Boards of Canada / Geogaddi', downloads: 19382, peers: 1417 },
+      { folder: 'Aphex Twin / SAW 85–92', downloads: 17631, peers: 1296 },
+      { folder: 'Burial / Untrue', downloads: 15844, peers: 1182 },
+      { folder: 'Autechre / Tri Repetae', downloads: 14920, peers: 1104 },
+      { folder: 'Biosphere / Substrata', downloads: 11832, peers: 947 },
+    ], 11050, 390, 902),
+    errors: top20Errors([
+      { error: 'Peer disconnected', count: 2614, lastSeen: '31m ago' },
+      { error: 'Transfer timed out', count: 1372, lastSeen: '4h ago' },
+      { error: 'Connection failed', count: 806, lastSeen: '1d ago' },
+      { error: 'File unavailable', count: 514, lastSeen: '3d ago' },
+      { error: 'File no longer shared', count: 226, lastSeen: '9d ago' },
+    ], 78),
+    summary: { downloaded: '2.46 TB', downloadFiles: 30418, uploaded: '6.91 TB', uploadFiles: 164307, shareRatio: '2.81', ratioDelta: '+0.00' },
+  },
 };
+
+function emptyDashboardRange(range: DashboardRangeId): DashboardRangeData {
+  const source = dashboardData[range];
+  return {
+    label: source.label,
+    chartLabels: [...source.chartLabels],
+    downloadMbps: source.downloadMbps.map(() => 0),
+    uploadMbps: source.uploadMbps.map(() => 0),
+    downloadUsers: [],
+    uploadUsers: [],
+    content: [],
+    errors: [],
+    summary: {
+      downloaded: '0 B',
+      downloadFiles: 0,
+      uploaded: '0 B',
+      uploadFiles: 0,
+      shareRatio: '—',
+      ratioDelta: '+0.00',
+    },
+  };
+}
+
+export const emptyDashboardData = {
+  '24h': emptyDashboardRange('24h'),
+  '7d': emptyDashboardRange('7d'),
+  '30d': emptyDashboardRange('30d'),
+  '90d': emptyDashboardRange('90d'),
+  '1y': emptyDashboardRange('1y'),
+  all: emptyDashboardRange('all'),
+} satisfies Record<DashboardRangeId, DashboardRangeData>;
+
 
 // Contract semantics for the future single dashboard aggregate endpoint. These
 // values are intentionally explicit even though the current visual fixtures are mocked.
@@ -259,6 +369,8 @@ const dashboardRangeContracts: Record<DashboardRangeId, ProposedDashboardAnalyti
   '7d': { startUtc: '2026-07-31T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 43_200, comparisonStartUtc: '2026-07-24T08:15:00.000Z', comparisonEndUtc: '2026-07-31T08:15:00.000Z', partialRetention: false },
   '30d': { startUtc: '2026-07-08T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 172_800, comparisonStartUtc: '2026-06-08T08:15:00.000Z', comparisonEndUtc: '2026-07-08T08:15:00.000Z', partialRetention: false },
   '90d': { startUtc: '2026-05-09T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 518_400, comparisonStartUtc: '2026-02-08T08:15:00.000Z', comparisonEndUtc: '2026-05-09T08:15:00.000Z', partialRetention: false },
+  '1y': { startUtc: '2025-08-07T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 2_102_400, comparisonStartUtc: '2024-08-07T08:15:00.000Z', comparisonEndUtc: '2025-08-07T08:15:00.000Z', partialRetention: false },
+  all: { startUtc: '2024-01-01T00:00:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 5_184_000, comparisonStartUtc: null, comparisonEndUtc: null, partialRetention: false },
 };
 
 function decimalBytes(label: string): number {
@@ -267,8 +379,14 @@ function decimalBytes(label: string): number {
   return Number(match[1]) * (match[2]!.toUpperCase() === 'TB' ? 1_000_000_000_000 : 1_000_000_000);
 }
 
-export function dashboardContractFor(range: DashboardRangeId, partialRetention = false): ProposedDashboardAnalyticsDto {
-  const data = dashboardData[range];
+export function dashboardContractFor(
+  range: DashboardRangeId,
+  options: { data?: DashboardRangeData; partialRetention?: boolean } = {},
+): ProposedDashboardAnalyticsDto {
+  const data = options.data ?? dashboardData[range];
+  const partialRetention = options.partialRetention ?? false;
+  const shareRatio = Number(data.summary.shareRatio);
+  const ratioDelta = Number(data.summary.ratioDelta);
   return {
     contract: 'proposed-dashboard-analytics-v1',
     range: { ...dashboardRangeContracts[range], partialRetention },
@@ -288,7 +406,10 @@ export function dashboardContractFor(range: DashboardRangeId, partialRetention =
     summary: {
       downloadedBytes: decimalBytes(data.summary.downloaded), downloadedFiles: data.summary.downloadFiles,
       uploadedBytes: decimalBytes(data.summary.uploaded), uploadedFiles: data.summary.uploadFiles,
-      shareRatio: Number(data.summary.shareRatio), comparisonShareRatio: Math.max(0, Number(data.summary.shareRatio) - Number(data.summary.ratioDelta)),
+      shareRatio: Number.isFinite(shareRatio) ? shareRatio : null,
+      comparisonShareRatio: dashboardRangeContracts[range].comparisonStartUtc && Number.isFinite(shareRatio) && Number.isFinite(ratioDelta)
+        ? Math.max(0, shareRatio - ratioDelta)
+        : null,
     },
   };
 }

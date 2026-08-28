@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PrototypeSearchConditions } from '../prototype/search-config';
   import type { SearchResultMode } from '../prototype/search';
-  import { searchModeFamily } from '../prototype/search';
+  import { isAggregateSearchMode, searchModeFamily } from '../prototype/search';
 
   interface Props {
     mode: SearchResultMode;
@@ -19,11 +19,22 @@
 
   let { mode, conditions = $bindable() }: Props = $props();
   let family = $derived(searchModeFamily(mode));
+  let aggregateMode = $derived(isAggregateSearchMode(mode));
 
   function removeFormat(format: string): void {
     conditions.common.formats = conditions.common.formats.filter((item) => item !== format);
   }
 </script>
+
+
+{#if aggregateMode && conditions.aggregate.minShares}
+  <span class="search-condition-pill">≥{conditions.aggregate.minShares} sharers<button type="button" aria-label="Remove minimum sharers filter" onclick={() => (conditions.aggregate.minShares = '')}>×</button></span>
+{/if}
+{#if aggregateMode}
+  {#if conditions.aggregate.lengthTolerance && conditions.aggregate.lengthTolerance !== '3'}
+    <span class="search-condition-pill">group ±{conditions.aggregate.lengthTolerance}s<button type="button" aria-label="Reset aggregate grouping tolerance" onclick={() => (conditions.aggregate.lengthTolerance = '3')}>×</button></span>
+  {/if}
+{/if}
 
 {#each conditions.common.formats as format}
   <span class="search-condition-pill">format: {format}<button type="button" aria-label={`Remove ${format} format`} onclick={() => removeFormat(format)}>×</button></span>

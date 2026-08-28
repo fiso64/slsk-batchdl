@@ -3,7 +3,7 @@
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
-  import { dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
+  import { dashboardContractFor, dashboardData, emptyDashboardData, dashboardRangeIds, dashboardRangeLabels, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
   import { resourceStateForScenario } from '../prototype/resource-state';
 
   interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
@@ -11,9 +11,12 @@
 
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'downloads' | 'uploads' | 'content' | 'errors'>('downloads');
-  let data = $derived(dashboardData[range]);
+  let data = $derived(scenario.id === 'empty' ? emptyDashboardData[range] : dashboardData[range]);
   let resourceState = $derived(resourceStateForScenario(scenario.id, 'dashboard'));
-  let contract = $derived(dashboardContractFor(range, scenario.id === 'stress'));
+  let contract = $derived(dashboardContractFor(range, { data, partialRetention: scenario.id === 'stress' }));
+  let hasDownloadHistory = $derived(data.downloadMbps.some((value) => value > 0) || data.summary.downloadFiles > 0);
+  let hasUploadHistory = $derived(data.uploadMbps.some((value) => value > 0) || data.summary.uploadFiles > 0);
+  let hasHistoricalTransfers = $derived(hasDownloadHistory || hasUploadHistory);
 
   let activeTransfers = $derived(scenario.snapshot.transfers.filter((transfer) => !transfer.status.isTerminal));
   let activeDownloads = $derived(activeTransfers.filter((transfer) => transfer.identity.direction === 'download'));
@@ -22,6 +25,12 @@
   let uploadRate = $derived(activeUploads.reduce((sum, transfer) => sum + Number(transfer.progress.bytesPerSecond ?? 0), 0));
   let queuedTransfers = $derived(activeTransfers.filter((transfer) => transfer.status.state === 'Queued').length);
   let distinctPeers = $derived(new Set(scenario.snapshot.transfers.map((transfer) => transfer.identity.username)).size);
+  let shareRatioSamples = $derived(data.uploadMbps.map((upload, index) => upload / Math.max(data.downloadMbps[index] ?? 0, 0.1)));
+
+  function metricBarHeight(values: number[], value: number): number {
+    const maximum = Math.max(1, ...values);
+    return Math.round(14 + (value / maximum) * 86);
+  }
 
   function formatRate(bytesPerSecond: number): string {
     if (bytesPerSecond <= 0) return '0 B/s';
@@ -67,7 +76,7 @@
       <span>History range</span>
       <div class="range-buttons">
         {#each dashboardRangeIds as id}
-          <button type="button" class:active={range === id} onclick={() => (range = id)}>{id}</button>
+          <button type="button" class:active={range === id} onclick={() => (range = id)}>{dashboardRangeLabels[id]}</button>
         {/each}
       </div>
     </div>
@@ -77,49 +86,55 @@
 
   <div class="dashboard-metrics">
     <article class="dashboard-metric-card">
-      <div class="metric-label download"><span aria-hidden="true">↓</span> Download</div>
-      <strong>{formatRate(downloadRate)}</strong>
-      <small>{activeDownloads.length} active · {queuedTransfers} queued transfer rows</small>
+      <div class="metric-label download"><span aria-hidden="true">↓</span> Downloaded</div>
+      <strong>{data.summary.downloaded}</strong>
+      <small>{data.summary.downloadFiles} files in range</small>
       <div class="metric-sparkline" aria-hidden="true">
-        {#each data.downloadMbps.slice(-8) as point}
-          <i style={`height:${Math.max(12, point * 9)}%`}></i>
-        {/each}
+        {#if hasDownloadHistory}
+          {#each data.downloadMbps.slice(-8) as point}
+            <i style={`height:${metricBarHeight(data.downloadMbps, point)}%`}></i>
+          {/each}
+        {/if}
       </div>
     </article>
 
     <article class="dashboard-metric-card">
-      <div class="metric-label upload"><span aria-hidden="true">↑</span> Upload</div>
-      <strong>{formatRate(uploadRate)}</strong>
-      <small>{activeUploads.length} active upload{activeUploads.length === 1 ? '' : 's'}</small>
+      <div class="metric-label upload"><span aria-hidden="true">↑</span> Uploaded</div>
+      <strong>{data.summary.uploaded}</strong>
+      <small>{data.summary.uploadFiles} files in range</small>
       <div class="metric-sparkline upload" aria-hidden="true">
-        {#each data.uploadMbps.slice(-8) as point}
-          <i style={`height:${Math.max(12, point * 11)}%`}></i>
-        {/each}
+        {#if hasUploadHistory}
+          {#each data.uploadMbps.slice(-8) as point}
+            <i style={`height:${metricBarHeight(data.uploadMbps, point)}%`}></i>
+          {/each}
+        {/if}
       </div>
     </article>
 
     <article class="dashboard-metric-card">
-      <div class="metric-label"><span aria-hidden="true">⇵</span> Transfers</div>
-      <strong>{activeTransfers.length} active</strong>
-      <small>{queuedTransfers} queued transfer rows · {scenario.snapshot.transfers.filter((transfer) => transfer.status.isTerminal).length} terminal rows in snapshot</small>
-      <div class="transfer-mini-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="metric-label"><span aria-hidden="true">⇵</span> Share ratio</div>
+      <strong>{data.summary.shareRatio}</strong>
+      <small>{hasHistoricalTransfers ? (range === 'all' ? 'All retained history' : `${data.summary.ratioDelta} vs previous range`) : '—'}</small>
+      <div class="metric-sparkline ratio" aria-hidden="true">
+        {#if hasHistoricalTransfers}
+          {#each shareRatioSamples.slice(-8) as point}
+            <i style={`height:${metricBarHeight(shareRatioSamples, point)}%`}></i>
+          {/each}
+        {/if}
+      </div>
     </article>
 
     <article class="dashboard-metric-card">
-      <div class="metric-label"><span aria-hidden="true">◎</span> Peers</div>
+      <div class="metric-label"><span aria-hidden="true">◎</span> Distinct peers</div>
       <strong>{distinctPeers}</strong>
       <small>visible in current snapshot</small>
-      <div class="dashboard-connection"><span class:offline={scenario.soulseek === 'disconnected'}></span>{scenario.soulseek === 'ready' ? 'Soulseek connected' : scenario.soulseek}</div>
     </article>
   </div>
 
   <section class="dashboard-panel activity-panel" data-bucket-seconds={contract.range.bucketSeconds}>
     <div class="dashboard-panel-heading">
-      <div>
-        <h2>Transfer activity</h2>
-        <p>Bandwidth over time · {data.label}</p>
-      </div>
-      <span class="panel-context">download + upload</span>
+      <h2>Transfer activity</h2>
+      <span class="panel-context">{data.label}</span>
     </div>
 
     <div class="activity-chart">
@@ -137,10 +152,12 @@
             <line x1="506" y1="0" x2="506" y2="150" />
             <line x1="633" y1="0" x2="633" y2="150" />
           </g>
-          <path class="chart-area download" d={areaPath(data.downloadMbps)} />
-          <path class="chart-line download" d={chartPath(data.downloadMbps)} />
-          <path class="chart-area upload" d={areaPath(data.uploadMbps)} />
-          <path class="chart-line upload" d={chartPath(data.uploadMbps)} />
+          {#if hasHistoricalTransfers}
+            <path class="chart-area download" d={areaPath(data.downloadMbps)} />
+            <path class="chart-line download" d={chartPath(data.downloadMbps)} />
+            <path class="chart-area upload" d={areaPath(data.uploadMbps)} />
+            <path class="chart-line upload" d={chartPath(data.uploadMbps)} />
+          {/if}
         </svg>
         <div class="chart-x-labels">
           {#each data.chartLabels as label}<span>{label}</span>{/each}
@@ -186,19 +203,19 @@
     </section>
 
     <div class="dashboard-bottom-grid">
-      <section class="dashboard-panel transfer-summary-panel">
+      <section class="dashboard-panel current-transfer-panel">
         <div class="dashboard-panel-heading compact">
-          <div><h2>Transfer summary</h2><p>{data.label}</p></div>
+          <h2>Transfer rates</h2>
         </div>
         <div class="summary-metrics">
-          <div><span>Downloaded</span><strong>{data.summary.downloaded}</strong><small>{data.summary.downloadFiles} files</small></div>
-          <div><span>Uploaded</span><strong>{data.summary.uploaded}</strong><small>{data.summary.uploadFiles} files</small></div>
-          <div><span>Share ratio</span><strong>{data.summary.shareRatio}</strong><small>{data.summary.ratioDelta} over range</small></div>
+          <div><span>Download</span><strong class="rate-value download"><i aria-hidden="true">↓</i>{formatRate(downloadRate)}</strong><small>{activeDownloads.length} active download{activeDownloads.length === 1 ? '' : 's'}</small></div>
+          <div><span>Upload</span><strong class="rate-value upload"><i aria-hidden="true">↑</i>{formatRate(uploadRate)}</strong><small>{activeUploads.length} active upload{activeUploads.length === 1 ? '' : 's'}</small></div>
+          <div><span>Active transfers</span><strong>{activeTransfers.length}</strong><small>{queuedTransfers} queued transfer row{queuedTransfers === 1 ? '' : 's'}</small></div>
         </div>
       </section>
 
       <section class="dashboard-panel health-panel">
-        <div class="dashboard-panel-heading compact"><div><h2>Daemon health</h2><p>Current runtime state</p></div><span class:offline={scenario.connection === 'offline'} class="health-badge"><i></i>{scenario.connection === 'connected' ? 'Healthy' : 'Offline'}</span></div>
+        <div class="dashboard-panel-heading compact"><h2>Daemon health</h2><span class:offline={scenario.connection === 'offline'} class="health-badge"><i></i>{scenario.connection === 'connected' ? 'Healthy' : 'Offline'}</span></div>
         <div class="health-list">
           <div><span>Soulseek</span><strong>{scenario.soulseek}</strong></div>
           <div><span>Daemon</span><strong>{scenario.connection}</strong></div>

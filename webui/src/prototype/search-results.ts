@@ -63,6 +63,7 @@ export type { AudioAttributes };
 
 type FileCandidateRefDto = components['schemas']['FileCandidateRefDto'];
 type StartFileDownloadsRequestDto = components['schemas']['StartFileDownloadsRequestDto'];
+type StartFolderDownloadRequestDto = components['schemas']['StartFolderDownloadRequestDto'];
 type AlbumFolderRefDto = components['schemas']['AlbumFolderRefDto'];
 type AlbumQueryDto = components['schemas']['AlbumQueryDto'];
 type AggregateTrackProjectionRequestDto = components['schemas']['AggregateTrackProjectionRequestDto'];
@@ -74,8 +75,42 @@ export type AggregateSearchProjectionRequest =
   | { kind: 'album-aggregate'; request: AggregateAlbumProjectionRequestDto };
 
 /** Generic File Search must opt into General so selected files become RemoteFile jobs. */
-export function buildGenericFileDownloadRequest(files: FileCandidateRefDto[]): StartFileDownloadsRequestDto {
-  return { files, requestedMode: 2 };
+export function buildGenericFileDownloadRequest(
+  files: FileCandidateRefDto[],
+  options?: components['schemas']['SubmissionOptionsDto'],
+): StartFileDownloadsRequestDto {
+  return { files, requestedMode: 2, options: options ?? null };
+}
+
+export function buildTrackFileDownloadRequest(
+  files: FileCandidateRefDto[],
+  options?: components['schemas']['SubmissionOptionsDto'],
+): StartFileDownloadsRequestDto {
+  return { files, requestedMode: 0, options: options ?? null };
+}
+
+export function buildAlbumFolderDownloadRequest(
+  album: AlbumSearchResult,
+  selectedFileIds: Set<string>,
+  options?: components['schemas']['SubmissionOptionsDto'],
+  albumQuery?: AlbumQueryDto,
+): StartFolderDownloadRequestDto {
+  const selectedFiles = album.files.filter((file) => selectedFileIds.has(file.id));
+  const wholeFolder = selectedFiles.length === album.files.length;
+  return {
+    folder: album.candidateRef,
+    options: options ?? null,
+    albumQuery: albumQuery ?? null,
+    selection: wholeFolder ? null : {
+      files: selectedFiles.map((file) => ({
+        username: album.peer.username,
+        filename: `${album.path.replace(/[\/]+$/, '')}/${file.relativePath.replace(/^[\/]+/, '')}`,
+      })),
+      exactFiles: true,
+      skipTrackCountVerification: false,
+    },
+    requestedMode: 1,
+  };
 }
 
 /** Album Search and Album Aggregate both use the daemon's existing retrieve-folder follow-up. */
@@ -487,6 +522,12 @@ export const songAggregateGroups: SongAggregateGroup[] = [
       aggregateTrackOption(3, 3, cloudarchive, 'Fusion/Casiopea/Galactic Funk.mp3', 14_900_000, { bitrateKbps: 320, sampleRateHz: 44_100, lengthSeconds: 384 }),
     ],
   },
+  {
+    kind: 'song-aggregate', id: prototypeUuid(0x59000000, 4), artist: 'Casiopea', title: 'Swallow', itemName: 'Swallow', shareCount: 1,
+    options: [
+      aggregateTrackOption(4, 1, cloudarchive, 'Fusion/Casiopea/Eyes of the Mind/08 - Swallow.flac', 44_600_000, { bitrateKbps: 944, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 271 }),
+    ],
+  },
 ];
 
 export const albumAggregateGroups: AlbumAggregateGroup[] = [
@@ -524,6 +565,12 @@ export const albumAggregateGroups: AlbumAggregateGroup[] = [
       aggregateAlbumOption(4, 2, tapeLoop, 'Casiopea/Super Flight', ['Take Me', 'Sailing Alone', 'Olion', 'Magic Ray'], 'flac'),
     ],
   },
+  {
+    kind: 'album-aggregate', id: prototypeUuid(0x5a000000, 5), artist: 'Casiopea', album: 'Cross Point', itemName: 'Cross Point', shareCount: 1,
+    options: [
+      aggregateAlbumOption(5, 1, silvermachine, 'lossless/Casiopea/1981 - Cross Point', ['Smile Again', 'Swallow', 'A Sparkling Day', 'Galactic Funk'], 'hires'),
+    ],
+  },
 ];
 
 export function buildAggregateSearchProjectionRequest(
@@ -552,7 +599,9 @@ export function aggregateGroupsForRecord(record: SearchRecord, filterText = ''):
   const projection = buildAggregateSearchProjectionRequest(record, false);
   const source: AggregateSearchGroup[] = projection.kind === 'album-aggregate' ? albumAggregateGroups : songAggregateGroups;
   const query = filterText.trim().toLowerCase();
+  const minShares = Math.max(1, Number(record.conditions.aggregate.minShares || 1));
   return source
+    .filter((group) => group.shareCount >= minShares)
     .filter((group) => !query || `${group.artist} ${group.itemName} ${group.options.map((option) => option.path).join(' ')}`.toLowerCase().includes(query))
     .sort((a, b) => b.shareCount - a.shareCount);
 }
@@ -902,6 +951,16 @@ function conditionsFor(mode: SearchResultMode, variant: 'default' | 'simple' | '
   return conditions;
 }
 
+function aggregateGroupCountForConditions(
+  mode: SearchResultMode,
+  conditions: PrototypeSearchConditions,
+): number | undefined {
+  const source = mode === 'album-aggregate' ? albumAggregateGroups : mode === 'song-aggregate' ? songAggregateGroups : null;
+  if (!source) return undefined;
+  const minShares = Math.max(1, Number(conditions.aggregate.minShares || 1));
+  return source.filter((group) => group.shareCount >= minShares).length;
+}
+
 function makeRecord(
   index: number,
   draft: SearchDraft,
@@ -930,7 +989,7 @@ function makeRecord(
     foundFiles,
     lockedFiles,
     distinctPeers,
-    aggregateGroupCount: draft.resultMode === 'album-aggregate' ? albumAggregateGroups.length : draft.resultMode === 'song-aggregate' ? songAggregateGroups.length : undefined,
+    aggregateGroupCount: aggregateGroupCountForConditions(draft.resultMode, conditions),
     when,
     conditions: cloneSearchConditions(conditions),
     submittedConditions: immutableSubmittedConditions(conditions),
@@ -985,7 +1044,7 @@ export function createSearchRecord(draft: SearchDraft, conditions: PrototypeSear
   const submission = buildSearchSubmission(draft, conditions);
   const family = searchModeFamily(draft.resultMode);
   const aggregate = isAggregateSearchMode(draft.resultMode);
-  const aggregateGroupCount = draft.resultMode === 'album-aggregate' ? albumAggregateGroups.length : draft.resultMode === 'song-aggregate' ? songAggregateGroups.length : undefined;
+  const aggregateGroupCount = aggregateGroupCountForConditions(draft.resultMode, conditions);
   return {
     id: prototypeUuid(0x50000000, createdSearchSequence),
     workflowId: prototypeUuid(0x50010000, createdSearchSequence),

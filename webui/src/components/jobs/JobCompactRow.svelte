@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
+  import JobTypeBadge, { type JobTypeBadgeTone } from './JobTypeBadge.svelte';
   import { formatBytes } from '../../prototype/items';
   import {
     effectiveJobProgress,
@@ -22,6 +23,7 @@
     titleOverride?: string;
     contextOverride?: string;
     whenOverride?: string;
+    typeToneOverride?: JobTypeBadgeTone;
   }
 
   let {
@@ -33,6 +35,7 @@
     titleOverride,
     contextOverride,
     whenOverride,
+    typeToneOverride,
   }: Props = $props();
   let jobSet = $derived(allJobs.length ? allJobs : [job]);
   let displayStatus = $derived(effectiveJobStatus(job, jobSet));
@@ -44,6 +47,11 @@
     if (contextOverride) return contextOverride;
     if (job.kind === 'extract') return `${extractSourceLabel(job.payload.sourceType)} import`;
     return jobKindLabel(job.kind);
+  }
+
+  function typeTone(): JobTypeBadgeTone {
+    if (typeToneOverride) return typeToneOverride;
+    return job.kind === 'extract' ? 'import' : 'automatic';
   }
 
   function stats(): string[] {
@@ -114,8 +122,7 @@
       <span class="search-history-query">{titleOverride ?? job.title}</span>
       <span class={`search-status-badge ${jobStatusClass(displayStatus)}`}><i></i>{jobStatusLabel(displayStatus)}</span>
       <span class="search-history-context">
-        <span class="automatic-history-icon"><Icon name={jobKindIcon(job.kind)} /></span>
-        <span>{contextLabel()}</span>
+        <JobTypeBadge icon={jobKindIcon(job.kind)} label={contextLabel()} tone={typeTone()} />
         <span class="stat-separator">·</span>
         <span>{whenOverride ?? job.when}</span>
       </span>

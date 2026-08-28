@@ -63,6 +63,10 @@ export interface PrototypeSearchConditions {
   common: CommonSearchConditions;
   track: TrackSearchConditions;
   album: AlbumSearchConditions;
+  aggregate: {
+    minShares: string;
+    lengthTolerance: string;
+  };
   ranking: SearchRankingPreferences;
 }
 
@@ -74,6 +78,11 @@ export function createPrototypeSearchConditions(mode: SearchResultMode = 'album'
   const config = createEmptySearchConditions();
   // Generic File Search deliberately starts neutral: it is a raw SearchJob and
   // must not inherit Sockseek's audio/song-oriented preference defaults.
+  if (mode === 'song-aggregate' || mode === 'album-aggregate') {
+    config.aggregate.minShares = '2';
+    config.aggregate.lengthTolerance = '3';
+  }
+
   if (searchModeFamily(mode) === 'generic') return config;
 
   config.ranking.common.formats = ['MP3'];
@@ -114,8 +123,29 @@ export function createEmptySearchConditions(): PrototypeSearchConditions {
       requiredTrackTitles: [],
       strictAlbumQuality: false,
     },
+    aggregate: {
+      minShares: '',
+      lengthTolerance: '',
+    },
     ranking: createEmptySearchRanking(),
   };
+}
+
+export function searchFilteringCustomized(
+  value: PrototypeSearchConditions,
+  mode: SearchResultMode = 'album',
+): boolean {
+  const baseline = createPrototypeSearchConditions(mode);
+  const { ranking: _valueRanking, ...filtering } = value;
+  const { ranking: _baselineRanking, ...baselineFiltering } = baseline;
+  return JSON.stringify(filtering) !== JSON.stringify(baselineFiltering);
+}
+
+export function searchRankingCustomized(
+  value: PrototypeSearchConditions,
+  mode: SearchResultMode = 'album',
+): boolean {
+  return JSON.stringify(value.ranking) !== JSON.stringify(createPrototypeSearchConditions(mode).ranking);
 }
 
 export function createEmptySearchRanking(): SearchRankingPreferences {
@@ -146,8 +176,8 @@ export type SearchSettingsPatchDto = components['schemas']['SearchSettingsPatchD
 export type SearchConditionFamily = 'generic' | 'track' | 'album' | 'mixed';
 type FileConditionsPatchDto = components['schemas']['FileConditionsPatchDto'];
 
-function numberOrNull(value: string): number | null {
-  if (!value.trim()) return null;
+function numberOrNull(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || !String(value).trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -227,7 +257,15 @@ export function toNecessarySearchPatch(
   resultMode: SearchResultMode,
   conditions: PrototypeSearchConditions,
 ): SearchSettingsPatchDto {
-  return toSearchSettingsPatchForFamily(searchModeFamily(resultMode), conditions);
+  const patch = toSearchSettingsPatchForFamily(searchModeFamily(resultMode), conditions);
+  if (resultMode === 'song-aggregate' || resultMode === 'album-aggregate') {
+    // The UI treats an empty Minimum sharers field as no threshold. The daemon's
+    // configured default is 2, so explicitly send the neutral aggregate value 1
+    // when the user removes that ordinary filter pill.
+    patch.minSharesAggregate = numberOrNull(conditions.aggregate.minShares) ?? 1;
+    patch.aggregateLengthTol = numberOrNull(conditions.aggregate.lengthTolerance);
+  }
+  return patch;
 }
 
 export function hasAppliedConditions(mode: SearchResultMode, conditions: PrototypeSearchConditions): boolean {
@@ -245,8 +283,11 @@ export function hasAppliedConditions(mode: SearchResultMode, conditions: Prototy
       || conditions.common.bannedUsers.trim(),
   );
   if (family === 'generic') return common;
+  const aggregate = mode === 'song-aggregate' || mode === 'album-aggregate'
+    ? Boolean(conditions.aggregate.minShares || (conditions.aggregate.lengthTolerance && conditions.aggregate.lengthTolerance !== '3'))
+    : false;
 
-  return common || Boolean(
+  return common || aggregate || Boolean(
     conditions.common.strictArtist
       || (family === 'track'
         ? conditions.track.strictTitle || conditions.track.expectedLength
@@ -269,6 +310,7 @@ export function cloneSearchConditions(conditions: PrototypeSearchConditions): Pr
       ...conditions.album,
       requiredTrackTitles: [...conditions.album.requiredTrackTitles],
     },
+    aggregate: { ...conditions.aggregate },
     ranking: {
       common: {
         ...conditions.ranking.common,

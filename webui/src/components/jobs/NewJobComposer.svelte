@@ -1,9 +1,12 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
+  import ExpandableSettingsPanel from '../ExpandableSettingsPanel.svelte';
   import SearchConfigPanel from '../SearchConfigPanel.svelte';
   import JobPreviewTree from './JobPreviewTree.svelte';
   import {
     createPrototypeSearchConditions,
+    searchFilteringCustomized,
+    searchRankingCustomized,
     toSearchSettingsPatchForFamily,
     type PrototypeSearchConditions,
     type SearchConditionFamily,
@@ -22,6 +25,16 @@
     type NewJobDraft,
   } from '../../prototype/jobs';
   import type { ProposedInputArtifactUploadDto, ProposedSubmitJobPreviewRequestDto } from '../../prototype/backend-contracts';
+  import {
+    buildImportSettingsPatch,
+    buildSubmissionOptions,
+    createPrototypeDownloadOptions,
+    createPrototypeImportOptions,
+    downloadOptionsCustomized,
+    importOptionsCustomized,
+    mergeDownloadSettings,
+    type DownloadOptionCapabilities,
+  } from '../../prototype/download-options';
 
   interface Props {
     onclose: () => void;
@@ -33,15 +46,30 @@
   let draft = $state<NewJobDraft>({ ...emptyNewJobDraft, artist: 'Autechre', title: 'Gantz Graf' });
   let preview = $state<JobPreviewPlan | null>(null);
   let selectedLeaves = $state<Set<string>>(new Set());
-  let optionsOpen = $state(false);
+  let filteringOpen = $state(false);
+  let rankingOpen = $state(false);
+  let downloadOpen = $state(false);
   let uploadActive = $state(false);
   let csvMappingOpen = $state(false);
+  let importOptionsOpen = $state(false);
+  let downloadOptions = $state(createPrototypeDownloadOptions());
+  let importOptions = $state(createPrototypeImportOptions());
   let trackConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('track'));
   let albumConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('album'));
   let mixedConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('track'));
 
   let selectedCount = $derived(selectedLeaves.size);
   let csvMappingCustomized = $derived(Object.values(draft.csvColumns).some((value) => value.trim().length > 0));
+  let hasImportOptions = $derived(['spotify', 'youtube', 'bandcamp', 'musicbrainz', 'csv', 'list'].includes(draft.choice));
+  let importOptionsChanged = $derived(importOptionsCustomized(importOptions));
+  let downloadCapabilities = $derived<DownloadOptionCapabilities>({
+    albumFolderEnrichment: draft.choice === 'album' || (draft.choice !== 'song' && draft.choice !== 'soulseek'),
+    playlistOutput: ['spotify', 'youtube', 'bandcamp', 'musicbrainz', 'csv', 'list'].includes(draft.choice),
+    nameFormat: true,
+  });
+  let downloadOptionsChanged = $derived(downloadOptionsCustomized(downloadOptions, downloadCapabilities));
+  let filteringOptionsChanged = $derived(searchFilteringCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
+  let rankingOptionsChanged = $derived(searchRankingCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
   let valid = $derived(
     draft.choice === 'song' ? Boolean(draft.title.trim())
       : draft.choice === 'album' ? Boolean(draft.album.trim())
@@ -98,10 +126,13 @@
 
   function choose(value: NewJobChoice): void {
     draft.choice = value;
-    optionsOpen = false;
+    filteringOpen = false;
+    rankingOpen = false;
+    downloadOpen = false;
     clearPreview();
     draft.uploadedFileName = '';
     csvMappingOpen = false;
+    importOptionsOpen = false;
     draft.uploadedFileType = '';
     if (value === 'song') Object.assign(draft, { artist: 'Autechre', title: 'Gantz Graf', album: '' });
     else if (value === 'album') Object.assign(draft, { artist: 'Nujabes', album: 'Modal Soul', title: '' });
@@ -126,6 +157,16 @@
     clearPreview();
   }
 
+  function setImportNumber(field: 'maxTracks' | 'offset', value: string): void {
+    importOptions[field] = value;
+    clearPreview();
+  }
+
+  function setUpgradeToAlbum(value: boolean): void {
+    importOptions.upgradeToAlbum = value;
+    clearPreview();
+  }
+
   function resolvedSourceInput(): string {
     if (draft.choice !== 'spotify') return draft.source;
     if (draft.spotifyInput === 'likes') return 'spotify-likes';
@@ -145,21 +186,17 @@
     return mixedConditions;
   }
 
-  function currentDownloadSettings() {
-    const settings = { search: toSearchSettingsPatchForFamily(currentFamily(), currentConditions()) } as {
-      search: ReturnType<typeof toSearchSettingsPatchForFamily>;
-      csv?: {
-        artistCol: string;
-        albumCol: string;
-        titleCol: string;
-        lengthCol: string;
-        descCol: string;
-        ytIdCol: string;
-        trackCountCol: string;
-      };
-    };
-    if (draft.choice === 'csv') settings.csv = { ...draft.csvColumns };
-    return settings;
+  function currentSubmissionOptions() {
+    const options = buildSubmissionOptions(downloadOptions, downloadCapabilities);
+    const search = toSearchSettingsPatchForFamily(currentFamily(), currentConditions());
+    const csv = draft.choice === 'csv' ? { ...draft.csvColumns } : undefined;
+    const importPatch = hasImportOptions ? buildImportSettingsPatch(importOptions) : undefined;
+    options.downloadSettings = mergeDownloadSettings(
+      options.downloadSettings,
+      { search, csv },
+      importPatch,
+    );
+    return options;
   }
 
   function buildPlan(): JobPreviewPlan {
@@ -202,7 +239,7 @@
   function submitPlan(plan: JobPreviewPlan, leaves: Set<string>): void {
     if (!leaves.size) return;
     const request: ProposedSubmitJobPreviewRequestDto = {
-      downloadSettings: currentDownloadSettings(),
+      options: currentSubmissionOptions(),
       selection: { mode: 'only', leafRefs: [...leaves] },
     };
     void request;
@@ -221,7 +258,13 @@
     if (!preview) return;
     submitPlan(preview, selectedLeaves);
   }
+
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') onclose();
+  }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <section class="new-job-composer" aria-label="New job">
   <header class="new-job-heading">
@@ -229,18 +272,7 @@
     <button type="button" class="new-job-close" aria-label="Close new job" onclick={onclose}><Icon name="x" /></button>
   </header>
 
-  {#if optionsOpen}
-    <div class="new-job-options-view">
-      {#if draft.choice === 'song'}
-        <SearchConfigPanel mode="track" bind:conditions={trackConditions} title="Conditions & ranking" initialTab="conditions" onclose={() => (optionsOpen = false)} />
-      {:else if draft.choice === 'album'}
-        <SearchConfigPanel mode="album" bind:conditions={albumConditions} title="Conditions & ranking" initialTab="conditions" onclose={() => (optionsOpen = false)} />
-      {:else}
-        <SearchConfigPanel mode="track" configurationFamily="mixed" bind:conditions={mixedConditions} title="Conditions & ranking" initialTab="conditions" onclose={() => (optionsOpen = false)} />
-      {/if}
-    </div>
-  {:else}
-    <div class="new-job-layout">
+  <div class="new-job-layout">
       <aside class="new-job-type-nav" aria-label="Job type">
         <section>
           <h3>Download automatically</h3>
@@ -272,11 +304,12 @@
       </aside>
 
       <div class="new-job-workspace">
-        <header class="new-job-current-choice">
-          <div><strong>{choiceMetadata.label}</strong><small>{choiceMetadata.detail}</small></div>
-        </header>
+        <div class="new-job-scroll-area">
+          <header class="new-job-current-choice">
+            <div><strong>{choiceMetadata.label}</strong><small>{choiceMetadata.detail}</small></div>
+          </header>
 
-        <div class="new-job-config">
+          <div class="new-job-config">
           {#if draft.choice === 'song'}
             <label><span>Artist <small>(optional)</small></span><input value={draft.artist} oninput={(event) => setField('artist', (event.currentTarget as HTMLInputElement).value)} /></label>
             <label><span>Title</span><input value={draft.title} oninput={(event) => setField('title', (event.currentTarget as HTMLInputElement).value)} /></label>
@@ -318,16 +351,7 @@
             </label>
             {#if draft.choice === 'csv'}
               <section class="new-job-csv-options">
-                <button
-                  type="button"
-                  class="new-job-csv-options-toggle"
-                  aria-expanded={csvMappingOpen}
-                  onclick={() => (csvMappingOpen = !csvMappingOpen)}
-                >
-                  <span><Icon name="settings" /><strong>Column mapping</strong></span>
-                  <small>{csvMappingCustomized ? 'Custom' : 'Auto-detect'}</small>
-                </button>
-                {#if csvMappingOpen}
+                <ExpandableSettingsPanel title="Column mapping" summary={csvMappingCustomized ? 'Custom' : 'Auto-detect'} customized={csvMappingCustomized} bind:open={csvMappingOpen} bodyId="new-job-csv-mapping">
                   <div class="new-job-csv-mapping">
                     <p>Override header names only when the CSV does not use common column names.</p>
                     <div class="new-job-csv-grid">
@@ -340,35 +364,88 @@
                       <label><span>Description</span><input placeholder="Auto" value={draft.csvColumns.descCol} oninput={(event) => setCsvColumn('descCol', (event.currentTarget as HTMLInputElement).value)} /></label>
                     </div>
                   </div>
-                {/if}
+                </ExpandableSettingsPanel>
               </section>
             {/if}
           {/if}
-        </div>
 
-        <div class="new-job-config-actions">
-          <button type="button" class="new-job-options-button" aria-expanded="false" onclick={() => (optionsOpen = true)}><Icon name="settings" /> Conditions & ranking</button>
-          <span class="new-job-action-spacer"></span>
-          <button type="button" class="new-job-review-button" disabled={!valid} onclick={review}>Review</button>
-          <button type="button" class="new-job-start-button" disabled={!valid} onclick={startNow}>Start</button>
-        </div>
+          {#if hasImportOptions}
+            <section class="new-job-import-options">
+              <ExpandableSettingsPanel title="Import options" summary={importOptionsChanged ? 'Custom' : 'Defaults'} customized={importOptionsChanged} bind:open={importOptionsOpen} bodyId="new-job-import-options">
+                <div class="new-job-import-options-body">
+                  <div class="config-grid">
+                    <label><span>Limit items</span><input type="number" min="1" step="1" value={importOptions.maxTracks} placeholder="All" oninput={(event) => setImportNumber('maxTracks', (event.currentTarget as HTMLInputElement).value)} /></label>
+                    <label><span>Offset</span><input type="number" min="0" step="1" value={importOptions.offset} oninput={(event) => setImportNumber('offset', (event.currentTarget as HTMLInputElement).value)} /></label>
+                  </div>
+                  <label class="config-check"><input type="checkbox" checked={importOptions.upgradeToAlbum} onchange={(event) => setUpgradeToAlbum((event.currentTarget as HTMLInputElement).checked)} /> Upgrade song items to albums</label>
+                </div>
+              </ExpandableSettingsPanel>
+            </section>
+          {/if}
 
-        {#if preview}
-          {@const currentPreview = preview}
-          <section class="new-job-preview">
-            <header>
-              <div><p class="eyebrow">Review</p><h3>{currentPreview.title}</h3><small>{currentPreview.sourceLabel}</small></div>
-              <button type="button" class="new-job-select-toggle" onclick={() => (selectedLeaves = selectedCount === previewLeafRefs(currentPreview).length ? new Set() : new Set(previewLeafRefs(currentPreview)))}>{selectedCount === previewLeafRefs(currentPreview).length ? 'Deselect all' : 'Select all'}</button>
-            </header>
-            <p class="new-job-preview-note">Review resolves extraction and preprocessing only. Soulseek candidate discovery starts after submission.</p>
-            <JobPreviewTree roots={currentPreview.roots} {selectedLeaves} onselectionchange={(next) => (selectedLeaves = next)} />
-            <footer class="new-job-preview-actions">
-              <span>{selectedCount} selected</span>
-              <button type="button" class="new-job-start-button" disabled={!selectedCount} onclick={startReviewed}>Start {selectedCount || ''} {selectedCount === 1 ? 'job' : 'jobs'}</button>
-            </footer>
+          <section class="new-job-job-settings" aria-label="Job settings">
+            <ExpandableSettingsPanel title="Filtering" summary={filteringOptionsChanged ? 'Custom' : 'Defaults'} customized={filteringOptionsChanged} bind:open={filteringOpen} bodyId="new-job-filtering-options">
+              <SearchConfigPanel
+                mode={draft.choice === 'album' ? 'album' : 'track'}
+                configurationFamily={currentFamily()}
+                conditions={currentConditions()}
+                section="conditions"
+                embedded
+              />
+            </ExpandableSettingsPanel>
+
+            <ExpandableSettingsPanel title="Ranking" summary={rankingOptionsChanged ? 'Custom' : 'Defaults'} customized={rankingOptionsChanged} bind:open={rankingOpen} bodyId="new-job-ranking-options">
+              <SearchConfigPanel
+                mode={draft.choice === 'album' ? 'album' : 'track'}
+                configurationFamily={currentFamily()}
+                conditions={currentConditions()}
+                section="ranking"
+                embedded
+              />
+            </ExpandableSettingsPanel>
+
+            <ExpandableSettingsPanel title="Download" summary={downloadOptionsChanged ? 'Custom' : 'Defaults'} customized={downloadOptionsChanged} bind:open={downloadOpen} bodyId="new-job-download-options">
+              <SearchConfigPanel
+                mode={draft.choice === 'album' ? 'album' : 'track'}
+                configurationFamily={currentFamily()}
+                conditions={currentConditions()}
+                downloadOptions={downloadOptions}
+                {downloadCapabilities}
+                section="download"
+                embedded
+              />
+            </ExpandableSettingsPanel>
           </section>
-        {/if}
+        </div>
+
+          {#if preview}
+            {@const currentPreview = preview}
+            <section class="new-job-preview">
+              <header>
+                <div><p class="eyebrow">Review</p><h3>{currentPreview.title}</h3><small>{currentPreview.sourceLabel}</small></div>
+                <button type="button" class="new-job-select-toggle" onclick={() => (selectedLeaves = selectedCount === previewLeafRefs(currentPreview).length ? new Set() : new Set(previewLeafRefs(currentPreview)))}>{selectedCount === previewLeafRefs(currentPreview).length ? 'Deselect all' : 'Select all'}</button>
+              </header>
+              <p class="new-job-preview-note">Review resolves extraction and preprocessing only. Soulseek candidate discovery starts after submission.</p>
+              <JobPreviewTree roots={currentPreview.roots} {selectedLeaves} onselectionchange={(next) => (selectedLeaves = next)} />
+            </section>
+          {/if}
+        </div>
+
+        <footer class="new-job-footer">
+          {#if preview}
+            <span class="new-job-footer-status">{selectedCount} selected</span>
+            <div class="new-job-footer-actions">
+              <button type="button" class="new-job-start-button" disabled={!selectedCount} onclick={startReviewed}>Start {selectedCount || ''} {selectedCount === 1 ? 'job' : 'jobs'}</button>
+            </div>
+          {:else}
+            <span class="new-job-footer-status"></span>
+            <div class="new-job-footer-actions">
+              <button type="button" class="new-job-review-button" disabled={!valid} onclick={review}>Review</button>
+              <button type="button" class="new-job-start-button" disabled={!valid} onclick={startNow}>Start</button>
+            </div>
+          {/if}
+        </footer>
       </div>
     </div>
-  {/if}
 </section>
+

@@ -3,7 +3,7 @@
   import Icon from '../Icon.svelte';
   import type { AppIconName } from '../../prototype/icons';
   import type { FolderItemFile, TransferPresentation } from '../../prototype/items';
-  import { audioSummary, basename, formatBytes, formatLength } from '../../prototype/items';
+  import { audioSummary, basename, formatBytes, formatLength, isAudioFilePath } from '../../prototype/items';
 
   interface Props {
     path: string;
@@ -153,9 +153,16 @@
     return value ? 'clock' : 'file';
   }
 
-  function fileTransferPrimary(value: TransferPresentation): string {
-    if (value.tone === 'failed' || value.tone === 'cancelled') return value.state;
-    return value.progressText ?? value.state;
+  function usesCircularTransferState(value: TransferPresentation): boolean {
+    return value.tone === 'complete' || value.tone === 'active' || value.tone === 'queued';
+  }
+
+  function showsInlineTransferProgress(value: TransferPresentation): boolean {
+    return value.progressPercent !== undefined && value.tone !== 'complete' && value.tone !== 'queued';
+  }
+
+  function fileTransferProgressText(value: TransferPresentation): string {
+    return value.progressPercent === undefined ? '' : `${Math.round(value.progressPercent)}%`;
   }
 
   function fileTransferSecondary(value: TransferPresentation): string {
@@ -179,18 +186,56 @@
         <strong>{basename(path)}</strong>
       {/if}
       {#if locked}<span class="locked-badge">Locked</span>{/if}
-      {#if transfer}<span class={`transfer-state ${transfer.tone ?? ''} ${transferDirectionClass}`}>{transfer.state}</span>{/if}
     </div>
     <small>{path}</small>
     {#if dataStateLabel}
       <div class="item-data-state"><span>{dataStateLabel}</span>{#if !filesComplete}<small>{files.length} of {totalFileCount} files loaded</small>{/if}</div>
     {/if}
-    {#if transfer}
-      <div class="transfer-subline">
-        {#if transfer.created}<span>{transfer.created}</span>{/if}
-        {#if transfer.detail}<span>{transfer.detail}</span>{/if}
+  </div>
+{/snippet}
+
+{#snippet contentsControl()}
+  {#if contentsState}
+    <div class="folder-contents-control-slot">
+      {#if contentsState === 'partial' || contentsState === 'failed'}
+        <button
+          type="button"
+          class:failed={contentsState === 'failed'}
+          class="folder-load-contents-button"
+          aria-label={contentsState === 'failed' ? 'Retry loading all files in this folder' : 'Load all files in this folder'}
+          title={contentsState === 'failed'
+            ? 'Folder retrieval failed. Try again.'
+            : 'Load all files in this folder in case the search omitted any.'}
+          onclick={() => onloadfullcontents?.()}
+        >+</button>
+      {:else if contentsState === 'retrieving'}
+        <span class="folder-contents-state retrieving" aria-label="Loading all files in this folder" title="Loading all files in this folder…"><i></i></span>
+      {:else}
+        <span class="folder-contents-state complete" aria-label="Full folder loaded" title="Full folder loaded"><Icon name="check" /></span>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet transferSummary()}
+  <div class="folder-transfer-summary">
+    <div class="folder-transfer-summary-primary">
+      <div class="folder-transfer-identity">
+        <strong class="folder-transfer-name">{basename(path)}</strong>
+        {#if locked}<span class="locked-badge">Locked</span>{/if}
       </div>
-    {/if}
+      <div class="folder-transfer-summary-meta">
+        <span class="folder-transfer-file-count"><strong>{filesComplete ? totalFileCount : `${files.length}/${totalFileCount}`}</strong><span>files</span></span>
+        {@render contentsControl()}
+        <strong class="folder-transfer-size">{formatBytes(sizeBytes)}</strong>
+        <span class={`transfer-state ${transfer?.tone ?? ''} ${transferDirectionClass}`}>{transfer?.state}</span>
+        {#if actions}<span class="item-card-action">{@render actions()}</span>{/if}
+      </div>
+    </div>
+    <div class="folder-transfer-summary-secondary">
+      <small class="folder-transfer-path">{path}</small>
+      {#if transfer?.created}<span class="folder-transfer-age">{transfer.created}</span>{/if}
+    </div>
   </div>
 {/snippet}
 
@@ -206,52 +251,36 @@
 >
   <div
     class="folder-item-summary folder-result-summary"
+    class:transfer-summary={Boolean(transfer)}
     class:has-contents-control={Boolean(contentsState)}
     class:has-card-action={Boolean(actions)}
   >
-    {#if selectable}
-      <label class="folder-summary-select-target clickable">
-        <input
-          type="checkbox"
-          checked={selected}
-          aria-label={`Select all files in ${basename(path)}`}
-          use:indeterminate={partial}
-          onchange={(event) => onselectall?.((event.currentTarget as HTMLInputElement).checked)}
-        />
-        {@render folderIdentity()}
-      </label>
+    {#if transfer}
+      {@render transferSummary()}
     {:else}
-      <div class="folder-summary-select-target nonselectable">
-        {@render folderIdentity()}
-      </div>
-    {/if}
+      {#if selectable}
+        <label class="folder-summary-select-target clickable">
+          <input
+            type="checkbox"
+            checked={selected}
+            aria-label={`Select all files in ${basename(path)}`}
+            use:indeterminate={partial}
+            onchange={(event) => onselectall?.((event.currentTarget as HTMLInputElement).checked)}
+          />
+          {@render folderIdentity()}
+        </label>
+      {:else}
+        <div class="folder-summary-select-target nonselectable">
+          {@render folderIdentity()}
+        </div>
+      {/if}
 
-    <div class="folder-summary-stat folder-file-count"><strong>{filesComplete ? totalFileCount : `${files.length}/${totalFileCount}`}</strong><small>files</small></div>
-
-    {#if contentsState}
-      <div class="folder-contents-control-slot">
-        {#if contentsState === 'partial' || contentsState === 'failed'}
-          <button
-            type="button"
-            class:failed={contentsState === 'failed'}
-            class="folder-load-contents-button"
-            aria-label={contentsState === 'failed' ? 'Retry loading all files in this folder' : 'Load all files in this folder'}
-            title={contentsState === 'failed'
-              ? 'Folder retrieval failed. Try again.'
-              : 'Load all files in this folder in case the search omitted any.'}
-            onclick={() => onloadfullcontents?.()}
-          >+</button>
-        {:else if contentsState === 'retrieving'}
-          <span class="folder-contents-state retrieving" aria-label="Loading all files in this folder" title="Loading all files in this folder…"><i></i></span>
-        {:else}
-          <span class="folder-contents-state complete" aria-label="Full folder loaded" title="Full folder loaded"><Icon name="check" /></span>
-        {/if}
-      </div>
-    {/if}
-
-    <div class="item-detail result-detail item-size-detail"><strong>{formatBytes(sizeBytes)}</strong></div>
-    {#if actions}
-      <div class="item-card-action">{@render actions()}</div>
+      <div class="folder-summary-stat folder-file-count"><strong>{filesComplete ? totalFileCount : `${files.length}/${totalFileCount}`}</strong><small>files</small></div>
+      {@render contentsControl()}
+      <div class="item-detail result-detail item-size-detail"><strong>{formatBytes(sizeBytes)}</strong></div>
+      {#if actions}
+        <div class="item-card-action">{@render actions()}</div>
+      {/if}
     {/if}
   </div>
 
@@ -303,6 +332,7 @@
       {:else}
         {@const file = row.file}
         {@const fileDirectionClass = file.transfer?.direction ? `transfer-${file.transfer.direction}` : ''}
+        {@const isAudioFile = Boolean(file.audio) || isAudioFilePath(file.relativePath)}
         <svelte:element
           this={selectable ? 'label' : 'div'}
           class:locked={file.locked}
@@ -319,15 +349,8 @@
               onchange={(event) => onselectfile?.(file, (event.currentTarget as HTMLInputElement).checked)}
             />
           {:else}
-            <span
-              class={`folder-file-state ${fileDirectionClass}`}
-              class:active={file.transfer?.tone === 'active'}
-              class:queued={file.transfer?.tone === 'queued'}
-              class:complete={file.transfer?.tone === 'complete'}
-              class:failed={file.transfer?.tone === 'failed'}
-              class:cancelled={file.transfer?.tone === 'cancelled'}
-            >
-              <Icon name={transferIcon(file.transfer)} />
+            <span class:audio={isAudioFile} class="folder-file-type-icon" aria-hidden="true">
+              <Icon name={isAudioFile ? 'track' : 'file'} />
             </span>
           {/if}
           <span class="folder-file-path" title={file.relativePath}>
@@ -335,14 +358,6 @@
               <strong>{row.displayName}</strong>
               {#if file.locked}<small>Locked</small>{/if}
             </span>
-            {#if file.transfer?.progressPercent !== undefined}
-              <span
-                class={`folder-file-progress ${file.transfer.tone ?? ''} ${fileDirectionClass}`}
-                aria-label={`${file.transfer.progressPercent.toFixed(0)}% complete`}
-              >
-                <i style={`width:${file.transfer.progressPercent}%`}></i>
-              </span>
-            {/if}
           </span>
           {#if file.audio}
             <span class="folder-file-audio">{audioSummary(file.audio)}</span>
@@ -353,13 +368,34 @@
           {/if}
           {#if file.transfer}
             {@const secondaryTransferText = fileTransferSecondary(file.transfer)}
-            <span
-              class="folder-file-transfer-meta"
-              class:failed={file.transfer.tone === 'failed'}
-              class:cancelled={file.transfer.tone === 'cancelled'}
-            >
-              <strong>{fileTransferPrimary(file.transfer)}</strong>
-              {#if secondaryTransferText}<small title={secondaryTransferText}>{secondaryTransferText}</small>{/if}
+            {@const showProgress = showsInlineTransferProgress(file.transfer)}
+            <span class="folder-file-transfer-strip">
+              {#if showProgress}
+                <strong class="folder-file-transfer-percent">{fileTransferProgressText(file.transfer)}</strong>
+                <span
+                  class={`folder-file-progress ${file.transfer.tone ?? ''} ${fileDirectionClass}`}
+                  aria-label={`${file.transfer.progressPercent?.toFixed(0)}% complete`}
+                >
+                  <i style={`width:${file.transfer.progressPercent}%`}></i>
+                </span>
+              {/if}
+              {#if secondaryTransferText}
+                <small class="folder-file-transfer-detail" title={secondaryTransferText}>{secondaryTransferText}</small>
+              {/if}
+              {#if usesCircularTransferState(file.transfer)}
+                <span
+                  class={`folder-file-state ${fileDirectionClass}`}
+                  class:active={file.transfer.tone === 'active'}
+                  class:queued={file.transfer.tone === 'queued'}
+                  class:complete={file.transfer.tone === 'complete'}
+                  aria-label={file.transfer.state}
+                  title={file.transfer.state}
+                >
+                  <Icon name={transferIcon(file.transfer)} />
+                </span>
+              {:else}
+                <span class={`transfer-state folder-file-transfer-label ${file.transfer.tone ?? ''}`}>{file.transfer.state}</span>
+              {/if}
             </span>
           {/if}
           {#if fileActions}

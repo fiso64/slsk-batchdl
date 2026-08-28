@@ -80,6 +80,11 @@
     const nextFamily = searchModeFamily(nextMode);
     if (previousFamily === 'generic' || nextFamily === 'generic') {
       conditions = createPrototypeSearchConditions(nextMode);
+    } else if (nextMode === 'song-aggregate' || nextMode === 'album-aggregate') {
+      conditions.aggregate = {
+        minShares: conditions.aggregate.minShares || '2',
+        lengthTolerance: conditions.aggregate.lengthTolerance || '3',
+      };
     }
     if (nextMode === 'generic') {
       const query = value.mode === 'split'

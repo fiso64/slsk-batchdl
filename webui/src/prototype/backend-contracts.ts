@@ -30,8 +30,8 @@ export interface ProposedDashboardAnalyticsDto {
     startUtc: string;
     endUtc: string;
     bucketSeconds: number;
-    comparisonStartUtc: string;
-    comparisonEndUtc: string;
+    comparisonStartUtc: string | null;
+    comparisonEndUtc: string | null;
     partialRetention: boolean;
   };
   semantics: {
@@ -187,6 +187,20 @@ export interface ProposedHistoryDeleteRequestDto {
 
 
 
+/** Proposed UI-safe effective defaults for submission forms; excludes secrets. */
+export interface ProposedSubmissionDefaultsDto {
+  skipExisting: boolean;
+  loadFullAlbumFolder: boolean;
+  outputParentDir: string | null;
+  nameFormat: string;
+  writePlaylist: boolean;
+  minSharesAggregate: number;
+  aggregateLengthToleranceSeconds: number;
+  maxTracks: number | null;
+  offset: number;
+  upgradeToAlbum: boolean;
+}
+
 /** Proposed server-owned upload metadata for extraction inputs supplied by remote clients. */
 export interface ProposedInputArtifactUploadDto {
   filename: string;
@@ -226,7 +240,7 @@ export interface ProposedJobPreviewPageDto {
 
 export interface ProposedSubmitJobPreviewRequestDto {
   /** Submission options are captured by the preview so Review and direct Start use identical settings. */
-  downloadSettings?: components['schemas']['DownloadSettingsPatchDto'];
+  options?: components['schemas']['SubmissionOptionsDto'];
   selection:
     | { mode: 'all-except'; leafRefs: string[] }
     | { mode: 'only'; leafRefs: string[] };
