@@ -41,7 +41,7 @@
   class:transfer-card={Boolean(transfer)}
   class:has-audio={Boolean(audio)}
 >
-  <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class="file-item-main file-result-row">
+  <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class:nonselectable={!selectable} class="file-item-main file-result-row">
     {#if selectable}
       <input
         type="checkbox"

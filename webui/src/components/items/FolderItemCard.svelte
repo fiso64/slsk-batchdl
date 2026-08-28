@@ -175,7 +175,7 @@
   class:tree-layout={fileLayout === 'tree'}
   class:transfer-card={Boolean(transfer)}
 >
-  <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class="folder-item-summary folder-result-summary">
+  <svelte:element this={selectable ? 'label' : 'div'} class:clickable={selectable} class:nonselectable={!selectable} class="folder-item-summary folder-result-summary">
     {#if selectable}
       <input
         type="checkbox"

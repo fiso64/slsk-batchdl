@@ -14,6 +14,7 @@
   import { emptySearchDraft, type SearchDraft } from './prototype/search';
   import type { PrototypeSearchConditions } from './prototype/search-config';
   import { getUserBrowseFixture, type UserBrowseDraft, type UserBrowseView } from './prototype/users';
+  import { createInitialAutomaticJobs, type AutomaticJobRecord } from './prototype/jobs';
   import {
     createInitialSearches,
     createSearchRecord,
@@ -28,8 +29,9 @@
   let scenario = $derived(getScenario(scenarioId));
   let search = $state<SearchDraft>({ ...emptySearchDraft });
   let searches = $state<SearchRecord[]>(createInitialSearches('normal'));
+  let automaticJobs = $state<AutomaticJobRecord[]>(createInitialAutomaticJobs('normal'));
   let searchView = $state<SearchView>('list');
-  let activeSearchId = $state<string | null>(defaultSearchId);
+  let activeJobId = $state<string | null>(defaultSearchId);
   let userBrowse = $state<UserBrowseDraft>({ query: getUserBrowseFixture('normal').profile.username, mode: 'user' });
   let activeUsername = $state<string>(getUserBrowseFixture('normal').profile.username);
   let userView = $state<UserBrowseView>('user');
@@ -78,11 +80,12 @@
     if (root === 'jobs' && segments[1]) {
       const id = decodeSegment(segments[1]);
       const record = searches.find((candidate) => candidate.id === id);
-      if (record) {
+      const automaticJob = automaticJobs.find((candidate) => candidate.id === id);
+      if (record || automaticJob) {
         activePage = 'jobs';
         searchView = 'results';
-        activeSearchId = record.id;
-        return jobPath(record.id);
+        activeJobId = id;
+        return jobPath(id);
       }
       activePage = 'jobs';
       searchView = 'list';
@@ -136,8 +139,8 @@
       }
 
       activePage = 'jobs';
-      if (searchView === 'results' && activeSearchId && searches.some((record) => record.id === activeSearchId)) {
-        setBrowserPath(jobPath(activeSearchId));
+      if (searchView === 'results' && activeJobId && (searches.some((record) => record.id === activeJobId) || automaticJobs.some((job) => job.id === activeJobId))) {
+        setBrowserPath(jobPath(activeJobId));
       } else {
         searchView = 'list';
         setBrowserPath('/jobs');
@@ -158,12 +161,13 @@
   function changeScenario(nextScenario: ScenarioId): void {
     scenarioId = nextScenario;
     searches = createInitialSearches(nextScenario);
-    activeSearchId = searches.find((record) => record.fixture === 'boards')?.id ?? searches[0]?.id ?? null;
-    if (searchView === 'results' && !activeSearchId) searchView = 'list';
+    automaticJobs = createInitialAutomaticJobs(nextScenario);
+    activeJobId = searches.find((record) => record.fixture === 'boards')?.id ?? searches[0]?.id ?? automaticJobs[0]?.id ?? null;
+    if (searchView === 'results' && !activeJobId) searchView = 'list';
     const nextUsername = getUserBrowseFixture(nextScenario).profile.username;
     activeUsername = nextUsername;
     if (activePage === 'users') setBrowserPath(userPath(nextUsername, userView), true);
-    if (activePage === 'jobs') setBrowserPath(searchView === 'results' && activeSearchId ? jobPath(activeSearchId) : '/jobs', true);
+    if (activePage === 'jobs') setBrowserPath(searchView === 'results' && activeJobId ? jobPath(activeJobId) : '/jobs', true);
   }
 
   function useUserBrowse(next: UserBrowseDraft): void {
@@ -214,10 +218,24 @@
   }
 
   function openSearchRecord(record: SearchRecord): void {
-    activeSearchId = record.id;
+    activeJobId = record.id;
     searchView = 'results';
     activePage = 'jobs';
     setBrowserPath(jobPath(record.id));
+  }
+
+
+  function openAutomaticJob(job: AutomaticJobRecord): void {
+    activeJobId = job.id;
+    searchView = 'results';
+    activePage = 'jobs';
+    setBrowserPath(jobPath(job.id));
+  }
+
+  function startAutomaticJobs(records: AutomaticJobRecord[], rootId: string): void {
+    automaticJobs = [...records, ...automaticJobs];
+    const root = records.find((job) => job.id === rootId);
+    if (root) openAutomaticJob(root);
   }
 
   function showSearchList(): void {
@@ -238,7 +256,7 @@
     // replaces the old row in-place so the user stays in the same logical slot.
     const rerun = rerunSearchRecord(record);
     searches = searches.map((item) => item.id === record.id ? rerun : item);
-    activeSearchId = rerun.id;
+    activeJobId = rerun.id;
     searchView = 'results';
     activePage = 'jobs';
     setBrowserPath(jobPath(rerun.id), true);
@@ -266,11 +284,14 @@
       {scenarioId}
       bind:searches
       bind:view={searchView}
-      bind:activeSearchId
+      bind:automaticJobs
+      bind:activeJobId
       {userActions}
       onopenrecord={openSearchRecord}
       onshowlist={showSearchList}
       onsearchagain={searchAgain}
+      onopenjob={openAutomaticJob}
+      onstartjobs={startAutomaticJobs}
     />
   {:else if activePage === 'users'}
     <Users {scenarioId} username={activeUsername} view={userView} onviewchange={changeUserView} onmessageuser={openChatUser} />

@@ -173,11 +173,57 @@ export interface ProposedPeerAccessMutationDto {
 }
 
 export interface ProposedHistoryDeleteRequestDto {
-  resourceKind: 'search-job' | 'download-job' | 'upload-transfer';
+  resourceKind: 'job' | 'download-job' | 'upload-transfer';
   resourceIds: string[];
   semantics: 'permanent-delete' | 'archive-from-history';
 }
 
+
+
+/** Proposed server-owned upload metadata for extraction inputs supplied by remote clients. */
+export interface ProposedInputArtifactUploadDto {
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  purpose: 'job-extraction-input';
+}
+
+export interface ProposedInputArtifactDto extends ProposedInputArtifactUploadDto {
+  artifactId: string;
+  createdAtUtc: string;
+  expiresAtUtc: string;
+}
+
+/** Proposed non-runtime planning resource used by WebUI/remote CLI before submission. */
+export interface ProposedJobPreviewSummaryDto {
+  previewId: string;
+  state: 'resolving' | 'ready' | 'failed';
+  rootCount: number;
+  logicalJobCount: number;
+  expiresAtUtc: string;
+}
+
+export interface ProposedJobPreviewItemDto {
+  previewRef: string;
+  parentPreviewRef: string | null;
+  kind: string;
+  itemName: string | null;
+  detail: string | null;
+  childCount: number;
+}
+
+export interface ProposedJobPreviewPageDto {
+  items: ProposedJobPreviewItemDto[];
+  nextCursor: string | null;
+}
+
+export interface ProposedSubmitJobPreviewRequestDto {
+  /** Submission options are captured by the preview so Review and direct Start use identical settings. */
+  downloadSettings?: components['schemas']['DownloadSettingsPatchDto'];
+  selection:
+    | { mode: 'all-except'; leafRefs: string[] }
+    | { mode: 'only'; leafRefs: string[] };
+}
 
 export interface PrototypeDownloadSelectionSummary {
   requestedCount: number;

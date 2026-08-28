@@ -143,6 +143,7 @@ export function createEmptySearchRanking(): SearchRankingPreferences {
 }
 
 export type SearchSettingsPatchDto = components['schemas']['SearchSettingsPatchDto'];
+export type SearchConditionFamily = 'generic' | 'track' | 'album' | 'mixed';
 type FileConditionsPatchDto = components['schemas']['FileConditionsPatchDto'];
 
 function numberOrNull(value: string): number | null {
@@ -166,11 +167,10 @@ function collectionOrNull(values: string[]): { replace: string[] } | null {
  * album-quality controls remain Conditions-only here even though the raw API has
  * a generic preferredFolderCond patch seam.
  */
-export function toNecessarySearchPatch(
-  resultMode: SearchResultMode,
+export function toSearchSettingsPatchForFamily(
+  family: SearchConditionFamily,
   conditions: PrototypeSearchConditions,
 ): SearchSettingsPatchDto {
-  const family = searchModeFamily(resultMode);
   const allowedUsers = csv(conditions.common.allowedUsers);
   const bannedUsers = csv(conditions.common.bannedUsers);
 
@@ -182,14 +182,14 @@ export function toNecessarySearchPatch(
     minBitDepth: numberOrNull(conditions.common.minBitDepth),
     maxBitDepth: numberOrNull(conditions.common.maxBitDepth),
     strictArtist: family === 'generic' ? null : conditions.common.strictArtist || null,
-    strictTitle: family === 'track' ? conditions.track.strictTitle || null : null,
-    strictAlbum: family === 'album' ? conditions.album.strictAlbum || null : null,
+    strictTitle: family === 'track' || family === 'mixed' ? conditions.track.strictTitle || null : null,
+    strictAlbum: family === 'album' || family === 'mixed' ? conditions.album.strictAlbum || null : null,
     formats: collectionOrNull(conditions.common.formats),
     allowedUsers: collectionOrNull(allowedUsers),
     bannedUsers: collectionOrNull(bannedUsers),
-    acceptNoLength: family === 'track' ? conditions.track.acceptNoLength : null,
+    acceptNoLength: family === 'track' || family === 'mixed' ? conditions.track.acceptNoLength : null,
     acceptMissingProps: conditions.common.rejectUnknownMetadata ? false : null,
-    lengthTolerance: family === 'track' ? numberOrNull(conditions.track.lengthTolerance) : null,
+    lengthTolerance: family === 'track' || family === 'mixed' ? numberOrNull(conditions.track.lengthTolerance) : null,
   };
 
   const ranking = conditions.ranking;
@@ -203,24 +203,31 @@ export function toNecessarySearchPatch(
     minBitDepth: numberOrNull(ranking.common.minBitDepth),
     maxBitDepth: numberOrNull(ranking.common.maxBitDepth),
     strictArtist: family === 'generic' ? null : ranking.common.strictArtist || null,
-    strictTitle: family === 'track' ? ranking.track.strictTitle || null : null,
-    strictAlbum: family === 'album' ? ranking.album.strictAlbum || null : null,
+    strictTitle: family === 'track' || family === 'mixed' ? ranking.track.strictTitle || null : null,
+    strictAlbum: family === 'album' || family === 'mixed' ? ranking.album.strictAlbum || null : null,
     formats: collectionOrNull(ranking.common.formats),
     allowedUsers: collectionOrNull(preferredAllowedUsers),
     bannedUsers: collectionOrNull(preferredBannedUsers),
-    lengthTolerance: family === 'track' ? numberOrNull(ranking.track.lengthTolerance) : null,
+    lengthTolerance: family === 'track' || family === 'mixed' ? numberOrNull(ranking.track.lengthTolerance) : null,
   };
 
   return {
     necessaryCond,
     preferredCond,
-    necessaryFolderCond: family === 'album' ? {
+    necessaryFolderCond: family === 'album' || family === 'mixed' ? {
       minTrackCount: numberOrNull(conditions.album.minTrackCount),
       maxTrackCount: numberOrNull(conditions.album.maxTrackCount),
       requiredTrackTitles: collectionOrNull(conditions.album.requiredTrackTitles),
     } : null,
-    strictAlbumQuality: family === 'album' ? conditions.album.strictAlbumQuality || null : null,
+    strictAlbumQuality: family === 'album' || family === 'mixed' ? conditions.album.strictAlbumQuality || null : null,
   };
+}
+
+export function toNecessarySearchPatch(
+  resultMode: SearchResultMode,
+  conditions: PrototypeSearchConditions,
+): SearchSettingsPatchDto {
+  return toSearchSettingsPatchForFamily(searchModeFamily(resultMode), conditions);
 }
 
 export function hasAppliedConditions(mode: SearchResultMode, conditions: PrototypeSearchConditions): boolean {

@@ -82,5 +82,47 @@
     <rect x="3.5" y="5.5" width="14" height="14" rx="2.2" />
     <circle cx="10.5" cy="12.5" r="3.3" />
     <path d="M7 3.5h11a2.5 2.5 0 0 1 2.5 2.5v11" />
+  {:else if name === 'aggregate-job'}
+    <path d="M8 17V7l7-1.6v9.7" />
+    <circle cx="5.8" cy="17" r="2.2" />
+    <circle cx="12.8" cy="15.2" r="2.2" />
+    <path d="M17 4v5M14.5 6.5h5" />
+  {:else if name === 'album-aggregate-job'}
+    <rect x="3.5" y="5.5" width="14" height="14" rx="2.2" />
+    <circle cx="10.5" cy="12.5" r="3.3" />
+    <path d="M7 3.5h11a2.5 2.5 0 0 1 2.5 2.5v11" />
+    <path d="M18 3v4M16 5h4" />
+  {:else if name === 'extract'}
+    <path d="M5 5h6l2 2h6v12H5z" />
+    <path d="M12 10v6M9.5 13.5 12 16l2.5-2.5" />
+  {:else if name === 'job-list'}
+    <rect x="5" y="4" width="14" height="16" rx="2" />
+    <path d="M9 8h6M9 12h6M9 16h6" />
+    <path d="M7 8h.01M7 12h.01M7 16h.01" />
+  {:else if name === 'retrieve-folder'}
+    <path d="M3.5 7h6l1.8 2h9.2v8.5A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" />
+    <path d="M12 12a3.5 3.5 0 1 0 3.1 1.9M16 11v3h-3" />
+  {:else if name === 'spotify'}
+    <circle cx="12" cy="12" r="9" />
+    <path d="M7.2 9.2c3.5-1 7.6-.7 10.2.8" />
+    <path d="M7.8 12.3c3-.8 6.5-.5 8.9.8" />
+    <path d="M8.5 15.2c2.4-.6 5.1-.4 7.2.7" />
+  {:else if name === 'youtube'}
+    <rect x="3" y="6.2" width="18" height="11.6" rx="4" />
+    <path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none" />
+  {:else if name === 'bandcamp'}
+    <path d="M8.2 6h12.3l-4.7 12H3.5z" fill="currentColor" stroke="none" />
+  {:else if name === 'musicbrainz'}
+    <path d="M11 2.7 4.2 6.8v10.4l6.8 4.1z" fill="currentColor" stroke="none" />
+    <path d="m13 2.7 6.8 4.1v10.4L13 21.3z" fill="currentColor" stroke="none" />
+  {:else if name === 'soulseek'}
+    <path d="M2.8 10.5c2.4 2.3 4.9 3.6 7.1 3.5l-2 6.2 4.6-2.7 3.1-4.1c2.1-.6 4.2-2 5.9-4-2.8 1.2-5 1.4-6.8.5-1.1-2.7-2.6-5-4.7-6.6.5 1.9.4 3.5-.1 4.7-2.3.6-4.6 1.5-7.1 2.5z" fill="currentColor" stroke="none" />
+  {:else if name === 'link'}
+    <path d="M9.5 14.5 7.8 16.2a3.2 3.2 0 1 1-4.5-4.5L6 9" />
+    <path d="m14.5 9.5 1.7-1.7a3.2 3.2 0 1 1 4.5 4.5L18 15" />
+    <path d="m8.5 15.5 7-7" />
+  {:else if name === 'upload-file'}
+    <path d="M7 3.5h6l4 4V20H7z" />
+    <path d="M13 3.5V8h4M12 17v-6M9.5 13.5 12 11l2.5 2.5" />
   {/if}
 </svg>
