@@ -252,8 +252,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
 
 // Contract semantics for the future single dashboard aggregate endpoint. These
 // values are intentionally explicit even though the current visual fixtures are mocked.
-import type { ProposedActivityFeedItemDto, ProposedDashboardAnalyticsDto } from './backend-contracts';
-import { prototypeUuid } from './ids';
+import type { ProposedDashboardAnalyticsDto } from './backend-contracts';
 
 const dashboardRangeContracts: Record<DashboardRangeId, ProposedDashboardAnalyticsDto['range']> = {
   '24h': { startUtc: '2026-08-06T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 7_200, comparisonStartUtc: '2026-08-05T08:15:00.000Z', comparisonEndUtc: '2026-08-06T08:15:00.000Z', partialRetention: false },
@@ -278,7 +277,6 @@ export function dashboardContractFor(range: DashboardRangeId, partialRetention =
       peerFiles: 'distinct-terminal-transfer-ids-by-direction',
       contentIdentity: 'logical-download-source-path',
       errorPopulation: 'terminal-transfer-attempt-failures',
-      activityOrdering: 'occurred-at-descending',
       shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes',
     },
     downloadMbps: data.downloadMbps,
@@ -294,10 +292,3 @@ export function dashboardContractFor(range: DashboardRangeId, partialRetention =
     },
   };
 }
-
-export const dashboardActivityFeed: { contract: ProposedActivityFeedItemDto; displayAge: string }[] = [
-  { contract: { activityId: prototypeUuid(0x71000000, 1), occurredAtUtc: '2026-08-07T08:13:00.000Z', kind: 'download', actor: 'nightshift', itemName: 'Music Is Math.flac', detail: 'downloaded from' }, displayAge: '2m' },
-  { contract: { activityId: prototypeUuid(0x71000000, 2), occurredAtUtc: '2026-08-07T08:07:00.000Z', kind: 'upload', actor: 'cassetteculture', itemName: '27 files uploaded', detail: 'to' }, displayAge: '8m' },
-  { contract: { activityId: prototypeUuid(0x71000000, 3), occurredAtUtc: '2026-08-07T08:01:00.000Z', kind: 'chat', actor: 'tape_loop', itemName: 'New message', detail: 'from' }, displayAge: '14m' },
-  { contract: { activityId: prototypeUuid(0x71000000, 4), occurredAtUtc: '2026-08-07T07:44:00.000Z', kind: 'download', itemName: 'Xtal.flac', detail: 'download completed' }, displayAge: '31m' },
-];

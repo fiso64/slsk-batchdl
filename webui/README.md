@@ -243,9 +243,9 @@ Applied search conditions appear in a focused overlay aligned to the query bar. 
 
 ## Dashboard exploration
 
-The prototype now opens on a Dashboard tab. Its history range control is intentionally dashboard-wide rather than chart-only: switching between 24h, 7d, 30d, and 90d updates the transfer activity chart, the Downloads/Uploads/Content/Errors ranking data, and the Transfer summary figures together. Current-rate cards, Recent activity, and Daemon health remain live/current-state views.
+The prototype now opens on a Dashboard tab. Its history range control is intentionally dashboard-wide rather than chart-only: switching between 24h, 7d, 30d, and 90d updates the transfer activity chart, the Downloads/Uploads/Content/Errors ranking data, and the Transfer summary figures together. Current-rate cards and Daemon health remain live/current-state views. The lower dashboard gives the ranking projection the full content width, then pairs the range summary with current daemon health rather than reserving space for a generic activity feed.
 
-The lower dashboard uses independent vertical columns so panels size to their own content. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space. Download and upload user rankings are deliberately directional: Downloads ranks remote users we downloaded from, while Uploads ranks remote users we uploaded to. All four ranking tabs retain the top 20 rows for the selected history range and scroll inside the ranking panel.
+The lower dashboard gives the ranking panel the full row, then places Transfer summary and Daemon health together in a responsive bottom grid. Ranked tables are explicitly full-width rather than relying on a generic `.table` class, avoiding CSS collisions and unused horizontal space. Download and upload user rankings are deliberately directional: Downloads ranks remote users we downloaded from, while Uploads ranks remote users we uploaded to. All four ranking tabs retain the top 20 rows for the selected history range and scroll inside the ranking panel.
 
 - Dashboard activity curves use bounded Bezier smoothing so sample values stay exact without angular joins.
 - The workspace itself owns vertical scrolling, so the scrollbar stays at the browser edge on every tab.

@@ -3,7 +3,7 @@
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
-  import { dashboardActivityFeed, dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
+  import { dashboardContractFor, dashboardData, dashboardRangeIds, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
   import { resourceStateForScenario } from '../prototype/resource-state';
 
   interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
@@ -151,41 +151,41 @@
   </section>
 
   <div class="dashboard-lower-area">
-    <div class="dashboard-column">
-      <section class="dashboard-panel ranking-panel">
-        <div class="ranking-tabs" role="tablist" aria-label="Dashboard ranking">
-          <button type="button" class:active={rankingTab === 'downloads'} onclick={() => (rankingTab = 'downloads')}>Downloads</button>
-          <button type="button" class:active={rankingTab === 'uploads'} onclick={() => (rankingTab = 'uploads')}>Uploads</button>
-          <button type="button" class:active={rankingTab === 'content'} onclick={() => (rankingTab = 'content')}>Content</button>
-          <button type="button" class:active={rankingTab === 'errors'} onclick={() => (rankingTab = 'errors')}>Errors</button>
-          <span>{data.label}</span>
+    <section class="dashboard-panel ranking-panel">
+      <div class="ranking-tabs" role="tablist" aria-label="Dashboard ranking">
+        <button type="button" class:active={rankingTab === 'downloads'} onclick={() => (rankingTab = 'downloads')}>Downloads</button>
+        <button type="button" class:active={rankingTab === 'uploads'} onclick={() => (rankingTab = 'uploads')}>Uploads</button>
+        <button type="button" class:active={rankingTab === 'content'} onclick={() => (rankingTab = 'content')}>Content</button>
+        <button type="button" class:active={rankingTab === 'errors'} onclick={() => (rankingTab = 'errors')}>Errors</button>
+        <span>{data.label}</span>
+      </div>
+
+      {#if rankingTab === 'downloads' || rankingTab === 'uploads'}
+        {@const rows: DashboardPeerRow[] = rankingTab === 'downloads' ? data.downloadUsers : data.uploadUsers}
+        <div class="dashboard-ranking-table peers-table">
+          <div class="dashboard-ranking-row heading"><span>#</span><span>User</span><span>{rankingTab === 'downloads' ? 'Downloaded' : 'Uploaded'}</span><span>Files</span></div>
+          {#each rows as peer, index}
+            <div class="dashboard-ranking-row"><span>{index + 1}</span><span class="dashboard-peer-name"><UsernameLink username={peer.peer} actions={userActions} /></span><span>{peer.transferred}</span><span>{peer.files}</span></div>
+          {/each}
         </div>
+      {:else if rankingTab === 'content'}
+        <div class="dashboard-ranking-table content-table">
+          <div class="dashboard-ranking-row heading"><span>#</span><span>Folder</span><span>Downloads</span><span>Peers</span></div>
+          {#each data.content as item, index}
+            <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={item.folder}>{item.folder}</span><span>{item.downloads}</span><span>{item.peers}</span></div>
+          {/each}
+        </div>
+      {:else}
+        <div class="dashboard-ranking-table errors-table">
+          <div class="dashboard-ranking-row heading"><span>#</span><span>Error</span><span>Count</span><span>Last seen</span></div>
+          {#each data.errors as error, index}
+            <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={error.error}>{error.error}</span><span>{error.count}</span><span>{error.lastSeen}</span></div>
+          {/each}
+        </div>
+      {/if}
+    </section>
 
-        {#if rankingTab === 'downloads' || rankingTab === 'uploads'}
-          {@const rows: DashboardPeerRow[] = rankingTab === 'downloads' ? data.downloadUsers : data.uploadUsers}
-          <div class="dashboard-ranking-table peers-table">
-            <div class="dashboard-ranking-row heading"><span>#</span><span>User</span><span>{rankingTab === 'downloads' ? 'Downloaded' : 'Uploaded'}</span><span>Files</span></div>
-            {#each rows as peer, index}
-              <div class="dashboard-ranking-row"><span>{index + 1}</span><span class="dashboard-peer-name"><UsernameLink username={peer.peer} actions={userActions} /></span><span>{peer.transferred}</span><span>{peer.files}</span></div>
-            {/each}
-          </div>
-        {:else if rankingTab === 'content'}
-          <div class="dashboard-ranking-table content-table">
-            <div class="dashboard-ranking-row heading"><span>#</span><span>Folder</span><span>Downloads</span><span>Peers</span></div>
-            {#each data.content as item, index}
-              <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={item.folder}>{item.folder}</span><span>{item.downloads}</span><span>{item.peers}</span></div>
-            {/each}
-          </div>
-        {:else}
-          <div class="dashboard-ranking-table errors-table">
-            <div class="dashboard-ranking-row heading"><span>#</span><span>Error</span><span>Count</span><span>Last seen</span></div>
-            {#each data.errors as error, index}
-              <div class="dashboard-ranking-row"><span>{index + 1}</span><span title={error.error}>{error.error}</span><span>{error.count}</span><span>{error.lastSeen}</span></div>
-            {/each}
-          </div>
-        {/if}
-      </section>
-
+    <div class="dashboard-bottom-grid">
       <section class="dashboard-panel transfer-summary-panel">
         <div class="dashboard-panel-heading compact">
           <div><h2>Transfer summary</h2><p>{data.label}</p></div>
@@ -194,21 +194,6 @@
           <div><span>Downloaded</span><strong>{data.summary.downloaded}</strong><small>{data.summary.downloadFiles} files</small></div>
           <div><span>Uploaded</span><strong>{data.summary.uploaded}</strong><small>{data.summary.uploadFiles} files</small></div>
           <div><span>Share ratio</span><strong>{data.summary.shareRatio}</strong><small>{data.summary.ratioDelta} over range</small></div>
-        </div>
-      </section>
-    </div>
-
-    <div class="dashboard-column">
-      <section class="dashboard-panel recent-activity-panel">
-        <div class="dashboard-panel-heading compact"><div><h2>Recent activity</h2><p>What the daemon has been doing</p></div><span class="live-indicator"><i></i>Live</span></div>
-        <div class="activity-feed">
-          {#each dashboardActivityFeed as item (item.contract.activityId)}
-            <div>
-              <i class={`feed-icon ${item.contract.kind}`}>{item.contract.kind === 'download' ? '↓' : item.contract.kind === 'upload' ? '↑' : '○'}</i>
-              <p><strong>{item.contract.itemName}</strong><span class="activity-detail"><span>{item.contract.detail}</span>{#if item.contract.actor}<UsernameLink username={item.contract.actor} actions={userActions} />{/if}</span></p>
-              <small>{item.displayAge}</small>
-            </div>
-          {/each}
         </div>
       </section>
 

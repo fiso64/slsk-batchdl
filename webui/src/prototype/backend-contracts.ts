@@ -39,7 +39,6 @@ export interface ProposedDashboardAnalyticsDto {
     peerFiles: 'distinct-terminal-transfer-ids-by-direction';
     contentIdentity: 'logical-download-source-path';
     errorPopulation: 'terminal-transfer-attempt-failures';
-    activityOrdering: 'occurred-at-descending';
     shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes';
   };
   downloadMbps: number[];
@@ -78,16 +77,6 @@ export interface ProposedDashboardSummaryDto {
   uploadedFiles: number;
   shareRatio: number | null;
   comparisonShareRatio: number | null;
-}
-
-/** Proposed durable feed contract; current daemon activity edges are not history. */
-export interface ProposedActivityFeedItemDto {
-  activityId: string;
-  occurredAtUtc: string;
-  kind: 'download' | 'upload' | 'chat';
-  actor?: string;
-  itemName: string;
-  detail?: string;
 }
 
 /** Proposed result metadata that preserves the daemon's preference decision. */
