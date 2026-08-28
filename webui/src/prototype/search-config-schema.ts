@@ -56,7 +56,7 @@ export const SEARCH_CONFIG_FIELDS = {
     ranking: { label: 'Bit depth', section: 'quality' },
   },
   strictArtist: {
-    id: 'strictArtist', modes: 'all', relationship: 'paired',
+    id: 'strictArtist', modes: ['track', 'album', 'song-aggregate', 'album-aggregate'], relationship: 'paired',
     conditions: { label: 'Require artist in path', section: 'matching' },
     ranking: { label: 'Prefer artist in path', section: 'matching' },
   },
@@ -107,7 +107,10 @@ export const SEARCH_CONFIG_FIELDS = {
   },
 } as const satisfies Record<string, SearchConfigFieldDefinition>;
 
-export const SEARCH_FORMATS = ['FLAC', 'MP3', 'OGG', 'OPUS', 'M4A', 'WAV'] as const;
+export const SEARCH_AUDIO_FORMATS = ['FLAC', 'MP3', 'OGG', 'OPUS', 'M4A', 'WAV'] as const;
+export const SEARCH_GENERIC_FORMATS = ['PDF', 'EPUB', 'ZIP', 'TXT', 'JPG', 'PNG'] as const;
+// Compatibility alias for components whose default vocabulary is audio-oriented.
+export const SEARCH_FORMATS = SEARCH_AUDIO_FORMATS;
 export const SEARCH_SAMPLE_RATES = [
   { value: '44100', label: '44.1 kHz' },
   { value: '48000', label: '48 kHz' },

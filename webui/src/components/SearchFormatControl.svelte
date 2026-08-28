@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { SEARCH_FORMATS } from '../prototype/search-config-schema';
+  import { SEARCH_AUDIO_FORMATS } from '../prototype/search-config-schema';
 
   interface Props {
     values: string[];
     label: string;
     ariaLabel: string;
     idPrefix: string;
+    suggestions?: readonly string[];
+    customPlaceholder?: string;
   }
 
-  let { values = $bindable(), label, ariaLabel, idPrefix }: Props = $props();
+  let { values = $bindable(), label, ariaLabel, idPrefix, suggestions = SEARCH_AUDIO_FORMATS, customPlaceholder = 'flac, mp3, aac, ape…' }: Props = $props();
   let view = $state<'buttons' | 'custom'>('buttons');
   let customFormats = $state('');
 
@@ -53,7 +55,7 @@
   <div class="format-control-row">
     <div class="format-buttons">
       <button type="button" class:active={values.length === 0} disabled={values.length === 0} onclick={clearFormats}>Any</button>
-      {#each SEARCH_FORMATS as format}
+      {#each suggestions as format}
         <button type="button" class:active={values.includes(format)} onclick={() => toggleFormat(format)}>{format}</button>
       {/each}
     </div>
@@ -64,7 +66,7 @@
     <input
       id={`${idPrefix}-custom-formats`}
       value={customFormats}
-      placeholder="flac, mp3, aac, ape…"
+      placeholder={customPlaceholder}
       aria-label={ariaLabel}
       oninput={(event) => {
         customFormats = (event.currentTarget as HTMLInputElement).value;

@@ -60,6 +60,11 @@
     <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
     <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
     <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+  {:else if name === 'generic'}
+    <path d="M6.5 3.5h6l4 4V18H6.5z" />
+    <path d="M12.5 3.5V8h4" />
+    <circle cx="15.5" cy="15.5" r="3.2" />
+    <path d="m18 18 2.2 2.2" />
   {:else if name === 'track'}
     <path d="M9 17.5V6.5l9-2v10.8" />
     <circle cx="6.5" cy="17.5" r="2.5" />

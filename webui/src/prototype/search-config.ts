@@ -66,12 +66,16 @@ export interface PrototypeSearchConditions {
   ranking: SearchRankingPreferences;
 }
 
-export function createPrototypeSearchConditions(): PrototypeSearchConditions {
+export function createPrototypeSearchConditions(mode: SearchResultMode = 'album'): PrototypeSearchConditions {
   // Required conditions intentionally begin unrestricted. The explicit `Any`
   // format state communicates this in the UI without manufacturing a no-op pill.
   // Ranking defaults mirror the documented pref-* defaults where they are useful
   // to expose in the prototype, but ranking never filters results out.
   const config = createEmptySearchConditions();
+  // Generic File Search deliberately starts neutral: it is a raw SearchJob and
+  // must not inherit Sockseek's audio/song-oriented preference defaults.
+  if (searchModeFamily(mode) === 'generic') return config;
+
   config.ranking.common.formats = ['MP3'];
   config.ranking.common.minBitrate = '200';
   config.ranking.common.maxBitrate = '2500';
@@ -177,7 +181,7 @@ export function toNecessarySearchPatch(
     maxSampleRate: numberOrNull(conditions.common.maxSampleRate),
     minBitDepth: numberOrNull(conditions.common.minBitDepth),
     maxBitDepth: numberOrNull(conditions.common.maxBitDepth),
-    strictArtist: conditions.common.strictArtist || null,
+    strictArtist: family === 'generic' ? null : conditions.common.strictArtist || null,
     strictTitle: family === 'track' ? conditions.track.strictTitle || null : null,
     strictAlbum: family === 'album' ? conditions.album.strictAlbum || null : null,
     formats: collectionOrNull(conditions.common.formats),
@@ -198,7 +202,7 @@ export function toNecessarySearchPatch(
     maxSampleRate: numberOrNull(ranking.common.maxSampleRate),
     minBitDepth: numberOrNull(ranking.common.minBitDepth),
     maxBitDepth: numberOrNull(ranking.common.maxBitDepth),
-    strictArtist: ranking.common.strictArtist || null,
+    strictArtist: family === 'generic' ? null : ranking.common.strictArtist || null,
     strictTitle: family === 'track' ? ranking.track.strictTitle || null : null,
     strictAlbum: family === 'album' ? ranking.album.strictAlbum || null : null,
     formats: collectionOrNull(ranking.common.formats),
@@ -221,7 +225,7 @@ export function toNecessarySearchPatch(
 
 export function hasAppliedConditions(mode: SearchResultMode, conditions: PrototypeSearchConditions): boolean {
   const family = searchModeFamily(mode);
-  return Boolean(
+  const common = Boolean(
     conditions.common.formats.length
       || conditions.common.minBitrate
       || conditions.common.maxBitrate
@@ -229,10 +233,14 @@ export function hasAppliedConditions(mode: SearchResultMode, conditions: Prototy
       || conditions.common.maxSampleRate
       || conditions.common.minBitDepth
       || conditions.common.maxBitDepth
-      || conditions.common.strictArtist
       || conditions.common.rejectUnknownMetadata
       || conditions.common.allowedUsers.trim()
-      || conditions.common.bannedUsers.trim()
+      || conditions.common.bannedUsers.trim(),
+  );
+  if (family === 'generic') return common;
+
+  return common || Boolean(
+    conditions.common.strictArtist
       || (family === 'track'
         ? conditions.track.strictTitle || conditions.track.expectedLength
         : conditions.album.strictAlbum

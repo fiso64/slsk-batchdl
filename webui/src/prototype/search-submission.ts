@@ -3,10 +3,12 @@ import type { SearchDraft } from './search';
 import { networkQuery, searchModeFamily } from './search';
 import { cloneSearchConditions, toNecessarySearchPatch, type PrototypeSearchConditions } from './search-config';
 
+export type SubmitSearchJobRequestDto = components['schemas']['SubmitSearchJobRequestDto'];
 export type SubmitTrackSearchJobRequestDto = components['schemas']['SubmitTrackSearchJobRequestDto'];
 export type SubmitAlbumSearchJobRequestDto = components['schemas']['SubmitAlbumSearchJobRequestDto'];
 
 export type PrototypeSearchSubmission =
+  | { kind: 'generic'; request: SubmitSearchJobRequestDto }
   | { kind: 'track'; request: SubmitTrackSearchJobRequestDto }
   | { kind: 'album'; request: SubmitAlbumSearchJobRequestDto }
   | { kind: 'song-aggregate'; request: SubmitTrackSearchJobRequestDto }
@@ -60,6 +62,14 @@ export function buildSearchSubmission(draft: SearchDraft, conditions: PrototypeS
   const searchPatch = toNecessarySearchPatch(draft.resultMode, conditions);
   const options = { downloadSettings: { search: searchPatch } };
   const family = searchModeFamily(draft.resultMode);
+
+  if (family === 'generic') {
+    const request: SubmitSearchJobRequestDto = {
+      queryText: networkQuery(draft),
+      options,
+    };
+    return { kind: 'generic', request };
+  }
 
   if (family === 'track') {
     // Both Track Search and Song Aggregate are projections of the same discovery SearchJob.

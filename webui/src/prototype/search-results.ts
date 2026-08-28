@@ -25,7 +25,7 @@ import {
 export type SearchStatus = 'pending' | 'searching' | 'receiving' | 'complete' | 'failed' | 'cancelled' | 'skipped' | 'interrupted';
 export type SearchResultPersistenceState = 'available' | 'incomplete' | 'pruned' | 'not-persisted' | 'interrupted';
 export type SearchView = 'list' | 'results';
-export type SearchSort = 'relevance' | 'speed' | 'queue' | 'size';
+export type SearchSort = 'relevance' | 'speed' | 'queue' | 'size' | 'count' | 'name';
 export type SizeSortDirection = 'asc' | 'desc';
 
 export interface SearchResultProjectionPage {
@@ -54,13 +54,14 @@ export interface SearchRecord {
   conditions: PrototypeSearchConditions;
   submittedConditions: PrototypeSearchConditions;
   submission: PrototypeSearchSubmission;
-  fixture: 'autechre' | 'boards' | 'aphex' | 'burial' | 'generic' | 'historical';
+  fixture: 'autechre' | 'boards' | 'aphex' | 'burial' | 'generic' | 'manuals' | 'historical';
   pagination: { resultPageSize: number; resultHasMore: boolean; resultPagesLoaded: number; historyPage: number };
 }
 
 export type { AudioAttributes };
 
 type FileCandidateRefDto = components['schemas']['FileCandidateRefDto'];
+type StartFileDownloadsRequestDto = components['schemas']['StartFileDownloadsRequestDto'];
 type AlbumFolderRefDto = components['schemas']['AlbumFolderRefDto'];
 type AggregateTrackProjectionRequestDto = components['schemas']['AggregateTrackProjectionRequestDto'];
 type AggregateAlbumProjectionRequestDto = components['schemas']['AggregateAlbumProjectionRequestDto'];
@@ -68,6 +69,11 @@ type AggregateAlbumProjectionRequestDto = components['schemas']['AggregateAlbumP
 export type AggregateSearchProjectionRequest =
   | { kind: 'song-aggregate'; request: AggregateTrackProjectionRequestDto }
   | { kind: 'album-aggregate'; request: AggregateAlbumProjectionRequestDto };
+
+/** Generic File Search must opt into General so selected files become RemoteFile jobs. */
+export function buildGenericFileDownloadRequest(files: FileCandidateRefDto[]): StartFileDownloadsRequestDto {
+  return { files, requestedMode: 2 };
+}
 
 export type PeerInfo = ItemPeerInfo & {
   uploadSpeedMbps: number;
@@ -113,7 +119,26 @@ export interface AlbumSearchResult {
   totalFileCount: number;
 }
 
-export type ProjectedSearchResult = TrackSearchResult | AlbumSearchResult;
+export interface GenericFileResult extends AlbumFileResult {
+  candidateRef: FileCandidateRefDto;
+  preferred: boolean;
+}
+
+export interface GenericDirectoryResult {
+  kind: 'generic-directory';
+  id: string;
+  peer: PeerInfo;
+  path: string;
+  locked: boolean;
+  /** Sum of the files currently surviving generic per-file conditions. */
+  sizeBytes: number;
+  files: GenericFileResult[];
+  totalFileCount: number;
+  preferred: boolean;
+  preference: ProposedPreferredResultDto;
+}
+
+export type ProjectedSearchResult = TrackSearchResult | AlbumSearchResult | GenericDirectoryResult;
 
 export interface SongAggregateGroup {
   kind: 'song-aggregate';
@@ -143,6 +168,111 @@ const cassetteculture: PeerInfo = { username: 'cassetteculture', uploadSpeedMbps
 const cloudarchive: PeerInfo = { username: 'cloudarchive', uploadSpeedMbps: 6.1, freeUploadSlot: true, queueLength: 0 };
 const tapeLoop: PeerInfo = { username: 'tape_loop', uploadSpeedMbps: 2.7, freeUploadSlot: false, queueLength: 7 };
 const silvermachine: PeerInfo = { username: 'silvermachine', uploadSpeedMbps: 5.2, freeUploadSlot: false, queueLength: 3 };
+
+function genericFile(
+  directoryId: number,
+  fileId: number,
+  peer: PeerInfo,
+  directoryPath: string,
+  relativePath: string,
+  sizeBytes: number,
+  audio?: AudioAttributes,
+  locked = false,
+): GenericFileResult {
+  const filename = `${directoryPath}/${relativePath}`;
+  return {
+    id: prototypeUuid(0x5b000000 + directoryId, fileId),
+    relativePath,
+    candidateRef: { username: peer.username, filename },
+    locked,
+    sizeBytes,
+    audio,
+    preferred: false,
+  };
+}
+
+function genericDirectory(
+  directoryId: number,
+  peer: PeerInfo,
+  path: string,
+  files: Array<[string, number, AudioAttributes? , boolean?]>,
+): GenericDirectoryResult {
+  const projectedFiles = files.map(([relativePath, sizeBytes, audio, locked], index) =>
+    genericFile(directoryId, index + 1, peer, path, relativePath, sizeBytes, audio, locked ?? false));
+  const sizeBytes = projectedFiles.reduce((total, file) => total + file.sizeBytes, 0);
+  return {
+    kind: 'generic-directory',
+    id: prototypeUuid(0x5c000000, directoryId),
+    peer,
+    path,
+    locked: projectedFiles.length > 0 && projectedFiles.every((file) => file.locked),
+    sizeBytes,
+    files: projectedFiles,
+    totalFileCount: projectedFiles.length,
+    preferred: false,
+    preference: {
+      candidateKey: `${peer.username}:${path}`,
+      tier: 'other',
+      matchedPreferenceKeys: [],
+    },
+  };
+}
+
+/**
+ * Raw-ish generic search fixture. Directories intentionally mix matching and
+ * non-matching file types so the File Search projection can demonstrate that
+ * generic conditions prune individual files instead of judging an album as a unit.
+ */
+export const genericDirectoryResults: GenericDirectoryResult[] = [
+  genericDirectory(1, nightshift, 'Docs/Linux/Kernel manuals', [
+    ['Linux Kernel Module Programming Guide.pdf', 3_800_000],
+    ['Linux Device Drivers 3rd Edition.epub', 5_900_000],
+    ['Networking/Linux Network Administrator Guide.pdf', 9_600_000],
+    ['Networking/Linux Advanced Routing & Traffic Control.epub', 6_700_000],
+    ['Networking/figures/topology.png', 1_400_000],
+    ['Kernel API/Linux Device Driver Model.pdf', 2_900_000],
+    ['Kernel API/legacy/Linux 2.6 Driver API.epub', 4_800_000],
+    ['Kernel API/legacy/notes.txt', 64_000],
+    ['cover.jpg', 1_200_000],
+    ['README.txt', 42_000],
+  ]),
+  genericDirectory(2, cassetteculture, 'Library/Unix & Linux/Manuals', [
+    ['Linux Administration Handbook.djvu', 18_700_000],
+    ['Linux Pocket Guide.epub', 4_100_000],
+    ['Linux Filesystem Hierarchy.pdf', 2_300_000],
+    ['Linux command cheat sheet.pdf', 1_100_000],
+    ['source.txt', 31_000],
+    ['index.nfo', 18_000],
+  ]),
+  // A sibling directory with no surviving PDF/EPUB children disappears completely;
+  // generic conditions never pull artwork along just because it shares a tree.
+  genericDirectory(6, cassetteculture, 'Library/Unix & Linux/Manuals/scans', [
+    ['front-cover.png', 2_600_000],
+    ['back-cover.jpg', 2_200_000],
+  ]),
+  genericDirectory(3, cloudarchive, 'Archive/Linux documentation', [
+    ['Linux Network Administrator Guide.pdf', 9_600_000],
+    ['Linux Filesystem Hierarchy.pdf', 2_300_000],
+    ['HOWTO/Networking/Linux Network HOWTO.pdf', 3_400_000],
+    ['HOWTO/Storage/Linux RAID HOWTO.epub', 2_700_000],
+    ['HOWTO/Storage/diagram.png', 930_000],
+    ['sources.zip', 28_000_000],
+    ['preview.jpg', 840_000],
+  ]),
+  genericDirectory(4, silvermachine, 'Reference/Manuals/Linux', [
+    ['Linux Command Line and Shell Scripting Bible.epub', 7_900_000],
+    ['Linux Command Line and Shell Scripting Bible.pdf', 14_500_000],
+    ['Bash quick reference.pdf', 1_800_000],
+    ['examples.zip', 6_200_000],
+  ]),
+  genericDirectory(5, tapeLoop, 'incoming/manuals', [
+    ['linux manual collection.pdf', 61_000_000, undefined, true],
+    ['Linux installation notes.epub', 2_200_000, undefined, true],
+    ['install.png', 4_100_000, undefined, true],
+    ['notes.txt', 93_000],
+    ['linux-installation-audio.flac', 34_000_000, { bitrateKbps: 912, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 421 }],
+  ]),
+];
 
 export const trackResults: TrackSearchResult[] = [
   { kind: 'track', id: prototypeUuid(0x51000000, 1), peer: nightshift, path: 'Music/Boards of Canada/Geogaddi/02 - Music Is Math.flac', candidateRef: { username: nightshift.username, filename: 'Music/Boards of Canada/Geogaddi/02 - Music Is Math.flac' }, locked: false, sizeBytes: 41_900_000, audio: { bitrateKbps: 944, sampleRateHz: 44_100, bitDepth: 16, lengthSeconds: 323 }, preferred: true, preference: { candidateKey: `${nightshift.username}:Music/Boards of Canada/Geogaddi/02 - Music Is Math.flac`, tier: 'preferred', matchedPreferenceKeys: ['format','quality'] } },
@@ -404,9 +534,14 @@ const trackNextPageResults = trackResults.map(alternateTrackResult);
 const albumNextPageResults = albumResults.map(alternateAlbumResult);
 
 function availableSearchResultCorpus(record: SearchRecord): ProjectedSearchResult[] {
-  const firstPage: ProjectedSearchResult[] = searchModeFamily(record.draft.resultMode) === 'album' ? albumResults : trackResults;
+  const family = searchModeFamily(record.draft.resultMode);
+  if (family === 'generic') return genericDirectoryResults.map((directory) => ({
+    ...directory,
+    files: directory.files.map((file) => ({ ...file })),
+  }));
+  const firstPage: ProjectedSearchResult[] = family === 'album' ? albumResults : trackResults;
   if (!record.pagination.resultHasMore && record.pagination.resultPagesLoaded <= 1) return [...firstPage];
-  const secondPage: ProjectedSearchResult[] = searchModeFamily(record.draft.resultMode) === 'album' ? albumNextPageResults : trackNextPageResults;
+  const secondPage: ProjectedSearchResult[] = family === 'album' ? albumNextPageResults : trackNextPageResults;
   return [...firstPage, ...secondPage];
 }
 
@@ -485,6 +620,8 @@ function matchesNecessaryProjection(
     : `${result.peer.username} ${result.path}`;
   if (query && !haystack.toLowerCase().includes(query)) return false;
 
+  if (result.kind === 'generic-directory') return false;
+
   if (result.kind === 'track') {
     const expectedLength = request.projection.kind === 'track'
       ? numeric(request.projection.request.songQuery?.length)
@@ -518,7 +655,7 @@ function withProjectedPreference(
   result: ProjectedSearchResult,
   request: ProposedSearchResultProjectionRequestDto,
 ): ProjectedSearchResult {
-  if (!hasRankingPatch(request)) return result;
+  if (!hasRankingPatch(request) || result.kind === 'generic-directory') return result;
   const preferred = result.kind === 'track'
     ? fileMatchesPatch(
         record,
@@ -540,6 +677,64 @@ function withProjectedPreference(
   };
 }
 
+function projectGenericDirectory(
+  record: SearchRecord,
+  directory: GenericDirectoryResult,
+  request: ProposedSearchResultProjectionRequestDto,
+): GenericDirectoryResult | null {
+  const filter = request.filterText?.trim().toLowerCase() ?? '';
+  const directoryMatchesFilter = !filter || `${directory.peer.username} ${directory.path}`.toLowerCase().includes(filter);
+  const preferredPatch = request.search.preferredCond;
+  const hasPreference = hasRankingPatch(request);
+  const survivingFiles = directory.files
+    .filter((file) => fileMatchesPatch(record, directory, file.candidateRef.filename, file.audio, request.search.necessaryCond))
+    .filter((file) => directoryMatchesFilter || file.relativePath.toLowerCase().includes(filter))
+    .map((file) => ({
+      ...file,
+      preferred: hasPreference
+        ? fileMatchesPatch(record, directory, file.candidateRef.filename, file.audio, preferredPatch)
+        : false,
+    }))
+    .sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true, sensitivity: 'base' }));
+
+  if (!survivingFiles.length) return null;
+  const preferred = survivingFiles.some((file) => file.preferred);
+  return {
+    ...directory,
+    locked: survivingFiles.every((file) => file.locked),
+    files: survivingFiles,
+    totalFileCount: survivingFiles.length,
+    sizeBytes: survivingFiles.reduce((total, file) => total + file.sizeBytes, 0),
+    preferred,
+    preference: {
+      ...directory.preference,
+      tier: preferred ? 'preferred' : 'other',
+      matchedPreferenceKeys: preferred ? ['best-child-file'] : [],
+    },
+  };
+}
+
+function compareGenericDirectories(
+  a: GenericDirectoryResult,
+  b: GenericDirectoryResult,
+  order: ProposedSearchResultProjectionRequestDto['order'],
+): number {
+  if (order === 'upload-speed') return b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps || a.path.localeCompare(b.path);
+  if (order === 'directory-size-ascending') return a.sizeBytes - b.sizeBytes || a.path.localeCompare(b.path);
+  if (order === 'directory-size-descending') return b.sizeBytes - a.sizeBytes || a.path.localeCompare(b.path);
+  if (order === 'file-count-ascending') return a.files.length - b.files.length || a.path.localeCompare(b.path);
+  if (order === 'file-count-descending') return b.files.length - a.files.length || a.path.localeCompare(b.path);
+  if (order === 'directory-name-ascending') return a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' });
+  if (order === 'directory-name-descending') return b.path.localeCompare(a.path, undefined, { numeric: true, sensitivity: 'base' });
+  // Relevance is the daemon ordering of each directory's best surviving child.
+  // The prototype approximates that lexical key with preference, slot and speed;
+  // production requires the server-owned grouped projection documented in the audit.
+  return Number(b.preferred) - Number(a.preferred)
+    || Number(b.peer.freeUploadSlot) - Number(a.peer.freeUploadSlot)
+    || b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps
+    || a.path.localeCompare(b.path);
+}
+
 export function buildSearchResultProjectionRequest(
   record: SearchRecord,
   filterText: string,
@@ -548,35 +743,44 @@ export function buildSearchResultProjectionRequest(
   cursor: string | null,
   limit: number,
 ): ProposedSearchResultProjectionRequestDto {
-  const projection: ProposedSearchResultProjectionRequestDto['projection'] = (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate')
-    ? {
-        kind: 'track',
-        request: {
-          songQuery: {
-            ...record.submission.request.songQuery,
-            length: numeric(record.conditions.track.expectedLength) ?? null,
-          },
-          includeFullResults: true,
+  const family = searchModeFamily(record.draft.resultMode);
+  let projection: ProposedSearchResultProjectionRequestDto['projection'];
+  if (record.submission.kind === 'generic') {
+    projection = { kind: 'generic-directory', request: { includeFiles: true, includeDescendants: true } };
+  } else if (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate') {
+    projection = {
+      kind: 'track',
+      request: {
+        songQuery: {
+          ...record.submission.request.songQuery,
+          length: numeric(record.conditions.track.expectedLength) ?? null,
         },
-      }
-    : {
-        kind: 'album',
-        request: {
-          albumQuery: record.submission.request.albumQuery,
-          includeFiles: true,
-        },
-      };
+        includeFullResults: true,
+      },
+    };
+  } else {
+    projection = {
+      kind: 'album',
+      request: {
+        albumQuery: record.submission.request.albumQuery,
+        includeFiles: true,
+      },
+    };
+  }
+
+  let order: ProposedSearchResultProjectionRequestDto['order'] = 'relevance';
+  if (sort === 'speed') order = 'upload-speed';
+  else if (family === 'generic' && sort === 'size') order = `directory-size-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
+  else if (family === 'generic' && sort === 'count') order = `file-count-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
+  else if (family === 'generic' && sort === 'name') order = `directory-name-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
+  else if (sort === 'queue') order = 'queue-depth';
+  else if (sort === 'size') order = `item-size-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`;
+
   return {
     filterText: filterText.trim() || null,
     projection,
     search: toNecessarySearchPatch(record.draft.resultMode, record.conditions),
-    order: sort === 'speed'
-      ? 'upload-speed'
-      : sort === 'queue'
-        ? 'queue-depth'
-        : sort === 'size'
-          ? `item-size-${sizeDirection === 'asc' ? 'ascending' : 'descending'}`
-          : 'relevance',
+    order,
     cursor,
     limit,
   };
@@ -591,15 +795,25 @@ export function requestSearchResultProjection(
     return { items: [], totalCount: 0, nextCursor: null, request };
   }
 
-  const projected = availableSearchResultCorpus(record)
-    .filter((result) => matchesNecessaryProjection(record, result, request))
-    .map((result) => withProjectedPreference(record, result, request));
+  let projected: ProjectedSearchResult[];
+  if (request.projection.kind === 'generic-directory') {
+    projected = availableSearchResultCorpus(record)
+      .filter((result): result is GenericDirectoryResult => result.kind === 'generic-directory')
+      .map((directory) => projectGenericDirectory(record, directory, request))
+      .filter((directory): directory is GenericDirectoryResult => directory !== null)
+      .sort((a, b) => compareGenericDirectories(a, b, request.order));
+  } else {
+    projected = availableSearchResultCorpus(record)
+      .filter((result) => result.kind !== 'generic-directory')
+      .filter((result) => matchesNecessaryProjection(record, result, request))
+      .map((result) => withProjectedPreference(record, result, request));
 
-  if (request.order === 'relevance') projected.sort((a, b) => Number(b.preferred) - Number(a.preferred));
-  else if (request.order === 'upload-speed') projected.sort((a, b) => b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
-  else if (request.order === 'queue-depth') projected.sort((a, b) => a.peer.queueLength - b.peer.queueLength || b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
-  else if (request.order === 'item-size-ascending') projected.sort((a, b) => a.sizeBytes - b.sizeBytes);
-  else projected.sort((a, b) => b.sizeBytes - a.sizeBytes);
+    if (request.order === 'relevance') projected.sort((a, b) => Number(b.preferred) - Number(a.preferred));
+    else if (request.order === 'upload-speed') projected.sort((a, b) => b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
+    else if (request.order === 'queue-depth') projected.sort((a, b) => a.peer.queueLength - b.peer.queueLength || b.peer.uploadSpeedMbps - a.peer.uploadSpeedMbps);
+    else if (request.order === 'item-size-ascending') projected.sort((a, b) => a.sizeBytes - b.sizeBytes);
+    else if (request.order === 'item-size-descending') projected.sort((a, b) => b.sizeBytes - a.sizeBytes);
+  }
 
   const offset = Math.max(0, numeric(request.cursor) ?? 0);
   const items = projected.slice(offset, offset + request.limit);
@@ -612,8 +826,26 @@ export function requestSearchResultProjection(
 }
 
 
-function conditionsFor(_mode: SearchResultMode, _variant: 'default' | 'simple' | 'aphex'): PrototypeSearchConditions {
-  return createPrototypeSearchConditions();
+function conditionsFor(mode: SearchResultMode, variant: 'default' | 'simple' | 'aphex' | 'manuals'): PrototypeSearchConditions {
+  const conditions = createPrototypeSearchConditions(mode);
+  const family = searchModeFamily(mode);
+  if (family === 'generic' || variant === 'manuals') {
+    // Generic search demonstrates simple per-file semantics: only PDF/EPUB files
+    // survive, while PDF is a ranking preference. Neighboring cover/archive files
+    // do not hitchhike into the projected directory.
+    conditions.common.formats = ['PDF', 'EPUB'];
+    conditions.ranking.common.formats = ['PDF'];
+    return conditions;
+  }
+  if (variant === 'default' && family === 'album') {
+    // Album mode demonstrates coverage semantics: FLAC determines whether an album
+    // is acceptable, but ancillary artwork remains part of an accepted folder.
+    conditions.common.formats = ['FLAC'];
+  } else if (variant === 'aphex' && family === 'track') {
+    // Track mode uses the same format condition as an individual-file predicate.
+    conditions.common.formats = ['FLAC'];
+  }
+  return conditions;
 }
 
 function makeRecord(
@@ -628,7 +860,7 @@ function makeRecord(
   resultState: SearchResultPersistenceState = 'available',
   lifetime: PrototypeDataLifetime = 'retained',
 ): SearchRecord {
-  const conditions = conditionsFor(draft.resultMode, fixture === 'aphex' ? 'aphex' : fixture === 'boards' ? 'default' : 'simple');
+  const conditions = conditionsFor(draft.resultMode, fixture === 'manuals' ? 'manuals' : fixture === 'aphex' || fixture === 'autechre' ? 'aphex' : fixture === 'boards' ? 'default' : 'simple');
   const submission = buildSearchSubmission(draft, conditions);
   return {
     id: prototypeUuid(0x50000000, index),
@@ -650,7 +882,7 @@ function makeRecord(
     submittedConditions: immutableSubmittedConditions(conditions),
     submission: cloneSearchSubmission(submission),
     fixture,
-    pagination: { resultPageSize: searchModeFamily(draft.resultMode) === 'album' ? albumResults.length : trackResults.length, resultHasMore: false, resultPagesLoaded: 1, historyPage: index <= 4 ? 1 : 2 },
+    pagination: { resultPageSize: searchModeFamily(draft.resultMode) === 'generic' ? genericDirectoryResults.length : searchModeFamily(draft.resultMode) === 'album' ? albumResults.length : trackResults.length, resultHasMore: false, resultPagesLoaded: 1, historyPage: index <= 4 ? 1 : 2 },
   };
 }
 
@@ -662,7 +894,8 @@ export function createInitialSearches(scenario: 'normal' | 'busy' | 'loading' | 
     return [makeRecord(2, { mode: 'split', resultMode: 'album', query: '', artist: 'Boards of Canada', title: 'Geogaddi' }, 'searching', 0, 0, 0, 'just now', 'boards', 'available', 'live')];
   }
   const records: SearchRecord[] = [
-    makeRecord(1, { mode: 'split', resultMode: 'track', query: '', artist: 'Autechre', title: 'Gantz Graf' }, 'searching', 187, 14, 42, 'just now', 'autechre'),
+    makeRecord(8, { mode: 'simple', resultMode: 'generic', query: 'linux manual', artist: '', title: '' }, 'complete', 23, 2, 5, 'just now', 'manuals'),
+    makeRecord(1, { mode: 'split', resultMode: 'track', query: '', artist: 'Autechre', title: 'Gantz Graf' }, 'searching', 187, 14, 42, '2 min ago', 'autechre'),
     makeRecord(2, { mode: 'split', resultMode: 'album', query: '', artist: 'Boards of Canada', title: 'Geogaddi' }, 'receiving', 412, 27, 68, '4 min ago', 'boards'),
     makeRecord(6, { mode: 'split', resultMode: 'album-aggregate', query: '', artist: 'Casiopea', title: '' }, 'complete', 536, 8, 91, '11 min ago', 'generic'),
     makeRecord(7, { mode: 'split', resultMode: 'song-aggregate', query: '', artist: 'Casiopea', title: '' }, 'complete', 684, 6, 104, '18 min ago', 'generic'),
@@ -681,7 +914,7 @@ export function createInitialSearches(scenario: 'normal' | 'busy' | 'loading' | 
     records[2] = { ...records[2]!, status: 'failed' };
     records[3] = { ...records[3]!, status: 'cancelled' };
     records[4] = { ...records[4]!, status: 'skipped', resultState: 'pruned', lifetime: 'pruned' };
-    records.push(makeRecord(6, { mode: 'simple', resultMode: 'album', query: 'old unavailable search', artist: '', title: '' }, 'complete', 0, 0, 0, '30 d ago', 'historical', 'not-persisted', 'live-only'));
+    records.push(makeRecord(9, { mode: 'simple', resultMode: 'album', query: 'old unavailable search', artist: '', title: '' }, 'complete', 0, 0, 0, '30 d ago', 'historical', 'not-persisted', 'live-only'));
   }
   return records;
 }
@@ -710,16 +943,16 @@ export function createSearchRecord(draft: SearchDraft, conditions: PrototypeSear
     resultState: 'available',
     lifetime: 'live',
     createdAtUtc: new Date().toISOString(),
-    foundFiles: family === 'album' ? 128 : 187,
-    lockedFiles: family === 'album' ? 9 : 14,
-    distinctPeers: family === 'album' ? 24 : 42,
+    foundFiles: family === 'generic' ? 96 : family === 'album' ? 128 : 187,
+    lockedFiles: family === 'generic' ? 3 : family === 'album' ? 9 : 14,
+    distinctPeers: family === 'generic' ? 18 : family === 'album' ? 24 : 42,
     aggregateGroupCount,
     when: 'just now',
     conditions: cloneSearchConditions(conditions),
     submittedConditions: immutableSubmittedConditions(conditions),
     submission: cloneSearchSubmission(submission),
     fixture: 'generic',
-    pagination: { resultPageSize: family === 'album' ? albumResults.length : trackResults.length, resultHasMore: aggregate ? false : true, resultPagesLoaded: 1, historyPage: 1 },
+    pagination: { resultPageSize: family === 'generic' ? genericDirectoryResults.length : family === 'album' ? albumResults.length : trackResults.length, resultHasMore: family === 'generic' || aggregate ? false : true, resultPagesLoaded: 1, historyPage: 1 },
   };
 }
 

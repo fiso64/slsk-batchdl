@@ -1,6 +1,6 @@
 export type SearchInputMode = 'simple' | 'split';
-export type SearchResultMode = 'track' | 'album' | 'song-aggregate' | 'album-aggregate';
-export type SearchModeFamily = 'track' | 'album';
+export type SearchResultMode = 'generic' | 'track' | 'album' | 'song-aggregate' | 'album-aggregate';
+export type SearchModeFamily = 'generic' | 'track' | 'album';
 
 export interface SearchDraft {
   mode: SearchInputMode;
@@ -19,6 +19,7 @@ export const emptySearchDraft: SearchDraft = {
 };
 
 export function searchModeFamily(mode: SearchResultMode): SearchModeFamily {
+  if (mode === 'generic') return 'generic';
   return mode === 'track' || mode === 'song-aggregate' ? 'track' : 'album';
 }
 
@@ -28,6 +29,7 @@ export function isAggregateSearchMode(mode: SearchResultMode): boolean {
 
 export function searchModeLabel(mode: SearchResultMode): string {
   switch (mode) {
+    case 'generic': return 'File Search';
     case 'track': return 'Track Search';
     case 'album': return 'Album Search';
     case 'song-aggregate': return 'Song Aggregate';
@@ -36,6 +38,12 @@ export function searchModeLabel(mode: SearchResultMode): string {
 }
 
 export function networkQuery(draft: SearchDraft): string {
+  if (draft.resultMode === 'generic') {
+    return draft.mode === 'simple'
+      ? draft.query.trim()
+      : [draft.artist.trim(), draft.title.trim()].filter(Boolean).join(' ');
+  }
+
   if (draft.mode === 'split') {
     return [draft.artist.trim(), draft.title.trim()].filter(Boolean).join(' ');
   }
