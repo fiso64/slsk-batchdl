@@ -1045,7 +1045,10 @@ public class RemoteCliBackendTests
         string url = DynamicLoopbackUrl;
         await using var app = BuildServer(new ServerOptions
         {
-            Engine = new EngineSettings(),
+            Engine = new EngineSettings
+            {
+                LogLevel = LogLevel.None,
+            },
             DefaultDownload = new DownloadSettings
             {
                 Output =
@@ -1078,15 +1081,34 @@ public class RemoteCliBackendTests
                 },
             };
 
+            Guid summaryWorkflowId = Guid.NewGuid();
+            var terminalJobs = new TaskCompletionSource<Guid[]>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            backend.StateUpdated += update =>
+            {
+                if (update.Status == DaemonClientApplyStatus.Applied
+                    && update.ChangedWorkflows.Any(workflow =>
+                        workflow.WorkflowId == summaryWorkflowId
+                        && workflow.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
+                {
+                    terminalJobs.TrySetResult(
+                        backend.ClientStore.GetWorkflowJobs(summaryWorkflowId)
+                            .Select(job => job.JobId)
+                            .ToArray());
+                }
+            };
+
             var summary = await backend.SubmitExtractJobAsync(
                 new SubmitExtractJobRequestDto(
                     inputPath,
                     "List",
                     Options: new SubmissionOptionsDto(
+                        WorkflowId: summaryWorkflowId,
                         OutputParentDir: outputDir,
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--print", "jobs"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
+            Guid[] expectedJobIds = await terminalJobs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             using var output = new StringWriter();
             await Sockseek.Cli.Program.PrintRemoteRequestedOutputAsync(
@@ -1094,7 +1116,8 @@ public class RemoteCliBackendTests
                 summary.WorkflowId,
                 printSettings,
                 CancellationToken.None,
-                output);
+                output,
+                expectedJobIds);
 
             string rendered = output.ToString();
             StringAssert.Contains(rendered, "2 jobs:");

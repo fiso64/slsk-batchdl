@@ -545,7 +545,14 @@ internal static partial class Program
             cliReporter = null;
 
             if (rootSettings.PrintResults || rootSettings.PrintJobs)
-                await PrintRemoteRequestedOutputAsync(backend, submission.WorkflowId, rootSettings, cts.Token);
+            {
+                await PrintRemoteRequestedOutputAsync(
+                    backend,
+                    submission.WorkflowId,
+                    rootSettings,
+                    cts.Token,
+                    expectedJobIds: observedCompletion.Jobs.Select(job => job.JobId).ToArray());
+            }
 
             return exitCode;
         }
@@ -1120,9 +1127,15 @@ internal static partial class Program
         Guid workflowId,
         DownloadSettings settings,
         CancellationToken ct,
-        TextWriter? output = null)
+        TextWriter? output = null,
+        IReadOnlyCollection<Guid>? expectedJobIds = null)
     {
-        var queue = await BuildRemotePrintQueueAsync(backend, workflowId, settings, ct);
+        var queue = await BuildRemotePrintQueueAsync(
+            backend,
+            workflowId,
+            settings,
+            expectedJobIds,
+            ct);
         using var outputScope = output is null ? null : Printing.RedirectOutput(output);
         PrintOutputRenderer.PrintRequestedOutput(queue);
     }
@@ -1145,6 +1158,7 @@ internal static partial class Program
         ICliBackend backend,
         Guid workflowId,
         DownloadSettings settings,
+        IReadOnlyCollection<Guid>? expectedJobIds,
         CancellationToken ct)
     {
         var deadline = Stopwatch.GetTimestamp()
@@ -1155,6 +1169,7 @@ internal static partial class Program
                 backend,
                 workflowId,
                 settings,
+                expectedJobIds,
                 ct);
             if (complete)
                 return queue;
@@ -1174,6 +1189,7 @@ internal static partial class Program
         ICliBackend backend,
         Guid workflowId,
         DownloadSettings settings,
+        IReadOnlyCollection<Guid>? expectedJobIds,
         CancellationToken ct)
     {
         var queue = new JobList("remote workflow")
@@ -1196,6 +1212,13 @@ internal static partial class Program
         {
             if (!await LoadRemoteJobTreeAsync(backend, summary.JobId, details, ct))
                 return (queue, false);
+        }
+
+        if (expectedJobIds != null
+            && (details.Count != expectedJobIds.Count
+                || expectedJobIds.Any(jobId => !details.ContainsKey(jobId))))
+        {
+            return (queue, false);
         }
 
         var rootDetails = details.Values
