@@ -634,8 +634,106 @@ function alternateAlbumResult(result: AlbumSearchResult, index: number): AlbumSe
   };
 }
 
-const trackNextPageResults = trackResults.map(alternateTrackResult);
-const albumNextPageResults = albumResults.map(alternateAlbumResult);
+function retargetTrackResult(result: TrackSearchResult, path: string): TrackSearchResult {
+  return {
+    ...result,
+    path,
+    candidateRef: { username: result.peer.username, filename: path },
+    preference: { ...result.preference, candidateKey: `${result.peer.username}:${path}` },
+  };
+}
+
+function trackResultsForRecord(record: SearchRecord): TrackSearchResult[] {
+  const results: TrackSearchResult[] = trackResults.map((result) => ({ ...result, audio: result.audio ? { ...result.audio } : undefined }));
+  const artist = record.draft.artist.trim();
+  const title = record.draft.title.trim();
+  if (!artist || !title) return results;
+
+  if (record.fixture === 'autechre' || record.fixture === 'aphex') {
+    // Saved FLAC-oriented track searches need a small number of candidates that
+    // actually satisfy the saved strict-title ranking. The remaining corpus stays
+    // deliberately noisy so the Preferred/Other partition remains visible.
+    results[0] = retargetTrackResult(results[0]!, `Music/${artist}/${title}/${title}.flac`);
+    results[1] = retargetTrackResult(results[1]!, `lossless/${artist}/${title}/01 - ${title}.flac`);
+  } else if (record.fixture === 'historical') {
+    // The ordinary Track Search ranking defaults prefer MP3. Give the historical
+    // fixture one exact-title MP3 candidate without manufacturing a special rank.
+    results[6] = retargetTrackResult(results[6]!, `incoming/${artist}/${title}.mp3`);
+  }
+
+  return results;
+}
+
+function retargetAlbumFile(file: AlbumFileResult, title: string, index: number): AlbumFileResult {
+  if (!file.audio) return { ...file };
+  const suffix = file.relativePath.includes('.') ? file.relativePath.slice(file.relativePath.lastIndexOf('.')) : '';
+  const prefix = file.relativePath.includes('/') ? file.relativePath.slice(0, file.relativePath.lastIndexOf('/') + 1) : '';
+  return { ...file, relativePath: `${prefix}${String(index + 1).padStart(2, '0')} - ${title}${suffix}` };
+}
+
+function retargetAlbumResult(
+  result: AlbumSearchResult,
+  path: string,
+  trackTitles: string[],
+): AlbumSearchResult {
+  let audioIndex = 0;
+  const files = result.files.map((file) => {
+    if (!file.audio) return { ...file };
+    const title = trackTitles[audioIndex] ?? `Track ${audioIndex + 1}`;
+    const next = retargetAlbumFile(file, title, audioIndex);
+    audioIndex += 1;
+    return next;
+  });
+  return {
+    ...result,
+    path,
+    candidateRef: { username: result.peer.username, folderPath: path },
+    files,
+    preference: { ...result.preference, candidateKey: `${result.peer.username}:${path}` },
+  };
+}
+
+function makeAlbumResultHighResolution(result: AlbumSearchResult): AlbumSearchResult {
+  return {
+    ...result,
+    files: result.files.map((file) => file.audio ? {
+      ...file,
+      audio: {
+        ...file.audio,
+        bitrateKbps: Math.max(file.audio.bitrateKbps ?? 0, 2050),
+        sampleRateHz: 96_000,
+        bitDepth: 24,
+      },
+    } : { ...file }),
+  };
+}
+
+function albumResultsForRecord(record: SearchRecord): AlbumSearchResult[] {
+  let results: AlbumSearchResult[] = albumResults.map((result) => ({
+    ...result,
+    files: result.files.map((file) => ({ ...file, audio: file.audio ? { ...file.audio } : undefined })),
+  }));
+
+  if (record.fixture === 'burial') {
+    const artist = record.draft.artist.trim() || 'Burial';
+    const album = record.draft.title.trim() || 'Untrue';
+    const tracks = ['Untitled', 'Archangel', 'Near Dark', 'Ghost Hardware'];
+    const paths = [
+      `Music/${artist}/${album}`,
+      `Music/${artist}/${album} [24bit]`,
+      `lossless/${artist}/2007 - ${album}`,
+      `Archive/${artist}/${album} (MP3)`,
+      `${artist}/${album}`,
+    ];
+    results = results.map((result, index) => retargetAlbumResult(result, paths[index]!, tracks));
+  }
+
+  // Keep exactly two ordinary CD-quality FLAC folders in the preferred tier. A
+  // third FLAC folder remains visible but exceeds the default preferred sample-rate
+  // ceiling, making the distinction between necessary and preferred conditions clear.
+  results[4] = makeAlbumResultHighResolution(results[4]!);
+  return results;
+}
 
 function availableSearchResultCorpus(record: SearchRecord): ProjectedSearchResult[] {
   const family = searchModeFamily(record.draft.resultMode);
@@ -643,9 +741,14 @@ function availableSearchResultCorpus(record: SearchRecord): ProjectedSearchResul
     ...directory,
     files: directory.files.map((file) => ({ ...file })),
   }));
-  const firstPage: ProjectedSearchResult[] = family === 'album' ? albumResults : trackResults;
-  if (!record.pagination.resultHasMore && record.pagination.resultPagesLoaded <= 1) return [...firstPage];
-  const secondPage: ProjectedSearchResult[] = family === 'album' ? albumNextPageResults : trackNextPageResults;
+
+  const firstPage: ProjectedSearchResult[] = family === 'album'
+    ? albumResultsForRecord(record)
+    : trackResultsForRecord(record);
+  if (!record.pagination.resultHasMore && record.pagination.resultPagesLoaded <= 1) return firstPage;
+  const secondPage: ProjectedSearchResult[] = family === 'album'
+    ? (firstPage as AlbumSearchResult[]).map(alternateAlbumResult)
+    : (firstPage as TrackSearchResult[]).map(alternateTrackResult);
   return [...firstPage, ...secondPage];
 }
 
@@ -732,7 +835,7 @@ function matchesNecessaryProjection(
 
   const folderPatch = request.search.necessaryFolderCond;
   const audioFiles = result.files.filter((file) => isAudioFilePath(file.relativePath));
-  const matchingFiles = audioFiles.filter((file) => fileMatchesPatch(record, result, file.relativePath, file.audio, request.search.necessaryCond));
+  const matchingFiles = audioFiles.filter((file) => fileMatchesPatch(record, result, `${result.path}/${file.relativePath}`, file.audio, request.search.necessaryCond));
   const minTracks = numeric(folderPatch?.minTrackCount);
   const maxTracks = numeric(folderPatch?.maxTrackCount);
   if (minTracks !== undefined && audioFiles.length < minTracks) return false;
@@ -756,7 +859,14 @@ function withProjectedPreference(
   result: ProjectedSearchResult,
   request: ProposedSearchResultProjectionRequestDto,
 ): ProjectedSearchResult {
-  if (!hasRankingPatch(request) || result.kind === 'generic-directory') return result;
+  if (result.kind === 'generic-directory') return result;
+  if (!hasRankingPatch(request)) {
+    return {
+      ...result,
+      preferred: false,
+      preference: { ...result.preference, tier: 'other', matchedPreferenceKeys: [] },
+    };
+  }
   const preferred = result.kind === 'track'
     ? fileMatchesPatch(
         record,
@@ -766,7 +876,7 @@ function withProjectedPreference(
         request.search.preferredCond,
         request.projection.kind === 'track' ? numeric(request.projection.request.songQuery?.length) : undefined,
       )
-    : result.files.some((file) => fileMatchesPatch(record, result, file.relativePath, file.audio, request.search.preferredCond));
+    : result.files.some((file) => fileMatchesPatch(record, result, `${result.path}/${file.relativePath}`, file.audio, request.search.preferredCond));
   return {
     ...result,
     preferred,
