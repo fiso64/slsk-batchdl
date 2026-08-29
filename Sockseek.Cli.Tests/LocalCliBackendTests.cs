@@ -311,10 +311,12 @@ public class LocalCliBackendTests
                 SearchHint = "Track One",
             });
 
+            await backend.SubscribeWorkflowAsync(searchJob.WorkflowId, cts.Token);
             engine.Enqueue(searchJob, downloadSettings);
             var runTask = engine.RunAsync(cts.Token);
 
             await WaitForConditionAsync(
+                backend,
                 () => searchJob.TerminalOutcome == JobTerminalOutcome.Succeeded,
                 "Timed out waiting for the album search to complete.");
 
@@ -388,10 +390,12 @@ public class LocalCliBackendTests
                 DownloadBehaviorPolicy = new DownloadBehaviorPolicy { Album = DownloadBehavior.Manual },
             };
 
+            await backend.SubscribeWorkflowAsync(albumJob.WorkflowId, cts.Token);
             engine.Enqueue(albumJob, downloadSettings);
             var runTask = engine.RunAsync(cts.Token);
 
             await WaitForConditionAsync(
+                backend,
                 () => albumJob.IsAwaitingSelection,
                 "Timed out waiting for the manual album job to reach the picker.");
 
@@ -467,10 +471,12 @@ public class LocalCliBackendTests
                 SearchHint = "Track One",
             });
 
+            await backend.SubscribeWorkflowAsync(searchJob.WorkflowId, cts.Token);
             engine.Enqueue(searchJob, downloadSettings);
             var runTask = engine.RunAsync(cts.Token);
 
             await WaitForConditionAsync(
+                backend,
                 () => searchJob.TerminalOutcome == JobTerminalOutcome.Succeeded,
                 "Timed out waiting for the album search to complete.");
 
@@ -500,6 +506,7 @@ public class LocalCliBackendTests
             Assert.IsNotNull(downloadSummary);
             AlbumJob? albumJob = null;
             await WaitForConditionAsync(
+                backend,
                 () =>
                 {
                     albumJob = (AlbumJob?)engine.GetJob(downloadSummary.JobId);
@@ -513,6 +520,7 @@ public class LocalCliBackendTests
             Assert.AreEqual(2, albumJob.ResolvedTarget.Files.Count, "The download should use the retrieved folder snapshot, not reconstruct a partial folder from old search results.");
 
             await WaitForConditionAsync(
+                backend,
                 () => albumJob.IsTerminal,
                 "Timed out waiting for selected album download to complete.");
 
@@ -621,10 +629,12 @@ public class LocalCliBackendTests
             var backend = new LocalCliBackend(engine);
 
             var searchJob = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track One" });
+            await backend.SubscribeWorkflowAsync(searchJob.WorkflowId, cts.Token);
             engine.Enqueue(searchJob, downloadSettings);
             var runTask = engine.RunAsync(cts.Token);
 
             await WaitForConditionAsync(
+                backend,
                 () => searchJob.TerminalOutcome == JobTerminalOutcome.Succeeded,
                 "Timed out waiting for aggregate track search to complete.");
 
@@ -677,10 +687,12 @@ public class LocalCliBackendTests
             var backend = new LocalCliBackend(engine);
 
             var searchJob = new SearchJob(new AlbumQuery { Artist = "Artist" });
+            await backend.SubscribeWorkflowAsync(searchJob.WorkflowId, cts.Token);
             engine.Enqueue(searchJob, downloadSettings);
             var runTask = engine.RunAsync(cts.Token);
 
             await WaitForConditionAsync(
+                backend,
                 () => searchJob.TerminalOutcome == JobTerminalOutcome.Succeeded,
                 "Timed out waiting for aggregate album search to complete.");
 
@@ -706,19 +718,15 @@ public class LocalCliBackendTests
         }
     }
 
-    private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-                return;
-
-            await Task.Delay(5);
-        }
-
-        Assert.Fail(failureMessage);
-    }
+    private static Task WaitForConditionAsync(
+        ICliBackend backend,
+        Func<bool> condition,
+        string failureMessage)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            _ => Task.FromResult(condition()),
+            failureMessage,
+            timeoutMs: 10_000);
 
     private static async Task DeleteDirectoryIfExistsWithRetryAsync(string path)
     {

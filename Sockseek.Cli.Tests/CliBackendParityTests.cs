@@ -19,7 +19,7 @@ public class CliBackendParityTests
     private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
 
     [TestMethod]
-    public async Task CliBackendParity_TerminalJobProjections_AreEquivalent()
+    public async Task CliBackendParity_LiveTerminalJobUpdates_AreEquivalent()
     {
         var projections = new ConcurrentBag<string[]>();
         await RunForEachBackendAsync(
@@ -31,23 +31,104 @@ public class CliBackendParityTests
             },
             scenario: async ctx =>
             {
+                var terminalJobs = new ConcurrentDictionary<Guid, JobSummaryDto>();
+                void CaptureTerminal(DaemonClientUpdate update)
+                {
+                    foreach (JobSummaryDto job in update.ChangedJobs.Where(job =>
+                        job.LifecycleState == ServerJobLifecycleState.Terminal))
+                        terminalJobs[job.JobId] = job;
+                }
+                ctx.Backend.StateUpdated += CaptureTerminal;
                 var summary = await ctx.Backend.SubmitTrackSearchJobAsync(
                     new SubmitTrackSearchJobRequestDto(
                         new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                     ctx.Token);
-                await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.Succeeded);
-                var jobs = await ctx.Backend.GetJobsAsync(
-                    new JobQuery(null, null, null, summary.WorkflowId, IncludeAll: true),
-                    ctx.Token);
-                projections.Add(jobs.Select(job =>
-                    $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
-                    .OrderBy(value => value, StringComparer.Ordinal)
-                    .ToArray());
+                try
+                {
+                    JobSummaryDto? observedTerminal = await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(terminalJobs.GetValueOrDefault(summary.JobId)),
+                        job => job != null,
+                        $"{ctx.Name} did not publish a live terminal update for job {summary.JobId}.",
+                        job => job == null ? "<missing>" : FormatState(job));
+                    Assert.IsNotNull(observedTerminal);
+                    JobSummaryDto terminal = observedTerminal;
+                    projections.Add(
+                    [
+                        $"{terminal.Kind}:{terminal.LifecycleState}:{terminal.ActivityPhase}:" +
+                        $"{terminal.TerminalOutcome}:{terminal.ParentJobId.HasValue}",
+                    ]);
+                }
+                finally
+                {
+                    ctx.Backend.StateUpdated -= CaptureTerminal;
+                }
             });
 
         Assert.AreEqual(2, projections.Count);
         var projectionArray = projections.ToArray();
         CollectionAssert.AreEqual(projectionArray[0], projectionArray[1]);
+    }
+
+    [TestMethod]
+    public async Task RemoteBackend_RetiredSearchHistoryMatchesItsLiveTerminalUpdate()
+    {
+        await RunAsync(
+            () => ParityBackendContext.CreateRemoteAsync(musicRoot =>
+            {
+                string trackDir = Path.Combine(musicRoot, "Artist");
+                Directory.CreateDirectory(trackDir);
+                File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+            }),
+            async ctx =>
+            {
+                var terminalJobs = new ConcurrentDictionary<Guid, JobSummaryDto>();
+                void CaptureTerminal(DaemonClientUpdate update)
+                {
+                    foreach (JobSummaryDto job in update.ChangedJobs.Where(job =>
+                        job.LifecycleState == ServerJobLifecycleState.Terminal))
+                        terminalJobs[job.JobId] = job;
+                }
+                ctx.Backend.StateUpdated += CaptureTerminal;
+                try
+                {
+                    var summary = await ctx.Backend.SubmitTrackSearchJobAsync(
+                        new SubmitTrackSearchJobRequestDto(
+                            new SongQueryDto("Artist", "Track One", "", "", -1, false)),
+                        ctx.Token);
+                    JobSummaryDto? observedTerminal = await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(terminalJobs.GetValueOrDefault(summary.JobId)),
+                        job => job != null,
+                        $"Remote live state did not publish terminal job {summary.JobId}.",
+                        job => job == null ? "<missing>" : FormatState(job));
+                    Assert.IsNotNull(observedTerminal);
+                    JobSummaryDto liveTerminal = observedTerminal;
+                    await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(
+                            ctx.Backend.ClientStore.GetWorkflowJobs(summary.WorkflowId).Count == 0),
+                        "Remote workflow did not retire from live state.");
+
+                    var retainedJobs = await ctx.Backend.GetJobsAsync(
+                        new JobQuery(null, null, null, summary.WorkflowId, IncludeAll: true),
+                        ctx.Token);
+                    JobSummaryDto retained = retainedJobs.Single(job => job.JobId == summary.JobId);
+                    Assert.AreEqual(liveTerminal.LifecycleState, retained.LifecycleState);
+                    Assert.AreEqual(liveTerminal.TerminalOutcome, retained.TerminalOutcome);
+                    Assert.AreEqual(liveTerminal.ActivityPhase, retained.ActivityPhase);
+
+                    var projection = await ctx.Backend.GetFileResultsAsync(summary.JobId, ctx.Token);
+                    Assert.IsNotNull(projection);
+                    Assert.IsTrue(projection.IsComplete);
+                    Assert.AreEqual("Complete", projection.PersistenceState);
+                    Assert.AreEqual(1, projection.Items.Count);
+                }
+                finally
+                {
+                    ctx.Backend.StateUpdated -= CaptureTerminal;
+                }
+            });
     }
 
     [TestCleanup]
@@ -323,6 +404,7 @@ public class CliBackendParityTests
 
                 await WaitForWorkflowStateAsync(ctx.Backend, summary.WorkflowId, ServerWorkflowState.Completed);
                 await WaitForConditionAsync(
+                    ctx.Backend,
                     () => messages.Contains("Auto profiles active: album-auto"),
                     $"Timed out waiting for workflow message on {ctx.Name}. Observed: {string.Join(", ", observed)}");
             },
@@ -704,47 +786,31 @@ public class CliBackendParityTests
                     ]),
             ]);
 
-    private static async Task WaitForJobStateAsync(ICliBackend backend, Guid jobId, ExpectedJobStatus expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
+    private static Task WaitForJobStateAsync(
+        ICliBackend backend,
+        Guid jobId,
+        ExpectedJobStatus expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetJobDetailAsync(jobId, ct),
+            detail => detail?.Summary is { } summary && ProjectState(summary) == expectedState,
+            $"Timed out waiting for job {jobId} to reach state '{expectedState}'.",
+            detail => FormatState(detail?.Summary),
+            timeoutMs);
 
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
-            if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        var finalDetail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
-        Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'. Final state: {FormatState(finalDetail?.Summary)}.");
-    }
-
-    private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-            if (detail?.Summary.State == expectedState)
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-        var finalJobs = finalDetail == null
-            ? []
-            : await backend.GetJobsAsync(
-                new JobQuery(null, null, null, workflowId, IncludeAll: true),
-                CancellationToken.None);
-        string jobs = finalDetail == null
-            ? "<missing>"
-            : string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
-        Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
-    }
+    private static Task WaitForWorkflowStateAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        ServerWorkflowState expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetWorkflowAsync(workflowId, ct),
+            detail => detail?.Summary.State == expectedState,
+            $"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'.",
+            detail => detail?.Summary.State.ToString() ?? "<missing>",
+            timeoutMs);
 
     private static async Task<JobSummaryDto> WaitForWorkflowJobAsync(
         ICliBackend backend,
@@ -752,37 +818,29 @@ public class CliBackendParityTests
         Func<JobSummaryDto, bool> predicate,
         int timeoutMs = 5000)
     {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, null, workflowId, IncludeAll: true), CancellationToken.None);
-            var match = jobs.FirstOrDefault(predicate);
-            if (match != null)
-                return match;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        var finalJobs = await backend.GetJobsAsync(new JobQuery(null, null, null, workflowId, IncludeAll: true), CancellationToken.None);
-        Assert.Fail($"Timed out waiting for matching workflow job. Jobs: {string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)}"))}");
-        throw new InvalidOperationException("Unreachable after Assert.Fail.");
+        var jobs = await BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetJobsAsync(
+                new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                ct),
+            items => items.Any(predicate),
+            "Timed out waiting for matching workflow job.",
+            items => string.Join(", ", items.Select(job =>
+                $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)}")),
+            timeoutMs);
+        return jobs.First(predicate);
     }
 
-    private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            if (condition())
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        Assert.Fail(failureMessage);
-    }
+    private static Task WaitForConditionAsync(
+        ICliBackend backend,
+        Func<bool> condition,
+        string failureMessage,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            _ => Task.FromResult(condition()),
+            failureMessage,
+            timeoutMs);
 
     private static ExpectedJobStatus ProjectState(JobSummaryDto summary)
         => ProjectState(summary.LifecycleState, summary.ActivityPhase, summary.TerminalOutcome, summary.SkipReason);

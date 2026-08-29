@@ -166,8 +166,25 @@ internal sealed class InteractiveCliCoordinator
         if (detail?.Payload is not AlbumJobPayloadDto album)
             return;
 
-        var projection = await backend.GetFolderResultsAsync(albumJobId, includeFiles: true, ct);
+        var projection = await backend.GetFolderResultsAsync(
+            albumJobId,
+            new FolderSearchProjectionRequestDto(album.Query, IncludeFiles: true),
+            ct);
         var folders = projection?.Items.Select(ToAlbumFolder).ToList() ?? [];
+        var purpose = interactiveAlbumSessions.TryGetValue(albumJobId, out var session)
+            ? InteractiveAlbumPromptPurpose.RetryAcceptedAlbumPrompt
+            : InteractiveAlbumPromptPurpose.NewAlbumPrompt;
+
+        if (session?.LastSelectedFolderKey is { } selectedFolderKey
+            && folders.Any(folder => FolderKey(folder).Equals(selectedFolderKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            // The selected folder is removed before a failed manual download returns to
+            // AwaitingSelection. Seeing it here means the summary/projection still describes
+            // the selection generation that was just resumed, so wait for a newer state.
+            handledManualSelections.Remove(albumJobId);
+            return;
+        }
+
         if (folders.Count == 0)
         {
             if (ConsoleInputManager.Reporter != null)
@@ -175,10 +192,6 @@ internal sealed class InteractiveCliCoordinator
             await backend.CompleteManualSelectionAsync(albumJobId, ct);
             return;
         }
-
-        var purpose = interactiveAlbumSessions.TryGetValue(albumJobId, out var session)
-            ? InteractiveAlbumPromptPurpose.RetryAcceptedAlbumPrompt
-            : InteractiveAlbumPromptPurpose.NewAlbumPrompt;
 
         if (session == null)
         {

@@ -445,7 +445,7 @@ public sealed class PersistenceWriterTests
         }
 
         stop.Cancel();
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(() => runTask);
+        await AssertCanceledAsync(runTask);
         await runtimeSession.StopAsync();
     }
 
@@ -582,7 +582,7 @@ public sealed class PersistenceWriterTests
         Assert.AreEqual(320, neutral.BitRate);
 
         stop.Cancel();
-        await Assert.ThrowsExceptionAsync<OperationCanceledException>(() => runTask);
+        await AssertCanceledAsync(runTask);
         await runtimeSession.StopAsync();
     }
 
@@ -1112,6 +1112,20 @@ public sealed class PersistenceWriterTests
         inbox.Complete();
         await new PersistenceWriter(database.Factory, inbox, health, options).RunAsync(CancellationToken.None);
         return health.Snapshot(inbox);
+    }
+
+    private static async Task AssertCanceledAsync(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        Assert.Fail("Expected the persistence writer to stop by cancellation.");
     }
 
     private sealed class WriterDatabase : IAsyncDisposable

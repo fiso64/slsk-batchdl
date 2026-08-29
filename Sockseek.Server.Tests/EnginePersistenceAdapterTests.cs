@@ -240,6 +240,36 @@ public sealed class EnginePersistenceAdapterTests
     }
 
     [TestMethod]
+    public async Task WorkflowHandoffIsPendingBeforeLaterRetirementObserversRun()
+    {
+        var events = new DownloadEvents();
+        var sink = new CapturingSink();
+        var handoffs = new PersistenceHandoffTracker();
+        var adapter = new EnginePersistenceAdapter(Guid.NewGuid(), sink, handoffs);
+        adapter.Attach(events);
+        var job = new SearchJob("query");
+        Task? handoffObservedDuringRetirement = null;
+        events.WorkflowRetired += _ =>
+        {
+            handoffObservedDuringRetirement = handoffs.WaitForJobAsync(
+                job.Id,
+                CancellationToken.None);
+        };
+
+        Invoke(events, "RaiseJobRegistered", job, null, null);
+        job.SetDone();
+        Invoke(events, "RaiseJobStateChanged", job);
+        Invoke(events, "RaiseWorkflowRetired", job.WorkflowId, 1);
+
+        Assert.IsNotNull(handoffObservedDuringRetirement);
+        Assert.IsFalse(
+            handoffObservedDuringRetirement.IsCompleted,
+            "Persistence must own the retiring generation before later observers can remove live state.");
+        handoffs.Committed(sink.Mutations);
+        await handoffObservedDuringRetirement;
+    }
+
+    [TestMethod]
     public void RejectingPersistenceSinkCannotDelayOrPreventWorkflowRetirement()
     {
         var events = new DownloadEvents();

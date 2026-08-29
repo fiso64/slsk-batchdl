@@ -45,6 +45,7 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             decoded?.DisplayId,
             decoded?.Id,
             limit + 1);
+        await persistence.WaitForAllHandoffsAsync(cancellationToken).ConfigureAwait(false);
         PersistedWorkflowPage? persisted = persistence.JobHistory == null
             ? null
             : await persistence.JobHistory.GetWorkflowsAsync(cursor, limit, cancellationToken).ConfigureAwait(false);
@@ -79,6 +80,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveWorkflow = live.GetWorkflow(workflowId);
         if (liveWorkflow != null)
             return liveWorkflow;
+        await persistence.WaitForWorkflowHandoffAsync(workflowId, cancellationToken)
+            .ConfigureAwait(false);
         if (persistence.JobHistory == null)
             return null;
         var historical = await persistence.JobHistory.GetWorkflowAsync(workflowId, cancellationToken).ConfigureAwait(false);
@@ -93,6 +96,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveDetail = supervisor.GetJobDetailByDisplayId(workflowId, displayId);
         if (liveDetail != null)
             return liveDetail;
+        await persistence.WaitForWorkflowHandoffAsync(workflowId, cancellationToken)
+            .ConfigureAwait(false);
         if (persistence.JobHistory == null)
             return null;
         var job = await persistence.JobHistory.GetJobByDisplayIdAsync(workflowId, displayId, cancellationToken).ConfigureAwait(false);
@@ -174,6 +179,16 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         ValidateJobPageLimit(limit);
         var decoded = JobHistoryReader.DecodeCursor(cursor);
         var liveRows = live.GetJobPageCandidates(query, decoded?.DisplayId, decoded?.Id, limit + 1);
+        if (query.WorkflowId is { } workflowId)
+        {
+            await persistence.WaitForWorkflowHandoffAsync(workflowId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            await persistence.WaitForAllHandoffsAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
         PersistedJobPage? persisted = persistence.JobHistory == null
             ? null
             : await persistence.JobHistory.GetJobsAsync(new JobHistoryQuery(
@@ -214,6 +229,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveDetail = live.GetJobDetail(jobId);
         if (liveDetail != null)
             return liveDetail;
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         if (persistence.JobHistory == null)
             return null;
 
@@ -243,6 +260,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             if (hasMore) items.RemoveAt(items.Count - 1);
             return new CombinedSearchRawPage(items, hasMore && items.Count > 0 ? items[^1].Sequence : null);
         }
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         if (persistence.SearchHistory == null)
             return null;
 
@@ -270,6 +289,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveResults = supervisor.GetFileResults(jobId, request);
         if (liveResults != null)
             return liveResults;
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         if (persistence.SearchHistory == null || persistence.JobHistory == null)
             return null;
 
@@ -305,6 +326,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             : supervisor.GetFolderResults(jobId, includeFiles);
         if (liveResults != null)
             return liveResults;
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         var source = await LoadHistoricalProjectionSourceAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (source == null)
             return null;
@@ -324,6 +347,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveResults = supervisor.GetAggregateTrackResults(jobId, request);
         if (liveResults != null)
             return liveResults;
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         var source = await LoadHistoricalProjectionSourceAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (source == null)
             return null;
@@ -343,6 +368,8 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var liveResults = supervisor.GetAggregateAlbumResults(jobId, request);
         if (liveResults != null)
             return liveResults;
+        await persistence.WaitForJobHandoffAsync(jobId, cancellationToken)
+            .ConfigureAwait(false);
         var source = await LoadHistoricalProjectionSourceAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (source == null)
             return null;

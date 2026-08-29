@@ -13,16 +13,28 @@ public sealed class EnginePersistenceAdapter
 {
     private readonly Guid runtimeId;
     private readonly IPersistenceMutationSink sink;
+    private readonly PersistenceHandoffTracker? handoffs;
     private readonly ConcurrentDictionary<Guid, JobRelationships> relationships = new();
+    private readonly ConcurrentDictionary<Guid, TrackedRevision> terminalJobRevisions = new();
+    private readonly ConcurrentDictionary<Guid, TrackedRevision> searchCompletionRevisions = new();
     private readonly ConcurrentDictionary<Guid, TransferAttemptPersistenceMutation> pendingTerminalAttempts = new();
     private readonly ConcurrentDictionary<Guid, Guid> transferWorkflowIds = new();
 
     public EnginePersistenceAdapter(Guid runtimeId, IPersistenceMutationSink sink)
+        : this(runtimeId, sink, handoffs: null)
+    {
+    }
+
+    internal EnginePersistenceAdapter(
+        Guid runtimeId,
+        IPersistenceMutationSink sink,
+        PersistenceHandoffTracker? handoffs)
     {
         if (runtimeId == Guid.Empty)
             throw new ArgumentException("A non-empty runtime ID is required.", nameof(runtimeId));
         this.runtimeId = runtimeId;
         this.sink = sink;
+        this.handoffs = handoffs;
     }
 
     internal static IReadOnlySet<Type> HandledChangeTypes { get; } = new HashSet<Type>
@@ -58,9 +70,23 @@ public sealed class EnginePersistenceAdapter
         typeof(OverallProgressChange),
     };
 
-    public void Attach(DownloadEvents events) => events.ChangePublished += OnChange;
+    public void Attach(DownloadEvents events)
+    {
+        // This subscription is deliberately registered before EngineStateStore's
+        // retirement handler. It establishes persistent ownership before live state
+        // becomes unobservable; all mutation writes remain on ChangePublished.
+        events.WorkflowRetired += OnWorkflowRetiring;
+        events.ChangePublished += OnChange;
+    }
 
-    public void Detach(DownloadEvents events) => events.ChangePublished -= OnChange;
+    public void Detach(DownloadEvents events)
+    {
+        events.WorkflowRetired -= OnWorkflowRetiring;
+        events.ChangePublished -= OnChange;
+    }
+
+    private void OnWorkflowRetiring(WorkflowRetiredChange retired)
+        => RetireWorkflow(retired.WorkflowId);
 
     private void OnChange(CoreChange change)
     {
@@ -72,22 +98,25 @@ public sealed class EnginePersistenceAdapter
                     registered.ParentJobId,
                     registered.SourceJobId,
                     null);
-                sink.TryEnqueue(JobMutation(registered.Job, registered, PersistenceMutationPriority.Structural));
+                EnqueueJobMutation(
+                    registered.Job,
+                    registered,
+                    PersistenceMutationPriority.Structural);
                 break;
 
             case JobStateChangedChange state:
-                sink.TryEnqueue(JobMutation(
+                EnqueueJobMutation(
                     state.Job,
                     state,
-                    state.IsTerminal ? PersistenceMutationPriority.Terminal : PersistenceMutationPriority.Ordinary));
+                    state.IsTerminal ? PersistenceMutationPriority.Terminal : PersistenceMutationPriority.Ordinary);
                 break;
 
             case JobActivityChangedChange activity:
-                sink.TryEnqueue(JobMutation(activity.Job, activity, PersistenceMutationPriority.Ordinary));
+                EnqueueJobMutation(activity.Job, activity, PersistenceMutationPriority.Ordinary);
                 break;
 
             case JobDiscoveryChangedChange discovery:
-                sink.TryEnqueue(JobMutation(discovery.Job, discovery, PersistenceMutationPriority.Ordinary));
+                EnqueueJobMutation(discovery.Job, discovery, PersistenceMutationPriority.Ordinary);
                 break;
 
             case JobResultCreatedChange result:
@@ -95,8 +124,8 @@ public sealed class EnginePersistenceAdapter
                     result.ExtractJob.Id,
                     _ => new JobRelationships(result.ExtractJob.WorkflowId, null, null, result.ResultJob.Id),
                     (_, current) => current with { ResultJobId = result.ResultJob.Id });
-                sink.TryEnqueue(JobMutation(result.ExtractJob, result, PersistenceMutationPriority.Structural));
-                sink.TryEnqueue(JobMutation(result.ResultJob, result, PersistenceMutationPriority.Structural));
+                EnqueueJobMutation(result.ExtractJob, result, PersistenceMutationPriority.Structural);
+                EnqueueJobMutation(result.ResultJob, result, PersistenceMutationPriority.Structural);
                 break;
 
             case DownloadStartedChange started:
@@ -164,6 +193,13 @@ public sealed class EnginePersistenceAdapter
                 break;
 
             case SearchCompletedChange completed:
+                if (relationships.GetValueOrDefault(completed.JobId) is { } searchRelationship)
+                {
+                    handoffs?.RegisterJob(searchRelationship.WorkflowId, completed.JobId);
+                    searchCompletionRevisions[completed.JobId] = new TrackedRevision(
+                        searchRelationship.WorkflowId,
+                        completed.Revision);
+                }
                 sink.TryEnqueue(new SearchCompletionPersistenceMutation(
                     runtimeId,
                     completed.Sequence,
@@ -176,8 +212,9 @@ public sealed class EnginePersistenceAdapter
                     "Complete"));
                 break;
 
-            case WorkflowRetiredChange retired:
-                RetireWorkflow(retired.WorkflowId);
+            case WorkflowRetiredChange:
+                // The handoff marker and adapter cleanup run on the earlier typed
+                // event so no query can fall between live removal and ownership.
                 break;
 
             case JobExecutionCompletedChange:
@@ -258,6 +295,18 @@ public sealed class EnginePersistenceAdapter
             job.QueryText,
             PayloadSchemaVersion: 1,
             PayloadJson(job.Payload));
+    }
+
+    private void EnqueueJobMutation(
+        JobSnapshot job,
+        CoreChange change,
+        PersistenceMutationPriority priority)
+    {
+        handoffs?.RegisterJob(job.WorkflowId, job.Id);
+        var mutation = JobMutation(job, change, priority);
+        if (priority == PersistenceMutationPriority.Terminal)
+            terminalJobRevisions[job.Id] = new TrackedRevision(job.WorkflowId, job.Revision);
+        sink.TryEnqueue(mutation);
     }
 
     private static string? PayloadJson(JobSnapshotPayload payload)
@@ -462,8 +511,21 @@ public sealed class EnginePersistenceAdapter
 
     private void RetireWorkflow(Guid workflowId)
     {
+        var jobs = terminalJobRevisions
+            .Where(pair => pair.Value.WorkflowId == workflowId)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Revision);
+        var searches = searchCompletionRevisions
+            .Where(pair => pair.Value.WorkflowId == workflowId)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Revision);
+        handoffs?.BeginRetirement(workflowId, jobs, searches);
+
         foreach (var pair in relationships.Where(pair => pair.Value.WorkflowId == workflowId))
             relationships.TryRemove(pair.Key, out _);
+
+        foreach (Guid jobId in jobs.Keys)
+            terminalJobRevisions.TryRemove(jobId, out _);
+        foreach (Guid jobId in searches.Keys)
+            searchCompletionRevisions.TryRemove(jobId, out _);
 
         foreach (var pair in transferWorkflowIds.Where(pair => pair.Value == workflowId))
         {
@@ -488,4 +550,6 @@ public sealed class EnginePersistenceAdapter
         Guid? ParentJobId,
         Guid? SourceJobId,
         Guid? ResultJobId);
+
+    private sealed record TrackedRevision(Guid WorkflowId, long Revision);
 }

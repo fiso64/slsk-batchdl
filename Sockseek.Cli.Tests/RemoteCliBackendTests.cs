@@ -11,6 +11,7 @@ using Sockseek.Server;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Channels;
 using Tests.ClientTests;
 
 namespace Tests.Cli;
@@ -245,6 +246,7 @@ public class RemoteCliBackendTests
             CollectionAssert.Contains(downloaded, "01. Artist - Track One.mp3");
 
             await WaitForConditionAsync(
+                backend,
                 () => Task.FromResult(seenUpdates.Any(update => update.ChangedTransfers.Any())),
                 "Timed out waiting for typed transfer state.");
             Assert.IsTrue(seenUpdates.Any(update => update.ChangedJobs.Any(job => job.JobId == searchSummary.JobId)));
@@ -391,10 +393,6 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
-            await WaitForConditionAsync(
-                () => Task.FromResult(Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length >= 2),
-                "Timed out waiting for extracted album downloads to appear on disk.");
-
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Where(path => string.Equals(Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase))
                 .Select(Path.GetFileName)
@@ -482,6 +480,17 @@ public class RemoteCliBackendTests
             int activePickers = 0;
             int maxActivePickers = 0;
             int pickerCalls = 0;
+            Guid workflowId = Guid.NewGuid();
+            var bothAlbumsReady = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveAlbumReadiness(DaemonClientUpdate _)
+            {
+                if (backend.ClientStore.GetWorkflowJobs(workflowId).Count(job =>
+                    job.Kind == ServerJobKind.Album
+                    && job.LifecycleState == ServerJobLifecycleState.AwaitingSelection) >= 2)
+                    bothAlbumsReady.TrySetResult();
+            }
+            backend.StateUpdated += ObserveAlbumReadiness;
             var coordinator = new InteractiveCliCoordinator(
                 backend,
                 new CliSettings { InteractiveMode = true, NoProgress = true },
@@ -499,8 +508,9 @@ public class RemoteCliBackendTests
 
                     try
                     {
-                        await Task.Delay(25);
-                        Interlocked.Increment(ref pickerCalls);
+                        int pickerCall = Interlocked.Increment(ref pickerCalls);
+                        if (pickerCall == 1)
+                            await bothAlbumsReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
                         var folder = request.Folders.First();
                         return new InteractiveModeManager.RunResult(
                             InteractiveModeManager.RunAction.Accept,
@@ -521,6 +531,7 @@ public class RemoteCliBackendTests
                     inputPath,
                     "List",
                     Options: new SubmissionOptionsDto(
+                        WorkflowId: workflowId,
                         OutputParentDir: outputDir,
                         ProfileContext: new Dictionary<string, bool> { ["interactive"] = true },
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch([inputPath, "--input-type", "list", "--no-browse-folder"]))),
@@ -531,6 +542,7 @@ public class RemoteCliBackendTests
 
             Assert.AreEqual(2, pickerCalls, "Both extracted album searches should reach the interactive picker.");
             Assert.AreEqual(1, maxActivePickers, "Remote interactive album prompts must not overlap.");
+            backend.StateUpdated -= ObserveAlbumReadiness;
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Where(path => string.Equals(Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase))
@@ -798,17 +810,16 @@ public class RemoteCliBackendTests
                 new AlbumQueryDto("Artist", "Album", "", "", false)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, ExpectedJobStatus.Succeeded);
-            SearchResultSnapshotDto<AlbumFolderDto>? projection = null;
             await WaitForConditionAsync(
-                async () =>
-                {
-                    projection = await backend.GetFolderResultsAsync(
-                        searchSummary.JobId,
-                        includeFiles: false);
-                    return projection != null;
-                },
-                "Timed out waiting for retained folder results.");
+                backend,
+                () => Task.FromResult(
+                    backend.ClientStore.GetWorkflowJobs(searchSummary.WorkflowId).Count == 0),
+                "Timed out waiting for the search workflow to retire from live state.");
+            SearchResultSnapshotDto<AlbumFolderDto>? projection =
+                await backend.GetFolderResultsAsync(searchSummary.JobId, includeFiles: false);
             Assert.IsNotNull(projection);
+            Assert.IsTrue(projection.IsComplete);
+            Assert.AreEqual("Complete", projection.PersistenceState);
             Assert.AreEqual(1, projection.Items.Count);
 
             var downloadSummary = await backend.StartFolderDownloadAsync(
@@ -818,9 +829,10 @@ public class RemoteCliBackendTests
             Assert.IsNotNull(downloadSummary);
 
             await WaitForConditionAsync(
-                async () =>
+                backend,
+                async ct =>
                 {
-                    return (await GetChildSongPayloadsAsync(backend, downloadSummary.JobId))
+                    return (await GetChildSongPayloadsAsync(backend, downloadSummary.JobId, ct))
                         .Any(file => ProjectState(file) == ExpectedJobStatus.Downloading) == true;
                 },
                 "Timed out waiting for remote album file downloads to start.");
@@ -828,15 +840,16 @@ public class RemoteCliBackendTests
             Assert.IsTrue(await backend.CancelWorkflowAsync(downloadSummary.WorkflowId) > 0);
             await WaitForJobStateAsync(backend, downloadSummary.JobId, ExpectedJobStatus.Failed);
             await WaitForConditionAsync(
-                async () =>
-                {
-                    if (backend.ClientStore.GetWorkflowJobs(downloadSummary.WorkflowId).Count != 0)
-                        return false;
-                    var retained = await backend.GetJobsAsync(new JobQuery(
-                        null, null, null, downloadSummary.WorkflowId, IncludeAll: true));
-                    return retained.Any(job => job.JobId == downloadSummary.JobId);
-                },
-                "Timed out waiting for retired workflow history to become queryable.");
+                backend,
+                () => Task.FromResult(
+                    backend.ClientStore.GetWorkflowJobs(downloadSummary.WorkflowId).Count == 0),
+                "Timed out waiting for the cancelled album workflow to retire from live state.");
+            var retained = await backend.GetJobsAsync(new JobQuery(
+                null, null, null, downloadSummary.WorkflowId, IncludeAll: true));
+            Assert.IsTrue(retained.Any(job =>
+                job.JobId == downloadSummary.JobId
+                && job.LifecycleState == ServerJobLifecycleState.Terminal
+                && job.TerminalOutcome == ServerJobTerminalOutcome.Cancelled));
 
             using var output = new StringWriter();
             await Sockseek.Cli.Program.PrintRemoteCompleteAsync(
@@ -1180,6 +1193,7 @@ public class RemoteCliBackendTests
                 manual));
 
             await WaitForConditionAsync(
+                monitor,
                 () => Task.FromResult(
                     monitor.ClientStore.GetWorkflowJobs(first.WorkflowId)
                         .Any(job => job.LifecycleState == ServerJobLifecycleState.AwaitingSelection)
@@ -1270,6 +1284,7 @@ public class RemoteCliBackendTests
                     new DownloadBehaviorPolicyDto(Album: DownloadBehavior.Manual)));
 
                 await WaitForConditionAsync(
+                    monitor,
                     () => Task.FromResult(
                         monitor.ClientStore.GetPosition(StateStreamScopeDto.Daemon) is { } position
                         && position.Epoch != firstPosition.Epoch
@@ -1317,8 +1332,8 @@ public class RemoteCliBackendTests
                 ["--no-config", "--remote", url, "--monitor", "--no-progress"],
                 cancellation.Token);
 
-            await WaitForConditionAsync(
-                () => Task.FromResult(ConsoleInputManager.OnCancelRequested != null),
+            await WaitForConsoleHandlersAsync(
+                () => ConsoleInputManager.OnCancelRequested != null,
                 "Monitor mode did not finish attaching.");
             Assert.IsFalse(
                 monitorTask.IsCompleted,
@@ -1394,11 +1409,11 @@ public class RemoteCliBackendTests
                 ["--no-config", "--remote", url, "--monitor", "--no-progress"],
                 cancellation.Token);
 
-            await WaitForConditionAsync(
-                () => Task.FromResult(
+            await WaitForConsoleHandlersAsync(
+                () =>
                     ConsoleInputManager.OnCancelRequested != null
                     && ConsoleInputManager.OnNextCandidateRequested != null
-                    && ConsoleInputManager.OnInfoRequested != null),
+                    && ConsoleInputManager.OnInfoRequested != null,
                 "Monitor mode did not install the normal console controls.");
 
             await using var controller = new RemoteCliBackend(url);
@@ -1520,8 +1535,9 @@ public class RemoteCliBackendTests
                 ],
                 cancellation.Token);
 
-            await WaitForConditionAsync(
-                () => Task.FromResult(Directory.GetFiles(outputDir, "*.mp3", SearchOption.AllDirectories).Length > 0),
+            await WaitForFileAsync(
+                outputDir,
+                "*.mp3",
                 "Input supplied with --monitor was not downloaded.",
                 timeoutMs: 10000);
 
@@ -1608,16 +1624,8 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
-            IReadOnlyList<JobSummaryDto> jobs = [];
-            await WaitForConditionAsync(
-                async () =>
-                {
-                    jobs = await backend.GetJobsAsync(new JobQuery(
-                        null, null, null, summary.WorkflowId, IncludeAll: true));
-                    return jobs.Any(job => job.Kind == ServerJobKind.JobList)
-                        && jobs.Any(job => job.Kind == ServerJobKind.Search);
-                },
-                "Timed out waiting for submitted job-list history.");
+            IReadOnlyList<JobSummaryDto> jobs = await backend.GetJobsAsync(new JobQuery(
+                null, null, null, summary.WorkflowId, IncludeAll: true));
             Assert.IsTrue(jobs.Any(job => job.Kind == ServerJobKind.JobList));
             Assert.IsTrue(jobs.Any(job => job.Kind == ServerJobKind.Search));
             Assert.IsTrue(jobs.All(job => job.WorkflowId == summary.WorkflowId));
@@ -1665,6 +1673,7 @@ public class RemoteCliBackendTests
                 new SongQueryDto("Artist", "Track", "", "", -1, false),
                 Options: new SubmissionOptionsDto(workflowId)));
             await WaitForConditionAsync(
+                backend,
                 () => Task.FromResult(
                     observed.Any(job => job.JobId == first.JobId
                         && job.LifecycleState == ServerJobLifecycleState.Terminal)
@@ -1675,6 +1684,7 @@ public class RemoteCliBackendTests
                 new SongQueryDto("Artist", "Track", "", "", -1, false),
                 Options: new SubmissionOptionsDto(workflowId)));
             await WaitForConditionAsync(
+                backend,
                 () => Task.FromResult(observed.Any(job => job.JobId == successor.JobId
                     && job.LifecycleState == ServerJobLifecycleState.Terminal)),
                 "The reused workflow subscription did not observe its successor generation.");
@@ -1689,68 +1699,39 @@ public class RemoteCliBackendTests
         }
     }
 
-    private static async Task WaitForJobStateAsync(ICliBackend backend, Guid jobId, ExpectedJobStatus expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
+    private static Task WaitForJobStateAsync(
+        ICliBackend backend,
+        Guid jobId,
+        ExpectedJobStatus expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetJobDetailAsync(jobId, ct),
+            detail => detail?.Summary is { } summary && ProjectState(summary) == expectedState,
+            $"Timed out waiting for job {jobId} to reach state '{expectedState}'.",
+            detail => detail?.Summary is { } summary ? ProjectState(summary).ToString() : "<missing>",
+            timeoutMs);
 
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
-            if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'.");
-    }
-
-    private static async Task WaitForEventTypeAsync(ConcurrentBag<string> seenTypes, string eventType, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            if (seenTypes.Contains(eventType))
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        Assert.Fail($"Timed out waiting for event '{eventType}'. Seen: {string.Join(", ", seenTypes.Distinct().OrderBy(x => x))}");
-    }
-
-    private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-            if (detail?.Summary.State == expectedState)
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-        var finalJobs = finalDetail == null
-            ? []
-            : await backend.GetJobsAsync(
-                new JobQuery(null, null, null, workflowId, IncludeAll: true),
-                CancellationToken.None);
-        string jobs = finalDetail == null
-            ? "<missing>"
-            : string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
-        Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
-    }
+    private static Task WaitForWorkflowStateAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        ServerWorkflowState expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetWorkflowAsync(workflowId, ct),
+            detail => detail?.Summary.State == expectedState,
+            $"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'.",
+            detail => detail?.Summary.State.ToString() ?? "<missing>",
+            timeoutMs);
 
     private static async Task WaitForAlbumFileDownloadToStartAsync(ICliBackend backend, Guid albumJobId)
     {
         await WaitForConditionAsync(
-                async () =>
+                backend,
+                async ct =>
                 {
-                    return (await GetChildSongPayloadsAsync(backend, albumJobId))
+                    return (await GetChildSongPayloadsAsync(backend, albumJobId, ct))
                         .Any(file => ProjectState(file) == ExpectedJobStatus.Downloading) == true;
                 },
                 "Timed out waiting for remote album file downloads to start.");
@@ -1793,14 +1774,18 @@ public class RemoteCliBackendTests
             },
         };
 
-    private static async Task<List<SongJobPayloadDto>> GetChildSongPayloadsAsync(ICliBackend backend, Guid parentJobId)
+    private static async Task<List<SongJobPayloadDto>> GetChildSongPayloadsAsync(
+        ICliBackend backend,
+        Guid parentJobId,
+        CancellationToken cancellationToken = default)
     {
         var payloads = new List<SongJobPayloadDto>();
         var children = await backend.GetJobsAsync(
-            new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: parentJobId));
+            new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: parentJobId),
+            cancellationToken);
         foreach (var child in children)
         {
-            var detail = await backend.GetJobDetailAsync(child.JobId);
+            var detail = await backend.GetJobDetailAsync(child.JobId, cancellationToken);
             if (detail?.Payload is SongJobPayloadDto song)
                 payloads.Add(song);
         }
@@ -1834,20 +1819,90 @@ public class RemoteCliBackendTests
         return summary;
     }
 
-    private static async Task WaitForConditionAsync(Func<Task<bool>> condition, string failureMessage, int timeoutMs = 5000)
+    private static Task WaitForConditionAsync(
+        ICliBackend backend,
+        Func<Task<bool>> condition,
+        string failureMessage,
+        int timeoutMs = 5_000)
+        => WaitForConditionAsync(
+            backend,
+            _ => condition(),
+            failureMessage,
+            timeoutMs);
+
+    private static Task WaitForConditionAsync(
+        ICliBackend backend,
+        Func<CancellationToken, Task<bool>> condition,
+        string failureMessage,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            condition,
+            failureMessage,
+            timeoutMs);
+
+    private static async Task WaitForConsoleHandlersAsync(
+        Func<bool> condition,
+        string failureMessage,
+        int timeoutMs = 5_000)
     {
         using var timeout = new CancellationTokenSource(timeoutMs);
+        var signals = CreateTestSignal();
+        void OnHandlersChanged() => signals.Writer.TryWrite(0);
 
-        while (!timeout.IsCancellationRequested)
+        ConsoleInputManager.HandlersChanged += OnHandlersChanged;
+        try
         {
-            if (await condition())
-                return;
-
-            await Task.Delay(2, CancellationToken.None);
+            while (!condition())
+                await signals.Reader.ReadAsync(timeout.Token);
         }
-
-        Assert.Fail(failureMessage);
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new AssertFailedException(failureMessage);
+        }
+        finally
+        {
+            ConsoleInputManager.HandlersChanged -= OnHandlersChanged;
+        }
     }
+
+    private static async Task WaitForFileAsync(
+        string directory,
+        string filter,
+        string failureMessage,
+        int timeoutMs = 5_000)
+    {
+        using var timeout = new CancellationTokenSource(timeoutMs);
+        var signals = CreateTestSignal();
+        using var watcher = new FileSystemWatcher(directory, filter)
+        {
+            IncludeSubdirectories = true,
+            EnableRaisingEvents = true,
+        };
+        void OnChanged(object _, FileSystemEventArgs __) => signals.Writer.TryWrite(0);
+        void OnRenamed(object _, RenamedEventArgs __) => signals.Writer.TryWrite(0);
+        watcher.Created += OnChanged;
+        watcher.Changed += OnChanged;
+        watcher.Renamed += OnRenamed;
+
+        try
+        {
+            while (Directory.GetFiles(directory, filter, SearchOption.AllDirectories).Length == 0)
+                await signals.Reader.ReadAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new AssertFailedException(failureMessage);
+        }
+    }
+
+    private static Channel<byte> CreateTestSignal()
+        => Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropWrite,
+        });
 
     private static async Task DeleteDirectoryIfExistsWithRetryAsync(string path)
     {

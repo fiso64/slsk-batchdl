@@ -42,4 +42,7 @@ internal static partial class ServerLogMessages
 
     [LoggerMessage(4012, LogLevel.Warning, "Request for {Feature} could not start because the feature is unavailable")]
     internal static partial void FeatureRequestUnavailable(ILogger logger, string feature);
+
+    [LoggerMessage(4013, LogLevel.Error, "Historical state handoff failed for workflow {WorkflowId}; its retained history is unavailable")]
+    internal static partial void PersistenceHandoffFailed(ILogger logger, Guid workflowId, Exception exception);
 }

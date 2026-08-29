@@ -116,6 +116,21 @@ public static class ServerHost
 
         var app = builder.Build();
 
+        app.Use(async (context, next) =>
+        {
+            try
+            {
+                await next(context);
+            }
+            catch (PersistenceHandoffException exception)
+            {
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                await context.Response.WriteAsJsonAsync(
+                    new ApiErrorDto(exception.Message, "HistoryUnavailable"),
+                    context.RequestAborted);
+            }
+        });
+
         app.MapOpenApi("/api/openapi.json");
         MapEndpoints(app);
         return app;

@@ -24,6 +24,9 @@ public sealed class PersistenceCoordinator(
     private readonly ILoggerFactory loggerFactory = loggerFactory
         ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance;
     private readonly Dictionary<DownloadEngine, EnginePersistenceAdapter> adapters = [];
+    private readonly PersistenceHandoffTracker handoffs = new(
+        (loggerFactory ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+            .CreateLogger<PersistenceHandoffTracker>());
     private readonly object gate = new();
     private PersistenceRuntimeHost? host;
     private UploadPersistenceAdapter? uploadAdapter;
@@ -107,7 +110,8 @@ public sealed class PersistenceCoordinator(
             writerOptions,
             retentionOptions,
             version,
-            loggerFactory.CreateLogger<PersistenceRuntimeHost>());
+            loggerFactory.CreateLogger<PersistenceRuntimeHost>(),
+            handoffs);
         var startup = await host.StartAsync(cancellationToken).ConfigureAwait(false);
         host.Health.CommitCompleted += OnHistoryHealthChanged;
         host.Health.FailureRecorded += OnHistoryHealthChanged;
@@ -186,7 +190,10 @@ public sealed class PersistenceCoordinator(
 
         lock (gate)
         {
-            var adapter = new EnginePersistenceAdapter(Runtime.RuntimeId, host.MutationSink);
+            var adapter = new EnginePersistenceAdapter(
+                Runtime.RuntimeId,
+                host.MutationSink,
+                handoffs);
             adapter.Attach(engine.Events);
             adapters.Add(engine, adapter);
         }
@@ -248,5 +255,16 @@ public sealed class PersistenceCoordinator(
 
     private void OnHistoryHealthChanged()
         => HistoryHealthChanged?.Invoke();
+
+    internal Task WaitForJobHandoffAsync(Guid jobId, CancellationToken cancellationToken)
+        => handoffs.WaitForJobAsync(jobId, cancellationToken);
+
+    internal Task WaitForWorkflowHandoffAsync(
+        Guid workflowId,
+        CancellationToken cancellationToken)
+        => handoffs.WaitForWorkflowAsync(workflowId, cancellationToken);
+
+    internal Task WaitForAllHandoffsAsync(CancellationToken cancellationToken)
+        => handoffs.WaitForAllAsync(cancellationToken);
 
 }

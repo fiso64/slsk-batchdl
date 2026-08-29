@@ -1147,6 +1147,8 @@ public sealed class EngineSupervisor
         if (persistence?.JobHistory == null || persistence.SearchHistory == null)
             return null;
 
+        await persistence.WaitForJobHandoffAsync(sourceJobId, ct).ConfigureAwait(false);
+
         var persistedJob = await persistence.JobHistory.GetJobAsync(sourceJobId, ct).ConfigureAwait(false);
         if (persistedJob == null)
             return null;
@@ -1350,6 +1352,7 @@ public sealed class EngineSupervisor
     {
         if (persistence?.JobHistory == null || persistence.SearchHistory == null)
             return null;
+        await persistence.WaitForJobHandoffAsync(sourceJobId, ct).ConfigureAwait(false);
         var job = await persistence.JobHistory.GetJobAsync(sourceJobId, ct).ConfigureAwait(false);
         var metadata = await persistence.SearchHistory.GetMetadataAsync(sourceJobId, ct).ConfigureAwait(false);
         if (job == null || metadata == null)

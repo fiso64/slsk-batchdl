@@ -114,8 +114,19 @@ public class CliEndToEndTests
             var activePickers = 0;
             var maxActivePickers = 0;
             var pickerCalls = 0;
+            var workflowId = Guid.NewGuid();
 
             var backend = new LocalCliBackend(app, rootSettings);
+            var bothAlbumsReady = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveAlbumReadiness(DaemonClientUpdate _)
+            {
+                if (backend.ClientStore.GetWorkflowJobs(workflowId).Count(job =>
+                    job.Kind == ServerJobKind.Album
+                    && job.LifecycleState == ServerJobLifecycleState.AwaitingSelection) >= 2)
+                    bothAlbumsReady.TrySetResult();
+            }
+            backend.StateUpdated += ObserveAlbumReadiness;
             var coordinator = new InteractiveCliCoordinator(
                 backend,
                 cliSettings,
@@ -133,8 +144,9 @@ public class CliEndToEndTests
 
                     try
                     {
-                        await Task.Delay(25);
-                        Interlocked.Increment(ref pickerCalls);
+                        int pickerCall = Interlocked.Increment(ref pickerCalls);
+                        if (pickerCall == 1)
+                            await bothAlbumsReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
                         var folder = request.Folders.FirstOrDefault();
                         return new InteractiveModeManager.RunResult(
                             folder == null
@@ -152,7 +164,6 @@ public class CliEndToEndTests
                 });
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            var workflowId = Guid.NewGuid();
             var submission = await coordinator.StartAsync(
                 new SubmitExtractJobRequestDto(rootSettings.Extraction.Input!, rootSettings.Extraction.InputType.ToString(), Options: new SubmissionOptionsDto(workflowId)),
                 cts.Token);
@@ -165,6 +176,7 @@ public class CliEndToEndTests
             Assert.IsFalse(cts.IsCancellationRequested, "RunAsync timed out");
             Assert.AreEqual(2, pickerCalls, "Both list album jobs should reach the interactive picker");
             Assert.AreEqual(1, maxActivePickers, "Interactive album prompts must not overlap");
+            backend.StateUpdated -= ObserveAlbumReadiness;
 
             var files = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Where(path => string.Equals(Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase))

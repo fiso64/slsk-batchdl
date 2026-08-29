@@ -52,19 +52,22 @@ public sealed class PersistenceRuntimeHost
     private PersistenceHealthState lastLoggedState = PersistenceHealthState.Healthy;
     private int suppressedFailureLogs;
     private readonly ILogger<PersistenceRuntimeHost> logger;
+    private readonly IPersistenceMutationObserver? mutationObserver;
 
     public PersistenceRuntimeHost(
         SockseekSqliteOptions sqliteOptions,
         PersistenceWriterOptions writerOptions,
         PersistenceRetentionOptions retentionOptions,
         string version,
-        ILogger<PersistenceRuntimeHost>? logger = null)
+        ILogger<PersistenceRuntimeHost>? logger = null,
+        IPersistenceMutationObserver? mutationObserver = null)
     {
         this.sqliteOptions = sqliteOptions;
         this.writerOptions = writerOptions;
         this.retentionOptions = retentionOptions;
         this.version = version;
         this.logger = logger ?? NullLogger<PersistenceRuntimeHost>.Instance;
+        this.mutationObserver = mutationObserver;
         writerOptions.Validate();
         retentionOptions.Validate();
         Health.FailureRecorded += LogFailure;
@@ -115,8 +118,13 @@ public sealed class PersistenceRuntimeHost
                 .GetMaximumDisplayIdAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            inbox = new PersistenceInbox(writerOptions, Health);
-            writer = new PersistenceWriter(contextFactory, inbox, Health, writerOptions);
+            inbox = new PersistenceInbox(writerOptions, Health, mutationObserver);
+            writer = new PersistenceWriter(
+                contextFactory,
+                inbox,
+                Health,
+                writerOptions,
+                mutationObserver: mutationObserver);
             writerStop = new CancellationTokenSource();
             writerTask = writer.RunAsync(writerStop.Token);
             Chat = new ChatPersistenceStore(contextFactory, inbox);

@@ -10,7 +10,8 @@ public sealed class PersistenceWriter(
     PersistenceInbox inbox,
     PersistenceHealth health,
     PersistenceWriterOptions options,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    IPersistenceMutationObserver? mutationObserver = null)
 {
     private const int MaximumConsecutiveCommands = 16;
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
@@ -48,15 +49,18 @@ public sealed class PersistenceWriter(
                     continue;
                 }
 
-                var result = await TryWriteBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+                var (result, failure) = await TryWriteBatchAsync(batch, cancellationToken).ConfigureAwait(false);
                 if (result == WriteBatchResult.RecoverableFailure)
                 {
                     consecutiveRecoveryAttempts++;
                     if (consecutiveRecoveryAttempts >= options.MaximumRecoveryAttempts)
                     {
-                        health.RecordOperationalFailure(clock.GetUtcNow(), new InvalidOperationException(
-                            $"Persistence recovery exhausted {options.MaximumRecoveryAttempts} attempts; dropping {batch.Count} retained mutations."));
+                        var exhausted = new InvalidOperationException(
+                            $"Persistence recovery exhausted {options.MaximumRecoveryAttempts} attempts; dropping {batch.Count} retained mutations.",
+                            failure);
+                        health.RecordOperationalFailure(clock.GetUtcNow(), exhausted);
                         health.RecordPermanentlyFailedMutations(batch.Count);
+                        mutationObserver?.PermanentlyFailed(batch, exhausted);
                         if (IsDrained())
                             return;
                         continue;
@@ -69,6 +73,9 @@ public sealed class PersistenceWriter(
                 {
                     consecutiveRecoveryAttempts = 0;
                     health.RecordPermanentlyFailedMutations(batch.Count);
+                    mutationObserver?.PermanentlyFailed(
+                        batch,
+                        failure ?? new InvalidOperationException("Persistence mutation batch failed permanently."));
                     if (IsDrained())
                         return;
                     continue;
@@ -159,7 +166,7 @@ public sealed class PersistenceWriter(
         }
     }
 
-    private async Task<WriteBatchResult> TryWriteBatchAsync(
+    private async Task<(WriteBatchResult Result, Exception? Exception)> TryWriteBatchAsync(
         IReadOnlyList<PersistenceMutation> batch,
         CancellationToken cancellationToken)
     {
@@ -171,8 +178,9 @@ public sealed class PersistenceWriter(
                 await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
                 await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
+                IReadOnlyList<PersistenceMutation> normalized = NormalizeBatch(batch);
                 int rows = 0;
-                foreach (var mutation in NormalizeBatch(batch)
+                foreach (var mutation in normalized
                     .OrderBy(DependencyOrder)
                     .ThenBy(item => item.Sequence))
                 {
@@ -184,7 +192,8 @@ public sealed class PersistenceWriter(
                 health.RecordCommit(
                     clock.GetUtcNow(), rows, stopwatch.Elapsed, batch.Count,
                     reconciliationComplete: inbox.DegradedCount == 0);
-                return WriteBatchResult.Success;
+                mutationObserver?.Committed(normalized);
+                return (WriteBatchResult.Success, null);
             }
             catch (Exception ex) when (IsBusy(ex) && attempt < options.BusyRetryCount)
             {
@@ -196,7 +205,9 @@ public sealed class PersistenceWriter(
             {
                 bool recoverable = IsRecoverable(ex);
                 health.RecordFailure(clock.GetUtcNow(), WithBatchContext(ex, batch), transient: recoverable);
-                return recoverable ? WriteBatchResult.RecoverableFailure : WriteBatchResult.PermanentFailure;
+                return (
+                    recoverable ? WriteBatchResult.RecoverableFailure : WriteBatchResult.PermanentFailure,
+                    ex);
             }
         }
     }

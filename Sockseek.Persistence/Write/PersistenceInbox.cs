@@ -21,17 +21,22 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     private readonly object searchGate = new();
     private readonly SemaphoreSlim signal = new(0, 1);
     private readonly PersistenceHealth health;
+    private readonly IPersistenceMutationObserver? mutationObserver;
     private int criticalDepth;
     private int ordinaryDepth;
     private int bufferedSearchResultCount;
     private int incompleteTrackingOverflowed;
     private int completed;
 
-    public PersistenceInbox(PersistenceWriterOptions options, PersistenceHealth health)
+    public PersistenceInbox(
+        PersistenceWriterOptions options,
+        PersistenceHealth health,
+        IPersistenceMutationObserver? mutationObserver = null)
     {
         options.Validate();
         Options = options;
         this.health = health;
+        this.mutationObserver = mutationObserver;
         critical = CreateChannel(options.CriticalQueueCapacity);
         ordinary = CreateChannel(options.OrdinaryQueueCapacity);
         commands = Channel.CreateBounded<AwaitablePersistenceCommand>(
@@ -58,7 +63,12 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     {
         ArgumentNullException.ThrowIfNull(mutation);
         if (IsCompleted)
+        {
+            mutationObserver?.PermanentlyFailed(
+                [mutation],
+                new InvalidOperationException("Persistence stopped before the mutation could be accepted."));
             return false;
+        }
         if (mutation is SearchResultsPersistenceMutation searchResults)
             return TryBufferSearchResults(searchResults);
         if (mutation is SearchCompletionPersistenceMutation searchCompletion)
@@ -339,6 +349,10 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
                 degraded.Remove(victim.CoalescingKey);
                 if (victim.Priority == PersistenceMutationPriority.Terminal)
                     health.RecordEvictedTerminalProjection();
+                mutationObserver?.PermanentlyFailed(
+                    [victim],
+                    new InvalidOperationException(
+                        "Persistence evicted a retained mutation while reconciling a degraded writer."));
             }
             degraded.Add(mutation.CoalescingKey, mutation);
         }
