@@ -101,7 +101,7 @@ public sealed class UploadPersistenceAdapter
             TerminalOutcome(snapshot.State),
             snapshot.SizeBytes,
             snapshot.BytesTransferred,
-            snapshot.Attempt is null ? 0 : 1,
+            snapshot.Attempt?.Number ?? 0,
             snapshot.FailureReason.ToString(),
             FailureMessage: null,
             CancellationSource: snapshot.CancellationSource.ToString());

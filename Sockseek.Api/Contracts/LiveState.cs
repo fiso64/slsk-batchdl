@@ -67,8 +67,9 @@ public sealed record StateStreamScopeDto(
 }
 
 /// <summary>
-/// A stream cursor. Epoch changes on every daemon process start; Sequence is scoped
-/// independently to the daemon stream or to one workflow stream.
+/// A stream cursor. The daemon epoch changes on process start; a workflow epoch
+/// also changes when a retired workflow ID starts a new live generation. Sequence
+/// is scoped independently to the daemon stream or to one workflow generation.
 /// </summary>
 public sealed record StateStreamPositionDto(Guid Epoch, long Sequence);
 

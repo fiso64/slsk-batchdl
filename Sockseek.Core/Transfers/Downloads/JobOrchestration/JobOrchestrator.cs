@@ -40,7 +40,7 @@ internal sealed class JobOrchestrator
     }
     // ── recursive job processor ───────────────────────────────────────────────
 
-    public async Task ProcessRootJob(Job rootJob)
+    public async Task ProcessRootJob(Job rootJob, bool emitAutoProfileFinalSummary = true)
     {
         long startedAt = Stopwatch.GetTimestamp();
         DownloadLogMessages.RootJobStarted(logger, rootJob.Id, rootJob.GetType().Name);
@@ -50,7 +50,8 @@ internal sealed class JobOrchestrator
         }
         finally
         {
-            context.EmitAutoProfileFinalSummary(rootJob);
+            if (emitAutoProfileFinalSummary)
+                context.EmitAutoProfileFinalSummary(rootJob);
             long durationMilliseconds = (long)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
             if (rootJob.TerminalOutcome == JobTerminalOutcome.Failed
                 || rootJob.LifecycleState == JobLifecycleState.Running)
@@ -104,6 +105,7 @@ internal sealed class JobOrchestrator
         // (if any). Cancelling this job propagates to all descendants; cancelling the parent
         // propagates here automatically. ExtractJob passes parentToken (not its own token) when
         // recursing into its Result so that the Result is a sibling, not a child, in the hierarchy.
+        job.Cts?.Dispose();
         job.Cts = CancellationTokenSource.CreateLinkedTokenSource(context.Runtime.Token, parentToken);
 
         DownloadLogMessages.JobDecision(logger, job.Id, "execution-started", null);

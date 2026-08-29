@@ -247,8 +247,7 @@ public static class CoreSnapshotFactory
                 extract.Input,
                 extract.InputType?.ToString(),
                 extract.Result?.Id,
-                extract.AutoProcessResult,
-                BuildExtractResultDraft(extract)),
+                extract.AutoProcessResult),
             SearchJob search => new SearchJobSnapshotPayload(
                 search.QueryText,
                 search.DefaultFileProjection == null
@@ -401,88 +400,6 @@ public static class CoreSnapshotFactory
 
     private static int? Optional(int value)
         => value >= 0 ? value : null;
-
-    private static JobDraftSnapshot? BuildExtractResultDraft(ExtractJob extract)
-        => extract is { AutoProcessResult: false, Result: not null }
-            ? ToJobDraft(extract.Result)
-            : null;
-
-    private static JobDraftSnapshot? ToJobDraft(Job? job)
-        => job switch
-        {
-            null => null,
-            ExtractJob extract => new ExtractJobDraftSnapshot(
-                extract.Input,
-                extract.InputType?.ToString(),
-                extract.AutoProcessResult,
-                extract.ResultDownloadBehaviorPolicy == null ? null : CreateDownloadBehaviorPolicy(extract.ResultDownloadBehaviorPolicy),
-                CreateProvenance(extract)),
-            SearchJob search when search.DefaultFolderProjection != null =>
-                new AlbumSearchJobDraftSnapshot(
-                    CreateAlbumQuery(search.DefaultFolderProjection.Query),
-                    CreateProvenance(search)),
-            SearchJob search when search.DefaultFileProjection != null =>
-                new TrackSearchJobDraftSnapshot(
-                    CreateSongQuery(search.DefaultFileProjection.Query),
-                    search.DefaultFileProjection.IncludeFullResults,
-                    CreateProvenance(search)),
-            SongJob song => new SongJobDraftSnapshot(
-                CreateSongQuery(song.Query),
-                CreateDownloadBehaviorPolicy(song.DownloadBehaviorPolicy),
-                CreateProvenance(song)),
-            AlbumJob album => new AlbumJobDraftSnapshot(
-                CreateAlbumQuery(album.Query),
-                CreateDownloadBehaviorPolicy(album.DownloadBehaviorPolicy),
-                CreateProvenance(album)),
-            RemoteFileJob remoteFile => new RemoteFileJobDraftSnapshot(
-                CreatePeerFileTarget(remoteFile.Target),
-                new RelativeOutputPathSnapshot(SnapshotCollections.Freeze(remoteFile.OutputPath.Components)),
-                CreateProvenance(remoteFile)),
-            RemoteDirectoryJob remoteDirectory => remoteDirectory.Source switch
-            {
-                RemoteDirectorySource.PeerDirectory peer => new RemoteDirectoryJobDraftSnapshot(
-                    new PeerDirectoryIdentitySnapshot(peer.Directory.Username, peer.Directory.FolderPath),
-                    null,
-                    CreateProvenance(remoteDirectory)),
-                RemoteDirectorySource.Resolved resolved => new RemoteDirectoryJobDraftSnapshot(
-                    null,
-                    CreateDirectoryTransferPlan(resolved.Plan),
-                    CreateProvenance(remoteDirectory)),
-                _ => throw new InvalidOperationException("Unsupported remote directory source."),
-            },
-            AggregateJob aggregate => new AggregateJobDraftSnapshot(
-                CreateSongQuery(aggregate.Query),
-                CreateDownloadBehaviorPolicy(aggregate.DownloadBehaviorPolicy),
-                CreateProvenance(aggregate)),
-            AlbumAggregateJob aggregate => new AlbumAggregateJobDraftSnapshot(
-                CreateAlbumQuery(aggregate.Query),
-                CreateDownloadBehaviorPolicy(aggregate.DownloadBehaviorPolicy),
-                CreateProvenance(aggregate)),
-            JobList list => new JobListDraftSnapshot(
-                list.ItemName,
-                SnapshotCollections.Freeze(list.Jobs.Select(ToJobDraft).OfType<JobDraftSnapshot>()),
-                CreateProvenance(list)),
-            _ => null,
-        };
-
-    private static DownloadBehaviorPolicySnapshot CreateDownloadBehaviorPolicy(DownloadBehaviorPolicy policy)
-        => new(policy.Default, policy.Song, policy.Album, policy.Aggregate, policy.AlbumAggregate);
-
-    private static JobProvenanceSnapshot? CreateProvenance(Job job)
-        => job.SourceMutation == null && job.LineNumber == 0 && job.ItemNumber == 1
-            ? null
-            : new JobProvenanceSnapshot(job.ItemNumber, job.LineNumber, CreateSourceMutation(job.SourceMutation));
-
-    private static SourceMutationSnapshot? CreateSourceMutation(SourceMutation? mutation)
-        => mutation == null
-            ? null
-            : new SourceMutationSnapshot(
-                mutation.Kind,
-                mutation.Source,
-                mutation.LineNumber,
-                mutation.ItemNumber,
-                mutation.CsvColumnCount,
-                mutation.TrackUri);
 
     private static string CandidateKey(FileCandidateSnapshot candidate)
         => CandidateKey(new PeerFileIdentity(candidate.Username, candidate.Filename));

@@ -111,6 +111,84 @@ public sealed class ExactFileTransferRunnerTests
         }
     }
 
+    [TestMethod]
+    public async Task TransportCancellationWithoutRequestedToken_IsTransferFailure()
+    {
+        const string username = "Peer";
+        const string filename = @"Share\File.bin";
+        var client = new MockSoulseekClient([Response(username, filename)]);
+        client.BeforeDownloadStartsAsync = (_, _, _) =>
+            throw new OperationCanceledException("transport ended early");
+        var (runner, active, events) = CreateRunner(client);
+        var target = Target(username, filename);
+        var owner = new RemoteFileJob(target);
+        string root = CreateTempDirectory();
+        TransferFailedChange? failed = null;
+        TransferCancelledChange? cancelled = null;
+        TransferAttemptFailedChange? failedAttempt = null;
+        events.TransferFailed += change => failed = change;
+        events.TransferCancelled += change => cancelled = change;
+        events.TransferAttemptFailed += change => failedAttempt = change;
+
+        try
+        {
+            await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => runner.DownloadFile(
+                target, Path.Combine(root, "file.bin"), owner,
+                new TransferSettings { NoIncompleteExt = true }, root,
+                new TransferSettings().MaxStaleTime, publishToDuplicateCache: false));
+
+            Assert.IsNotNull(failed);
+            Assert.AreEqual(TransferFailureReason.PeerFailure, failed.Reason);
+            Assert.IsNotNull(failedAttempt);
+            Assert.IsNull(cancelled);
+            Assert.AreEqual(0, active.ActiveDownloads.Count());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RequestedTokenCancellation_IsTransferCancellation()
+    {
+        const string username = "Peer";
+        const string filename = @"Share\File.bin";
+        using var cancellation = new CancellationTokenSource();
+        var client = new MockSoulseekClient([Response(username, filename)]);
+        client.BeforeDownloadStartsAsync = (_, _, _) =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        };
+        var (runner, active, events) = CreateRunner(client);
+        var target = Target(username, filename);
+        var owner = new RemoteFileJob(target);
+        string root = CreateTempDirectory();
+        TransferFailedChange? failed = null;
+        TransferCancelledChange? cancelled = null;
+        events.TransferFailed += change => failed = change;
+        events.TransferCancelled += change => cancelled = change;
+
+        try
+        {
+            await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => runner.DownloadFile(
+                target, Path.Combine(root, "file.bin"), owner,
+                new TransferSettings { NoIncompleteExt = true }, root,
+                new TransferSettings().MaxStaleTime, cancellation.Token,
+                publishToDuplicateCache: false));
+
+            Assert.IsNotNull(cancelled);
+            Assert.AreEqual(TransferCancellationReason.Requested, cancelled.Reason);
+            Assert.IsNull(failed);
+            Assert.AreEqual(0, active.ActiveDownloads.Count());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static (ExactPeerFileTransferRunner Runner, ActiveDownloadTracker Active, DownloadEvents Events)
         CreateRunner(MockSoulseekClient client)
     {

@@ -642,11 +642,121 @@ public sealed class PersistenceWriterTests
         CollectionAssert.AreEqual(workflowIds.Skip(2).ToArray(), workflowPage2.Items.Select(item => item.WorkflowId).ToArray());
         Assert.IsNull(workflowPage2.NextCursor);
         Assert.AreEqual(ids[1], (await reader.GetJobByDisplayIdAsync(workflowIds[1], 2))?.Id);
-        Assert.AreEqual(1, (await reader.GetWorkflowJobsAsync(workflowIds[0])).Count);
+        Assert.AreEqual(1, (await reader.GetWorkflowAsync(workflowIds[0]))?.RootJobCount);
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetWorkflowsAsync("bad", 2));
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetWorkflowsAsync(
             workflowPage1.NextCursor + new string(' ', 128), 2));
         await runtimeSession.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task LargeWorkflow_PagesRootsDirectChildrenAndAllJobsInDisplayOrder()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var runtimeSession = new PersistenceRuntimeSession(database.Factory);
+        var runtime = (await runtimeSession.StartAsync("large-workflow-reader-test")).Runtime;
+        Guid workflowId = Guid.NewGuid();
+        Guid rootId = Guid.NewGuid();
+        Guid firstChildId = Guid.NewGuid();
+        var jobs = new List<JobEntity>(230);
+
+        jobs.Add(CreateJob(rootId, displayId: 1, parentJobId: null, itemName: null));
+        for (int displayId = 2; displayId <= 151; displayId++)
+        {
+            Guid id = displayId == 2 ? firstChildId : Guid.NewGuid();
+            jobs.Add(CreateJob(
+                id,
+                displayId,
+                rootId,
+                itemName: displayId == 11 ? "Large workflow" : null));
+        }
+        for (int displayId = 152; displayId <= 230; displayId++)
+            jobs.Add(CreateJob(Guid.NewGuid(), displayId, firstChildId, itemName: null));
+
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.Jobs.AddRange(jobs);
+            await context.SaveChangesAsync();
+        }
+
+        var reader = new JobHistoryReader(database.Factory);
+        var summary = await reader.GetWorkflowAsync(workflowId);
+        Assert.IsNotNull(summary);
+        Assert.AreEqual("Large workflow", summary.Title);
+        Assert.AreEqual(1, summary.RootJobCount);
+        Assert.AreEqual(230, summary.CompletedJobCount);
+        Assert.AreEqual(1, summary.FailedJobCount);
+
+        var roots = await reader.GetJobsAsync(new JobHistoryQuery(
+            Limit: 100,
+            WorkflowId: workflowId,
+            IncludeAll: false));
+        CollectionAssert.AreEqual(new[] { rootId }, roots.Items.Select(job => job.Id).ToArray());
+
+        var directPage1 = await reader.GetJobsAsync(new JobHistoryQuery(
+            Limit: 100,
+            WorkflowId: workflowId,
+            IncludeAll: true,
+            ParentJobId: rootId));
+        var directPage2 = await reader.GetJobsAsync(new JobHistoryQuery(
+            Cursor: directPage1.NextCursor,
+            Limit: 100,
+            WorkflowId: workflowId,
+            IncludeAll: true,
+            ParentJobId: rootId));
+        Assert.AreEqual(150, directPage1.Items.Count + directPage2.Items.Count);
+        Assert.IsNull(directPage2.NextCursor);
+        CollectionAssert.AreEqual(
+            Enumerable.Range(2, 150).Select(value => (long)value).ToArray(),
+            directPage1.Items.Concat(directPage2.Items).Select(job => job.DisplayId).ToArray());
+        Assert.AreEqual(150, await reader.GetChildCountAsync(rootId));
+
+        var all = new List<PersistedJob>();
+        string? cursor = null;
+        do
+        {
+            var page = await reader.GetJobsAsync(new JobHistoryQuery(
+                Cursor: cursor,
+                Limit: 100,
+                WorkflowId: workflowId,
+                IncludeAll: true));
+            all.AddRange(page.Items);
+            cursor = page.NextCursor;
+        }
+        while (cursor != null);
+        Assert.AreEqual(230, all.Count);
+        Assert.AreEqual(230, all.Select(job => job.Id).Distinct().Count());
+        CollectionAssert.AreEqual(
+            Enumerable.Range(1, 230).Select(value => (long)value).ToArray(),
+            all.Select(job => job.DisplayId).ToArray());
+
+        await runtimeSession.StopAsync();
+
+        JobEntity CreateJob(Guid id, int displayId, Guid? parentJobId, string? itemName)
+            => new()
+            {
+                Id = id,
+                WorkflowId = workflowId,
+                ParentJobId = parentJobId,
+                LastRuntimeId = runtime.RuntimeId,
+                LastSequence = displayId,
+                DisplayId = displayId,
+                Kind = displayId == 1 ? "JobList" : "Song",
+                LifecycleState = "Terminal",
+                ActivityPhase = "None",
+                TerminalOutcome = displayId == 225 ? "Failed" : "Succeeded",
+                SkipReason = "None",
+                CancellationSource = "None",
+                FailureReason = displayId == 225 ? "Other" : "None",
+                ItemName = itemName,
+                QueryText = displayId == 1 ? "fallback title" : null,
+                CreatedAtUtc = displayId,
+                UpdatedAtUtc = displayId,
+                CompletedAtUtc = displayId,
+                Revision = 1,
+                PayloadSchemaVersion = 1,
+            };
     }
 
     [TestMethod]
@@ -680,14 +790,14 @@ public sealed class PersistenceWriterTests
                     TerminalOutcome = "Succeeded",
                     TotalBytes = 100,
                     TransferredBytes = 100,
-                    AttemptCount = 3,
+                    AttemptCount = index == 0 ? 225 : 0,
                     CreatedAtUtc = 100,
                     CompletedAtUtc = 200,
                     FailureReason = "None",
                     Revision = 2,
                 });
             }
-            for (int attempt = 1; attempt <= 3; attempt++)
+            for (int attempt = 1; attempt <= 225; attempt++)
             {
                 context.TransferAttempts.Add(new TransferAttemptEntity
                 {
@@ -718,14 +828,24 @@ public sealed class PersistenceWriterTests
         Assert.AreEqual(ids[2], (await reader.GetTransfersAsync(new TransferHistoryQuery(
             Limit: 10, Username: "special-user", TerminalOutcome: "Succeeded"))).Items.Single().Id);
 
-        var attempts1 = await reader.GetAttemptsAsync(ids[0], 0, 2);
-        Assert.IsNotNull(attempts1);
-        Assert.AreEqual(2, attempts1.Items.Count);
-        Assert.AreEqual(2, attempts1.NextAttemptNumber);
-        var attempts2 = await reader.GetAttemptsAsync(ids[0], attempts1.NextAttemptNumber!.Value, 2);
-        Assert.IsNotNull(attempts2);
-        CollectionAssert.AreEqual(new[] { 3 }, attempts2.Items.Select(item => item.AttemptNumber).ToArray());
-        Assert.IsNull(attempts2.NextAttemptNumber);
+        var detail = await reader.GetTransferAsync(ids[0]);
+        Assert.IsNotNull(detail);
+        Assert.AreEqual(225, detail.Transfer.AttemptCount);
+        Assert.AreEqual(225, detail.LatestAttempt?.AttemptNumber);
+
+        var attemptNumbers = new List<int>();
+        int afterAttemptNumber = 0;
+        int? nextAttemptNumber;
+        do
+        {
+            var page = await reader.GetAttemptsAsync(ids[0], afterAttemptNumber, 100);
+            Assert.IsNotNull(page);
+            attemptNumbers.AddRange(page.Items.Select(item => item.AttemptNumber));
+            nextAttemptNumber = page.NextAttemptNumber;
+            afterAttemptNumber = nextAttemptNumber ?? 0;
+        }
+        while (nextAttemptNumber != null);
+        CollectionAssert.AreEqual(Enumerable.Range(1, 225).ToArray(), attemptNumbers.ToArray());
 
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetTransfersAsync(new TransferHistoryQuery("bad", 2)));
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetTransfersAsync(new TransferHistoryQuery(

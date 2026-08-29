@@ -66,9 +66,11 @@ internal sealed class JobConfiguration : IEntityTypeConfiguration<JobEntity>
         builder.HasIndex(x => x.DisplayId).IsUnique();
         builder.HasIndex(x => new { x.CreatedAtUtc, x.Id });
         builder.HasIndex(x => new { x.WorkflowId, x.CreatedAtUtc, x.Id });
+        builder.HasIndex(x => new { x.WorkflowId, x.DisplayId, x.Id });
         builder.HasIndex(x => new { x.LastRuntimeId, x.LifecycleState });
         builder.HasIndex(x => new { x.LifecycleState, x.CompletedAtUtc });
         builder.HasIndex(x => x.ParentJobId);
+        builder.HasIndex(x => new { x.ParentJobId, x.DisplayId, x.Id });
         builder.HasIndex(x => x.SourceJobId);
         builder.HasIndex(x => x.ResultJobId);
     }

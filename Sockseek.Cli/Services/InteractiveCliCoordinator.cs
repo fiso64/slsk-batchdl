@@ -48,7 +48,6 @@ internal sealed class InteractiveCliCoordinator
         rootOptions = request.Options;
         return await backend.SubmitExtractJobAsync(request with
         {
-            AutoStartExtractedResult = true,
             ResultDownloadBehavior = InteractiveDownloadBehavior(request.ResultDownloadBehavior),
         }, ct);
     }
@@ -349,9 +348,7 @@ internal sealed class InteractiveCliCoordinator
                 session.Query),
             ct);
 
-        var retrievedFolder = payload?.Folder != null
-            ? ToAlbumFolder(payload.Folder)
-            : folder;
+        var retrievedFolder = folder;
 
         await RefreshRetrievedFolderAsync(session, retrievedFolder, ct);
         retrievedFolder.IsFullyRetrieved = true;

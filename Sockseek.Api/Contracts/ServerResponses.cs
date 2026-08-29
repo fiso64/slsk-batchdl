@@ -240,12 +240,12 @@ public sealed record JobSummaryDto(
 }
 
 /// <summary>
-/// Selected-job snapshot: summary, typed payload, and direct child summaries for client navigation.
+/// Fixed-size selected-job snapshot. Direct children are listed through the jobs collection.
 /// </summary>
 public sealed record JobDetailDto(
     JobSummaryDto Summary,
     JobPayloadDto? Payload,
-    IReadOnlyList<JobSummaryDto> Children);
+    int ChildCount);
 
 /// <summary>
 /// Workflow list item summarizing related jobs submitted under one workflow id.
@@ -254,31 +254,16 @@ public sealed record WorkflowSummaryDto(
     Guid WorkflowId,
     string Title,
     ServerWorkflowState State,
-    IReadOnlyList<Guid> RootJobIds,
+    int RootJobCount,
     int ActiveJobCount,
     int FailedJobCount,
     int CompletedJobCount);
 
 /// <summary>
-/// Workflow snapshot containing execution-root job summaries unless IncludeAll is requested.
+/// Fixed-size workflow detail. Jobs are listed through the jobs collection.
 /// </summary>
 public sealed record WorkflowDetailDto(
-    WorkflowSummaryDto Summary,
-    IReadOnlyList<JobSummaryDto> Jobs);
-
-/// <summary>
-/// Recursive execution tree node built from ParentJobId relationships.
-/// </summary>
-public sealed record WorkflowJobNodeDto(
-    JobSummaryDto Summary,
-    IReadOnlyList<WorkflowJobNodeDto> Children);
-
-/// <summary>
-/// Workflow snapshot shaped as an execution tree.
-/// </summary>
-public sealed record WorkflowTreeDto(
-    WorkflowSummaryDto Summary,
-    IReadOnlyList<WorkflowJobNodeDto> Jobs);
+    WorkflowSummaryDto Summary);
 
 /// <summary>
 /// Query parameters for listing jobs.
@@ -292,4 +277,5 @@ public sealed record JobQuery(
     ServerJobKind? Kind,
     Guid? WorkflowId,
     bool IncludeAll,
-    ServerJobSkipReason? SkipReason = null);
+    ServerJobSkipReason? SkipReason = null,
+    Guid? ParentJobId = null);

@@ -28,14 +28,21 @@ public class RemoteCliBackendTests
             await DeleteDirectoryIfExistsWithRetryAsync(directory);
     }
 
-    private WebApplication BuildServer(ServerOptions options, string? url = null)
+    private WebApplication BuildServer(
+        ServerOptions options,
+        string? url = null,
+        bool enablePersistence = true)
     {
-        string dataDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "sockseek-remote-cli-data",
-            Guid.NewGuid().ToString("N"));
-        options.Persistence.DataDirectory = dataDirectory;
-        serverDataDirectories.Add(dataDirectory);
+        options.Persistence.Enabled = enablePersistence;
+        if (enablePersistence)
+        {
+            string dataDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "sockseek-remote-cli-data",
+                Guid.NewGuid().ToString("N"));
+            options.Persistence.DataDirectory = dataDirectory;
+            serverDataDirectories.Add(dataDirectory);
+        }
         return Sockseek.Server.ServerHost.Build([], options, url);
     }
 
@@ -131,6 +138,24 @@ public class RemoteCliBackendTests
         StringAssert.Contains(handler.RequestUri!.Query, "username=peer%20name");
         StringAssert.Contains(handler.RequestUri.Query, "cursor=previous-page");
         StringAssert.Contains(handler.RequestUri.Query, "limit=25");
+    }
+
+    [TestMethod]
+    public async Task SockseekApiClient_GetJobsAsync_FollowsEveryCursorPage()
+    {
+        Guid workflowId = Guid.NewGuid();
+        var handler = new PagedJobsHandler(workflowId);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:5030/") };
+        var client = new SockseekApiClient(http);
+
+        var jobs = await client.GetJobsAsync(
+            new JobQuery(null, null, null, workflowId, IncludeAll: true));
+
+        Assert.AreEqual(201, jobs.Count);
+        Assert.AreEqual(201, jobs.Select(job => job.JobId).Distinct().Count());
+        Assert.AreEqual(ServerJobTerminalOutcome.Failed, jobs.Single(job => job.DisplayId == 201).TerminalOutcome);
+        Assert.AreEqual(2, handler.RequestCount);
+        StringAssert.Contains(handler.SecondRequestUri!.Query, "cursor=second-page");
     }
 
     [TestMethod]
@@ -365,7 +390,6 @@ public class RemoteCliBackendTests
                         DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(["-a", "--no-browse-folder"]))));
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
-            await WaitForLiveTerminalAlbumStateAsync(backend, workflowId);
 
             await WaitForConditionAsync(
                 () => Task.FromResult(Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories).Length >= 2),
@@ -774,7 +798,16 @@ public class RemoteCliBackendTests
                 new AlbumQueryDto("Artist", "Album", "", "", false)));
 
             await WaitForJobStateAsync(backend, searchSummary.JobId, ExpectedJobStatus.Succeeded);
-            var projection = await backend.GetFolderResultsAsync(searchSummary.JobId, includeFiles: false);
+            SearchResultSnapshotDto<AlbumFolderDto>? projection = null;
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    projection = await backend.GetFolderResultsAsync(
+                        searchSummary.JobId,
+                        includeFiles: false);
+                    return projection != null;
+                },
+                "Timed out waiting for retained folder results.");
             Assert.IsNotNull(projection);
             Assert.AreEqual(1, projection.Items.Count);
 
@@ -794,6 +827,16 @@ public class RemoteCliBackendTests
 
             Assert.IsTrue(await backend.CancelWorkflowAsync(downloadSummary.WorkflowId) > 0);
             await WaitForJobStateAsync(backend, downloadSummary.JobId, ExpectedJobStatus.Failed);
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    if (backend.ClientStore.GetWorkflowJobs(downloadSummary.WorkflowId).Count != 0)
+                        return false;
+                    var retained = await backend.GetJobsAsync(new JobQuery(
+                        null, null, null, downloadSummary.WorkflowId, IncludeAll: true));
+                    return retained.Any(job => job.JobId == downloadSummary.JobId);
+                },
+                "Timed out waiting for retired workflow history to become queryable.");
 
             using var output = new StringWriter();
             await Sockseek.Cli.Program.PrintRemoteCompleteAsync(
@@ -988,7 +1031,7 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    public async Task RemoteCliBackend_PrintJobs_RendersInputJobsFromWorkflowSnapshot()
+    public async Task RemoteCliBackend_PrintJobs_WaitsForCompleteRetainedGraphAndRendersInputJobs()
     {
         string inputPath = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-" + Guid.NewGuid() + ".txt");
         string outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-remote-print-jobs-out-" + Guid.NewGuid());
@@ -1179,7 +1222,7 @@ public class RemoteCliBackendTests
             DefaultDownload = new DownloadSettings(),
             Profiles = ProfileCatalog.Empty,
         };
-        var firstApp = BuildServer(options, url);
+        var firstApp = BuildServer(options, url, enablePersistence: false);
         await firstApp.StartAsync();
 
         try
@@ -1193,7 +1236,7 @@ public class RemoteCliBackendTests
             // run the disconnect callback during this deliberate daemon restart.
             await firstApp.StopAsync();
 
-            await using var secondApp = BuildServer(options, url);
+            await using var secondApp = BuildServer(options, url, enablePersistence: false);
             await secondApp.StartAsync();
             try
             {
@@ -1542,7 +1585,16 @@ public class RemoteCliBackendTests
 
             await WaitForWorkflowStateAsync(backend, summary.WorkflowId, ServerWorkflowState.Completed);
 
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, null, summary.WorkflowId, IncludeAll: true));
+            IReadOnlyList<JobSummaryDto> jobs = [];
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    jobs = await backend.GetJobsAsync(new JobQuery(
+                        null, null, null, summary.WorkflowId, IncludeAll: true));
+                    return jobs.Any(job => job.Kind == ServerJobKind.JobList)
+                        && jobs.Any(job => job.Kind == ServerJobKind.Search);
+                },
+                "Timed out waiting for submitted job-list history.");
             Assert.IsTrue(jobs.Any(job => job.Kind == ServerJobKind.JobList));
             Assert.IsTrue(jobs.Any(job => job.Kind == ServerJobKind.Search));
             Assert.IsTrue(jobs.All(job => job.WorkflowId == summary.WorkflowId));
@@ -1554,6 +1606,63 @@ public class RemoteCliBackendTests
                 Directory.Delete(musicRoot, true);
             if (Directory.Exists(outputDir))
                 Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RemoteCliBackend_ReusedRetiredWorkflowIdObservesSuccessorGeneration()
+    {
+        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-remote-reused-workflow-" + Guid.NewGuid());
+        Directory.CreateDirectory(musicRoot);
+        File.WriteAllText(Path.Combine(musicRoot, "Artist - Track.mp3"), "a");
+        await using var app = BuildServer(new ServerOptions
+        {
+            Engine = new EngineSettings
+            {
+                MockFilesDir = musicRoot,
+                MockFilesReadTags = false,
+            },
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, DynamicLoopbackUrl, enablePersistence: false);
+
+        try
+        {
+            await app.StartAsync();
+            await using var backend = new RemoteCliBackend(GetBoundUrl(app));
+            Guid workflowId = Guid.NewGuid();
+            var observed = new ConcurrentBag<JobSummaryDto>();
+            backend.StateUpdated += update =>
+            {
+                foreach (var job in update.ChangedJobs)
+                    observed.Add(job);
+            };
+
+            var first = await backend.SubmitTrackSearchJobAsync(new SubmitTrackSearchJobRequestDto(
+                new SongQueryDto("Artist", "Track", "", "", -1, false),
+                Options: new SubmissionOptionsDto(workflowId)));
+            await WaitForConditionAsync(
+                () => Task.FromResult(
+                    observed.Any(job => job.JobId == first.JobId
+                        && job.LifecycleState == ServerJobLifecycleState.Terminal)
+                    && backend.ClientStore.GetWorkflowJobs(workflowId).Count == 0),
+                "The first workflow generation did not retire from live state.");
+
+            var successor = await backend.SubmitTrackSearchJobAsync(new SubmitTrackSearchJobRequestDto(
+                new SongQueryDto("Artist", "Track", "", "", -1, false),
+                Options: new SubmissionOptionsDto(workflowId)));
+            await WaitForConditionAsync(
+                () => Task.FromResult(observed.Any(job => job.JobId == successor.JobId
+                    && job.LifecycleState == ServerJobLifecycleState.Terminal)),
+                "The reused workflow subscription did not observe its successor generation.");
+
+            Assert.AreNotEqual(first.JobId, successor.JobId);
+            Assert.AreEqual(workflowId, successor.WorkflowId);
+        }
+        finally
+        {
+            await app.StopAsync();
+            await DeleteDirectoryIfExistsWithRetryAsync(musicRoot);
         }
     }
 
@@ -1588,36 +1697,6 @@ public class RemoteCliBackendTests
         Assert.Fail($"Timed out waiting for event '{eventType}'. Seen: {string.Join(", ", seenTypes.Distinct().OrderBy(x => x))}");
     }
 
-    private static async Task WaitForLiveTerminalAlbumStateAsync(
-        RemoteCliBackend backend,
-        Guid workflowId,
-        int timeoutMs = 15_000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-        while (!timeout.IsCancellationRequested)
-        {
-            if (backend.ClientStore.GetLiveStateView().Jobs.Any(job =>
-                    job.WorkflowId == workflowId
-                    && job.Kind == ServerJobKind.Album
-                    && job.LifecycleState == ServerJobLifecycleState.Terminal))
-            {
-                return;
-            }
-
-            await Task.Delay(2, CancellationToken.None);
-        }
-
-        var position = backend.ClientStore.GetPosition(StateStreamScopeDto.Workflow(workflowId));
-        var jobs = backend.ClientStore.GetLiveStateView().Jobs
-            .Where(job => job.WorkflowId == workflowId)
-            .Select(job => $"[{job.DisplayId}] {job.Kind}:{job.LifecycleState}/{job.TerminalOutcome}")
-            .ToList();
-        Assert.Fail(
-            "Timed out waiting for the remote live store to contain the terminal album state. "
-            + $"Position: {position?.Epoch}/{position?.Sequence}; jobs: "
-            + (jobs.Count == 0 ? "<none>" : string.Join(", ", jobs)));
-    }
-
     private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
     {
         using var timeout = new CancellationTokenSource(timeoutMs);
@@ -1632,9 +1711,14 @@ public class RemoteCliBackendTests
         }
 
         var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
+        var finalJobs = finalDetail == null
+            ? []
+            : await backend.GetJobsAsync(
+                new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                CancellationToken.None);
         string jobs = finalDetail == null
             ? "<missing>"
-            : string.Join(", ", finalDetail.Jobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
+            : string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
         Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
     }
 
@@ -1688,9 +1772,10 @@ public class RemoteCliBackendTests
 
     private static async Task<List<SongJobPayloadDto>> GetChildSongPayloadsAsync(ICliBackend backend, Guid parentJobId)
     {
-        var parent = await backend.GetJobDetailAsync(parentJobId);
         var payloads = new List<SongJobPayloadDto>();
-        foreach (var child in parent?.Children ?? [])
+        var children = await backend.GetJobsAsync(
+            new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: parentJobId));
+        foreach (var child in children)
         {
             var detail = await backend.GetJobDetailAsync(child.JobId);
             if (detail?.Payload is SongJobPayloadDto song)
@@ -1783,6 +1868,49 @@ public class RemoteCliBackendTests
             Method = request.Method;
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class PagedJobsHandler(Guid workflowId) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+        public Uri? SecondRequestUri { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            bool secondPage = request.RequestUri?.Query.Contains(
+                "cursor=second-page",
+                StringComparison.Ordinal) == true;
+            if (secondPage)
+                SecondRequestUri = request.RequestUri;
+
+            IReadOnlyList<JobSummaryDto> jobs = secondPage
+                ? [Job(201, ServerJobTerminalOutcome.Failed)]
+                : Enumerable.Range(1, 200)
+                    .Select(displayId => Job(displayId, ServerJobTerminalOutcome.Succeeded))
+                    .ToArray();
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(jobs),
+                RequestMessage = request,
+            };
+            if (!secondPage)
+                response.Headers.Add("X-Next-Cursor", "second-page");
+            return Task.FromResult(response);
+        }
+
+        private JobSummaryDto Job(int displayId, ServerJobTerminalOutcome outcome)
+            => new()
+            {
+                JobId = Guid.Parse($"10000000-0000-0000-0000-{displayId:D12}"),
+                DisplayId = displayId,
+                WorkflowId = workflowId,
+                Kind = ServerJobKind.Song,
+                LifecycleState = ServerJobLifecycleState.Terminal,
+                TerminalOutcome = outcome,
+            };
     }
 
     private sealed class FailFirstDaemonSnapshotHandler()

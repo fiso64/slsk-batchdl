@@ -34,7 +34,7 @@ public sealed class UserBrowseApiTests
             },
             Persistence = new ServerPersistenceOptions
             {
-                Enabled = false,
+                Enabled = true,
                 DataDirectory = data,
             },
         }, url);
@@ -161,12 +161,12 @@ public sealed class UserBrowseApiTests
                     overwriteOptions));
             await WaitUntilAsync(() => TryReadAllText(overwritePath) == "333");
 
-            WorkflowTreeDto tree = (await api.GetWorkflowTreeAsync(
-                submitted.Workflow.WorkflowId))!;
-            Assert.AreEqual(
-                2,
-                tree.Jobs.SelectMany(Flatten)
-                    .Count(node => node.Summary.Kind == ServerJobKind.RemoteDirectory));
+            await WaitUntilAsync(async () =>
+            {
+                IReadOnlyList<JobSummaryDto> workflowJobs = await api.GetJobsAsync(
+                    new JobQuery(null, null, null, submitted.Workflow.WorkflowId, IncludeAll: true));
+                return workflowJobs.Count(job => job.Kind == ServerJobKind.RemoteDirectory) == 2;
+            });
 
             PageDto<UserBrowseDto> resources = await api.GetUserBrowsesAsync(
                 username: "local", state: UserBrowseState.Complete, limit: 1);
@@ -227,6 +227,14 @@ public sealed class UserBrowseApiTests
         Assert.IsTrue(condition(), "The daemon did not initialize peer browsing.");
     }
 
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!await condition() && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.IsTrue(await condition(), "The expected persisted job state did not become available.");
+    }
+
     private static string? TryReadAllText(string path)
     {
         try
@@ -237,14 +245,6 @@ public sealed class UserBrowseApiTests
         {
             return null;
         }
-    }
-
-    private static IEnumerable<WorkflowJobNodeDto> Flatten(WorkflowJobNodeDto node)
-    {
-        yield return node;
-        foreach (WorkflowJobNodeDto child in node.Children)
-        foreach (WorkflowJobNodeDto descendant in Flatten(child))
-            yield return descendant;
     }
 
     private static int GetFreeTcpPort()

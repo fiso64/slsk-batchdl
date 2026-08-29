@@ -112,14 +112,6 @@ public sealed record AlbumFolderSnapshot(
     IReadOnlyList<AlbumFileSnapshot> Files,
     bool IsFullyRetrieved);
 
-public sealed record SourceMutationSnapshot(
-    SourceMutationKind Kind,
-    string Source,
-    int LineNumber,
-    int ItemNumber,
-    int CsvColumnCount,
-    string? TrackUri);
-
 public enum TransferSnapshotDirection
 {
     Download,
@@ -150,74 +142,9 @@ public sealed record TransferSnapshot(
     FileCandidateSnapshot? Candidate,
     PeerFileTargetSnapshot? Target = null);
 
-public sealed record JobProvenanceSnapshot(
-    int ItemNumber,
-    int LineNumber,
-    SourceMutationSnapshot? SourceMutation);
-
-public sealed record DownloadBehaviorPolicySnapshot(
-    DownloadBehavior Default,
-    DownloadBehavior? Song,
-    DownloadBehavior? Album,
-    DownloadBehavior? Aggregate,
-    DownloadBehavior? AlbumAggregate);
-
 public sealed record FileSearchProjectionSnapshot(SongQuerySnapshot Query, bool IncludeFullResults);
 
 public sealed record FolderSearchProjectionSnapshot(AlbumQuerySnapshot Query, bool IncludeFiles);
-
-public abstract record JobDraftSnapshot(JobProvenanceSnapshot? Provenance);
-
-public sealed record ExtractJobDraftSnapshot(
-    string Input,
-    string? InputType,
-    bool AutoProcessResult,
-    DownloadBehaviorPolicySnapshot? ResultDownloadBehavior,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record TrackSearchJobDraftSnapshot(
-    SongQuerySnapshot SongQuery,
-    bool IncludeFullResults,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record AlbumSearchJobDraftSnapshot(
-    AlbumQuerySnapshot AlbumQuery,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record SongJobDraftSnapshot(
-    SongQuerySnapshot SongQuery,
-    DownloadBehaviorPolicySnapshot? DownloadBehavior,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record AlbumJobDraftSnapshot(
-    AlbumQuerySnapshot AlbumQuery,
-    DownloadBehaviorPolicySnapshot? DownloadBehavior,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record RemoteFileJobDraftSnapshot(
-    PeerFileTargetSnapshot Target,
-    RelativeOutputPathSnapshot OutputPath,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record RemoteDirectoryJobDraftSnapshot(
-    PeerDirectoryIdentitySnapshot? Directory,
-    DirectoryTransferPlanSnapshot? Plan,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record AggregateJobDraftSnapshot(
-    SongQuerySnapshot SongQuery,
-    DownloadBehaviorPolicySnapshot? DownloadBehavior,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record AlbumAggregateJobDraftSnapshot(
-    AlbumQuerySnapshot AlbumQuery,
-    DownloadBehaviorPolicySnapshot? DownloadBehavior,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
-
-public sealed record JobListDraftSnapshot(
-    string? Name,
-    IReadOnlyList<JobDraftSnapshot> Jobs,
-    JobProvenanceSnapshot? Provenance) : JobDraftSnapshot(Provenance);
 
 public abstract record JobSnapshotPayload;
 
@@ -241,8 +168,7 @@ public sealed record ExtractJobSnapshotPayload(
     string Input,
     string? InputType,
     Guid? ResultJobId,
-    bool AutoProcessResult,
-    JobDraftSnapshot? ResultDraft) : JobSnapshotPayload;
+    bool AutoProcessResult) : JobSnapshotPayload;
 
 public sealed record SearchJobSnapshotPayload(
     string QueryText,

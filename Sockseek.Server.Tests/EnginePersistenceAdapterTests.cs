@@ -138,10 +138,9 @@ public sealed class EnginePersistenceAdapterTests
         var directoryPayload = (RemoteDirectoryJobPayloadDto)HistoricalJobDtoMapper.ToPayload(
             ToPersistedJob(mutations[remoteDirectory.Id]));
         Assert.AreEqual(RemoteDirectorySourceKindDto.Resolved, directoryPayload.SourceKind);
-        Assert.IsNotNull(directoryPayload.ResolvedPlanSource);
-        Assert.IsNull(directoryPayload.ActivePlan,
-            "A resolved source plan is the first active attempt and must not be serialized twice.");
-        Assert.AreEqual(1, directoryPayload.ResolvedPlanSource.Entries.Count);
+        Assert.IsNull(directoryPayload.SourceUsername);
+        Assert.IsNull(directoryPayload.SourceFolderPath);
+        Assert.AreEqual("planned", directoryPayload.Directory.Phase);
     }
 
     [TestMethod]
@@ -212,6 +211,54 @@ public sealed class EnginePersistenceAdapterTests
         Assert.AreEqual(0L, health.Snapshot(inbox).DroppedProgressCount);
     }
 
+    [TestMethod]
+    public void WorkflowRetirementOnlyReleasesAdapterBookkeepingAndDoesNotEnqueueABarrier()
+    {
+        var events = new DownloadEvents();
+        var sink = new CapturingSink();
+        var adapter = new EnginePersistenceAdapter(Guid.NewGuid(), sink);
+        adapter.Attach(events);
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var file = new Soulseek.File(1, @"Music\Artist\Track.mp3", 100, ".mp3");
+        var response = new SearchResponse("user", 1, true, 1_000, 0, [file]);
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
+        Guid transferId = Guid.NewGuid();
+        Guid attemptId = Guid.NewGuid();
+
+        Invoke(events, "RaiseJobRegistered", song, null, null);
+        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseTransferAttemptStarted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete");
+        Invoke(events, "RaiseTransferAttemptCompleted", transferId, attemptId, 1, song, candidate.Target, "C:/downloads/Track.mp3");
+        Assert.AreEqual((1, 1, 1), adapter.RetainedStateCounts);
+        int mutationsBeforeRetirement = sink.Mutations.Count;
+
+        Invoke(events, "RaiseWorkflowRetired", song.WorkflowId, 1);
+
+        Assert.AreEqual(mutationsBeforeRetirement, sink.Mutations.Count);
+        Assert.AreEqual((0, 0, 0), adapter.RetainedStateCounts);
+        Assert.AreEqual((0, 0, 0, 0, 0), events.RetainedStateCounts);
+    }
+
+    [TestMethod]
+    public void RejectingPersistenceSinkCannotDelayOrPreventWorkflowRetirement()
+    {
+        var events = new DownloadEvents();
+        var sink = new RejectingSink();
+        var adapter = new EnginePersistenceAdapter(Guid.NewGuid(), sink);
+        adapter.Attach(events);
+        var job = new SearchJob("query");
+        bool retired = false;
+        events.WorkflowRetired += _ => retired = true;
+
+        Invoke(events, "RaiseJobRegistered", job, null, null);
+        Invoke(events, "RaiseWorkflowRetired", job.WorkflowId, 1);
+
+        Assert.IsTrue(retired);
+        Assert.IsTrue(sink.RejectedCount > 0);
+        Assert.AreEqual((0, 0, 0), adapter.RetainedStateCounts);
+        Assert.AreEqual((0, 0, 0, 0, 0), events.RetainedStateCounts);
+    }
+
     private static void Invoke(DownloadEvents events, string methodName, params object?[] args)
         => typeof(DownloadEvents)
             .GetMethod(methodName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
@@ -259,6 +306,17 @@ public sealed class EnginePersistenceAdapterTests
         {
             Mutations.Add(mutation);
             return true;
+        }
+    }
+
+    private sealed class RejectingSink : IPersistenceMutationSink
+    {
+        public int RejectedCount { get; private set; }
+
+        public bool TryEnqueue(PersistenceMutation mutation)
+        {
+            RejectedCount++;
+            return false;
         }
     }
 }

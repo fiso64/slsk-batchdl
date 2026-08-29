@@ -5,7 +5,7 @@ using Sockseek.Api;
 
 namespace Sockseek.Server;
 
-internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
+internal sealed class ServerJobSettingsResolver : IJobSettingsResolver, IWorkflowSettingsLifetime
 {
     private readonly DownloadSettings baseDefaults;
     private readonly ProfileCatalog catalog;
@@ -39,6 +39,12 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
 
     public void RemoveWorkflowOptions(Guid workflowId)
         => submissionOptions.RemoveWorkflowOptions(workflowId);
+
+    public long CaptureWorkflowVersion(Guid workflowId)
+        => submissionOptions.CaptureWorkflowVersion(workflowId);
+
+    public void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds, long expectedVersion)
+        => submissionOptions.RetireWorkflow(workflowId, jobIds, expectedVersion);
 
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {

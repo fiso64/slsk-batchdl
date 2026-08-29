@@ -39,6 +39,7 @@ public sealed class EngineSupervisor
     private readonly PersistenceCoordinator? persistence;
     private readonly ILoggerFactory loggerFactory;
     private readonly ILogger<EngineSupervisor> logger;
+    private readonly bool retireTerminalWorkflows;
 
     private DownloadEngine? currentEngine;
     private int restartCount;
@@ -62,10 +63,20 @@ public sealed class EngineSupervisor
         IOptions<ServerOptions> options,
         PersistenceCoordinator? persistence = null,
         ILoggerFactory? loggerFactory = null)
+        : this(options, persistence, loggerFactory, retireTerminalWorkflows: true)
+    {
+    }
+
+    internal EngineSupervisor(
+        IOptions<ServerOptions> options,
+        PersistenceCoordinator? persistence,
+        ILoggerFactory? loggerFactory,
+        bool retireTerminalWorkflows)
     {
         this.options = options.Value;
         this.persistence = persistence;
         this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        this.retireTerminalWorkflows = retireTerminalWorkflows;
         logger = this.loggerFactory.CreateLogger<EngineSupervisor>();
 
         engineSettings = SettingsCloner.Clone(this.options.Engine);
@@ -334,7 +345,6 @@ public sealed class EngineSupervisor
                     {
                         var durable = await history.GetTransferAsync(
                             transfer.TransferId,
-                            attemptLimit: 1,
                             ct).ConfigureAwait(false);
                         if (durable?.Transfer.Revision >= transfer.Revision
                             && durable.Transfer.TerminalOutcome != "None")
@@ -1395,7 +1405,8 @@ public sealed class EngineSupervisor
             clientManager,
             jobSettingsResolver,
             directorySource: PeerBrowses,
-            loggerFactory: loggerFactory);
+            loggerFactory: loggerFactory,
+            retireTerminalWorkflows: retireTerminalWorkflows);
         persistence?.AttachEngine(engine);
         StateStore.AttachEngine(engine);
         lock (engineGate)

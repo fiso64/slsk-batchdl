@@ -9,11 +9,14 @@ using Sockseek.Core.Snapshots;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Sockseek.Core.Diagnostics;
+using System.Diagnostics;
 
 namespace Sockseek.Cli;
 
 internal static partial class Program
 {
+    private static readonly TimeSpan RetainedWorkflowAvailabilityTimeout = TimeSpan.FromSeconds(5);
+
     internal enum CliExitCode
     {
         Success = 0,
@@ -517,17 +520,26 @@ internal static partial class Program
 
             if (interactiveCoordinator != null)
                 await interactiveCoordinator.RunUntilCompleteAsync(submission.WorkflowId, cts.Token);
-            else
-                await WaitForRemoteWorkflowAsync(backend, submission.WorkflowId, cts.Token);
 
             await terminalUpdateObserver.WaitForTerminalUpdateAsync(cts.Token);
+            var observedCompletion = terminalUpdateObserver.Completion
+                ?? throw new InvalidOperationException("The terminal workflow update did not contain a completion snapshot.");
 
             if (!rootSettings.DoNotDownload)
-                await PrintRemoteCompleteAsync(backend, submission.WorkflowId, cts.Token);
+                await PrintRemoteCompleteCoreAsync(
+                    backend,
+                    submission.WorkflowId,
+                    cts.Token,
+                    output: null,
+                    observedCompletion: observedCompletion);
 
             var exitCode = LogCliSessionExit(
                 logger,
-                await DetermineRemoteExitCodeAsync(backend, submission.WorkflowId, cts.Token),
+                await DetermineRemoteExitCodeAsync(
+                    backend,
+                    submission.WorkflowId,
+                    cts.Token,
+                    observedCompletion),
                 remoteSettings);
             cliReporter?.Stop();
             cliReporter = null;
@@ -741,7 +753,13 @@ internal static partial class Program
                 if (detail == null)
                     Printing.WriteLine($"Job ID [{id}] not found.", ConsoleColor.Red, force: true);
                 else
-                    JobInfoPrinter.Print(detail);
+                {
+                    var children = await backend.GetJobsAsync(
+                        new JobQuery(null, null, null, detail.Summary.WorkflowId, IncludeAll: true,
+                            ParentJobId: detail.Summary.JobId),
+                        cts.Token);
+                    JobInfoPrinter.Print(detail, children);
+                }
 
                 lock (Printing.ConsoleLock)
                 {
@@ -820,43 +838,13 @@ internal static partial class Program
         }
     }
 
-    private static async Task WaitForRemoteWorkflowAsync(ICliBackend backend, Guid workflowId, CancellationToken ct)
-    {
-        if (backend.ClientStore.GetWorkflow(workflowId)?.State
-            is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
-        {
-            return;
-        }
-
-        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void OnStateUpdated(DaemonClientUpdate _)
-        {
-            if (backend.ClientStore.GetWorkflow(workflowId)?.State
-                is ServerWorkflowState.Completed or ServerWorkflowState.Failed)
-            {
-                completed.TrySetResult();
-            }
-        }
-
-        backend.StateUpdated += OnStateUpdated;
-        try
-        {
-            OnStateUpdated(default!);
-            await completed.Task.WaitAsync(ct);
-        }
-        finally
-        {
-            backend.StateUpdated -= OnStateUpdated;
-        }
-    }
-
     private sealed class WorkflowTerminalUpdateObserver : IDisposable
     {
-        private static readonly TimeSpan TerminalUpdateDrainTimeout = TimeSpan.FromSeconds(2);
-
         private readonly ICliBackend backend;
         private readonly Guid workflowId;
         private readonly TaskCompletionSource terminalUpdateSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ObservedWorkflowCompletion? Completion { get; private set; }
 
         public WorkflowTerminalUpdateObserver(ICliBackend backend, Guid workflowId)
         {
@@ -870,15 +858,7 @@ internal static partial class Program
             if (terminalUpdateSeen.Task.IsCompleted)
                 return;
 
-            try
-            {
-                await terminalUpdateSeen.Task.WaitAsync(TerminalUpdateDrainTimeout, ct);
-            }
-            catch (TimeoutException)
-            {
-                // The HTTP snapshot is authoritative for completion. This wait is only to give
-                // the remote event stream a chance to deliver terminal activity before the CLI exits.
-            }
+            await terminalUpdateSeen.Task.WaitAsync(ct);
         }
 
         public void Dispose()
@@ -889,12 +869,22 @@ internal static partial class Program
             if (update.Status != DaemonClientApplyStatus.Applied)
                 return;
 
-            if (update.ChangedWorkflows.Any(workflow =>
-                    workflow.WorkflowId == workflowId
-                    && workflow.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed))
-                terminalUpdateSeen.TrySetResult();
+            var workflow = update.ChangedWorkflows.FirstOrDefault(workflow =>
+                workflow.WorkflowId == workflowId
+                && workflow.State is ServerWorkflowState.Completed or ServerWorkflowState.Failed);
+            if (workflow == null)
+                return;
+
+            Completion = new ObservedWorkflowCompletion(
+                workflow,
+                backend.ClientStore.GetWorkflowJobs(workflowId).ToArray());
+            terminalUpdateSeen.TrySetResult();
         }
     }
+
+    private sealed record ObservedWorkflowCompletion(
+        WorkflowSummaryDto Workflow,
+        IReadOnlyList<JobSummaryDto> Jobs);
 
     internal static CliExitCode DetermineLocalExitCode(JobList queue)
     {
@@ -924,17 +914,28 @@ internal static partial class Program
     private static async Task<CliExitCode> DetermineRemoteExitCodeAsync(
         ICliBackend backend,
         Guid workflowId,
-        CancellationToken ct)
+        CancellationToken ct,
+        ObservedWorkflowCompletion? observedCompletion = null)
     {
-        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-        if (workflow == null)
-            return CliExitCode.WorkFailed;
-
-        var summaries = (await backend.GetJobsAsync(
-                new JobQuery(null, null, null, workflowId, IncludeAll: true),
-                ct))
-            .OrderBy(job => job.DisplayId)
-            .ToArray();
+        WorkflowSummaryDto workflow;
+        JobSummaryDto[] summaries;
+        if (observedCompletion != null)
+        {
+            workflow = observedCompletion.Workflow;
+            summaries = observedCompletion.Jobs.OrderBy(job => job.DisplayId).ToArray();
+        }
+        else
+        {
+            var detail = await backend.GetWorkflowAsync(workflowId, ct);
+            if (detail == null)
+                return CliExitCode.WorkFailed;
+            workflow = detail.Summary;
+            summaries = (await backend.GetJobsAsync(
+                    new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                    ct))
+                .OrderBy(job => job.DisplayId)
+                .ToArray();
+        }
 
         if (summaries.Any(job => job.TerminalOutcome == ServerJobTerminalOutcome.Cancelled))
             return CliExitCode.Cancelled;
@@ -951,7 +952,7 @@ internal static partial class Program
         foreach (var summary in summaries)
             CountRemoteUserFacingCompletion(summary, jobsById, supersededSourceJobIds, ref successes, ref fails, ref skipped);
 
-        if (fails > 0 || workflow.Summary.State == ServerWorkflowState.Failed)
+        if (fails > 0 || workflow.State == ServerWorkflowState.Failed)
             return CliExitCode.WorkFailed;
 
         return CliExitCode.Success;
@@ -1000,19 +1001,36 @@ internal static partial class Program
     private static bool IsMachineReadablePrint(PrintOption printOption)
         => (printOption & (PrintOption.Json | PrintOption.Link | PrintOption.Index)) != 0;
 
-    internal static async Task PrintRemoteCompleteAsync(
+    internal static Task PrintRemoteCompleteAsync(
         ICliBackend backend,
         Guid workflowId,
         CancellationToken ct,
         TextWriter? output = null)
-    {
-        var workflow = await backend.GetWorkflowAsync(workflowId, ct);
-        if (workflow == null)
-            return;
+        => PrintRemoteCompleteCoreAsync(backend, workflowId, ct, output, observedCompletion: null);
 
-        var summaries = workflow.Jobs
-            .OrderBy(job => job.DisplayId)
-            .ToArray();
+    private static async Task PrintRemoteCompleteCoreAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        CancellationToken ct,
+        TextWriter? output,
+        ObservedWorkflowCompletion? observedCompletion)
+    {
+        JobSummaryDto[] summaries;
+        if (observedCompletion != null)
+        {
+            summaries = observedCompletion.Jobs.OrderBy(job => job.DisplayId).ToArray();
+        }
+        else
+        {
+            var workflow = await backend.GetWorkflowAsync(workflowId, ct);
+            if (workflow == null)
+                return;
+            summaries = (await backend.GetJobsAsync(
+                    new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                    ct))
+                .OrderBy(job => job.DisplayId)
+                .ToArray();
+        }
         var jobsById = summaries.ToDictionary(job => job.JobId);
         var supersededSourceJobIds = summaries
             .Select(job => job.SourceJobId)
@@ -1097,9 +1115,6 @@ internal static partial class Program
             || (outcome == ServerJobTerminalOutcome.Skipped
                 && skipReason is not ServerJobSkipReason.AlreadyExists and not ServerJobSkipReason.Manual);
 
-    private static IEnumerable<SongJobPayloadDto> ResolvedAlbumSongs(AlbumJobPayloadDto album)
-        => album.Tracks?.Where(song => Utils.IsMusicFile(song.ResolvedFilename ?? "")) ?? [];
-
     internal static async Task PrintRemoteRequestedOutputAsync(
         ICliBackend backend,
         Guid workflowId,
@@ -1132,6 +1147,35 @@ internal static partial class Program
         DownloadSettings settings,
         CancellationToken ct)
     {
+        var deadline = Stopwatch.GetTimestamp()
+            + (long)(Stopwatch.Frequency * RetainedWorkflowAvailabilityTimeout.TotalSeconds);
+        while (true)
+        {
+            var (queue, complete) = await TryBuildRemotePrintQueueAsync(
+                backend,
+                workflowId,
+                settings,
+                ct);
+            if (complete)
+                return queue;
+
+            if (Stopwatch.GetTimestamp() >= deadline)
+            {
+                throw new InvalidOperationException(
+                    "The completed workflow did not become available from daemon history. " +
+                    "Check that daemon persistence is enabled and healthy.");
+            }
+
+            await Task.Delay(25, ct);
+        }
+    }
+
+    private static async Task<(JobList Queue, bool Complete)> TryBuildRemotePrintQueueAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        DownloadSettings settings,
+        CancellationToken ct)
+    {
         var queue = new JobList("remote workflow")
         {
             Config = SettingsCloner.Clone(settings),
@@ -1139,26 +1183,35 @@ internal static partial class Program
 
         var workflow = await backend.GetWorkflowAsync(workflowId, ct);
         if (workflow == null)
-            return queue;
+            return (queue, false);
+
+        var roots = await backend.GetJobsAsync(
+            new JobQuery(null, null, null, workflowId, IncludeAll: false),
+            ct);
+        if (roots.Count != workflow.Summary.RootJobCount)
+            return (queue, false);
 
         var details = new Dictionary<Guid, JobDetailDto>();
-        foreach (var summary in workflow.Jobs)
-            await LoadRemoteJobTreeAsync(backend, summary.JobId, details, ct);
+        foreach (var summary in roots)
+        {
+            if (!await LoadRemoteJobTreeAsync(backend, summary.JobId, details, ct))
+                return (queue, false);
+        }
 
-        var roots = details.Values
-            .Where(detail => workflow.Jobs.Any(root => root.JobId == detail.Summary.JobId))
+        var rootDetails = details.Values
+            .Where(detail => detail.Summary.ParentJobId == null)
             .OrderBy(detail => detail.Summary.DisplayId)
             .ToList();
 
         var visited = new HashSet<Guid>();
-        foreach (var root in roots)
+        foreach (var root in rootDetails)
         {
             var job = await ToRemotePrintJobAsync(backend, root, details, settings, visited, ct);
             if (job != null)
                 queue.Add(job);
         }
 
-        return queue;
+        return (queue, true);
     }
 
     private static async Task<Job?> ToRemotePrintJobAsync(
@@ -1199,12 +1252,22 @@ internal static partial class Program
 
             AggregateJobPayloadDto aggregate
                 => effectiveSettings.PrintResults
-                    ? await ToAggregateResultsJobAsync(backend, aggregate, detail.Children, details, ct)
-                    : ToAggregateJob(aggregate),
+                    ? await ToAggregateResultsJobAsync(
+                        backend,
+                        aggregate,
+                        ChildrenOf(detail, details).Select(child => child.Summary).ToArray(),
+                        details,
+                        ct)
+                    : ToAggregateJob(aggregate, ChildrenOf(detail, details)),
 
             AlbumAggregateJobPayloadDto albumAggregate
                 => effectiveSettings.PrintResults
-                    ? await ToAlbumAggregateResultsJobAsync(backend, albumAggregate, detail.Children, details, ct)
+                    ? await ToAlbumAggregateResultsJobAsync(
+                        backend,
+                        albumAggregate,
+                        ChildrenOf(detail, details).Select(child => child.Summary).ToArray(),
+                        details,
+                        ct)
                     : ToAlbumAggregateJob(albumAggregate, detail.Summary),
 
             RetrieveFolderJobPayloadDto folder
@@ -1228,10 +1291,7 @@ internal static partial class Program
         HashSet<Guid> visited,
         CancellationToken ct)
     {
-        var job = new ExtractJob(extract.Input, ParseRemoteInputType(extract.InputType))
-        {
-            AutoProcessResult = extract.AutoProcessResult,
-        };
+        var job = new ExtractJob(extract.Input, ParseRemoteInputType(extract.InputType));
         ApplyJobOutcome(job, detail.Summary.LifecycleState, detail.Summary.ActivityPhase, detail.Summary.TerminalOutcome, detail.Summary.SkipReason, detail.Summary.FailureReason, detail.Summary.FailureMessage, detail.Summary.CancellationSource);
 
         if (extract.ResultJobId is Guid resultJobId
@@ -1401,28 +1461,11 @@ internal static partial class Program
         {
             NewFilesFoundCount = folder.NewFilesFoundCount,
             RetrievalOutcome = ToCoreFolderRetrievalOutcome(folder.RetrievalOutcome),
-            Result = folder.Folder == null ? null : ToPeerDirectorySnapshot(folder.Folder),
         };
 
         ApplyJobOutcome(job, summary.LifecycleState, summary.ActivityPhase, summary.TerminalOutcome, summary.SkipReason, summary.FailureReason, summary.FailureMessage, summary.CancellationSource);
         return job;
     }
-
-    private static PeerDirectorySnapshot ToPeerDirectorySnapshot(AlbumFolderDto folder)
-        => new(
-            new PeerDirectoryIdentity(folder.Username, folder.FolderPath),
-            folder.Files?.Select(file => new PeerFileTarget(
-                new PeerFileIdentity(file.Username, file.Filename),
-                file.File.Size < 0 ? null : file.File.Size,
-                file.File.Extension,
-                file.File.BitRate,
-                file.File.BitDepth,
-                file.File.SampleRate,
-                file.File.Length,
-                file.File.Attributes?.Select(attribute => new Sockseek.Core.Snapshots.FileAttributeSnapshot(
-                    attribute.Type,
-                    attribute.Value)).ToArray())).ToArray() ?? [],
-            folder.IsFullyRetrieved);
 
     private static void ApplyRemotePrintConfig(Job job, DownloadSettings settings)
         => job.Config = SettingsCloner.Clone(settings);
@@ -1445,32 +1488,41 @@ internal static partial class Program
             ? parsed
             : FolderRetrievalOutcome.None;
 
-    private static async Task LoadRemoteJobTreeAsync(
+    private static async Task<bool> LoadRemoteJobTreeAsync(
         ICliBackend backend,
         Guid jobId,
         Dictionary<Guid, JobDetailDto> details,
         CancellationToken ct)
     {
         if (details.ContainsKey(jobId))
-            return;
+            return true;
 
         var detail = await backend.GetJobDetailAsync(jobId, ct);
         if (detail == null)
-            return;
+            return false;
 
         details[jobId] = detail;
 
         if (detail.Payload is ExtractJobPayloadDto { ResultJobId: Guid resultJobId })
-            await LoadRemoteJobTreeAsync(backend, resultJobId, details, ct);
-
-        foreach (var child in detail.Children)
         {
-            if (detail.Summary.Kind == ServerJobKind.Album
-                && child.Kind == ServerJobKind.Song)
-                continue;
-
-            await LoadRemoteJobTreeAsync(backend, child.JobId, details, ct);
+            if (!await LoadRemoteJobTreeAsync(backend, resultJobId, details, ct))
+                return false;
         }
+
+        var children = await backend.GetJobsAsync(
+            new JobQuery(null, null, null, detail.Summary.WorkflowId, IncludeAll: true,
+                ParentJobId: detail.Summary.JobId),
+            ct);
+        if (children.Count != detail.ChildCount)
+            return false;
+
+        foreach (var child in children)
+        {
+            if (!await LoadRemoteJobTreeAsync(backend, child.JobId, details, ct))
+                return false;
+        }
+
+        return true;
     }
 
     private static List<JobDetailDto> ChildrenOf(
@@ -1638,7 +1690,6 @@ internal static partial class Program
             DownloadPath = song.File.DownloadPath,
             BytesTransferred = song.File.BytesTransferred,
             FileSize = song.File.FileSize,
-            Candidates = song.Candidates?.Select(ToFileCandidate).ToList(),
             DownloadSource = ToSongDownloadSource(song.DownloadSource),
         };
 
@@ -1694,7 +1745,6 @@ internal static partial class Program
     {
         var job = new AlbumJob(ToAlbumQuery(album.Query))
         {
-            Results = album.Results?.Select(ToAlbumFolder).ToList() ?? [],
             DownloadPath = album.Directory.DownloadPath,
         };
 
@@ -1704,10 +1754,16 @@ internal static partial class Program
         return job;
     }
 
-    private static AggregateJob ToAggregateJob(AggregateJobPayloadDto aggregate)
+    private static AggregateJob ToAggregateJob(
+        AggregateJobPayloadDto aggregate,
+        IEnumerable<JobDetailDto> children)
         => new(ToSongQuery(aggregate.Query))
         {
-            Songs = aggregate.Songs?.Select(ToSongJob).ToList() ?? [],
+            Songs = children
+                .Select(child => child.Payload)
+                .OfType<SongJobPayloadDto>()
+                .Select(ToSongJob)
+                .ToList(),
         };
 
     private static AlbumAggregateJob ToAlbumAggregateJob(AlbumAggregateJobPayloadDto albumAggregate, JobSummaryDto? summary = null)

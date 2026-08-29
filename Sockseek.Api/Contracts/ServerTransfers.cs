@@ -35,7 +35,3 @@ public sealed record TransferAttemptHistoryDto(
     string FailureReason,
     string? FailureMessage,
     long Revision);
-
-public sealed record TransferHistoryDetailDto(
-    TransferHistoryDto Transfer,
-    IReadOnlyList<TransferAttemptHistoryDto> Attempts);

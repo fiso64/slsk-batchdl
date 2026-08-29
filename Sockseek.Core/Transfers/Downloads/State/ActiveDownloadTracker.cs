@@ -20,4 +20,6 @@ internal sealed class ActiveDownloadTracker
 
     public bool Contains(Guid transferId)
         => downloads.ContainsKey(transferId);
+
+    internal int Count => downloads.Count;
 }

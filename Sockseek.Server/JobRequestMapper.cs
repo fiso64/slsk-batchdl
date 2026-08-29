@@ -27,8 +27,6 @@ public static class JobRequestMapper
         }
 
         var job = new ExtractJob(request.Input, inputType);
-        if (request.AutoStartExtractedResult.HasValue)
-            job.AutoProcessResult = request.AutoStartExtractedResult.Value;
         if (request.ResultDownloadBehavior != null)
             job.ResultDownloadBehaviorPolicy = ToDownloadBehaviorPolicy(request.ResultDownloadBehavior);
 
@@ -178,7 +176,6 @@ public static class JobRequestMapper
             ExtractJobDraftDto extract => ApplyProvenance(CreateExtractJob(new SubmitExtractJobRequestDto(
                 extract.Input,
                 extract.InputType,
-                extract.AutoStartExtractedResult,
                 ResultDownloadBehavior: extract.ResultDownloadBehavior)), extract.Provenance),
             TrackSearchJobDraftDto search => ApplyProvenance(new SearchJob(ToSongQuery(search.SongQuery), search.IncludeFullResults), search.Provenance),
             AlbumSearchJobDraftDto search => ApplyProvenance(new SearchJob(ToAlbumQuery(search.AlbumQuery)), search.Provenance),

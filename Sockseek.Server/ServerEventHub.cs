@@ -8,7 +8,9 @@ namespace Sockseek.Server;
 /// connection; workflow mode remains exclusive so one change is never delivered
 /// twice to that connection.
 /// </summary>
-public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorizer) : Hub
+public sealed class ServerEventHub(
+    IOperatorMutationAuthorizer operatorAuthorizer,
+    EngineStateStore stateStore) : Hub
 {
     private const string AllEventsGroupName = "events:all";
     private const string ModeKey = "sockseek:stream-mode";
@@ -17,6 +19,7 @@ public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorize
     private const string ChatMode = "chat";
     private const string DaemonChatMode = "daemonChat";
     private const string ChatScopesKey = "sockseek:chat-scopes";
+    private const string WorkflowScopesKey = "sockseek:workflow-scopes";
 
     public override async Task OnConnectedAsync()
     {
@@ -65,21 +68,75 @@ public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorize
     /// Subscribes this connection to events for one workflow.
     /// This is mainly useful for narrow clients such as a remote CLI tracking one submitted workflow.
     /// </summary>
-    public Task SubscribeWorkflow(Guid workflowId)
+    public async Task SubscribeWorkflow(Guid workflowId)
     {
+        if (workflowId == Guid.Empty)
+            throw new HubException("A workflow subscription requires a workflow ID.");
         if (Context.Items.TryGetValue(ModeKey, out var mode)
             && !Equals(mode, WorkflowMode))
             throw new HubException("Cannot mix workflow and daemon/chat subscriptions on one connection.");
 
         Context.Items[ModeKey] = WorkflowMode;
-        return Groups.AddToGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
+        var scopes = WorkflowScopes();
+        bool added;
+        lock (scopes)
+            added = scopes.Add(workflowId);
+        if (added)
+            stateStore.ReserveWorkflowStream(workflowId);
+
+        try
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
+        }
+        catch
+        {
+            if (added)
+            {
+                lock (scopes)
+                    scopes.Remove(workflowId);
+                stateStore.ReleaseWorkflowStreamReservation(workflowId);
+            }
+            throw;
+        }
     }
 
     /// <summary>
     /// Removes this connection from the workflow-specific event subscription.
     /// </summary>
-    public Task UnsubscribeWorkflow(Guid workflowId)
-        => Groups.RemoveFromGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
+    public async Task UnsubscribeWorkflow(Guid workflowId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, WorkflowGroupName(workflowId));
+        var scopes = WorkflowScopes();
+        bool removed;
+        bool hasWorkflows;
+        lock (scopes)
+        {
+            removed = scopes.Remove(workflowId);
+            hasWorkflows = scopes.Count > 0;
+        }
+        if (removed)
+            stateStore.ReleaseWorkflowStreamReservation(workflowId);
+        if (!hasWorkflows)
+            Context.Items.Remove(ModeKey);
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (Context.Items.TryGetValue(WorkflowScopesKey, out object? value)
+            && value is HashSet<Guid> scopes)
+        {
+            Guid[] workflowIds;
+            lock (scopes)
+            {
+                workflowIds = scopes.ToArray();
+                scopes.Clear();
+            }
+            foreach (Guid workflowId in workflowIds)
+                stateStore.ReleaseWorkflowStreamReservation(workflowId);
+        }
+
+        await base.OnDisconnectedAsync(exception);
+    }
 
     /// <summary>Subscribes to one stable-id conversation or room stream.</summary>
     public async Task SubscribeChat(StateStreamScopeDto scope)
@@ -180,6 +237,18 @@ public sealed class ServerEventHub(IOperatorMutationAuthorizer operatorAuthorize
         }
         var created = new HashSet<StateStreamScopeDto>();
         Context.Items[ChatScopesKey] = created;
+        return created;
+    }
+
+    private HashSet<Guid> WorkflowScopes()
+    {
+        if (Context.Items.TryGetValue(WorkflowScopesKey, out object? value)
+            && value is HashSet<Guid> scopes)
+        {
+            return scopes;
+        }
+        var created = new HashSet<Guid>();
+        Context.Items[WorkflowScopesKey] = created;
         return created;
     }
 

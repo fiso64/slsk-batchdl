@@ -39,7 +39,7 @@ public sealed record PersistedTransferAttempt(
     string? FailureMessage,
     long Revision);
 
-public sealed record PersistedTransferDetail(PersistedTransfer Transfer, IReadOnlyList<PersistedTransferAttempt> Attempts);
+public sealed record PersistedTransferDetail(PersistedTransfer Transfer, PersistedTransferAttempt? LatestAttempt);
 public sealed record TransferHistoryQuery(
     string? Cursor = null,
     int Limit = 100,
@@ -58,7 +58,7 @@ public sealed record PersistedTransferAttemptPage(IReadOnlyList<PersistedTransfe
 public interface ITransferHistoryReader
 {
     Task<PersistedTransferPage> GetTransfersAsync(TransferHistoryQuery query, CancellationToken cancellationToken = default);
-    Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, int attemptLimit = 200, CancellationToken cancellationToken = default);
+    Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, CancellationToken cancellationToken = default);
     Task<PersistedTransferAttemptPage?> GetAttemptsAsync(Guid transferId, int afterAttemptNumber, int limit, CancellationToken cancellationToken = default);
 }
 
@@ -102,24 +102,23 @@ public sealed class TransferHistoryReader(IDbContextFactory<SockseekDbContext> c
             hasMore && rows.Count > 0 ? EncodeCursor(rows[^1].CreatedAtUtc, rows[^1].Id) : null);
     }
 
-    public async Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, int attemptLimit = 200, CancellationToken cancellationToken = default)
+    public async Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, CancellationToken cancellationToken = default)
     {
-        if (attemptLimit is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(attemptLimit));
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var transfer = await context.Transfers.AsNoTracking()
             .SingleOrDefaultAsync(row => row.Id == transferId, cancellationToken)
             .ConfigureAwait(false);
         if (transfer == null) return null;
-        var attempts = await context.TransferAttempts.AsNoTracking()
+        var latestAttempt = await context.TransferAttempts.AsNoTracking()
             .Where(attempt => attempt.TransferId == transferId)
-            .OrderBy(attempt => attempt.AttemptNumber)
-            .Take(attemptLimit)
-            .ToListAsync(cancellationToken)
+            .OrderByDescending(attempt => attempt.AttemptNumber)
+            .ThenByDescending(attempt => attempt.Id)
+            .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
         return new PersistedTransferDetail(
             MapTransfer(transfer),
-            attempts.Select(MapAttempt).ToArray());
+            latestAttempt == null ? null : MapAttempt(latestAttempt));
     }
 
     public async Task<PersistedTransferAttemptPage?> GetAttemptsAsync(

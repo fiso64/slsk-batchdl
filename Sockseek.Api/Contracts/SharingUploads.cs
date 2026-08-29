@@ -38,11 +38,13 @@ public enum TransferDetailSource
 
 /// <summary>
 /// Point-in-time transfer detail. Live is authoritative when present; History
-/// supplies retained attempts and is the fallback after live removal.
+/// supplies retained metadata and is the fallback after live removal. Complete
+/// attempt history is available from the paged transfer-attempts resource.
 /// </summary>
 public sealed record TransferDetailDto(
     TransferDetailSource Source,
     TransferStateDto? Live,
     TransferQueueEstimateDto? QueueEstimate,
     TransferHistoryDto? History,
-    IReadOnlyList<TransferAttemptHistoryDto> Attempts);
+    int AttemptCount,
+    TransferAttemptHistoryDto? LatestAttempt);

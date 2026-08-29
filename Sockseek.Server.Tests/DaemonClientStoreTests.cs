@@ -403,7 +403,7 @@ public class DaemonClientStoreTests
             revision);
 
     private static WorkflowSummaryDto Workflow(Guid workflowId, Guid rootJobId)
-        => new(workflowId, "workflow", ServerWorkflowState.Active, [rootJobId], 1, 0, 0);
+        => new(workflowId, "workflow", ServerWorkflowState.Active, 1, 1, 0, 0);
 
     private static TransferStateDto Transfer(
         Guid transferId,

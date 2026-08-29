@@ -93,6 +93,18 @@ public interface IJobSettingsResolver
     DownloadSettings Resolve(DownloadSettings inherited, Job job);
 }
 
+/// <summary>
+/// Optional lifetime hook for daemon resolvers that retain per-workflow or
+/// per-job submission state. The version prevents an old workflow generation
+/// from deleting options already supplied for a later generation with the same
+/// workflow ID.
+/// </summary>
+public interface IWorkflowSettingsLifetime
+{
+    long CaptureWorkflowVersion(Guid workflowId);
+    void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds, long expectedVersion);
+}
+
 public sealed class DefaultJobSettingsResolver : IJobSettingsResolver
 {
     public static DefaultJobSettingsResolver Instance { get; } = new();

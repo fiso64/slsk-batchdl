@@ -22,6 +22,9 @@ public class DownloadEvents
     private readonly ConcurrentDictionary<Guid, long> attemptRevisions = new();
     private readonly ConcurrentDictionary<Guid, object> transferGates = new();
     private readonly ConcurrentDictionary<Guid, byte> terminalTransfers = new();
+    private readonly ConcurrentDictionary<Guid, Guid> jobWorkflowIds = new();
+    private readonly ConcurrentDictionary<Guid, Guid> transferWorkflowIds = new();
+    private readonly ConcurrentDictionary<Guid, Guid> attemptTransferIds = new();
 
     // ── Graph / lifecycle ───────────────────────────────────────────────────
     public event Action<JobRegisteredChange>? JobRegistered;
@@ -40,6 +43,7 @@ public class DownloadEvents
     // transforms). This happens at the same moment the ExtractJob itself completes.
     public event Action<JobResultCreatedChange>? JobResultCreated;
     public event Action<EngineCompletedChange>? EngineCompleted;
+    public event Action<WorkflowRetiredChange>? WorkflowRetired;
 
     // Fired for transient, human-readable status updates that don't warrant a formal state change
     // (e.g. "deleting files", "moving").
@@ -115,6 +119,13 @@ public class DownloadEvents
 
     internal void RaiseEngineCompleted(JobList queue)
         => Publish(new EngineCompletedChange(NextSequence(), UtcNow(), Snapshot(queue, incrementRevision: true)));
+
+    internal void RaiseWorkflowRetired(Guid workflowId, int jobCount)
+    {
+        Publish(new WorkflowRetiredChange(NextSequence(), UtcNow(), workflowId));
+        RetireWorkflowState(workflowId);
+        DownloadLogMessages.WorkflowRetired(logger, workflowId, jobCount);
+    }
 
 
     internal void RaiseJobStatus(Job job, string status)
@@ -280,7 +291,7 @@ public class DownloadEvents
             SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptStarted", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
-            NextAttemptRevision(attemptId),
+            NextAttemptRevision(attemptId, transferId),
             TransferAttemptSource.SoulseekPeer,
             attemptOutputPath));
 
@@ -298,7 +309,7 @@ public class DownloadEvents
             SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCompleted", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
-            NextAttemptRevision(attemptId)));
+            NextAttemptRevision(attemptId, transferId)));
 
     internal void RaiseTransferAttemptFailed(
         Guid transferId,
@@ -315,7 +326,7 @@ public class DownloadEvents
             SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptFailed", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
-            NextAttemptRevision(attemptId),
+            NextAttemptRevision(attemptId, transferId),
             CoreSnapshotFactory.CreateException(exception)));
 
     internal void RaiseTransferAttemptCancelled(
@@ -333,7 +344,7 @@ public class DownloadEvents
             SnapshotTransfer(transferId, song, candidate, transferOutputPath, "AttemptCancelled", song.BytesTransferred, candidate.Size ?? 0, attemptNumber, incrementRevision: true),
             attemptId,
             attemptNumber,
-            NextAttemptRevision(attemptId),
+            NextAttemptRevision(attemptId, transferId),
             reason));
 
     internal void RaiseFallbackTransferAttemptStarted(
@@ -349,7 +360,7 @@ public class DownloadEvents
             SnapshotFallbackTransfer(transferId, song, sourceReference, outputPath, "AttemptStarted", 0, 0, 1, incrementRevision: true),
             attemptId,
             AttemptNumber: 1,
-            AttemptRevision: NextAttemptRevision(attemptId),
+            AttemptRevision: NextAttemptRevision(attemptId, transferId),
             Source: TransferAttemptSource.Fallback,
             OutputPath: outputPath));
 
@@ -366,7 +377,7 @@ public class DownloadEvents
             SnapshotFallbackTransfer(transferId, song, sourceReference, outputPath, "AttemptCompleted", 0, 0, 1, incrementRevision: true),
             attemptId,
             AttemptNumber: 1,
-            AttemptRevision: NextAttemptRevision(attemptId)));
+            AttemptRevision: NextAttemptRevision(attemptId, transferId)));
 
     internal void RaiseFallbackTransferAttemptFailed(
         Guid transferId,
@@ -382,7 +393,7 @@ public class DownloadEvents
             SnapshotFallbackTransfer(transferId, song, sourceReference, outputPath, "AttemptFailed", 0, 0, 1, incrementRevision: true),
             attemptId,
             AttemptNumber: 1,
-            AttemptRevision: NextAttemptRevision(attemptId),
+            AttemptRevision: NextAttemptRevision(attemptId, transferId),
             Exception: CoreSnapshotFactory.CreateException(exception)));
 
     internal void RaiseFallbackTransferAttemptCancelled(
@@ -399,7 +410,7 @@ public class DownloadEvents
             SnapshotFallbackTransfer(transferId, song, sourceReference, outputPath, "AttemptCancelled", 0, 0, 1, incrementRevision: true),
             attemptId,
             AttemptNumber: 1,
-            AttemptRevision: NextAttemptRevision(attemptId),
+            AttemptRevision: NextAttemptRevision(attemptId, transferId),
             Reason: reason));
 
     internal void RaiseTrackBatchResolved(Job job, IReadOnlyList<SongJob> pending, IReadOnlyList<SongJob> existing, IReadOnlyList<SongJob> notFound)
@@ -431,11 +442,15 @@ public class DownloadEvents
 
     private DateTimeOffset UtcNow() => timeProvider.GetUtcNow();
 
-    private long NextAttemptRevision(Guid attemptId)
-        => attemptRevisions.AddOrUpdate(attemptId, 1, static (_, current) => current + 1);
+    private long NextAttemptRevision(Guid attemptId, Guid transferId)
+    {
+        attemptTransferIds[attemptId] = transferId;
+        return attemptRevisions.AddOrUpdate(attemptId, 1, static (_, current) => current + 1);
+    }
 
     private JobSnapshot Snapshot(Job job, bool incrementRevision = false)
     {
+        jobWorkflowIds[job.Id] = job.WorkflowId;
         long revision = incrementRevision
             ? jobRevisions.AddOrUpdate(job.Id, 1, static (_, current) => current + 1)
             : jobRevisions.GetOrAdd(job.Id, 0);
@@ -457,6 +472,7 @@ public class DownloadEvents
         int attemptCount,
         bool incrementRevision)
     {
+        transferWorkflowIds[transferId] = song.WorkflowId;
         long revision = incrementRevision
             ? transferRevisions.AddOrUpdate(transferId, 1, static (_, current) => current + 1)
             : transferRevisions.GetOrAdd(transferId, 0);
@@ -484,6 +500,7 @@ public class DownloadEvents
         int attemptCount,
         bool incrementRevision)
     {
+        transferWorkflowIds[transferId] = song.WorkflowId;
         long revision = incrementRevision
             ? transferRevisions.AddOrUpdate(transferId, 1, static (_, current) => current + 1)
             : transferRevisions.GetOrAdd(transferId, 0);
@@ -546,6 +563,9 @@ public class DownloadEvents
                 break;
             case EngineCompletedChange specific:
                 InvokeObservers(EngineCompleted, specific, nameof(EngineCompleted));
+                break;
+            case WorkflowRetiredChange specific:
+                InvokeObservers(WorkflowRetired, specific, nameof(WorkflowRetired));
                 break;
             case JobStatusChange specific:
                 InvokeObservers(JobStatus, specific, nameof(JobStatus));
@@ -614,6 +634,36 @@ public class DownloadEvents
 
         InvokeObservers(ChangePublished, change, nameof(ChangePublished));
     }
+
+    private void RetireWorkflowState(Guid workflowId)
+    {
+        foreach (var pair in jobWorkflowIds.Where(pair => pair.Value == workflowId))
+        {
+            jobWorkflowIds.TryRemove(pair.Key, out _);
+            jobRevisions.TryRemove(pair.Key, out _);
+        }
+
+        var transferIds = transferWorkflowIds
+            .Where(pair => pair.Value == workflowId)
+            .Select(pair => pair.Key)
+            .ToHashSet();
+        foreach (Guid transferId in transferIds)
+        {
+            transferWorkflowIds.TryRemove(transferId, out _);
+            transferRevisions.TryRemove(transferId, out _);
+            transferGates.TryRemove(transferId, out _);
+            terminalTransfers.TryRemove(transferId, out _);
+        }
+
+        foreach (var pair in attemptTransferIds.Where(pair => transferIds.Contains(pair.Value)))
+        {
+            attemptTransferIds.TryRemove(pair.Key, out _);
+            attemptRevisions.TryRemove(pair.Key, out _);
+        }
+    }
+
+    internal (int Jobs, int Transfers, int Attempts, int Gates, int TerminalTransfers) RetainedStateCounts
+        => (jobRevisions.Count, transferRevisions.Count, attemptRevisions.Count, transferGates.Count, terminalTransfers.Count);
 
     private void InvokeObservers<T>(Action<T>? observers, T value, string eventName)
     {

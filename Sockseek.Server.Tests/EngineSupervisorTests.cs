@@ -152,12 +152,12 @@ public class EngineSupervisorTests
             Assert.IsNull(detail.Summary.ParentJobId);
             Assert.AreEqual(searchSummary.JobId, detail.Summary.SourceJobId);
 
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(searchSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
+            var workflowJobs = supervisor.StateStore.GetJobs(
+                new JobQuery(null, null, null, searchSummary.WorkflowId, IncludeAll: false));
+            Assert.AreEqual(2, workflowJobs.Count);
             CollectionAssert.AreEquivalent(
                 new[] { searchSummary.JobId, downloadSummary.JobId },
-                workflowTree.Jobs.Select(job => job.Summary.JobId).ToArray());
+                workflowJobs.Select(job => job.JobId).ToArray());
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
@@ -632,15 +632,14 @@ public class EngineSupervisorTests
             Assert.IsNotNull(payload);
             Assert.AreEqual(
                 1,
-                payload.NewFilesFoundCount,
-                "Retrieved folder files: " + string.Join(", ", payload.Folder?.Files?.Select(file => file.Filename) ?? []));
+                payload.NewFilesFoundCount);
 
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(searchSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
+            var workflowJobs = supervisor.StateStore.GetJobs(
+                new JobQuery(null, null, null, searchSummary.WorkflowId, IncludeAll: false));
+            Assert.AreEqual(2, workflowJobs.Count);
             CollectionAssert.AreEquivalent(
                 new[] { searchSummary.JobId, retrieveSummary.JobId },
-                workflowTree.Jobs.Select(job => job.Summary.JobId).ToArray());
+                workflowJobs.Select(job => job.JobId).ToArray());
 
             var afterRetrieve = supervisor.GetFolderResults(searchSummary.JobId, includeFiles: true);
             Assert.IsNotNull(afterRetrieve);
@@ -658,78 +657,6 @@ public class EngineSupervisorTests
             var retrieveJobs = supervisor.StateStore.GetJobs(
                 new JobQuery(null, null, ServerJobKind.RetrieveFolder, searchSummary.WorkflowId, IncludeAll: true));
             Assert.AreEqual(1, retrieveJobs.Count, "Starting a download from a fully retrieved folder should not browse it again.");
-
-            cts.Cancel();
-            await runTask;
-        }
-        finally
-        {
-            cts.Cancel();
-            await runTask;
-            if (Directory.Exists(musicRoot))
-                Directory.Delete(musicRoot, true);
-        }
-    }
-
-    [TestMethod]
-    public async Task ExtractJobPayload_ExposesResultDraftForTypedResubmission()
-    {
-        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
-        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
-        string outputDir = Path.Combine(musicRoot, "out");
-        Directory.CreateDirectory(albumDir);
-        Directory.CreateDirectory(outputDir);
-
-        File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
-
-        using var cts = new CancellationTokenSource();
-        Task runTask = Task.CompletedTask;
-        try
-        {
-            var supervisor = CreateSupervisor(musicRoot, outputDir, settings =>
-            {
-                settings.Extraction.IsAlbum = true;
-                settings.Search.NoBrowseFolder = true;
-            });
-            runTask = supervisor.RunAsync(cts.Token);
-
-            var extractSummary = await supervisor.SubmitExtractJobAsync(
-                new SubmitExtractJobRequestDto(
-                    "Artist Album",
-                    "String",
-                    AutoStartExtractedResult: false),
-                CancellationToken.None);
-
-            await WaitForJobStateAsync(supervisor, extractSummary.JobId, ExpectedJobStatus.Succeeded);
-
-            var extractDetail = supervisor.StateStore.GetJobDetail(extractSummary.JobId);
-            Assert.IsNotNull(extractDetail);
-            var extractPayload = extractDetail.Payload as ExtractJobPayloadDto;
-            Assert.IsNotNull(extractPayload);
-            var albumDraft = extractPayload.ResultDraft as AlbumJobDraftDto;
-            Assert.IsNotNull(albumDraft);
-
-            var started = await supervisor.SubmitAlbumSearchJobAsync(
-                new SubmitAlbumSearchJobRequestDto(
-                    albumDraft.AlbumQuery,
-                    new SubmissionOptionsDto(WorkflowId: extractSummary.WorkflowId)),
-                CancellationToken.None);
-
-            Assert.AreEqual(ServerJobKind.Search, started.Kind);
-            Assert.AreEqual(extractSummary.WorkflowId, started.WorkflowId);
-
-            await WaitForJobStateAsync(supervisor, started.JobId, ExpectedJobStatus.Succeeded);
-
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(extractSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
-            Assert.IsTrue(workflowTree.Jobs.Any(job => job.Summary.JobId == extractSummary.JobId));
-            Assert.IsTrue(workflowTree.Jobs.Any(job => job.Summary.JobId == started.JobId));
-
-            var albums = supervisor.GetFolderResults(started.JobId, includeFiles: true);
-            Assert.IsNotNull(albums);
-            Assert.AreEqual(1, albums.Items.Count);
-            Assert.AreEqual(@"Artist\Album", albums.Items[0].FolderPath);
 
             cts.Cancel();
             await runTask;
@@ -1493,13 +1420,69 @@ public class EngineSupervisorTests
         }
     }
 
+    [TestMethod]
+    public async Task TerminalDaemonWorkflowWithoutPersistencePublishesFinalRemovalAndHasNoHistoryFallback()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-retirement-" + Guid.NewGuid());
+        string output = Path.Combine(root, "out");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(output);
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(
+                root,
+                output,
+                retireTerminalWorkflows: true);
+            var finalJobs = new ConcurrentBag<JobSummaryDto>();
+            var batches = new ConcurrentBag<StateUpdateBatchDto>();
+            supervisor.StateStore.JobUpserted += summary =>
+            {
+                if (summary.LifecycleState == ServerJobLifecycleState.Terminal)
+                    finalJobs.Add(summary);
+            };
+            supervisor.StateStore.StateBatchPublished += batches.Add;
+            runTask = supervisor.RunAsync(cts.Token);
+
+            var submitted = await supervisor.SubmitSearchJobAsync(
+                new SubmitSearchJobRequestDto("missing"),
+                CancellationToken.None);
+            await WaitForConditionAsync(
+                () => batches.Any(batch => batch.State.RemovedJobIds.Contains(submitted.JobId)),
+                "Timed out waiting for terminal workflow retirement.");
+
+            Assert.IsTrue(finalJobs.Any(job => job.JobId == submitted.JobId));
+            Assert.IsNull(supervisor.StateStore.GetJobSummary(submitted.JobId));
+            Assert.IsNull(supervisor.StateStore.GetWorkflowSummary(submitted.WorkflowId));
+            Assert.IsNull(supervisor.GetRuntimeJob<Job>(submitted.JobId));
+            Assert.IsNull(supervisor.GetFileResults(submitted.JobId));
+            Assert.IsFalse(supervisor.CancelJob(submitted.JobId));
+            Assert.IsNull(await supervisor.StartFileDownloadsAsync(
+                submitted.JobId,
+                new StartFileDownloadsRequestDto([
+                    new FileCandidateRefDto("peer", @"Share\missing.mp3"),
+                ]),
+                CancellationToken.None));
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static EngineSupervisor CreateSupervisor(
         string musicRoot,
         string outputDir,
         Action<DownloadSettings>? configureDownload = null,
         Action<EngineSettings>? configureEngine = null,
         ProfileCatalog? profiles = null,
-        DownloadSettingsPatchDto? launchDownloadSettings = null)
+        DownloadSettingsPatchDto? launchDownloadSettings = null,
+        bool retireTerminalWorkflows = false)
     {
         var engineSettings = new EngineSettings
         {
@@ -1530,7 +1513,15 @@ public class EngineSupervisorTests
             },
         });
 
-        return new EngineSupervisor(options);
+        // Most tests in this class exercise submission/execution mechanics and
+        // inspect terminal runtime objects directly. Production daemon retirement
+        // is covered separately; keeping it off here avoids turning those tests
+        // into persistence-history integration tests.
+        return new EngineSupervisor(
+            options,
+            persistence: null,
+            loggerFactory: null,
+            retireTerminalWorkflows: retireTerminalWorkflows);
     }
 
     private static SettingsProfile CreateProfile(string name, Action<DownloadSettings> applyDownload)
@@ -1645,11 +1636,11 @@ public class EngineSupervisorTests
 
     private static List<SongJobPayloadDto> GetChildSongPayloads(EngineSupervisor supervisor, Guid parentJobId)
     {
-        var parent = supervisor.StateStore.GetJobDetail(parentJobId);
-        return parent?.Children
+        return supervisor.StateStore
+            .GetJobs(new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: parentJobId))
             .Select(child => supervisor.StateStore.GetJobDetail(child.JobId)?.Payload)
             .OfType<SongJobPayloadDto>()
-            .ToList() ?? [];
+            .ToList();
     }
 
     private static List<JobSummaryDto> SearchChildren(EngineSupervisor supervisor, Guid workflowId)

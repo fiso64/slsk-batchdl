@@ -1,6 +1,7 @@
 using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
+using Sockseek.Core.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace Sockseek.Core;
@@ -35,10 +36,10 @@ internal sealed class DownloadExecutorCoordinator
         ctx.IndexEditor?.Update();
         ctx.PlaylistEditor?.Update();
 
-        await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
-
         try
         {
+            await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
+
             JobOutcome outcome = JobOutcome.NoChange();
             switch (job)
             {
@@ -92,12 +93,36 @@ internal sealed class DownloadExecutorCoordinator
             DownloadLogMessages.JobDecision(logger, job.Id, "leaf-download-completed", null);
             return outcome;
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            var outcome = JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken));
+            var outcome = ClassifyLeafFailure(job, parentToken, ex);
             JobOutcomeCommitter.Commit(job, outcome);
             return outcome;
         }
+    }
+
+    private JobOutcome ClassifyLeafFailure(
+        Job job,
+        CancellationToken parentToken,
+        Exception exception)
+    {
+        if (exception is OperationCanceledException
+            && jobs.IsJobCancellationRequested(job, parentToken))
+        {
+            return JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken));
+        }
+
+        DownloadLogMessages.ComponentFailed(
+            logger,
+            exception,
+            "leaf-download",
+            job.Id);
+        return JobOutcome.Failed(
+            job is FileDownloadJob or DirectoryDownloadJob
+                ? JobFailureReason.AllDownloadsFailed
+                : JobFailureReason.Other,
+            ExceptionText.Summary(exception),
+            ExceptionText.Detail(exception));
     }
 
     // ── per-job-type handlers ─────────────────────────────────────────────────

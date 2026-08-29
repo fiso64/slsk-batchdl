@@ -74,9 +74,7 @@ internal static class HistoricalJobDtoMapper
             ServerJobKind.Extract => new ExtractJobPayloadDto(
                 Text(root, "Input") ?? "",
                 Text(root, "InputType"),
-                job.ResultJobId,
-                Bool(root, "AutoProcessResult"),
-                null),
+                job.ResultJobId),
             ServerJobKind.Search => new SearchJobPayloadDto(
                 Text(root, "QueryText") ?? job.QueryText ?? "",
                 DefaultFileProjection(job),
@@ -207,24 +205,7 @@ internal static class HistoricalJobDtoMapper
             Parse(Text(root, "SourceKind"), RemoteDirectorySourceKindDto.PeerDirectory),
             Text(source, "Username"),
             Text(source, "FolderPath"),
-            Plan(Child(root, "ResolvedPlanSource")),
-            Plan(Child(root, "ActivePlan")),
             DirectoryState(root));
-    }
-
-    private static DirectoryTransferPlanDto? Plan(JsonElement element)
-    {
-        if (element.ValueKind != JsonValueKind.Object)
-            return null;
-        var entries = ChildArray(element, "Entries")
-            .Select(entry => new DirectoryTransferEntryDto(
-                PeerTarget(Child(entry, "Target")),
-                StringArray(entry, "RelativeDirectoryComponents")))
-            .ToArray();
-        return new DirectoryTransferPlanDto(
-            Text(element, "DisplayRoot") ?? "directory",
-            entries,
-            Long(element, "TotalKnownBytes"));
     }
 
     private static PeerFileTargetDto PeerTarget(JsonElement element)

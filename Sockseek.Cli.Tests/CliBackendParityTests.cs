@@ -19,7 +19,7 @@ public class CliBackendParityTests
     private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
 
     [TestMethod]
-    public async Task CliBackendParity_WorkflowStores_ProjectEquivalentState()
+    public async Task CliBackendParity_TerminalJobProjections_AreEquivalent()
     {
         var projections = new ConcurrentBag<string[]>();
         await RunForEachBackendAsync(
@@ -36,15 +36,11 @@ public class CliBackendParityTests
                         new SongQueryDto("Artist", "Track One", "", "", -1, false)),
                     ctx.Token);
                 await WaitForJobStateAsync(ctx.Backend, summary.JobId, ExpectedJobStatus.Succeeded);
-                await WaitForConditionAsync(
-                    () => ctx.Backend.ClientStore.GetJob(summary.JobId)?.LifecycleState
-                        == ServerJobLifecycleState.Terminal,
-                    $"{ctx.Name}: workflow store did not receive terminal state. " +
-                    $"Jobs: {string.Join(", ", ctx.Backend.ClientStore.GetJobs().Select(job => $"{job.JobId}:{job.LifecycleState}"))}");
-
-                projections.Add(ctx.Backend.ClientStore.GetWorkflowJobs(summary.WorkflowId)
-                    .Select(job =>
-                        $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
+                var jobs = await ctx.Backend.GetJobsAsync(
+                    new JobQuery(null, null, null, summary.WorkflowId, IncludeAll: true),
+                    ctx.Token);
+                projections.Add(jobs.Select(job =>
+                    $"{job.Kind}:{job.LifecycleState}:{job.ActivityPhase}:{job.TerminalOutcome}:{job.ParentJobId.HasValue}")
                     .OrderBy(value => value, StringComparer.Ordinal)
                     .ToArray());
             });
@@ -423,7 +419,6 @@ public class CliBackendParityTests
             new SubmitExtractJobRequestDto(
                 listPath,
                 InputType: "List",
-                AutoStartExtractedResult: true,
                 Options: new SubmissionOptionsDto(),
                 ResultDownloadBehavior: new DownloadBehaviorPolicyDto(
                     Album: DownloadBehavior.Manual,
@@ -560,7 +555,7 @@ public class CliBackendParityTests
                 Profiles = profiles ?? ProfileCatalog.Empty,
                 Persistence = new ServerPersistenceOptions
                 {
-                    Enabled = false,
+                    Enabled = true,
                     DataDirectory = Path.Combine(outputDir, ".server-data"),
                 },
             }, DynamicLoopbackUrl);
@@ -595,7 +590,7 @@ public class CliBackendParityTests
                 ClientFactory = _ => client,
                 Persistence = new ServerPersistenceOptions
                 {
-                    Enabled = false,
+                    Enabled = true,
                     DataDirectory = Path.Combine(outputDir, ".server-data"),
                 },
             }, DynamicLoopbackUrl);
@@ -740,9 +735,14 @@ public class CliBackendParityTests
         }
 
         var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
+        var finalJobs = finalDetail == null
+            ? []
+            : await backend.GetJobsAsync(
+                new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                CancellationToken.None);
         string jobs = finalDetail == null
             ? "<missing>"
-            : string.Join(", ", finalDetail.Jobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
+            : string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
         Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
     }
 

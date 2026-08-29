@@ -177,7 +177,7 @@ internal sealed class DiscoveryCoordinator
 
         var newContexts = JobPreparer.PrepareSubtree(extracted, job.Config, context.JobSettingsResolver, parentJob as JobList, context.Ctx(job));
         foreach (var (id, ctx) in newContexts)
-            context.Contexts[id] = ctx;
+            context.Contexts.Set(id, extracted.WorkflowId, ctx);
 
         EnsureDisplayIdsForExecutableSubtree(extracted);
         context.ObservePreparedAutoProfiles(extracted);
@@ -564,7 +564,7 @@ internal sealed class DiscoveryCoordinator
         {
             aj.ItemName ??= job.ItemName;
             aj.Config = job.Config;
-            context.Contexts[aj.Id] = new JobContext
+            context.Contexts.Set(aj, new JobContext
             {
                 IndexEditor = ctx.IndexEditor,
                 PlaylistEditor = ctx.PlaylistEditor,
@@ -572,9 +572,9 @@ internal sealed class DiscoveryCoordinator
                 MusicDirSkipper = ctx.MusicDirSkipper,
                 OutputScope = ctx.OutputScope,
                 PreprocessTracks = false,
-            };
+            });
         }
-        context.Contexts[albumList.Id] = new JobContext
+        context.Contexts.Set(albumList, new JobContext
         {
             IndexEditor = ctx.IndexEditor,
             PlaylistEditor = ctx.PlaylistEditor,
@@ -582,7 +582,7 @@ internal sealed class DiscoveryCoordinator
             MusicDirSkipper = ctx.MusicDirSkipper,
             OutputScope = ctx.OutputScope,
             PreprocessTracks = false,
-        };
+        });
 
         context.RegisterJob(albumList, job);
         job.UpdateActivity(JobActivityPhase.RunningChildren);

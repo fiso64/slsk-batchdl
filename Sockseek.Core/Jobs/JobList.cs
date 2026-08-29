@@ -7,9 +7,17 @@ namespace Sockseek.Core.Jobs;
     // State is derived: Done when all children are done, Failed if all failed.
     public class JobList : Job, IUpgradeable
     {
+        private readonly object jobsGate = new();
         public List<Job> Jobs { get; } = new();
 
-        public int Count => Jobs.Count;
+        public int Count
+        {
+            get
+            {
+                lock (jobsGate)
+                    return Jobs.Count;
+            }
+        }
 
         public Job this[int index] => Jobs[index];
 
@@ -21,7 +29,17 @@ namespace Sockseek.Core.Jobs;
             if (jobs != null) Jobs.AddRange(jobs);
         }
 
-        public void Add(Job job) => Jobs.Add(job);
+        public void Add(Job job)
+        {
+            lock (jobsGate)
+                Jobs.Add(job);
+        }
+
+        internal void RemoveJobs(IReadOnlySet<Guid> jobIds)
+        {
+            lock (jobsGate)
+                Jobs.RemoveAll(job => jobIds.Contains(job.Id));
+        }
 
         public void Reverse()
         {
@@ -39,7 +57,10 @@ namespace Sockseek.Core.Jobs;
         // Yields every Job reachable from this list (depth-first), following ExtractJob.Result.
         public IEnumerable<Job> AllJobs()
         {
-            foreach (var job in Jobs)
+            Job[] roots;
+            lock (jobsGate)
+                roots = Jobs.ToArray();
+            foreach (var job in roots)
                 foreach (var j in WalkJob(job))
                     yield return j;
         }

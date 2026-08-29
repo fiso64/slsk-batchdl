@@ -687,6 +687,10 @@ namespace Tests.Cancellation
             var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" })
             {
                 Config = new DownloadSettings(),
+                DownloadBehaviorPolicy = new DownloadBehaviorPolicy
+                {
+                    Album = DownloadBehavior.Manual,
+                },
             };
             album.SetAwaitingSelection();
             int flushCount = 0;
@@ -703,11 +707,13 @@ namespace Tests.Cancellation
                 },
                 job => job.IsSuccessfulTerminal);
 
+            Assert.IsTrue(coordinator.HasResumableState([album]));
             Assert.IsTrue(await coordinator.SkipAsync(album.Id));
             Assert.AreEqual(JobLifecycleState.Terminal, album.LifecycleState);
             Assert.AreEqual(JobTerminalOutcome.Skipped, album.TerminalOutcome);
             Assert.AreEqual(JobSkipReason.Manual, album.SkipReason);
             Assert.AreEqual(1, flushCount);
+            Assert.IsFalse(coordinator.HasResumableState([album]));
             Assert.IsFalse(await coordinator.SkipAsync(album.Id));
         }
 

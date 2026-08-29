@@ -39,65 +39,50 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         int limit,
         CancellationToken cancellationToken = default)
     {
-        if (persistence.JobHistory == null)
-            return new CombinedWorkflowPage(live.GetWorkflows().Take(limit).ToArray(), null);
-        var page = await persistence.JobHistory.GetWorkflowsAsync(cursor, limit, cancellationToken).ConfigureAwait(false);
-        return new CombinedWorkflowPage(
-            page.Items.Select(workflow =>
-            {
-                var summaries = MergeWorkflowSummaries(
-                    workflow.Jobs.Select(HistoricalJobDtoMapper.ToSummary),
-                    live.GetWorkflow(workflow.WorkflowId, includeAll: true)?.Jobs ?? []);
-                return ToWorkflowSummary(workflow.WorkflowId, summaries);
-            }).ToArray(),
-            page.NextCursor);
+        ValidateJobPageLimit(limit);
+        var decoded = JobHistoryReader.DecodeCursor(cursor);
+        var liveRows = live.GetWorkflowPageCandidates(
+            decoded?.DisplayId,
+            decoded?.Id,
+            limit + 1);
+        PersistedWorkflowPage? persisted = persistence.JobHistory == null
+            ? null
+            : await persistence.JobHistory.GetWorkflowsAsync(cursor, limit, cancellationToken).ConfigureAwait(false);
+
+        var merged = new Dictionary<Guid, (long FirstDisplayId, WorkflowSummaryDto Summary)>();
+        foreach (var workflow in persisted?.Items ?? [])
+            merged[workflow.WorkflowId] = (workflow.FirstDisplayId, ToWorkflowSummary(workflow));
+        foreach (var workflow in liveRows)
+            merged[workflow.Summary.WorkflowId] = (workflow.FirstDisplayId, workflow.Summary);
+
+        var ordered = merged.Values
+            .OrderBy(workflow => workflow.FirstDisplayId)
+            .ThenBy(workflow => workflow.Summary.WorkflowId)
+            .ToList();
+        bool hasMore = ordered.Count > limit
+            || liveRows.Count > limit
+            || persisted?.NextCursor != null;
+        if (ordered.Count > limit)
+            ordered.RemoveRange(limit, ordered.Count - limit);
+        string? next = hasMore && ordered.Count > 0
+            ? JobHistoryReader.EncodeCursor(
+                ordered[^1].FirstDisplayId,
+                ordered[^1].Summary.WorkflowId)
+            : null;
+        return new CombinedWorkflowPage(ordered.Select(item => item.Summary).ToArray(), next);
     }
 
     public async Task<WorkflowDetailDto?> GetWorkflowAsync(
         Guid workflowId,
-        bool includeAll,
         CancellationToken cancellationToken = default)
     {
-        var jobs = await GetHistoricalWorkflowJobsAsync(workflowId, cancellationToken).ConfigureAwait(false);
-        var liveWorkflow = live.GetWorkflow(workflowId, includeAll: true);
-        if (jobs.Count == 0 && liveWorkflow == null)
+        var liveWorkflow = live.GetWorkflow(workflowId);
+        if (liveWorkflow != null)
+            return liveWorkflow;
+        if (persistence.JobHistory == null)
             return null;
-        var summaries = MergeWorkflowSummaries(
-            jobs.Select(HistoricalJobDtoMapper.ToSummary),
-            liveWorkflow?.Jobs ?? []);
-        return new WorkflowDetailDto(
-            ToWorkflowSummary(workflowId, summaries),
-            summaries.Where(job => includeAll || job.ParentJobId == null).ToArray());
-    }
-
-    public async Task<WorkflowTreeDto?> GetWorkflowTreeAsync(
-        Guid workflowId,
-        CancellationToken cancellationToken = default)
-    {
-        var jobs = await GetHistoricalWorkflowJobsAsync(workflowId, cancellationToken).ConfigureAwait(false);
-        var liveWorkflow = live.GetWorkflow(workflowId, includeAll: true);
-        if (jobs.Count == 0 && liveWorkflow == null)
-            return null;
-        var summaries = MergeWorkflowSummaries(
-            jobs.Select(HistoricalJobDtoMapper.ToSummary),
-            liveWorkflow?.Jobs ?? []).ToDictionary(job => job.JobId);
-        var children = summaries.Values
-            .Where(job => job.ParentJobId.HasValue && summaries.ContainsKey(job.ParentJobId.Value))
-            .GroupBy(job => job.ParentJobId!.Value)
-            .ToDictionary(group => group.Key, group => group.OrderBy(job => job.DisplayId).ToArray());
-        WorkflowJobNodeDto Build(JobSummaryDto job, HashSet<Guid> path)
-        {
-            if (!path.Add(job.JobId))
-                return new WorkflowJobNodeDto(job, []);
-            var nodes = children.GetValueOrDefault(job.JobId)?.Select(child => Build(child, path)).ToArray() ?? [];
-            path.Remove(job.JobId);
-            return new WorkflowJobNodeDto(job, nodes);
-        }
-        var roots = summaries.Values.Where(job => !job.ParentJobId.HasValue || !summaries.ContainsKey(job.ParentJobId.Value))
-            .OrderBy(job => job.DisplayId)
-            .Select(job => Build(job, []))
-            .ToArray();
-        return new WorkflowTreeDto(ToWorkflowSummary(workflowId, summaries.Values.ToArray()), roots);
+        var historical = await persistence.JobHistory.GetWorkflowAsync(workflowId, cancellationToken).ConfigureAwait(false);
+        return historical == null ? null : new WorkflowDetailDto(ToWorkflowSummary(historical));
     }
 
     public async Task<JobDetailDto?> GetJobByDisplayIdAsync(
@@ -111,40 +96,38 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         if (persistence.JobHistory == null)
             return null;
         var job = await persistence.JobHistory.GetJobByDisplayIdAsync(workflowId, displayId, cancellationToken).ConfigureAwait(false);
-        return job == null
-            ? null
-            : new JobDetailDto(HistoricalJobDtoMapper.ToSummary(job), HistoricalJobDtoMapper.ToPayload(job), []);
+        if (job == null)
+            return null;
+        int childCount = await persistence.JobHistory.GetChildCountAsync(job.Id, cancellationToken).ConfigureAwait(false);
+        return new JobDetailDto(HistoricalJobDtoMapper.ToSummary(job), HistoricalJobDtoMapper.ToPayload(job), childCount);
     }
 
-    public async Task<TransferHistoryDetailDto?> GetTransferAsync(
+    private async Task<(TransferHistoryDto Transfer, TransferAttemptHistoryDto? LatestAttempt)?> GetHistoricalTransferAsync(
         Guid transferId,
-        int attemptLimit,
         CancellationToken cancellationToken = default)
     {
         if (persistence.TransferHistory == null)
             return null;
-        var detail = await persistence.TransferHistory.GetTransferAsync(transferId, attemptLimit, cancellationToken).ConfigureAwait(false);
+        var detail = await persistence.TransferHistory.GetTransferAsync(transferId, cancellationToken).ConfigureAwait(false);
         return detail == null
             ? null
-            : new TransferHistoryDetailDto(ToTransfer(detail.Transfer), detail.Attempts.Select(ToAttempt).ToArray());
+            : (ToTransfer(detail.Transfer), detail.LatestAttempt == null ? null : ToAttempt(detail.LatestAttempt));
     }
 
     public async Task<TransferDetailDto?> GetTransferDetailAsync(
         Guid transferId,
-        int attemptLimit,
         CancellationToken cancellationToken = default)
     {
-        TransferStateDto? liveTransfer = live.GetLiveTransfer(transferId);
-        TransferHistoryDetailDto? historical = await GetTransferAsync(
+        LiveTransferDetail? liveDetail = live.GetLiveTransferDetail(transferId);
+        var historical = await GetHistoricalTransferAsync(
             transferId,
-            attemptLimit,
             cancellationToken).ConfigureAwait(false);
-        if (liveTransfer is null && historical is null)
+        if (liveDetail is null && historical is null)
             return null;
 
         TransferQueueEstimateDto? estimate = null;
-        if (liveTransfer is not null
-            && liveTransfer.Status.State.Equals("Queued", StringComparison.OrdinalIgnoreCase)
+        if (liveDetail is not null
+            && liveDetail.Transfer.Status.State.Equals("Queued", StringComparison.OrdinalIgnoreCase)
             && supervisor.Sharing is { } sharing)
         {
             var value = sharing.Uploads.GetQueueEstimate(transferId);
@@ -154,15 +137,18 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         }
 
         return new TransferDetailDto(
-            liveTransfer is not null && historical is not null
+            liveDetail is not null && historical is not null
                 ? TransferDetailSource.Merged
-                : liveTransfer is not null
+                : liveDetail is not null
                     ? TransferDetailSource.Live
                     : TransferDetailSource.Historical,
-            liveTransfer,
+            liveDetail?.Transfer,
             estimate,
             historical?.Transfer,
-            historical?.Attempts ?? []);
+            Math.Max(
+                liveDetail?.Transfer.Status.AttemptCount ?? 0,
+                historical?.Transfer.AttemptCount ?? 0),
+            liveDetail?.LatestAttempt ?? historical?.LatestAttempt);
     }
 
     public async Task<CombinedTransferAttemptPage?> GetTransferAttemptsAsync(
@@ -185,24 +171,42 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         int limit,
         CancellationToken cancellationToken = default)
     {
-        if (persistence.JobHistory == null)
-            return new CombinedJobPage(live.GetJobs(query).Take(limit).ToArray(), null);
+        ValidateJobPageLimit(limit);
+        var decoded = JobHistoryReader.DecodeCursor(cursor);
+        var liveRows = live.GetJobPageCandidates(query, decoded?.DisplayId, decoded?.Id, limit + 1);
+        PersistedJobPage? persisted = persistence.JobHistory == null
+            ? null
+            : await persistence.JobHistory.GetJobsAsync(new JobHistoryQuery(
+                cursor,
+                limit,
+                query.LifecycleState?.ToString(),
+                query.TerminalOutcome?.ToString(),
+                query.SkipReason?.ToString(),
+                query.Kind?.ToString(),
+                query.WorkflowId,
+                query.IncludeAll,
+                query.ParentJobId), cancellationToken).ConfigureAwait(false);
 
-        var page = await persistence.JobHistory.GetJobsAsync(new JobHistoryQuery(
-            cursor,
-            limit,
-            query.LifecycleState?.ToString(),
-            query.TerminalOutcome?.ToString(),
-            query.SkipReason?.ToString(),
-            query.Kind?.ToString(),
-            query.WorkflowId,
-            query.IncludeAll), cancellationToken).ConfigureAwait(false);
+        var merged = persisted?.Items
+            .Select(HistoricalJobDtoMapper.ToSummary)
+            .ToDictionary(job => job.JobId)
+            ?? new Dictionary<Guid, JobSummaryDto>();
+        foreach (var job in liveRows)
+            merged[job.JobId] = job;
 
-        var liveById = live.GetJobs(query).ToDictionary(job => job.JobId);
-        var items = page.Items
-            .Select(job => liveById.GetValueOrDefault(job.Id) ?? HistoricalJobDtoMapper.ToSummary(job))
-            .ToArray();
-        return new CombinedJobPage(items, page.NextCursor);
+        var ordered = merged.Values
+            .OrderBy(job => job.DisplayId)
+            .ThenBy(job => job.JobId)
+            .ToList();
+        bool hasMore = ordered.Count > limit
+            || liveRows.Count > limit
+            || persisted?.NextCursor != null;
+        if (ordered.Count > limit)
+            ordered.RemoveRange(limit, ordered.Count - limit);
+        string? next = hasMore && ordered.Count > 0
+            ? JobHistoryReader.EncodeCursor(ordered[^1].DisplayId, ordered[^1].JobId)
+            : null;
+        return new CombinedJobPage(ordered, next);
     }
 
     public async Task<JobDetailDto?> GetJobAsync(Guid jobId, CancellationToken cancellationToken = default)
@@ -216,11 +220,11 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
         var job = await persistence.JobHistory.GetJobAsync(jobId, cancellationToken).ConfigureAwait(false);
         if (job == null)
             return null;
-        var children = await persistence.JobHistory.GetChildrenAsync(jobId, cancellationToken).ConfigureAwait(false);
+        int childCount = await persistence.JobHistory.GetChildCountAsync(jobId, cancellationToken).ConfigureAwait(false);
         return new JobDetailDto(
             HistoricalJobDtoMapper.ToSummary(job),
             HistoricalJobDtoMapper.ToPayload(job),
-            children.Select(HistoricalJobDtoMapper.ToSummary).ToArray());
+            childCount);
     }
 
     public async Task<CombinedSearchRawPage?> GetRawSearchResultsAsync(
@@ -390,42 +394,23 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             attempt.SourceUsername, attempt.SourcePath, attempt.OutputPath,
             attempt.StartedAtUtc, attempt.CompletedAtUtc, attempt.FailureReason, attempt.FailureMessage, attempt.Revision);
 
-    private async Task<IReadOnlyList<PersistedJob>> GetHistoricalWorkflowJobsAsync(Guid workflowId, CancellationToken cancellationToken)
-        => persistence.JobHistory == null
-            ? []
-            : await persistence.JobHistory.GetWorkflowJobsAsync(workflowId, cancellationToken).ConfigureAwait(false);
+    private static WorkflowSummaryDto ToWorkflowSummary(PersistedWorkflowSummary workflow)
+        => new(
+            workflow.WorkflowId,
+            workflow.Title,
+            Enum.TryParse(workflow.State, ignoreCase: true, out ServerWorkflowState state)
+                ? state
+                : ServerWorkflowState.Completed,
+            workflow.RootJobCount,
+            workflow.ActiveJobCount,
+            workflow.FailedJobCount,
+            workflow.CompletedJobCount);
 
-    private static WorkflowSummaryDto ToWorkflowSummary(Guid workflowId, IReadOnlyList<PersistedJob> jobs)
-        => ToWorkflowSummary(workflowId, jobs.Select(HistoricalJobDtoMapper.ToSummary).ToArray());
-
-    private static WorkflowSummaryDto ToWorkflowSummary(Guid workflowId, IReadOnlyList<JobSummaryDto> jobs)
+    private static void ValidateJobPageLimit(int limit)
     {
-        var ordered = jobs.OrderBy(job => job.DisplayId).ToArray();
-        int active = ordered.Count(job => job.LifecycleState != ServerJobLifecycleState.Terminal);
-        int failed = ordered.Count(job => job.TerminalOutcome == ServerJobTerminalOutcome.Failed);
-        int completed = ordered.Count(job => job.LifecycleState == ServerJobLifecycleState.Terminal);
-        var titleJob = ordered.FirstOrDefault(job => !string.IsNullOrWhiteSpace(job.ItemName)) ?? ordered[0];
-        string title = titleJob.ItemName ?? ordered[0].QueryText ?? ordered[0].Kind.ToString();
-        var state = active > 0 ? ServerWorkflowState.Active
-            : failed > 0 ? ServerWorkflowState.Failed
-            : ServerWorkflowState.Completed;
-        return new WorkflowSummaryDto(
-            workflowId,
-            title,
-            state,
-            ordered.Where(job => job.ParentJobId == null).Select(job => job.JobId).ToArray(),
-            active,
-            failed,
-            completed);
-    }
-
-    private static IReadOnlyList<JobSummaryDto> MergeWorkflowSummaries(
-        IEnumerable<JobSummaryDto> historical,
-        IEnumerable<JobSummaryDto> current)
-    {
-        var merged = historical.ToDictionary(job => job.JobId);
-        foreach (var job in current)
-            merged[job.JobId] = job;
-        return merged.Values.OrderBy(job => job.DisplayId).ToArray();
+        if (limit is < 1 or > JobHistoryReader.MaximumPageSize)
+            throw new ArgumentOutOfRangeException(
+                nameof(limit),
+                $"Page size must be between 1 and {JobHistoryReader.MaximumPageSize}.");
     }
 }

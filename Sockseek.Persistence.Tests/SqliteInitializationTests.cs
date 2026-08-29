@@ -37,7 +37,7 @@ public sealed class SqliteInitializationTests
 
         Assert.AreEqual("wal", result.JournalMode.ToLowerInvariant());
         Assert.AreEqual("2", result.SynchronousMode);
-        StringAssert.Contains(result.SchemaVersion, "AddChatSequenceAllocator");
+        StringAssert.Contains(result.SchemaVersion, "AddJobNavigationIndexes");
 
         await using var context = await database.Factory.CreateDbContextAsync();
         await context.Database.OpenConnectionAsync();

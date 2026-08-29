@@ -90,6 +90,21 @@ internal sealed class DownloadExecutionContext
 
     public void EmitAutoProfileFinalSummary(Job rootJob) => AutoProfiles.EmitFinalSummary(rootJob);
 
+    public void EmitAutoProfileFinalSummary(Guid workflowId) => AutoProfiles.EmitFinalSummary(workflowId);
+
+    public void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds)
+    {
+        musicDirectoryIndexBuildLoggedByWorkflow.TryRemove(workflowId, out _);
+        foreach (Guid jobId in jobIds)
+            PendingTerminalTransfers.TryRemove(jobId, out _);
+        AutoProfiles.Retire(workflowId);
+    }
+
+    internal (int WorkflowDiagnostics, int PendingTerminalTransfers, int AutoProfileWorkflows) RetainedStateCounts
+        => (musicDirectoryIndexBuildLoggedByWorkflow.Count,
+            PendingTerminalTransfers.Count,
+            AutoProfiles.RetainedWorkflowCount);
+
     public void RaiseBuildingMusicDirectoryIndex(Job job)
     {
         if (musicDirectoryIndexBuildLoggedByWorkflow.TryAdd(job.WorkflowId, 0))

@@ -36,6 +36,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     private readonly ILoggerFactory loggerFactory;
     private readonly ILogger<DownloadEngine> logger;
     private readonly string engineId = Guid.NewGuid().ToString("N")[..12];
+    private readonly bool retireTerminalWorkflows;
 
     internal bool AutomaticStaleChecksEnabled { get; set; } = true;
 
@@ -46,7 +47,6 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
     private readonly DownloadJobContextStore _contexts = new();
     private readonly SourceMutationCoordinator _sourceMutations;
-    private readonly ConcurrentDictionary<Guid, byte> _musicDirectoryIndexBuildLoggedByWorkflow = new();
     private readonly DownloadJobTracker _jobs;
     private readonly DownloadCommandTargetResolver _commandTargets;
     private readonly AutoProfileWorkflowReporter _autoProfiles;
@@ -54,6 +54,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     private readonly SkipEvaluationCoordinator _skipEvaluation;
     private readonly DownloadExecutionContext _executionContext;
     private readonly JobOrchestrator _orchestrator;
+    private readonly WorkflowLifetimeCoordinator? _workflowLifetime;
 
     public Job? GetJob(Guid id) => _jobs.GetJob(id);
     public Job? GetJob(int displayId) => _jobs.GetJob(displayId);
@@ -118,12 +119,12 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         if (sourceJobId is Guid sourceId)
             _jobs.AssociateSource(job.Id, sourceId);
 
-        _jobQueue.Enqueue(job, settings);
+        _jobQueue.Enqueue(job, settings, _workflowLifetime?.QueueRoot(job));
     }
 
     /// <summary>Resumes an existing job without re-parenting it or replacing its prepared context.</summary>
     public void Resume(Job job)
-        => _jobQueue.Resume(job);
+        => _jobQueue.Resume(job, _workflowLifetime?.QueueRoot(job));
 
     /// <summary>
     /// Applies a manual album-folder selection to an existing selection job and resumes it
@@ -139,11 +140,23 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
     /// <summary>Completes an AwaitingSelection job through the engine so terminal side effects stay centralized.</summary>
     public async Task<bool> CompleteManualSelectionAsync(Guid jobId)
-        => await _manualSelections.CompleteAsync(jobId);
+    {
+        var job = GetJob(jobId);
+        bool completed = await _manualSelections.CompleteAsync(jobId);
+        if (completed && job != null)
+            _workflowLifetime?.Reevaluate(job.WorkflowId);
+        return completed;
+    }
 
     /// <summary>Marks an AwaitingSelection job as explicitly skipped by the user.</summary>
     public async Task<bool> SkipManualSelectionAsync(Guid jobId)
-        => await _manualSelections.SkipAsync(jobId);
+    {
+        var job = GetJob(jobId);
+        bool skipped = await _manualSelections.SkipAsync(jobId);
+        if (skipped && job != null)
+            _workflowLifetime?.Reevaluate(job.WorkflowId);
+        return skipped;
+    }
 
     public async Task<RetrieveFolderJob> ProcessFolderRetrieval(
         AlbumFolder folder,
@@ -230,9 +243,11 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         TimeProvider? timeProvider = null,
         IPeerDirectorySource? directorySource = null,
         ILoggerFactory? loggerFactory = null,
-        ISensitiveOutput? sensitiveOutput = null)
+        ISensitiveOutput? sensitiveOutput = null,
+        bool retireTerminalWorkflows = false)
     {
         engineSettings = settings;
+        this.retireTerminalWorkflows = retireTerminalWorkflows;
         this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
         logger = this.loggerFactory.CreateLogger<DownloadEngine>();
         Events = new DownloadEvents(
@@ -304,6 +319,15 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
             Resume,
             _orchestrator.FlushManualSelectionTerminalEffectsAsync,
             JobOrchestrator.IsSuccessfulTerminal);
+        if (retireTerminalWorkflows)
+        {
+            _workflowLifetime = new WorkflowLifetimeCoordinator(
+                _jobs.GetJobsByWorkflow,
+                _manualSelections.HasResumableState,
+                workflowId => (_jobSettingsResolver as IWorkflowSettingsLifetime)
+                    ?.CaptureWorkflowVersion(workflowId) ?? 0,
+                RetireWorkflow);
+        }
     }
 
     public void Dispose()
@@ -320,6 +344,30 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
 
     internal int RunStaleDownloadCheckForTesting() => _staleDownloadCoordinator.CancelStaleDownloads();
 
+    internal DownloadEngineRetainedStateCounts RetainedStateCounts
+    {
+        get
+        {
+            var execution = _executionContext.RetainedStateCounts;
+            var events = Events.RetainedStateCounts;
+            return new DownloadEngineRetainedStateCounts(
+                Queue.Count,
+                _jobs.Count,
+                _contexts.Count,
+                _activeDownloads.Count,
+                _manualSelections.RetainedStateCount,
+                _workflowLifetime?.RetainedGenerationCount ?? 0,
+                execution.WorkflowDiagnostics,
+                execution.PendingTerminalTransfers,
+                execution.AutoProfileWorkflows,
+                events.Jobs,
+                events.Transfers,
+                events.Attempts,
+                events.Gates,
+                events.TerminalTransfers);
+        }
+    }
+
     // ── top-level entry point ─────────────────────────────────────────────────
 
     public async Task RunAsync(CancellationToken ct)
@@ -328,7 +376,7 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         await BoundedAsync.ForEachAsync(
             ReadPreparedRootJobs(ct),
             _runtime.ConcurrentSchedulingLimit,
-            _orchestrator.ProcessRootJob,
+            ProcessPreparedRootJob,
             ct);
         DownloadLogMessages.EngineStage(logger, engineId, "root-jobs-completed");
 
@@ -341,43 +389,126 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         await _runtime.CancelAsync();
     }
 
-    private async IAsyncEnumerable<Job> ReadPreparedRootJobs(
+    private async Task ProcessPreparedRootJob(PreparedRootJob prepared)
+    {
+        try
+        {
+            if (prepared.PreparationFailure != null)
+            {
+                _executionContext.RegisterJob(prepared.Job, parent: null);
+                FailActiveWorkflowJobs(prepared.Job, prepared.PreparationFailure);
+                Events.RaiseJobExecutionCompleted(prepared.Job);
+            }
+            else
+            {
+                try
+                {
+                    await _orchestrator.ProcessRootJob(
+                        prepared.Job,
+                        emitAutoProfileFinalSummary: !retireTerminalWorkflows);
+                }
+                catch (Exception ex) when (retireTerminalWorkflows)
+                {
+                    FailActiveWorkflowJobs(prepared.Job, ex);
+                }
+            }
+        }
+        finally
+        {
+            if (prepared.Lifetime != null)
+                _workflowLifetime!.RootCompleted(prepared.Lifetime);
+        }
+    }
+
+    private async IAsyncEnumerable<PreparedRootJob> ReadPreparedRootJobs(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (var queuedJob in _jobQueue.ReadAllAsync(cancellationToken))
         {
             var rootJob = queuedJob.Job;
             var settings = queuedJob.Settings;
+            if (queuedJob.Lifetime != null)
+                await _workflowLifetime!.WaitUntilReadyAsync(queuedJob.Lifetime, cancellationToken);
             DownloadLogMessages.JobDecision(
                 logger,
                 rootJob.Id,
                 queuedJob.IsResume ? "resume-dequeued" : "root-dequeued",
                 null);
 
-            if (!queuedJob.IsResume)
+            Exception? preparationFailure = null;
+            try
             {
-                Queue.Jobs.Add(rootJob);
+                if (!queuedJob.IsResume)
+                {
+                    Queue.Add(rootJob);
 
-                foreach (var (id, ctx) in JobPreparer.PrepareSubtree(rootJob, settings!, _jobSettingsResolver))
-                    _contexts[id] = ctx;
+                    foreach (var (id, ctx) in JobPreparer.PrepareSubtree(rootJob, settings!, _jobSettingsResolver))
+                        _contexts.Set(id, rootJob.WorkflowId, ctx);
 
-                _executionContext.ObservePreparedAutoProfiles(rootJob);
+                    _executionContext.ObservePreparedAutoProfiles(rootJob);
+                }
+                else if (!_contexts.ContainsKey(rootJob.Id))
+                {
+                    throw new InvalidOperationException($"Cannot resume job {rootJob.DisplayId}: no prepared job context exists.");
+                }
+
+                if (ContainsLoginRequiredJob(rootJob))
+                {
+                    await _runtime.EnsureServicesInitializedAsync(cancellationToken, AutomaticStaleChecksEnabled);
+                }
             }
-            else if (!_contexts.ContainsKey(rootJob.Id))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                throw new InvalidOperationException($"Cannot resume job {rootJob.DisplayId}: no prepared job context exists.");
+                throw;
             }
-
-            if (ContainsLoginRequiredJob(rootJob))
+            catch (Exception ex) when (retireTerminalWorkflows)
             {
-                await _runtime.EnsureServicesInitializedAsync(cancellationToken, AutomaticStaleChecksEnabled);
+                preparationFailure = ex;
             }
 
-            yield return rootJob;
+            yield return new PreparedRootJob(rootJob, queuedJob.Lifetime, preparationFailure);
         }
 
         DownloadLogMessages.EngineStage(logger, engineId, "waiting-for-root-jobs");
     }
+
+    private void RetireWorkflow(
+        Guid workflowId,
+        IReadOnlyList<Job> registeredJobs,
+        long settingsVersion)
+    {
+        _executionContext.EmitAutoProfileFinalSummary(workflowId);
+        Events.RaiseWorkflowRetired(workflowId, registeredJobs.Count);
+
+        var registeredIds = registeredJobs.Select(job => job.Id).ToHashSet();
+        Queue.RemoveJobs(registeredIds);
+        var preparedIds = _contexts.RemoveWorkflow(workflowId);
+        var allJobIds = registeredIds.Concat(preparedIds).ToHashSet();
+        _executionContext.RetireWorkflow(workflowId, allJobIds);
+        _manualSelections.Retire(registeredIds);
+        _jobs.Retire(registeredIds);
+        if (_jobSettingsResolver is IWorkflowSettingsLifetime settingsLifetime)
+            settingsLifetime.RetireWorkflow(workflowId, allJobIds, settingsVersion);
+    }
+
+    private void FailActiveWorkflowJobs(Job rootJob, Exception exception)
+    {
+        DownloadLogMessages.ComponentFailed(logger, exception, "root-execution", rootJob.Id);
+        string message = Diagnostics.ExceptionText.Summary(exception);
+        string detail = Diagnostics.ExceptionText.Detail(exception);
+        foreach (var job in _jobs.GetJobsByWorkflow(rootJob.WorkflowId))
+        {
+            if (!job.IsTerminal)
+                JobOutcomeCommitter.Commit(
+                    job,
+                    JobOutcome.Failed(JobFailureReason.Other, message, detail));
+        }
+    }
+
+    private sealed record PreparedRootJob(
+        Job Job,
+        WorkflowLifetimeCoordinator.WorkflowRootLease? Lifetime,
+        Exception? PreparationFailure);
 
     private void CleanupEmptyStagingDirectories()
     {
@@ -426,3 +557,19 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
         };
 
 }
+
+internal sealed record DownloadEngineRetainedStateCounts(
+    int QueueRoots,
+    int RegisteredJobs,
+    int Contexts,
+    int ActiveDownloads,
+    int ManualSelections,
+    int WorkflowGenerations,
+    int WorkflowDiagnostics,
+    int PendingTerminalTransfers,
+    int AutoProfileWorkflows,
+    int EventJobs,
+    int EventTransfers,
+    int EventAttempts,
+    int EventGates,
+    int EventTerminalTransfers);

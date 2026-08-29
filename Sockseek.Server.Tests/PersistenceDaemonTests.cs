@@ -141,7 +141,7 @@ public sealed class PersistenceDaemonTests
                 Assert.AreEqual("Healthy", status.Persistence.State);
                 Assert.IsNotNull(status.Persistence.RuntimeId);
                 Assert.IsNotNull(status.Persistence.RuntimeStartedAtUtc);
-                StringAssert.Contains(status.Persistence.SchemaVersion, "AddChatSequenceAllocator");
+                StringAssert.Contains(status.Persistence.SchemaVersion, "AddJobNavigationIndexes");
                 Assert.AreEqual(0, status.Persistence.ReconciledUnfinishedRuntimeCount);
 
                 var coordinator = app.Services.GetRequiredService<PersistenceCoordinator>();
@@ -180,7 +180,29 @@ public sealed class PersistenceDaemonTests
         finally
         {
             SqliteConnection.ClearAllPools();
-            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+            await DeleteDirectoryWithRetryAsync(directory);
+        }
+    }
+
+    private static async Task DeleteDirectoryWithRetryAsync(string directory)
+    {
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            if (!Directory.Exists(directory))
+                return;
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 19)
+            {
+                await Task.Delay(25);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 19)
+            {
+                await Task.Delay(25);
+            }
         }
     }
 
@@ -228,45 +250,58 @@ public sealed class PersistenceDaemonTests
             await using (var first = ServerHost.Build([], options, "http://127.0.0.1:0"))
             {
                 await first.StartAsync();
-                var supervisor = first.Services.GetRequiredService<EngineSupervisor>();
-                var search = await supervisor.SubmitTrackSearchJobAsync(
-                    new SubmitTrackSearchJobRequestDto(new SongQueryDto("Artist", "Track One")),
-                    CancellationToken.None);
-                await WaitForTerminalSuccessAsync(supervisor, search.JobId);
-                var results = supervisor.GetFileResults(search.JobId);
-                Assert.IsNotNull(results);
-                Assert.AreEqual(1, results.Items.Count);
+                try
+                {
+                    var supervisor = first.Services.GetRequiredService<EngineSupervisor>();
+                    var persistence = first.Services.GetRequiredService<PersistenceCoordinator>();
+                    var facade = first.Services.GetRequiredService<HistoricalQueryFacade>();
+                    var search = await supervisor.SubmitTrackSearchJobAsync(
+                        new SubmitTrackSearchJobRequestDto(new SongQueryDto("Artist", "Track One")),
+                        CancellationToken.None);
+                    await WaitForTerminalSuccessAsync(persistence, search.JobId);
+                    Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(search.JobId));
+                    var results = await facade.GetFileResultsAsync(search.JobId, null);
+                    Assert.IsNotNull(results);
+                    Assert.AreEqual(1, results.Items.Count);
 
-                sourceJobId = search.JobId;
-                workflowId = search.WorkflowId;
-                sourceDisplayId = search.DisplayId;
-                candidate = results.Items[0].Ref;
-                expectedCandidate = results.Items[0];
+                    sourceJobId = search.JobId;
+                    workflowId = search.WorkflowId;
+                    sourceDisplayId = search.DisplayId;
+                    candidate = results.Items[0].Ref;
+                    expectedCandidate = results.Items[0];
 
-                var aggregateTracks = supervisor.GetAggregateTrackResults(
-                    search.JobId,
-                    new AggregateTrackProjectionRequestDto(IncludeCandidates: true));
-                Assert.IsNotNull(aggregateTracks);
-                Assert.AreEqual(1, aggregateTracks.Items.Count);
-                expectedAggregateTrack = aggregateTracks.Items[0];
+                    var aggregateTracks = await facade.GetAggregateTrackResultsAsync(
+                        search.JobId,
+                        new AggregateTrackProjectionRequestDto(IncludeCandidates: true));
+                    Assert.IsNotNull(aggregateTracks);
+                    Assert.AreEqual(1, aggregateTracks.Items.Count);
+                    expectedAggregateTrack = aggregateTracks.Items[0];
 
-                var albumSearch = await supervisor.SubmitAlbumSearchJobAsync(
-                    new SubmitAlbumSearchJobRequestDto(new AlbumQueryDto("Artist", "Album")),
-                    CancellationToken.None);
-                await WaitForTerminalSuccessAsync(supervisor, albumSearch.JobId);
-                albumSearchJobId = albumSearch.JobId;
-                albumWorkflowId = albumSearch.WorkflowId;
-                var folders = supervisor.GetFolderResults(albumSearch.JobId, includeFiles: true);
-                Assert.IsNotNull(folders);
-                Assert.AreEqual(1, folders.Items.Count);
-                expectedFolder = folders.Items[0];
-                var aggregateAlbums = supervisor.GetAggregateAlbumResults(
-                    albumSearch.JobId,
-                    new AggregateAlbumProjectionRequestDto(IncludeFolders: true));
-                Assert.IsNotNull(aggregateAlbums);
-                Assert.AreEqual(1, aggregateAlbums.Items.Count);
-                expectedAggregateAlbum = aggregateAlbums.Items[0];
-                await first.StopAsync();
+                    var albumSearch = await supervisor.SubmitAlbumSearchJobAsync(
+                        new SubmitAlbumSearchJobRequestDto(new AlbumQueryDto("Artist", "Album")),
+                        CancellationToken.None);
+                    await WaitForTerminalSuccessAsync(persistence, albumSearch.JobId);
+                    Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(albumSearch.JobId));
+                    albumSearchJobId = albumSearch.JobId;
+                    albumWorkflowId = albumSearch.WorkflowId;
+                    var folders = await facade.GetFolderResultsAsync(
+                        albumSearch.JobId,
+                        request: null,
+                        includeFiles: true);
+                    Assert.IsNotNull(folders);
+                    Assert.AreEqual(1, folders.Items.Count);
+                    expectedFolder = folders.Items[0];
+                    var aggregateAlbums = await facade.GetAggregateAlbumResultsAsync(
+                        albumSearch.JobId,
+                        new AggregateAlbumProjectionRequestDto(IncludeFolders: true));
+                    Assert.IsNotNull(aggregateAlbums);
+                    Assert.AreEqual(1, aggregateAlbums.Items.Count);
+                    expectedAggregateAlbum = aggregateAlbums.Items[0];
+                }
+                finally
+                {
+                    await first.StopAsync();
+                }
             }
 
             SqliteConnection.ClearAllPools();
@@ -295,12 +330,15 @@ public sealed class PersistenceDaemonTests
                     var workflowPage = await facade.GetWorkflowsAsync(null, 100);
                     Assert.IsTrue(workflowPage.Items.Any(workflow => workflow.WorkflowId == workflowId));
                     Assert.IsTrue(workflowPage.Items.Any(workflow => workflow.WorkflowId == albumWorkflowId));
-                    var historicalWorkflow = await facade.GetWorkflowAsync(workflowId, includeAll: true);
+                    var historicalWorkflow = await facade.GetWorkflowAsync(workflowId);
                     Assert.IsNotNull(historicalWorkflow);
-                    CollectionAssert.Contains(historicalWorkflow.Jobs.Select(job => job.JobId).ToArray(), sourceJobId);
-                    var historicalTree = await facade.GetWorkflowTreeAsync(workflowId);
-                    Assert.IsNotNull(historicalTree);
-                    Assert.AreEqual(sourceJobId, historicalTree.Jobs.Single().Summary.JobId);
+                    Assert.AreEqual(1, historicalWorkflow.Summary.RootJobCount);
+                    var historicalJobs = await facade.GetJobsAsync(
+                        new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                        cursor: null,
+                        limit: 100);
+                    CollectionAssert.Contains(historicalJobs.Items.Select(job => job.JobId).ToArray(), sourceJobId);
+                    Assert.IsNull(historicalJobs.NextCursor);
                     var byDisplay = await facade.GetJobByDisplayIdAsync(workflowId, sourceDisplayId);
                     Assert.IsNotNull(byDisplay);
                     Assert.AreEqual(sourceJobId, byDisplay.Summary.JobId);
@@ -348,7 +386,9 @@ public sealed class PersistenceDaemonTests
                     Assert.AreEqual(albumSearchJobId, retrieved.SourceJobId);
                     Assert.AreEqual(albumWorkflowId, retrieved.WorkflowId);
                     Assert.IsTrue(retrieved.DisplayId > 2);
-                    await WaitForTerminalSuccessAsync(supervisor, retrieved.JobId);
+                    await WaitForTerminalSuccessAsync(
+                        second.Services.GetRequiredService<PersistenceCoordinator>(),
+                        retrieved.JobId);
 
                     var albumDownload = await supervisor.StartFolderDownloadAsync(
                         albumSearchJobId,
@@ -358,7 +398,9 @@ public sealed class PersistenceDaemonTests
                     Assert.AreEqual(albumSearchJobId, albumDownload.SourceJobId);
                     Assert.AreEqual(albumWorkflowId, albumDownload.WorkflowId);
                     Assert.IsTrue(albumDownload.DisplayId > 2);
-                    await WaitForTerminalSuccessAsync(supervisor, albumDownload.JobId);
+                    await WaitForTerminalSuccessAsync(
+                        second.Services.GetRequiredService<PersistenceCoordinator>(),
+                        albumDownload.JobId);
 
                     var downloads = await supervisor.StartFileDownloadsAsync(
                         sourceJobId,
@@ -372,20 +414,24 @@ public sealed class PersistenceDaemonTests
                     Assert.AreEqual(workflowId, downloads[0].WorkflowId);
                     Assert.IsTrue(downloads[0].DisplayId > 2);
                     Assert.AreEqual(3, new[] { retrieved.DisplayId, albumDownload.DisplayId, downloads[0].DisplayId }.Distinct().Count());
-                    await WaitForTerminalSuccessAsync(supervisor, downloads[0].JobId);
+                    await WaitForTerminalSuccessAsync(
+                        second.Services.GetRequiredService<PersistenceCoordinator>(),
+                        downloads[0].JobId);
                     var persistedDownload = await WaitForHistoricalJobAsync(
                         second.Services.GetRequiredService<PersistenceCoordinator>(),
                         downloads[0].JobId);
-                    var liveOverlaySourceSentinel = Guid.NewGuid();
-                    Assert.AreNotEqual(liveOverlaySourceSentinel, persistedDownload.SourceJobId);
-                    supervisor.StateStore.SetSourceJob(downloads[0].JobId, liveOverlaySourceSentinel);
-                    var overlaidDetail = await facade.GetJobAsync(downloads[0].JobId);
-                    Assert.IsNotNull(overlaidDetail);
-                    Assert.AreEqual(liveOverlaySourceSentinel, overlaidDetail.Summary.SourceJobId);
-                    var combinedWorkflow = await facade.GetWorkflowAsync(workflowId, includeAll: true);
+                    Assert.IsNull(supervisor.GetRuntimeJob<Sockseek.Core.Jobs.Job>(downloads[0].JobId));
+                    var retainedDetail = await facade.GetJobAsync(downloads[0].JobId);
+                    Assert.IsNotNull(retainedDetail);
+                    Assert.AreEqual(persistedDownload.SourceJobId, retainedDetail.Summary.SourceJobId);
+                    var combinedWorkflow = await facade.GetWorkflowAsync(workflowId);
                     Assert.IsNotNull(combinedWorkflow);
-                    CollectionAssert.Contains(combinedWorkflow.Jobs.Select(job => job.JobId).ToArray(), sourceJobId);
-                    CollectionAssert.Contains(combinedWorkflow.Jobs.Select(job => job.JobId).ToArray(), downloads[0].JobId);
+                    var combinedJobs = await facade.GetJobsAsync(
+                        new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                        cursor: null,
+                        limit: 100);
+                    CollectionAssert.Contains(combinedJobs.Items.Select(job => job.JobId).ToArray(), sourceJobId);
+                    CollectionAssert.Contains(combinedJobs.Items.Select(job => job.JobId).ToArray(), downloads[0].JobId);
                     Assert.IsTrue(Directory.GetFiles(outputDirectory, "*.mp3", SearchOption.AllDirectories).Length >= 1);
                 }
                 finally
@@ -421,14 +467,15 @@ public sealed class PersistenceDaemonTests
                     Assert.IsNotNull(completedTransfer.JobId);
                     Assert.IsNotNull(completedTransfer.WorkflowId);
 
-                    var detail = await facade.GetTransferAsync(completedTransfer.TransferId, attemptLimit: 100);
+                    var detail = await facade.GetTransferDetailAsync(completedTransfer.TransferId);
                     Assert.IsNotNull(detail);
-                    Assert.AreEqual(completedTransfer.TransferId, detail.Transfer.TransferId);
-                    Assert.IsTrue(detail.Attempts.Count > 0);
-                    Assert.IsTrue(detail.Attempts.All(attempt => attempt.TransferId == completedTransfer.TransferId));
-                    Assert.IsTrue(detail.Attempts.All(attempt => !string.IsNullOrWhiteSpace(attempt.SourceUsername)));
-                    Assert.IsTrue(detail.Attempts.All(attempt => !string.IsNullOrWhiteSpace(attempt.SourcePath)));
-                    Assert.IsTrue(detail.Attempts.All(attempt => !string.IsNullOrWhiteSpace(attempt.OutputPath)));
+                    Assert.AreEqual(completedTransfer.TransferId, detail.History!.TransferId);
+                    Assert.AreEqual(completedTransfer.AttemptCount, detail.AttemptCount);
+                    Assert.IsNotNull(detail.LatestAttempt);
+                    Assert.AreEqual(completedTransfer.TransferId, detail.LatestAttempt.TransferId);
+                    Assert.IsFalse(string.IsNullOrWhiteSpace(detail.LatestAttempt.SourceUsername));
+                    Assert.IsFalse(string.IsNullOrWhiteSpace(detail.LatestAttempt.SourcePath));
+                    Assert.IsFalse(string.IsNullOrWhiteSpace(detail.LatestAttempt.OutputPath));
 
                     var attemptPage = await facade.GetTransferAttemptsAsync(
                         completedTransfer.TransferId,
@@ -451,23 +498,27 @@ public sealed class PersistenceDaemonTests
         }
     }
 
-    private static async Task WaitForTerminalSuccessAsync(EngineSupervisor supervisor, Guid jobId)
+    private static async Task WaitForTerminalSuccessAsync(
+        PersistenceCoordinator persistence,
+        Guid jobId)
     {
+        var history = persistence.JobHistory
+            ?? throw new AssertFailedException("Persistence job history is unavailable.");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        JobSummaryDto? last = null;
+        PersistedJob? job = null;
         while (!timeout.IsCancellationRequested)
         {
-            last = supervisor.StateStore.GetJobSummary(jobId);
-            if (last?.TerminalOutcome == ServerJobTerminalOutcome.Succeeded)
-                return;
-            if (last?.LifecycleState == ServerJobLifecycleState.Terminal)
-                Assert.Fail($"Job terminated with {last.TerminalOutcome}: {last.FailureMessage}");
-
+            job = await history.GetJobAsync(jobId, timeout.Token);
+            if (job?.LifecycleState == "Terminal")
+                break;
             try { await Task.Delay(25, timeout.Token); }
             catch (OperationCanceledException) { break; }
         }
 
-        Assert.Fail($"Timed out waiting for job {jobId}; last state was {last?.LifecycleState}/{last?.TerminalOutcome}.");
+        Assert.IsNotNull(job, $"Timed out waiting for persisted job {jobId}.");
+        Assert.AreEqual("Terminal", job.LifecycleState);
+        Assert.AreEqual("Succeeded", job.TerminalOutcome,
+            $"Job terminated with {job.TerminalOutcome}: {job.FailureMessage}");
     }
 
     private static async Task<PersistedJob> WaitForHistoricalJobAsync(

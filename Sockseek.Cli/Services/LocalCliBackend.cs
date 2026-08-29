@@ -83,6 +83,7 @@ internal sealed class LocalCliBackend
             throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions in one local backend.");
         if (liveWorkflowSubscriptions.TryAdd(workflowId, 0))
         {
+            stateStore.ReserveWorkflowStream(workflowId);
             var snapshot = stateStore.GetWorkflowSnapshot(workflowId);
             LiveSnapshotApplied?.Invoke(snapshot);
             var update = daemonStore.ApplySnapshot(snapshot);
@@ -385,8 +386,7 @@ internal sealed class LocalCliBackend
             retrieveJob.Directory.Username,
             retrieveJob.NewFilesFoundCount,
             EngineStateStore.ToServerFolderRetrievalOutcome(retrieveJob.RetrievalOutcome),
-            retrieveJob.RetrievalCancelled,
-            ToAlbumFolderDto(folder, includeFiles: true));
+            retrieveJob.RetrievalCancelled);
     }
 
     public Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid sourceJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
@@ -951,7 +951,6 @@ internal sealed class LocalCliBackend
             song.ResolvedTarget?.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList(),
             song.Id,
             song.DisplayId,
-            song.Candidates?.Select(ToFileCandidateDto).ToList(),
             EngineStateStore.ToServerJobLifecycleState(song.LifecycleState),
             EngineStateStore.ToServerJobActivityPhase(song.ActivityPhase),
             song.ActivityUntilUtc,

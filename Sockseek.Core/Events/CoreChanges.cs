@@ -100,6 +100,12 @@ public sealed record EngineCompletedChange(
     JobSnapshot Queue)
     : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
 
+public sealed record WorkflowRetiredChange(
+    long Sequence,
+    DateTimeOffset OccurredAtUtc,
+    Guid WorkflowId)
+    : CoreChange(Sequence, OccurredAtUtc), IOrderedCoreChange;
+
 public sealed record JobStatusChange(
     long Sequence,
     DateTimeOffset OccurredAtUtc,

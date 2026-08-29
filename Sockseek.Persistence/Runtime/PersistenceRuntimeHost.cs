@@ -145,84 +145,39 @@ public sealed class PersistenceRuntimeHost
 
     public async Task<DatabaseIntegrityResult> CheckIntegrityAsync(CancellationToken cancellationToken = default)
     {
-        EnsureStarted();
-        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var result = await maintenance!.CheckIntegrityAsync(cancellationToken).ConfigureAwait(false);
-            if (!result.IsHealthy)
-                Health.RecordOperationalFailure(DateTimeOffset.UtcNow,
-                    new InvalidDataException($"SQLite integrity check failed: {result.Result}"));
-            return result;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
-            throw;
-        }
-        finally
-        {
-            maintenanceGate.Release();
-        }
+        var result = await ExecuteMaintenanceAsync(
+            ct => maintenance!.CheckIntegrityAsync(ct),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.IsHealthy)
+            Health.RecordOperationalFailure(DateTimeOffset.UtcNow,
+                new InvalidDataException($"SQLite integrity check failed: {result.Result}"));
+        return result;
     }
 
-    public async Task<DatabaseBackupResult> BackupAsync(string backupPath, CancellationToken cancellationToken = default)
+    public Task<DatabaseBackupResult> BackupAsync(string backupPath, CancellationToken cancellationToken = default)
+        => ExecuteMaintenanceAsync(
+            ct => maintenance!.BackupAsync(backupPath, ct),
+            cancellationToken);
+
+    public Task<WalCheckpointResult> CheckpointAsync(CancellationToken cancellationToken = default)
+        => ExecuteMaintenanceAsync(
+            ct => maintenance!.CheckpointAsync(ct),
+            cancellationToken);
+
+    public Task<RetentionResult> RunRetentionAsync(CancellationToken cancellationToken = default)
+        => ExecuteMaintenanceAsync(
+            ct => retention!.RunBatchAsync(ct),
+            cancellationToken);
+
+    private async Task<TResult> ExecuteMaintenanceAsync<TResult>(
+        Func<CancellationToken, Task<TResult>> operation,
+        CancellationToken cancellationToken)
     {
         EnsureStarted();
         await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await maintenance!.BackupAsync(backupPath, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
-            throw;
-        }
-        finally
-        {
-            maintenanceGate.Release();
-        }
-    }
-
-    public async Task<WalCheckpointResult> CheckpointAsync(CancellationToken cancellationToken = default)
-    {
-        EnsureStarted();
-        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await maintenance!.CheckpointAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Health.RecordOperationalFailure(DateTimeOffset.UtcNow, ex);
-            throw;
-        }
-        finally
-        {
-            maintenanceGate.Release();
-        }
-    }
-
-    public async Task<RetentionResult> RunRetentionAsync(CancellationToken cancellationToken = default)
-    {
-        EnsureStarted();
-        await maintenanceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return await retention!.RunBatchAsync(cancellationToken).ConfigureAwait(false);
+            return await operation(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

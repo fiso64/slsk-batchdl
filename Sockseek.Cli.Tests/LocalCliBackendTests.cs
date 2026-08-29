@@ -330,8 +330,6 @@ public class LocalCliBackendTests
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual(1, retrieved.NewFilesFoundCount);
-            Assert.IsNotNull(retrieved.Folder);
-            Assert.AreEqual(2, retrieved.Folder.Files?.Count);
 
             var expandedProjection = await backend.GetFolderResultsAsync(searchJob.Id, includeFiles: true, cts.Token);
             Assert.IsNotNull(expandedProjection);
@@ -410,8 +408,6 @@ public class LocalCliBackendTests
 
             Assert.IsNotNull(retrieved);
             Assert.AreEqual(1, retrieved.NewFilesFoundCount);
-            Assert.IsNotNull(retrieved.Folder);
-            Assert.AreEqual(2, retrieved.Folder.Files?.Count);
             Assert.AreEqual(2, albumJob.Results[0].Files.Count, "Folder retrieval must update the canonical AlbumJob results, not only a projected copy.");
 
             var expandedProjection = await backend.GetFolderResultsAsync(albumJob.Id, includeFiles: true, cts.Token);
@@ -483,16 +479,22 @@ public class LocalCliBackendTests
                 new RetrieveFolderRequestDto(new AlbumFolderRefDto("local", @"Artist\Album")),
                 cts.Token);
 
-            Assert.IsNotNull(retrieved?.Folder);
-            Assert.IsTrue(retrieved.Folder.IsFullyRetrieved);
-            Assert.AreEqual(2, retrieved.Folder.Files?.Count);
+            Assert.IsNotNull(retrieved);
+            var retrievedProjection = await backend.GetFolderResultsAsync(
+                searchJob.Id,
+                includeFiles: true,
+                cts.Token);
+            var retrievedFolder = retrievedProjection?.Items.Single();
+            Assert.IsNotNull(retrievedFolder);
+            Assert.IsTrue(retrievedFolder.IsFullyRetrieved);
+            Assert.AreEqual(2, retrievedFolder.Files?.Count);
 
             var downloadSummary = await backend.StartFolderDownloadAsync(
                 searchJob.Id,
                 new StartFolderDownloadRequestDto(
-                    retrieved.Folder.Ref,
+                    retrievedFolder.Ref,
                     AlbumQuery: new AlbumQueryDto("Artist", "Album", "Track One", null, false),
-                    SelectedFolder: retrieved.Folder),
+                    SelectedFolder: retrievedFolder),
                 cts.Token);
 
             Assert.IsNotNull(downloadSummary);

@@ -307,7 +307,10 @@ public sealed class ExactPeerFileTransferRunner
                 return ExactFileTransferOutcome.ManuallySkipped(target);
             }
 
-            if (ex is OperationCanceledException)
+            bool cancellationRequested = ex is OperationCanceledException
+                && (activeDownload?.Cts.IsCancellationRequested == true
+                    || ct?.IsCancellationRequested == true);
+            if (cancellationRequested)
             {
                 events.RaiseTransferAttemptCancelled(
                     transferId,
@@ -329,6 +332,17 @@ public sealed class ExactPeerFileTransferRunner
             }
             else
             {
+                if (ex is OperationCanceledException)
+                {
+                    events.RaiseTransferAttemptFailed(
+                        transferId,
+                        currentAttemptId,
+                        Math.Max(attemptCount, 1),
+                        owner,
+                        target,
+                        outputPath,
+                        ex);
+                }
                 events.RaiseTransferFailed(
                     transferId,
                     owner,

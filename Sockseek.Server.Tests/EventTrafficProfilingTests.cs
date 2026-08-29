@@ -158,8 +158,7 @@ public class EventTrafficProfilingTests
             var root = await supervisor.SubmitExtractJobAsync(
                 new SubmitExtractJobRequestDto(
                     csvPath,
-                    InputType: "CSV",
-                    AutoStartExtractedResult: true),
+                    InputType: "CSV"),
                 CancellationToken.None);
 
             await WaitForWorkflowJobCountAsync(supervisor, root.WorkflowId, jobCount + 2);
@@ -237,8 +236,7 @@ public class EventTrafficProfilingTests
             var root = await supervisor.SubmitExtractJobAsync(
                 new SubmitExtractJobRequestDto(
                     csvPath,
-                    InputType: "CSV",
-                    AutoStartExtractedResult: true),
+                    InputType: "CSV"),
                 CancellationToken.None);
 
             await WaitForWorkflowJobCountAsync(supervisor, root.WorkflowId, jobCount + 2);
@@ -309,8 +307,7 @@ public class EventTrafficProfilingTests
             var root = await supervisor.SubmitExtractJobAsync(
                 new SubmitExtractJobRequestDto(
                     csvPath,
-                    InputType: "CSV",
-                    AutoStartExtractedResult: true),
+                    InputType: "CSV"),
                 CancellationToken.None);
 
             await WaitForWorkflowJobCountAsync(supervisor, root.WorkflowId, jobCount + 2);

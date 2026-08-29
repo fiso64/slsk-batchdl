@@ -65,8 +65,11 @@ public sealed class PersistenceLoadTests
             $"Two bounded pages per resource took {stopwatch.Elapsed}.");
 
         StringAssert.Contains(await QueryPlanAsync(database,
-            "SELECT id FROM jobs WHERE workflow_id = $workflow ORDER BY created_at_utc, id LIMIT 101",
-            ("$workflow", SqlGuid(workflowId))), "IX_jobs_workflow_id_created_at_utc_id");
+            "SELECT id FROM jobs WHERE workflow_id = $workflow ORDER BY display_id, id LIMIT 101",
+            ("$workflow", SqlGuid(workflowId))), "IX_jobs_workflow_id_display_id_id");
+        StringAssert.Contains(await QueryPlanAsync(database,
+            "SELECT id FROM jobs WHERE parent_job_id = $parent ORDER BY display_id, id LIMIT 101",
+            ("$parent", SqlGuid(Guid.NewGuid()))), "IX_jobs_parent_job_id_display_id_id");
         StringAssert.Contains(await QueryPlanAsync(database,
             "SELECT id FROM transfers WHERE workflow_id = $workflow ORDER BY created_at_utc, id LIMIT 101",
             ("$workflow", SqlGuid(workflowId))), "IX_transfers_workflow_id_created_at_utc_id");

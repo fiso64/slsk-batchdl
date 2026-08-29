@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Sockseek.Api;
 
 namespace Sockseek.Cli;
@@ -8,6 +9,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     private readonly HttpClient http;
     private readonly SockseekApiClient api;
     private readonly SockseekLiveClient live;
+    private readonly ConcurrentDictionary<Guid, byte> workflowSubscriptions = [];
 
     public event Action<DaemonClientUpdate>? StateUpdated;
     public event Action<ActivityEventDto>? ActivityReceived;
@@ -84,7 +86,12 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
         var scopedOptions = (options ?? new SubmissionOptionsDto()) with { WorkflowId = workflowId };
 
         if (live.Mode != LiveSubscriptionMode.Daemon)
+        {
+            bool reusingSubscription = workflowSubscriptions.ContainsKey(workflowId);
             await SubscribeWorkflowAsync(workflowId, ct);
+            if (reusingSubscription)
+                await live.RefreshWorkflowAsync(workflowId, ct);
+        }
         var summary = await submit(scopedOptions);
         if (live.Mode != LiveSubscriptionMode.Daemon && summary.WorkflowId != workflowId)
             await SubscribeWorkflowAsync(summary.WorkflowId, ct);
@@ -94,6 +101,7 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     private async Task SubscribeWorkflowCoreAsync(Guid workflowId, CancellationToken ct = default)
     {
         await live.StartWorkflowAsync(workflowId, ct);
+        workflowSubscriptions.TryAdd(workflowId, 0);
     }
 
     private async Task SubscribeAllCoreAsync(CancellationToken ct = default)
@@ -139,17 +147,39 @@ internal sealed class RemoteCliBackend : ICliBackend, IAsyncDisposable
     public Task<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?> GetAggregateAlbumResultsAsync(Guid jobId, AggregateAlbumProjectionRequestDto request, CancellationToken ct = default)
         => api.GetAggregateAlbumResultsAsync(jobId, request, ct);
 
-    public Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
-        => api.StartRetrieveFolderAsync(searchJobId, request, ct);
+    public async Task<JobSummaryDto?> StartRetrieveFolderAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
+    {
+        await PrepareFollowUpSubscriptionAsync(searchJobId, ct);
+        return await api.StartRetrieveFolderAsync(searchJobId, request, ct);
+    }
 
-    public Task<RetrieveFolderJobPayloadDto?> RetrieveFolderAndWaitAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
-        => api.RetrieveFolderAndWaitAsync(searchJobId, request, ct);
+    public async Task<RetrieveFolderJobPayloadDto?> RetrieveFolderAndWaitAsync(Guid searchJobId, RetrieveFolderRequestDto request, CancellationToken ct = default)
+    {
+        await PrepareFollowUpSubscriptionAsync(searchJobId, ct);
+        return await api.RetrieveFolderAndWaitAsync(searchJobId, request, ct);
+    }
 
-    public Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid searchJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
-        => api.StartFileDownloadsAsync(searchJobId, request, ct);
+    public async Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid searchJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
+    {
+        await PrepareFollowUpSubscriptionAsync(searchJobId, ct);
+        return await api.StartFileDownloadsAsync(searchJobId, request, ct);
+    }
 
-    public Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
-        => api.StartFolderDownloadAsync(searchJobId, request, ct);
+    public async Task<JobSummaryDto?> StartFolderDownloadAsync(Guid searchJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
+    {
+        await PrepareFollowUpSubscriptionAsync(searchJobId, ct);
+        return await api.StartFolderDownloadAsync(searchJobId, request, ct);
+    }
+
+    private async Task PrepareFollowUpSubscriptionAsync(Guid sourceJobId, CancellationToken ct)
+    {
+        if (live.Mode != LiveSubscriptionMode.Workflow)
+            return;
+
+        var source = await api.GetJobDetailAsync(sourceJobId, ct);
+        if (source != null)
+            await live.RefreshWorkflowAsync(source.Summary.WorkflowId, ct);
+    }
 
     public Task<bool> CompleteManualSelectionAsync(Guid jobId, CancellationToken ct = default)
         => api.CompleteManualSelectionAsync(jobId, ct);

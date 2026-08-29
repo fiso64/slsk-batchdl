@@ -3757,7 +3757,7 @@
           "Jobs"
         ],
         "summary": "Lists known jobs.",
-        "description": "Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every matching job.",
+        "description": "Default results contain execution roots. Set parentJobId for direct children or includeAll=true for a flat workflow list.",
         "parameters": [
           {
             "name": "lifecycleState",
@@ -3789,6 +3789,14 @@
           },
           {
             "name": "workflowId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "parentJobId",
             "in": "query",
             "schema": {
               "type": "string",
@@ -4377,18 +4385,6 @@
             "schema": {
               "type": "string",
               "format": "uuid"
-            }
-          },
-          {
-            "name": "attemptLimit",
-            "in": "query",
-            "schema": {
-              "pattern": "^-?(?:0|[1-9]\\d*)$",
-              "type": [
-                "integer",
-                "string"
-              ],
-              "format": "int32"
             }
           }
         ],
@@ -5712,7 +5708,7 @@
           "Workflows"
         ],
         "summary": "Gets a workflow snapshot by id.",
-        "description": "Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every workflow job. Use /tree for the same jobs grouped by ParentJobId.",
+        "description": "Use the cursor-paged jobs collection to list workflow roots or descendants.",
         "parameters": [
           {
             "name": "workflowId",
@@ -5721,13 +5717,6 @@
             "schema": {
               "type": "string",
               "format": "uuid"
-            }
-          },
-          {
-            "name": "includeAll",
-            "in": "query",
-            "schema": {
-              "type": "boolean"
             }
           }
         ],
@@ -5738,41 +5727,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WorkflowDetailDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found"
-          }
-        }
-      }
-    },
-    "/api/workflows/{workflowId}/tree": {
-      "get": {
-        "tags": [
-          "Workflows"
-        ],
-        "summary": "Gets the execution tree for a workflow.",
-        "description": "This tree is built only from ParentJobId relationships. Follow-up jobs started from search results remain workflow roots and expose SourceJobId instead.",
-        "parameters": [
-          {
-            "name": "workflowId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkflowTreeDto"
                 }
               }
             }
@@ -7032,7 +6986,51 @@
           }
         }
       },
-      "DirectoryTransferPlanDto": { },
+      "DirectoryTransferEntryDto": {
+        "required": [
+          "target",
+          "relativeDirectoryComponents"
+        ],
+        "type": "object",
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/PeerFileTargetDto"
+          },
+          "relativeDirectoryComponents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "DirectoryTransferPlanDto": {
+        "required": [
+          "displayRoot",
+          "entries",
+          "totalKnownBytes"
+        ],
+        "type": "object",
+        "properties": {
+          "displayRoot": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DirectoryTransferEntryDto"
+            }
+          },
+          "totalKnownBytes": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "DownloadBehavior": {
         "enum": [
           "Automatic",
@@ -7707,7 +7705,7 @@
         "required": [
           "summary",
           "payload",
-          "children"
+          "childCount"
         ],
         "type": "object",
         "properties": {
@@ -7724,11 +7722,13 @@
               }
             ]
           },
-          "children": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/JobSummaryDto"
-            }
+          "childCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
@@ -8056,12 +8056,6 @@
               "string"
             ]
           },
-          "autoStartExtractedResult": {
-            "type": [
-              "null",
-              "boolean"
-            ]
-          },
           "downloadSettings": {
             "oneOf": [
               {
@@ -8206,7 +8200,15 @@
           "target": {
             "$ref": "#/components/schemas/PeerFileTargetDto"
           },
-          "outputPathComponents": { },
+          "outputPathComponents": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
           "downloadSettings": {
             "oneOf": [
               {
@@ -8488,15 +8490,6 @@
               "string"
             ],
             "format": "int32"
-          },
-          "songs": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/SongJobPayloadDto"
-            }
           }
         }
       },
@@ -8565,24 +8558,6 @@
               "null",
               "string"
             ]
-          },
-          "results": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AlbumFolderDto"
-            }
-          },
-          "tracks": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/SongJobPayloadDto"
-            }
           }
         }
       },
@@ -8590,9 +8565,7 @@
         "required": [
           "input",
           "inputType",
-          "resultJobId",
-          "autoProcessResult",
-          "resultDraft"
+          "resultJobId"
         ],
         "properties": {
           "kind": {
@@ -8616,19 +8589,6 @@
               "string"
             ],
             "format": "uuid"
-          },
-          "autoProcessResult": {
-            "type": "boolean"
-          },
-          "resultDraft": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/JobDraftDto"
-              }
-            ]
           }
         }
       },
@@ -8702,15 +8662,6 @@
               "string"
             ],
             "format": "int32"
-          },
-          "directSongs": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/SongJobPayloadDto"
-            }
           }
         }
       },
@@ -8719,8 +8670,6 @@
           "sourceKind",
           "sourceUsername",
           "sourceFolderPath",
-          "resolvedPlanSource",
-          "activePlan",
           "directory"
         ],
         "properties": {
@@ -8743,26 +8692,6 @@
             "type": [
               "null",
               "string"
-            ]
-          },
-          "resolvedPlanSource": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/DirectoryTransferPlanDto"
-              }
-            ]
-          },
-          "activePlan": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/DirectoryTransferPlanDto"
-              }
             ]
           },
           "directory": {
@@ -8831,16 +8760,6 @@
           },
           "retrievalCancelled": {
             "type": "boolean"
-          },
-          "folder": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AlbumFolderDto"
-              }
-            ]
           }
         }
       },
@@ -9007,15 +8926,6 @@
               "string"
             ],
             "format": "int32"
-          },
-          "candidates": {
-            "type": [
-              "null",
-              "array"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/FileCandidateDto"
-            }
           },
           "lifecycleState": {
             "oneOf": [
@@ -9635,7 +9545,83 @@
           }
         }
       },
-      "PeerFileTargetDto": { },
+      "PeerFileTargetDto": {
+        "required": [
+          "username",
+          "filename",
+          "size",
+          "extension"
+        ],
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "extension": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "bitRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "bitDepth": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "sampleRate": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "length": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "attributes": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/FileAttributeDto"
+            }
+          }
+        }
+      },
       "PeerInfoDto": {
         "required": [
           "username"
@@ -11448,186 +11434,6 @@
           }
         }
       },
-      "SongJobPayloadDto": {
-        "required": [
-          "query",
-          "candidateCount",
-          "file"
-        ],
-        "type": "object",
-        "properties": {
-          "query": {
-            "$ref": "#/components/schemas/SongQueryDto"
-          },
-          "candidateCount": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "file": {
-            "$ref": "#/components/schemas/FileDownloadStateDto"
-          },
-          "resolvedUsername": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "resolvedFilename": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "resolvedHasFreeUploadSlot": {
-            "type": [
-              "null",
-              "boolean"
-            ]
-          },
-          "resolvedUploadSpeed": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "resolvedSize": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int64"
-          },
-          "resolvedSampleRate": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "resolvedExtension": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "resolvedAttributes": { },
-          "jobId": {
-            "type": [
-              "null",
-              "string"
-            ],
-            "format": "uuid"
-          },
-          "displayId": {
-            "pattern": "^-?(?:0|[1-9]\\d*)$",
-            "type": [
-              "null",
-              "integer",
-              "string"
-            ],
-            "format": "int32"
-          },
-          "candidates": { },
-          "lifecycleState": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ServerJobLifecycleState"
-              }
-            ]
-          },
-          "activityPhase": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ServerJobActivityPhase"
-              }
-            ]
-          },
-          "activityUntilUtc": {
-            "type": [
-              "null",
-              "string"
-            ],
-            "format": "date-time"
-          },
-          "terminalOutcome": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ServerJobTerminalOutcome"
-              }
-            ]
-          },
-          "skipReason": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ServerJobSkipReason"
-              }
-            ]
-          },
-          "failureReason": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ServerJobFailureReason"
-              }
-            ]
-          },
-          "failureMessage": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "availableActions": { },
-          "transferState": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "cancellationSource": {
-            "$ref": "#/components/schemas/ServerJobCancellationSource"
-          },
-          "downloadSource": {
-            "$ref": "#/components/schemas/ServerSongDownloadSource"
-          },
-          "exactTarget": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/PeerFileTargetDto"
-              }
-            ]
-          }
-        }
-      },
       "SongQueryDto": {
         "type": "object",
         "properties": {
@@ -12254,12 +12060,6 @@
               "string"
             ]
           },
-          "autoStartExtractedResult": {
-            "type": [
-              "null",
-              "boolean"
-            ]
-          },
           "options": {
             "oneOf": [
               {
@@ -12494,7 +12294,8 @@
           "live",
           "queueEstimate",
           "history",
-          "attempts"
+          "attemptCount",
+          "latestAttempt"
         ],
         "type": "object",
         "properties": {
@@ -12531,11 +12332,23 @@
               }
             ]
           },
-          "attempts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TransferAttemptHistoryDto"
-            }
+          "attemptCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "latestAttempt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TransferAttemptHistoryDto"
+              }
+            ]
           }
         }
       },
@@ -13560,37 +13373,12 @@
       },
       "WorkflowDetailDto": {
         "required": [
-          "summary",
-          "jobs"
+          "summary"
         ],
         "type": "object",
         "properties": {
           "summary": {
             "$ref": "#/components/schemas/WorkflowSummaryDto"
-          },
-          "jobs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/JobSummaryDto"
-            }
-          }
-        }
-      },
-      "WorkflowJobNodeDto": {
-        "required": [
-          "summary",
-          "children"
-        ],
-        "type": "object",
-        "properties": {
-          "summary": {
-            "$ref": "#/components/schemas/JobSummaryDto"
-          },
-          "children": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowJobNodeDto"
-            }
           }
         }
       },
@@ -13619,7 +13407,7 @@
           "workflowId",
           "title",
           "state",
-          "rootJobIds",
+          "rootJobCount",
           "activeJobCount",
           "failedJobCount",
           "completedJobCount"
@@ -13636,12 +13424,13 @@
           "state": {
             "$ref": "#/components/schemas/ServerWorkflowState"
           },
-          "rootJobIds": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            }
+          "rootJobCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           },
           "activeJobCount": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
@@ -13666,24 +13455,6 @@
               "string"
             ],
             "format": "int32"
-          }
-        }
-      },
-      "WorkflowTreeDto": {
-        "required": [
-          "summary",
-          "jobs"
-        ],
-        "type": "object",
-        "properties": {
-          "summary": {
-            "$ref": "#/components/schemas/WorkflowSummaryDto"
-          },
-          "jobs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkflowJobNodeDto"
-            }
           }
         }
       },

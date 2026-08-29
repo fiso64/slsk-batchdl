@@ -90,6 +90,33 @@ public sealed class SockseekLiveClient : IAsyncDisposable
             token => connection.InvokeAsync("SubscribeWorkflow", workflowId, token),
             ct);
 
+    /// <summary>
+    /// Takes a fresh snapshot for an existing workflow subscription. Call this
+    /// before starting a new live generation that deliberately reuses a retired
+    /// workflow ID, so its new epoch is established before the first delta.
+    /// </summary>
+    public async Task RefreshWorkflowAsync(Guid workflowId, CancellationToken ct = default)
+    {
+        var scope = StateStreamScopeDto.Workflow(workflowId);
+        await lifecycleGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (Mode != LiveSubscriptionMode.Workflow
+                || !sessions.TryGetValue(scope, out ScopeSession? session))
+            {
+                throw new InvalidOperationException("The workflow must be subscribed before it can be refreshed.");
+            }
+
+            session.BeginBuffering();
+            await RecoverScopeAsync(scope, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            lifecycleGate.Release();
+        }
+    }
+
     public Task StartConversationAsync(Guid conversationId, CancellationToken ct = default)
         => StartChatAsync(StateStreamScopeDto.ChatConversation(conversationId), ct);
 

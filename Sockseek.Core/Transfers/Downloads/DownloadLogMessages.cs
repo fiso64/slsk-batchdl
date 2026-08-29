@@ -60,4 +60,7 @@ internal static partial class DownloadLogMessages
         JobLifecycleState lifecycleState,
         JobTerminalOutcome terminalOutcome,
         JobFailureReason failureReason);
+
+    [LoggerMessage(3015, LogLevel.Debug, "Retired terminal download workflow {WorkflowId} ({JobCount} jobs)")]
+    internal static partial void WorkflowRetired(ILogger logger, Guid workflowId, int jobCount);
 }

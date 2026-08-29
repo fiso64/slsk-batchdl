@@ -9,7 +9,7 @@ namespace Sockseek.Server;
 
 public sealed class SubmissionOptionsStore
 {
-    private readonly ConcurrentDictionary<Guid, SubmissionOptionsDto> workflowOptions = [];
+    private readonly ConcurrentDictionary<Guid, WorkflowOptionsEntry> workflowOptions = [];
     private readonly ConcurrentDictionary<Guid, SubmissionOptionsDto> jobOptions = [];
     private readonly ConcurrentDictionary<Guid, string> jobOutputParentDirs = [];
 
@@ -17,14 +17,18 @@ public sealed class SubmissionOptionsStore
     {
         if (options == null)
         {
-            workflowOptions.TryAdd(workflowId, new SubmissionOptionsDto());
+            workflowOptions.TryAdd(
+                workflowId,
+                new WorkflowOptionsEntry(new SubmissionOptionsDto(), Version: 1));
             return;
         }
 
-        if (IsWorkflowOnly(options) && workflowOptions.ContainsKey(workflowId))
-            return;
-
-        workflowOptions[workflowId] = options;
+        workflowOptions.AddOrUpdate(
+            workflowId,
+            _ => new WorkflowOptionsEntry(options, Version: 1),
+            (_, current) => IsWorkflowOnly(options)
+                ? current
+                : new WorkflowOptionsEntry(options, checked(current.Version + 1)));
     }
 
     public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
@@ -32,6 +36,30 @@ public sealed class SubmissionOptionsStore
 
     public void RemoveWorkflowOptions(Guid workflowId)
         => workflowOptions.TryRemove(workflowId, out _);
+
+    public long CaptureWorkflowVersion(Guid workflowId)
+        => workflowOptions.TryGetValue(workflowId, out var entry)
+            ? entry.Version
+            : 0;
+
+    public void RetireWorkflow(
+        Guid workflowId,
+        IReadOnlyCollection<Guid> jobIds,
+        long expectedVersion)
+    {
+        foreach (Guid jobId in jobIds)
+        {
+            jobOptions.TryRemove(jobId, out _);
+            jobOutputParentDirs.TryRemove(jobId, out _);
+        }
+
+        if (workflowOptions.TryGetValue(workflowId, out var entry)
+            && entry.Version == expectedVersion)
+        {
+            workflowOptions.TryRemove(
+                new KeyValuePair<Guid, WorkflowOptionsEntry>(workflowId, entry));
+        }
+    }
 
     public void SetJobOutputParentDir(Guid jobId, string? outputParentDir)
     {
@@ -44,8 +72,8 @@ public sealed class SubmissionOptionsStore
         if (jobOptions.TryGetValue(job.Id, out var options))
             return options;
 
-        return workflowOptions.TryGetValue(job.WorkflowId, out options)
-            ? options
+        return workflowOptions.TryGetValue(job.WorkflowId, out var entry)
+            ? entry.Options
             : null;
     }
 
@@ -53,6 +81,9 @@ public sealed class SubmissionOptionsStore
         => jobOutputParentDirs.TryGetValue(jobId, out var outputParentDir)
             ? outputParentDir
             : null;
+
+    internal (int Workflows, int Jobs, int OutputPaths) RetainedStateCounts
+        => (workflowOptions.Count, jobOptions.Count, jobOutputParentDirs.Count);
 
     public void ApplyTo(DownloadSettings settings, SubmissionOptionsDto? options, Guid jobId)
     {
@@ -89,13 +120,15 @@ public sealed class SubmissionOptionsStore
         && options.ProfileNames == null
         && options.ProfileContext == null
         && options.DownloadSettings == null;
+
+    private sealed record WorkflowOptionsEntry(SubmissionOptionsDto Options, long Version);
 }
 
 public sealed class SubmissionOptionsJobSettingsResolver(
     IJobSettingsResolver inner,
     SubmissionOptionsStore? optionsStore = null,
     Action<DownloadSettings>? normalize = null)
-    : IJobSettingsResolver
+    : IJobSettingsResolver, IWorkflowSettingsLifetime
 {
     public SubmissionOptionsStore Options { get; } = optionsStore ?? new SubmissionOptionsStore();
 
@@ -107,6 +140,12 @@ public sealed class SubmissionOptionsJobSettingsResolver(
 
     public void SetJobOutputParentDir(Guid jobId, string? outputParentDir)
         => Options.SetJobOutputParentDir(jobId, outputParentDir);
+
+    public long CaptureWorkflowVersion(Guid workflowId)
+        => Options.CaptureWorkflowVersion(workflowId);
+
+    public void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds, long expectedVersion)
+        => Options.RetireWorkflow(workflowId, jobIds, expectedVersion);
 
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {

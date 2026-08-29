@@ -9,7 +9,6 @@ namespace Sockseek.Api;
 public sealed record SubmitExtractJobRequestDto(
     string Input,
     string? InputType = null,
-    bool? AutoStartExtractedResult = null,
     SubmissionOptionsDto? Options = null,
     DownloadBehaviorPolicyDto? ResultDownloadBehavior = null);
 
@@ -104,7 +103,7 @@ public sealed record JobProvenanceDto(
     SourceMutationDto? SourceMutation = null);
 
 /// <summary>
-/// Reusable job shape returned by extraction and accepted inside job-list submissions.
+/// Reusable job shape accepted inside job-list submissions.
 /// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
 [JsonDerivedType(typeof(ExtractJobDraftDto), ServerProtocol.JobDraftKinds.Extract)]
@@ -122,7 +121,6 @@ public abstract record JobDraftDto;
 public sealed record ExtractJobDraftDto(
     string Input,
     string? InputType = null,
-    bool? AutoStartExtractedResult = null,
     DownloadSettingsPatchDto? DownloadSettings = null,
     DownloadBehaviorPolicyDto? ResultDownloadBehavior = null,
     JobProvenanceDto? Provenance = null) : JobDraftDto;

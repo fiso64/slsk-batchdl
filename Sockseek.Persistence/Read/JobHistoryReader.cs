@@ -11,7 +11,8 @@ public sealed record JobHistoryQuery(
     string? SkipReason = null,
     string? Kind = null,
     Guid? WorkflowId = null,
-    bool IncludeAll = false);
+    bool IncludeAll = false,
+    Guid? ParentJobId = null);
 
 public sealed record PersistedJob(
     Guid Id,
@@ -40,16 +41,24 @@ public sealed record PersistedJob(
     string? PayloadJson);
 
 public sealed record PersistedJobPage(IReadOnlyList<PersistedJob> Items, string? NextCursor);
-public sealed record PersistedWorkflow(Guid WorkflowId, IReadOnlyList<PersistedJob> Jobs);
-public sealed record PersistedWorkflowPage(IReadOnlyList<PersistedWorkflow> Items, string? NextCursor);
+public sealed record PersistedWorkflowSummary(
+    Guid WorkflowId,
+    long FirstDisplayId,
+    string Title,
+    string State,
+    int RootJobCount,
+    int ActiveJobCount,
+    int FailedJobCount,
+    int CompletedJobCount);
+public sealed record PersistedWorkflowPage(IReadOnlyList<PersistedWorkflowSummary> Items, string? NextCursor);
 
 public interface IJobHistoryReader
 {
     Task<PersistedJobPage> GetJobsAsync(JobHistoryQuery query, CancellationToken cancellationToken = default);
     Task<PersistedJob?> GetJobAsync(Guid jobId, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<PersistedJob>> GetChildrenAsync(Guid parentJobId, CancellationToken cancellationToken = default);
+    Task<int> GetChildCountAsync(Guid parentJobId, CancellationToken cancellationToken = default);
     Task<PersistedWorkflowPage> GetWorkflowsAsync(string? cursor = null, int limit = 100, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<PersistedJob>> GetWorkflowJobsAsync(Guid workflowId, CancellationToken cancellationToken = default);
+    Task<PersistedWorkflowSummary?> GetWorkflowAsync(Guid workflowId, CancellationToken cancellationToken = default);
     Task<PersistedJob?> GetJobByDisplayIdAsync(Guid workflowId, long displayId, CancellationToken cancellationToken = default);
 }
 
@@ -66,18 +75,21 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var jobs = context.Jobs.AsNoTracking().AsQueryable();
-        if (!query.IncludeAll) jobs = jobs.Where(job => job.ParentJobId == null);
+        if (query.ParentJobId != null)
+            jobs = jobs.Where(job => job.ParentJobId == query.ParentJobId);
+        else if (!query.IncludeAll)
+            jobs = jobs.Where(job => job.ParentJobId == null);
         if (query.LifecycleState != null) jobs = jobs.Where(job => job.LifecycleState == query.LifecycleState);
         if (query.TerminalOutcome != null) jobs = jobs.Where(job => job.TerminalOutcome == query.TerminalOutcome);
         if (query.SkipReason != null) jobs = jobs.Where(job => job.SkipReason == query.SkipReason);
         if (query.Kind != null) jobs = jobs.Where(job => job.Kind == query.Kind);
         if (query.WorkflowId != null) jobs = jobs.Where(job => job.WorkflowId == query.WorkflowId);
         if (cursor != null)
-            jobs = jobs.Where(job => job.CreatedAtUtc > cursor.CreatedAtUtc
-                || job.CreatedAtUtc == cursor.CreatedAtUtc && job.Id.CompareTo(cursor.Id) > 0);
+            jobs = jobs.Where(job => job.DisplayId > cursor.DisplayId
+                || job.DisplayId == cursor.DisplayId && job.Id.CompareTo(cursor.Id) > 0);
 
         var rows = await jobs
-            .OrderBy(job => job.CreatedAtUtc)
+            .OrderBy(job => job.DisplayId)
             .ThenBy(job => job.Id)
             .Take(query.Limit + 1)
             .ToListAsync(cancellationToken)
@@ -85,7 +97,7 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         bool hasMore = rows.Count > query.Limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
         var items = rows.Select(Map).ToArray();
-        string? next = hasMore && rows.Count > 0 ? EncodeCursor(rows[^1].CreatedAtUtc, rows[^1].Id) : null;
+        string? next = hasMore && rows.Count > 0 ? EncodeCursor(rows[^1].DisplayId, rows[^1].Id) : null;
         return new PersistedJobPage(items, next);
     }
 
@@ -96,15 +108,12 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         return entity == null ? null : Map(entity);
     }
 
-    public async Task<IReadOnlyList<PersistedJob>> GetChildrenAsync(Guid parentJobId, CancellationToken cancellationToken = default)
+    public async Task<int> GetChildCountAsync(Guid parentJobId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await context.Jobs.AsNoTracking()
-            .Where(job => job.ParentJobId == parentJobId)
-            .OrderBy(job => job.DisplayId)
-            .ToListAsync(cancellationToken)
+        return await context.Jobs.AsNoTracking()
+            .CountAsync(job => job.ParentJobId == parentJobId, cancellationToken)
             .ConfigureAwait(false);
-        return rows.Select(Map).ToArray();
     }
 
     public async Task<PersistedWorkflowPage> GetWorkflowsAsync(
@@ -115,42 +124,37 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         if (limit is < 1 or > MaximumPageSize) throw new ArgumentOutOfRangeException(nameof(limit));
         var decoded = DecodeCursor(cursor);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var groups = context.Jobs.AsNoTracking()
-            .GroupBy(job => job.WorkflowId)
-            .Select(group => new { WorkflowId = group.Key, FirstCreatedAtUtc = group.Min(job => job.CreatedAtUtc) });
+        var groups = WorkflowAggregates(context);
         if (decoded != null)
-            groups = groups.Where(group => group.FirstCreatedAtUtc > decoded.CreatedAtUtc
-                || group.FirstCreatedAtUtc == decoded.CreatedAtUtc && group.WorkflowId.CompareTo(decoded.Id) > 0);
-        var workflowRows = await groups
-            .OrderBy(group => group.FirstCreatedAtUtc)
+            groups = groups.Where(group => group.FirstDisplayId > decoded.DisplayId
+                || group.FirstDisplayId == decoded.DisplayId && group.WorkflowId.CompareTo(decoded.Id) > 0);
+        var aggregateRows = await groups
+            .OrderBy(group => group.FirstDisplayId)
             .ThenBy(group => group.WorkflowId)
             .Take(limit + 1)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
-        bool hasMore = workflowRows.Count > limit;
-        if (hasMore) workflowRows.RemoveAt(workflowRows.Count - 1);
-        var ids = workflowRows.Select(row => row.WorkflowId).ToArray();
-        var jobs = await context.Jobs.AsNoTracking()
-            .Where(job => ids.Contains(job.WorkflowId))
-            .OrderBy(job => job.DisplayId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var byWorkflow = jobs.GroupBy(job => job.WorkflowId).ToDictionary(group => group.Key);
+        bool hasMore = aggregateRows.Count > limit;
+        if (hasMore) aggregateRows.RemoveAt(aggregateRows.Count - 1);
+        var workflowRows = await LoadWorkflowSummariesAsync(context, aggregateRows, cancellationToken).ConfigureAwait(false);
         return new PersistedWorkflowPage(
-            workflowRows.Select(row => new PersistedWorkflow(
-                row.WorkflowId,
-                byWorkflow.GetValueOrDefault(row.WorkflowId)?.Select(Map).ToArray() ?? [])).ToArray(),
+            workflowRows,
             hasMore && workflowRows.Count > 0
-                ? EncodeCursor(workflowRows[^1].FirstCreatedAtUtc, workflowRows[^1].WorkflowId)
+                ? EncodeCursor(workflowRows[^1].FirstDisplayId, workflowRows[^1].WorkflowId)
                 : null);
     }
 
-    public async Task<IReadOnlyList<PersistedJob>> GetWorkflowJobsAsync(Guid workflowId, CancellationToken cancellationToken = default)
+    public async Task<PersistedWorkflowSummary?> GetWorkflowAsync(
+        Guid workflowId,
+        CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        var jobs = await context.Jobs.AsNoTracking()
-            .Where(job => job.WorkflowId == workflowId)
-            .OrderBy(job => job.DisplayId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        return jobs.Select(Map).ToArray();
+        var aggregate = await WorkflowAggregates(context)
+            .SingleOrDefaultAsync(workflow => workflow.WorkflowId == workflowId, cancellationToken)
+            .ConfigureAwait(false);
+        if (aggregate == null)
+            return null;
+        var rows = await LoadWorkflowSummariesAsync(context, [aggregate], cancellationToken).ConfigureAwait(false);
+        return rows[0];
     }
 
     public async Task<PersistedJob?> GetJobByDisplayIdAsync(
@@ -164,6 +168,79 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
             .SingleOrDefaultAsync(row => row.WorkflowId == workflowId && row.DisplayId == displayId, cancellationToken)
             .ConfigureAwait(false);
         return job == null ? null : Map(job);
+    }
+
+    private static IQueryable<WorkflowAggregate> WorkflowAggregates(SockseekDbContext context)
+        => context.Jobs.AsNoTracking()
+            .GroupBy(job => job.WorkflowId)
+            .Select(group => new WorkflowAggregate
+            {
+                WorkflowId = group.Key,
+                FirstDisplayId = group.Min(job => job.DisplayId),
+                RootJobCount = group.Count(job => job.ParentJobId == null),
+                ActiveJobCount = group.Count(job => job.LifecycleState != "Terminal"),
+                FailedJobCount = group.Count(job => job.TerminalOutcome == "Failed"
+                    || job.TerminalOutcome == "Cancelled"
+                    || job.TerminalOutcome == "PartialSuccess"
+                    || job.TerminalOutcome == "Skipped" && job.SkipReason != "AlreadyExists"),
+                CompletedJobCount = group.Count(job => job.LifecycleState == "Terminal"),
+            });
+
+    private static async Task<IReadOnlyList<PersistedWorkflowSummary>> LoadWorkflowSummariesAsync(
+        SockseekDbContext context,
+        IReadOnlyList<WorkflowAggregate> aggregates,
+        CancellationToken cancellationToken)
+    {
+        if (aggregates.Count == 0)
+            return [];
+
+        long[] firstDisplayIds = aggregates.Select(row => row.FirstDisplayId).ToArray();
+        var firstJobs = await context.Jobs.AsNoTracking()
+            .Where(job => firstDisplayIds.Contains(job.DisplayId))
+            .Select(job => new { job.WorkflowId, job.QueryText, job.Kind })
+            .ToDictionaryAsync(job => job.WorkflowId, cancellationToken)
+            .ConfigureAwait(false);
+
+        Guid[] workflowIds = aggregates.Select(row => row.WorkflowId).ToArray();
+        var firstItemIndexes = await context.Jobs.AsNoTracking()
+            .Where(job => workflowIds.Contains(job.WorkflowId)
+                && job.ItemName != null
+                && job.ItemName != "")
+            .GroupBy(job => job.WorkflowId)
+            .Select(group => new
+            {
+                WorkflowId = group.Key,
+                DisplayId = group.Min(job => job.DisplayId),
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        long[] firstItemDisplayIds = firstItemIndexes.Select(row => row.DisplayId).ToArray();
+        var firstItemNames = firstItemDisplayIds.Length == 0
+            ? new Dictionary<Guid, string?>()
+            : await context.Jobs.AsNoTracking()
+                .Where(job => firstItemDisplayIds.Contains(job.DisplayId))
+                .Select(job => new { job.WorkflowId, job.ItemName })
+                .ToDictionaryAsync(job => job.WorkflowId, job => job.ItemName, cancellationToken)
+                .ConfigureAwait(false);
+
+        return aggregates.Select(aggregate =>
+        {
+            var first = firstJobs[aggregate.WorkflowId];
+            firstItemNames.TryGetValue(aggregate.WorkflowId, out string? itemName);
+            return new PersistedWorkflowSummary(
+                aggregate.WorkflowId,
+                aggregate.FirstDisplayId,
+                itemName ?? first.QueryText ?? first.Kind,
+                aggregate.ActiveJobCount > 0
+                    ? "Active"
+                    : aggregate.FailedJobCount > 0
+                        ? "Failed"
+                        : "Completed",
+                aggregate.RootJobCount,
+                aggregate.ActiveJobCount,
+                aggregate.FailedJobCount,
+                aggregate.CompletedJobCount);
+        }).ToArray();
     }
 
     private static PersistedJob Map(Entities.JobEntity job)
@@ -196,7 +273,7 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
     private static DateTimeOffset? FromUnixMilliseconds(long? value)
         => value.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(value.Value) : null;
 
-    private static CursorValue? DecodeCursor(string? cursor)
+    public static CursorValue? DecodeCursor(string? cursor)
     {
         if (cursor is null)
             return null;
@@ -218,11 +295,21 @@ public sealed class JobHistoryReader(IDbContextFactory<SockseekDbContext> contex
         }
     }
 
-    private static string EncodeCursor(long createdAtUtc, Guid id)
-        => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{createdAtUtc}:{id:N}"))
+    public static string EncodeCursor(long displayId, Guid id)
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{displayId}:{id:N}"))
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
 
-    private sealed record CursorValue(long CreatedAtUtc, Guid Id);
+    public sealed record CursorValue(long DisplayId, Guid Id);
+
+    private sealed class WorkflowAggregate
+    {
+        public Guid WorkflowId { get; init; }
+        public long FirstDisplayId { get; init; }
+        public int RootJobCount { get; init; }
+        public int ActiveJobCount { get; init; }
+        public int FailedJobCount { get; init; }
+        public int CompletedJobCount { get; init; }
+    }
 }

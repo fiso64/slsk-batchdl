@@ -15,6 +15,7 @@ public sealed class EnginePersistenceAdapter
     private readonly IPersistenceMutationSink sink;
     private readonly ConcurrentDictionary<Guid, JobRelationships> relationships = new();
     private readonly ConcurrentDictionary<Guid, TransferAttemptPersistenceMutation> pendingTerminalAttempts = new();
+    private readonly ConcurrentDictionary<Guid, Guid> transferWorkflowIds = new();
 
     public EnginePersistenceAdapter(Guid runtimeId, IPersistenceMutationSink sink)
     {
@@ -33,6 +34,7 @@ public sealed class EnginePersistenceAdapter
         typeof(JobExecutionCompletedChange),
         typeof(JobResultCreatedChange),
         typeof(EngineCompletedChange),
+        typeof(WorkflowRetiredChange),
         typeof(JobStatusChange),
         typeof(JobMessageChange),
         typeof(WorkflowMessageChange),
@@ -65,7 +67,11 @@ public sealed class EnginePersistenceAdapter
         switch (change)
         {
             case JobRegisteredChange registered:
-                relationships[registered.Job.Id] = new JobRelationships(registered.ParentJobId, registered.SourceJobId, null);
+                relationships[registered.Job.Id] = new JobRelationships(
+                    registered.Job.WorkflowId,
+                    registered.ParentJobId,
+                    registered.SourceJobId,
+                    null);
                 sink.TryEnqueue(JobMutation(registered.Job, registered, PersistenceMutationPriority.Structural));
                 break;
 
@@ -87,7 +93,7 @@ public sealed class EnginePersistenceAdapter
             case JobResultCreatedChange result:
                 relationships.AddOrUpdate(
                     result.ExtractJob.Id,
-                    _ => new JobRelationships(null, null, result.ResultJob.Id),
+                    _ => new JobRelationships(result.ExtractJob.WorkflowId, null, null, result.ResultJob.Id),
                     (_, current) => current with { ResultJobId = result.ResultJob.Id });
                 sink.TryEnqueue(JobMutation(result.ExtractJob, result, PersistenceMutationPriority.Structural));
                 sink.TryEnqueue(JobMutation(result.ResultJob, result, PersistenceMutationPriority.Structural));
@@ -170,6 +176,10 @@ public sealed class EnginePersistenceAdapter
                     "Complete"));
                 break;
 
+            case WorkflowRetiredChange retired:
+                RetireWorkflow(retired.WorkflowId);
+                break;
+
             case JobExecutionCompletedChange:
             case EngineCompletedChange:
             case JobStatusChange:
@@ -220,7 +230,8 @@ public sealed class EnginePersistenceAdapter
         CoreChange change,
         PersistenceMutationPriority priority)
     {
-        var relation = relationships.GetValueOrDefault(job.Id) ?? new JobRelationships(null, null, null);
+        var relation = relationships.GetValueOrDefault(job.Id)
+            ?? new JobRelationships(job.WorkflowId, null, null, null);
         return new JobPersistenceMutation(
             runtimeId,
             change.Sequence,
@@ -253,7 +264,7 @@ public sealed class EnginePersistenceAdapter
     {
         object compact = payload switch
         {
-            ExtractJobSnapshotPayload extract => new { extract.Input, extract.InputType, extract.AutoProcessResult },
+            ExtractJobSnapshotPayload extract => new { extract.Input, extract.InputType },
             SearchJobSnapshotPayload search => new
             {
                 search.QueryText,
@@ -281,9 +292,6 @@ public sealed class EnginePersistenceAdapter
             {
                 remoteDirectory.SourceKind,
                 remoteDirectory.DirectorySource,
-                remoteDirectory.ResolvedPlanSource,
-                remoteDirectory.ResolvedDirectory,
-                remoteDirectory.ActivePlan,
                 remoteDirectory.Directory,
             },
             AggregateJobSnapshotPayload aggregate => new { aggregate.Query, SongCount = aggregate.Songs.Count },
@@ -312,7 +320,9 @@ public sealed class EnginePersistenceAdapter
         string failureReason,
         string? failureMessage,
         string cancellationSource = "None")
-        => new(
+    {
+        transferWorkflowIds[transfer.Id] = transfer.WorkflowId ?? Guid.Empty;
+        return new(
             runtimeId,
             change.Sequence,
             change.OccurredAtUtc,
@@ -334,6 +344,7 @@ public sealed class EnginePersistenceAdapter
             failureReason,
             failureMessage,
             cancellationSource);
+    }
 
     private TransferAttemptPersistenceMutation AttemptMutation(
         TransferAttemptStartedChange attempt,
@@ -449,6 +460,21 @@ public sealed class EnginePersistenceAdapter
         return new Guid(bytes.AsSpan(0, 16));
     }
 
+    private void RetireWorkflow(Guid workflowId)
+    {
+        foreach (var pair in relationships.Where(pair => pair.Value.WorkflowId == workflowId))
+            relationships.TryRemove(pair.Key, out _);
+
+        foreach (var pair in transferWorkflowIds.Where(pair => pair.Value == workflowId))
+        {
+            transferWorkflowIds.TryRemove(pair.Key, out _);
+            pendingTerminalAttempts.TryRemove(pair.Key, out _);
+        }
+    }
+
+    internal (int Relationships, int PendingAttempts, int Transfers) RetainedStateCounts
+        => (relationships.Count, pendingTerminalAttempts.Count, transferWorkflowIds.Count);
+
     private static string DurableTransferState(string state)
     {
         if (state.Contains("InProgress", StringComparison.OrdinalIgnoreCase)) return "InProgress";
@@ -457,5 +483,9 @@ public sealed class EnginePersistenceAdapter
         return "Requested";
     }
 
-    private sealed record JobRelationships(Guid? ParentJobId, Guid? SourceJobId, Guid? ResultJobId);
+    private sealed record JobRelationships(
+        Guid WorkflowId,
+        Guid? ParentJobId,
+        Guid? SourceJobId,
+        Guid? ResultJobId);
 }

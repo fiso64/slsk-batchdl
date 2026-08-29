@@ -159,8 +159,21 @@ public sealed class SockseekApiClient
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<ProfileSummaryDto>>(jsonOptions, ct) ?? [];
     }
 
-    public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(JobQuery query, CancellationToken ct = default)
-        => (await GetJobsPageAsync(query, cursor: null, limit: 100, ct)).Items;
+    public async Task<IReadOnlyList<JobSummaryDto>> GetJobsAsync(
+        JobQuery query,
+        CancellationToken ct = default)
+    {
+        var jobs = new List<JobSummaryDto>();
+        string? cursor = null;
+        do
+        {
+            var page = await GetJobsPageAsync(query, cursor, limit: 200, ct);
+            jobs.AddRange(page.Items);
+            cursor = page.NextCursor;
+        }
+        while (cursor != null);
+        return jobs;
+    }
 
     public async Task<CursorPage<JobSummaryDto>> GetJobsPageAsync(
         JobQuery query,
@@ -175,6 +188,7 @@ public sealed class SockseekApiClient
             + QueryPart("skipReason", query.SkipReason?.ToString())
             + QueryPart("kind", query.Kind?.ToWireString())
             + QueryPart("workflowId", query.WorkflowId?.ToString())
+            + QueryPart("parentJobId", query.ParentJobId?.ToString())
             + QueryPart("cursor", cursor)
             + QueryPart("limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
@@ -193,12 +207,8 @@ public sealed class SockseekApiClient
             $"api/workflows/{id}/jobs/display/{displayId}", ct);
     }
 
-    public async Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
-        => await GetWorkflowAsync(workflowId, includeAll: false, ct);
-
-    public Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, bool includeAll, CancellationToken ct = default)
-        => GetOptionalAsync<WorkflowDetailDto>(
-            $"api/workflows/{workflowId}?includeAll={includeAll.ToString().ToLowerInvariant()}", ct);
+    public Task<WorkflowDetailDto?> GetWorkflowAsync(Guid workflowId, CancellationToken ct = default)
+        => GetOptionalAsync<WorkflowDetailDto>($"api/workflows/{workflowId}", ct);
 
     public async Task<CursorPage<WorkflowSummaryDto>> GetWorkflowsPageAsync(
         string? cursor = null,
@@ -208,9 +218,6 @@ public sealed class SockseekApiClient
             "api/workflows?limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture)
             + QueryPart("cursor", cursor),
             ct);
-
-    public Task<WorkflowTreeDto?> GetWorkflowTreeAsync(Guid workflowId, CancellationToken ct = default)
-        => GetOptionalAsync<WorkflowTreeDto>($"api/workflows/{workflowId}/tree", ct);
 
     public async Task<SequencePage<SearchRawResultDto>?> GetRawSearchResultsPageAsync(
         Guid jobId,
@@ -251,10 +258,9 @@ public sealed class SockseekApiClient
 
     public Task<TransferDetailDto?> GetTransferAsync(
         Guid transferId,
-        int attemptLimit = 200,
         CancellationToken ct = default)
         => GetOptionalAsync<TransferDetailDto>(
-            $"api/transfers/{transferId}?attemptLimit={attemptLimit}", ct);
+            $"api/transfers/{transferId}", ct);
 
     public Task<SharingStateDto> GetSharingAsync(CancellationToken ct = default)
         => GetRequiredAsync<SharingStateDto>("api/sharing", ct);

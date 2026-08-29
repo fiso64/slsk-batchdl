@@ -42,7 +42,9 @@ public class OpenApiContractTests
         StringAssert.Contains(json, nameof(DirectoryTransferPlanDto));
         StringAssert.Contains(json, nameof(FileCandidateDto));
         StringAssert.Contains(json, nameof(FileMetadataDto));
-        StringAssert.Contains(json, nameof(WorkflowTreeDto));
+        StringAssert.Contains(json, nameof(WorkflowDetailDto));
+        StringAssert.Contains(json, nameof(JobDetailDto));
+        Assert.IsFalse(json.Contains("WorkflowTreeDto", StringComparison.Ordinal));
         StringAssert.Contains(json, nameof(StateSnapshotDto));
         StringAssert.Contains(json, nameof(ApiErrorDto));
         StringAssert.Contains(json, nameof(SharingStateDto));
@@ -67,6 +69,56 @@ public class OpenApiContractTests
         StringAssert.Contains(json, "exactTarget");
         StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteFile);
         StringAssert.Contains(json, ServerProtocol.JobKinds.RemoteDirectory);
+
+        JsonElement schemas = document.RootElement
+            .GetProperty("components")
+            .GetProperty("schemas");
+        JsonElement workflowProperties = schemas
+            .GetProperty(nameof(WorkflowSummaryDto))
+            .GetProperty("properties");
+        Assert.IsTrue(workflowProperties.TryGetProperty("rootJobCount", out _));
+        Assert.IsFalse(workflowProperties.TryGetProperty("rootJobIds", out _));
+        JsonElement jobDetailProperties = schemas
+            .GetProperty(nameof(JobDetailDto))
+            .GetProperty("properties");
+        Assert.IsTrue(jobDetailProperties.TryGetProperty("childCount", out _));
+        Assert.IsFalse(jobDetailProperties.TryGetProperty("children", out _));
+        JsonElement albumPayloadProperties = schemas.EnumerateObject()
+            .Single(schema => schema.Name.EndsWith(nameof(AlbumJobPayloadDto), StringComparison.Ordinal))
+            .Value
+            .GetProperty("properties");
+        Assert.IsFalse(albumPayloadProperties.TryGetProperty("tracks", out _));
+        Assert.IsFalse(albumPayloadProperties.TryGetProperty("results", out _));
+        JsonElement directoryPayloadProperties = schemas.EnumerateObject()
+            .Single(schema => schema.Name.EndsWith(nameof(RemoteDirectoryJobPayloadDto), StringComparison.Ordinal))
+            .Value
+            .GetProperty("properties");
+        Assert.IsFalse(directoryPayloadProperties.TryGetProperty("activePlan", out _));
+        Assert.IsFalse(directoryPayloadProperties.TryGetProperty("resolvedPlanSource", out _));
+        JsonElement extractPayloadProperties = schemas.EnumerateObject()
+            .Single(schema => schema.Name.EndsWith(nameof(ExtractJobPayloadDto), StringComparison.Ordinal))
+            .Value
+            .GetProperty("properties");
+        Assert.IsTrue(extractPayloadProperties.TryGetProperty("resultJobId", out _));
+        Assert.IsFalse(extractPayloadProperties.TryGetProperty("autoProcessResult", out _));
+        Assert.IsFalse(extractPayloadProperties.TryGetProperty("resultDraft", out _));
+        JsonElement submitExtractProperties = schemas
+            .GetProperty(nameof(SubmitExtractJobRequestDto))
+            .GetProperty("properties");
+        Assert.IsFalse(submitExtractProperties.TryGetProperty("autoStartExtractedResult", out _));
+        JsonElement extractDraftProperties = schemas.EnumerateObject()
+            .Single(schema => schema.Name.EndsWith(nameof(ExtractJobDraftDto), StringComparison.Ordinal))
+            .Value
+            .GetProperty("properties");
+        Assert.IsFalse(extractDraftProperties.TryGetProperty("autoStartExtractedResult", out _));
+        JsonElement transferDetailProperties = schemas
+            .GetProperty(nameof(TransferDetailDto))
+            .GetProperty("properties");
+        Assert.IsTrue(transferDetailProperties.TryGetProperty("attemptCount", out _));
+        Assert.IsTrue(transferDetailProperties.TryGetProperty("latestAttempt", out _));
+        Assert.IsFalse(transferDetailProperties.TryGetProperty("attempts", out _));
+        Assert.IsFalse(json.Contains("attemptLimit", StringComparison.Ordinal));
+
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
             .TryGetProperty("/api/daemon/snapshot", out _));

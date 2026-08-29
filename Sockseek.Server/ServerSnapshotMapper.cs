@@ -60,9 +60,7 @@ public static class ServerSnapshotMapper
             ExtractJobSnapshotPayload extract => new ExtractJobPayloadDto(
                 extract.Input,
                 extract.InputType,
-                extract.ResultJobId,
-                extract.AutoProcessResult,
-                ToJobDraft(extract.ResultDraft)),
+                extract.ResultJobId),
             SearchJobSnapshotPayload search => new SearchJobPayloadDto(
                 search.QueryText,
                 search.DefaultFileProjection == null
@@ -84,9 +82,7 @@ public static class ServerSnapshotMapper
                 album.ResultCount,
                 ToDirectoryDownloadStateDto(album.Directory),
                 album.ResolvedTarget?.Username,
-                album.ResolvedTarget?.FolderPath,
-                null,
-                null),
+                album.ResolvedTarget?.FolderPath),
             RemoteFileJobSnapshotPayload remoteFile => new RemoteFileJobPayloadDto(
                 ToPeerFileTargetDto(remoteFile.Target),
                 remoteFile.OutputPath.Components,
@@ -97,16 +93,13 @@ public static class ServerSnapshotMapper
                     : RemoteDirectorySourceKindDto.Resolved,
                 remoteDirectory.DirectorySource?.Username,
                 remoteDirectory.DirectorySource?.FolderPath,
-                remoteDirectory.ResolvedPlanSource == null ? null : ToDirectoryTransferPlanDto(remoteDirectory.ResolvedPlanSource),
-                remoteDirectory.ActivePlan == null ? null : ToDirectoryTransferPlanDto(remoteDirectory.ActivePlan),
                 ToDirectoryDownloadStateDto(remoteDirectory.Directory)),
             AggregateJobSnapshotPayload aggregate => new AggregateJobPayloadDto(
                 ToSongQueryDto(aggregate.Query),
                 aggregate.Songs.Count,
                 aggregate.Songs.Count(IsTerminalJob),
                 aggregate.Songs.Count(IsSuccessfulJob),
-                aggregate.Songs.Count(IsFailedOrSkippedJob),
-                null),
+                aggregate.Songs.Count(IsFailedOrSkippedJob)),
             AlbumAggregateJobSnapshotPayload albumAggregate => new AlbumAggregateJobPayloadDto(
                 ToAlbumQueryDto(albumAggregate.Query),
                 albumAggregate.AlbumCount > 0
@@ -117,15 +110,13 @@ public static class ServerSnapshotMapper
                 list.Jobs.Count(IsActiveJob),
                 list.Jobs.Count(IsTerminalJob),
                 list.Jobs.Count(IsSuccessfulJob),
-                list.Jobs.Count(IsFailedOrSkippedJob),
-                null),
+                list.Jobs.Count(IsFailedOrSkippedJob)),
             RetrieveFolderJobSnapshotPayload retrieve => new RetrieveFolderJobPayloadDto(
                 retrieve.Directory.FolderPath,
                 retrieve.Directory.Username,
                 retrieve.NewFilesFoundCount,
                 ToServerFolderRetrievalOutcome(retrieve.RetrievalOutcome),
-                retrieve.RetrievalCancelled,
-                retrieve.Result == null ? null : ToRetrievedFolderDto(retrieve.Result)),
+                retrieve.RetrievalCancelled),
             GenericJobSnapshotPayload generic => new GenericJobPayloadDto(generic.Text),
             _ => new GenericJobPayloadDto(job.QueryText ?? ToServerJobKind(job.Kind).ToWireString()),
         };
@@ -165,7 +156,6 @@ public static class ServerSnapshotMapper
             song.ResolvedTarget?.Attributes?.Select(ToFileAttributeDto).ToList(),
             job.Id,
             job.DisplayId,
-            null,
             ToServerJobLifecycleState(job.LifecycleState),
             ToServerJobActivityPhase(job.ActivityPhase),
             job.ActivityUntilUtc,
@@ -211,36 +201,6 @@ public static class ServerSnapshotMapper
                 ? folder.Files.Select(file => ToFileCandidateDto(file.Candidate)).ToList()
                 : null,
             folder.IsFullyRetrieved);
-
-    private static AlbumFolderDto ToRetrievedFolderDto(PeerDirectoryResultSnapshot folder)
-    {
-        var files = folder.Files.Select(ToRetrievedFileDto).ToList();
-        return new AlbumFolderDto(
-            new AlbumFolderRefDto(folder.Identity.Username, folder.Identity.FolderPath),
-            folder.Identity.Username,
-            folder.Identity.FolderPath,
-            new PeerInfoDto(folder.Identity.Username, null, null),
-            files.Count,
-            folder.Files.Count(file => Utils.IsMusicFile(file.Identity.Filename)),
-            files,
-            folder.IsComplete);
-    }
-
-    private static FileCandidateDto ToRetrievedFileDto(PeerFileTargetSnapshot target)
-        => new(
-            new FileCandidateRefDto(target.Identity.Username, target.Identity.Filename),
-            target.Identity.Username,
-            target.Identity.Filename,
-            new PeerInfoDto(target.Identity.Username, null, null),
-            new FileMetadataDto(
-                Utils.GetFileNameSlsk(target.Identity.Filename),
-                target.Size ?? -1,
-                target.Extension,
-                target.BitRate,
-                target.BitDepth,
-                target.SampleRate,
-                target.Length,
-                target.Attributes?.Select(ToFileAttributeDto).ToList()));
 
     public static SongQueryDto ToSongQueryDto(SongQuerySnapshot query)
         => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong);
@@ -358,87 +318,6 @@ public static class ServerSnapshotMapper
     private static FileAttributeDto ToFileAttributeDto(FileAttributeSnapshot attribute)
         => new(attribute.Type, attribute.Value);
 
-    private static JobDraftDto? ToJobDraft(JobDraftSnapshot? draft)
-        => draft switch
-        {
-            null => null,
-            ExtractJobDraftSnapshot extract => new ExtractJobDraftDto(
-                extract.Input,
-                extract.InputType,
-                extract.AutoProcessResult,
-                DownloadSettings: null,
-                extract.ResultDownloadBehavior == null ? null : ToDownloadBehaviorPolicyDto(extract.ResultDownloadBehavior),
-                ToProvenanceDto(extract.Provenance)),
-            AlbumSearchJobDraftSnapshot search => new AlbumSearchJobDraftDto(
-                ToAlbumQueryDto(search.AlbumQuery),
-                DownloadSettings: null,
-                ToProvenanceDto(search.Provenance)),
-            TrackSearchJobDraftSnapshot search => new TrackSearchJobDraftDto(
-                ToSongQueryDto(search.SongQuery),
-                search.IncludeFullResults,
-                DownloadSettings: null,
-                ToProvenanceDto(search.Provenance)),
-            SongJobDraftSnapshot song => new SongJobDraftDto(
-                ToSongQueryDto(song.SongQuery),
-                song.DownloadBehavior == null ? null : ToDownloadBehaviorPolicyDto(song.DownloadBehavior),
-                DownloadSettings: null,
-                ToProvenanceDto(song.Provenance)),
-            AlbumJobDraftSnapshot album => new AlbumJobDraftDto(
-                ToAlbumQueryDto(album.AlbumQuery),
-                album.DownloadBehavior == null ? null : ToDownloadBehaviorPolicyDto(album.DownloadBehavior),
-                DownloadSettings: null,
-                ToProvenanceDto(album.Provenance)),
-            RemoteFileJobDraftSnapshot remoteFile => new RemoteFileJobDraftDto(
-                ToPeerFileTargetDto(remoteFile.Target),
-                remoteFile.OutputPath.Components,
-                DownloadSettings: null,
-                ToProvenanceDto(remoteFile.Provenance)),
-            RemoteDirectoryJobDraftSnapshot remoteDirectory => new RemoteDirectoryJobDraftDto(
-                remoteDirectory.Directory?.Username,
-                remoteDirectory.Directory?.FolderPath,
-                remoteDirectory.Plan == null ? null : ToDirectoryTransferPlanDto(remoteDirectory.Plan),
-                DownloadSettings: null,
-                ToProvenanceDto(remoteDirectory.Provenance)),
-            AggregateJobDraftSnapshot aggregate => new AggregateJobDraftDto(
-                ToSongQueryDto(aggregate.SongQuery),
-                aggregate.DownloadBehavior == null ? null : ToDownloadBehaviorPolicyDto(aggregate.DownloadBehavior),
-                DownloadSettings: null,
-                ToProvenanceDto(aggregate.Provenance)),
-            AlbumAggregateJobDraftSnapshot aggregate => new AlbumAggregateJobDraftDto(
-                ToAlbumQueryDto(aggregate.AlbumQuery),
-                aggregate.DownloadBehavior == null ? null : ToDownloadBehaviorPolicyDto(aggregate.DownloadBehavior),
-                DownloadSettings: null,
-                ToProvenanceDto(aggregate.Provenance)),
-            JobListDraftSnapshot list => new JobListJobDraftDto(
-                list.Name,
-                list.Jobs.Select(ToJobDraft).OfType<JobDraftDto>().ToList(),
-                DownloadSettings: null,
-                ToProvenanceDto(list.Provenance)),
-            _ => null,
-        };
-
-    private static JobProvenanceDto? ToProvenanceDto(JobProvenanceSnapshot? provenance)
-        => provenance == null
-            ? null
-            : new JobProvenanceDto(
-                provenance.ItemNumber,
-                provenance.LineNumber,
-                ToSourceMutationDto(provenance.SourceMutation));
-
-    private static SourceMutationDto? ToSourceMutationDto(SourceMutationSnapshot? mutation)
-        => mutation == null
-            ? null
-            : new SourceMutationDto(
-                mutation.Kind.ToString(),
-                mutation.Source,
-                mutation.LineNumber,
-                mutation.ItemNumber,
-                mutation.CsvColumnCount,
-                mutation.TrackUri);
-
-    private static DownloadBehaviorPolicyDto ToDownloadBehaviorPolicyDto(DownloadBehaviorPolicySnapshot policy)
-        => new(policy.Default, policy.Song, policy.Album, policy.Aggregate, policy.AlbumAggregate);
-
     private static PeerFileTargetDto ToPeerFileTargetDto(PeerFileTargetSnapshot target)
         => new(
             target.Identity.Username,
@@ -450,14 +329,6 @@ public static class ServerSnapshotMapper
             target.SampleRate,
             target.Length,
             target.Attributes?.Select(ToFileAttributeDto).ToList());
-
-    private static DirectoryTransferPlanDto ToDirectoryTransferPlanDto(DirectoryTransferPlanSnapshot plan)
-        => new(
-            plan.DisplayRoot,
-            plan.Entries.Select(entry => new DirectoryTransferEntryDto(
-                ToPeerFileTargetDto(entry.Target),
-                entry.RelativeDirectoryComponents)).ToList(),
-            plan.TotalKnownBytes);
 
     private static FileDownloadStateDto ToFileDownloadStateDto(FileDownloadStateSnapshot file)
         => new(

@@ -714,6 +714,7 @@ public static class ServerHost
             ServerJobSkipReason? skipReason,
             ServerJobKind? kind,
             Guid? workflowId,
+            Guid? parentJobId,
             bool includeAll,
             string? cursor,
             int? limit,
@@ -722,7 +723,7 @@ public static class ServerHost
             try
             {
                 var page = await queryFacade.GetJobsAsync(
-                    new JobQuery(lifecycleState, terminalOutcome, kind, workflowId, includeAll, skipReason),
+                    new JobQuery(lifecycleState, terminalOutcome, kind, workflowId, includeAll, skipReason, parentJobId),
                     cursor,
                     limit ?? 100,
                     cancellationToken);
@@ -737,7 +738,7 @@ public static class ServerHost
         })
             .WithTags("Jobs")
             .WithSummary("Lists known jobs.")
-            .WithDescription("Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every matching job.")
+            .WithDescription("Default results contain execution roots. Set parentJobId for direct children or includeAll=true for a flat workflow list.")
             .Produces<IReadOnlyList<JobSummaryDto>>();
 
         app.MapGet("/api/jobs/{jobId:guid}", async (Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
@@ -992,13 +993,12 @@ public static class ServerHost
 
         app.MapGet("/api/transfers/{transferId:guid}", async (
             Guid transferId,
-            int? attemptLimit,
             HistoricalQueryFacade queryFacade,
             CancellationToken cancellationToken) =>
         {
             try
             {
-                var detail = await queryFacade.GetTransferDetailAsync(transferId, attemptLimit ?? 200, cancellationToken);
+                var detail = await queryFacade.GetTransferDetailAsync(transferId, cancellationToken);
                 return detail != null
                     ? Results.Ok(detail)
                     : Results.NotFound(new ApiErrorDto(
@@ -1034,7 +1034,6 @@ public static class ServerHost
             {
                 TransferDetailDto? retained = await queryFacade.GetTransferDetailAsync(
                     transferId,
-                    attemptLimit: 1,
                     cancellationToken);
                 return retained is null
                     ? Results.NotFound(new ApiErrorDto(
@@ -1424,27 +1423,15 @@ public static class ServerHost
             .Produces<IReadOnlyList<WorkflowSummaryDto>>();
 
         app.MapGet("/api/workflows/{workflowId:guid}", async (
-            Guid workflowId, bool? includeAll, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
+            Guid workflowId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
         {
-            var workflow = await queryFacade.GetWorkflowAsync(workflowId, includeAll == true, cancellationToken);
+            var workflow = await queryFacade.GetWorkflowAsync(workflowId, cancellationToken);
             return workflow != null ? Results.Ok(workflow) : Results.NotFound();
         })
             .WithTags("Workflows")
             .WithSummary("Gets a workflow snapshot by id.")
-            .WithDescription("Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every workflow job. Use /tree for the same jobs grouped by ParentJobId.")
+            .WithDescription("Use the cursor-paged jobs collection to list workflow roots or descendants.")
             .Produces<WorkflowDetailDto>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapGet("/api/workflows/{workflowId:guid}/tree", async (
-            Guid workflowId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-        {
-            var workflow = await queryFacade.GetWorkflowTreeAsync(workflowId, cancellationToken);
-            return workflow != null ? Results.Ok(workflow) : Results.NotFound();
-        })
-            .WithTags("Workflows")
-            .WithSummary("Gets the execution tree for a workflow.")
-            .WithDescription("This tree is built only from ParentJobId relationships. Follow-up jobs started from search results remain workflow roots and expose SourceJobId instead.")
-            .Produces<WorkflowTreeDto>()
             .Produces(StatusCodes.Status404NotFound);
 
         app.MapPost("/api/workflows/{workflowId:guid}/cancel", (Guid workflowId, EngineSupervisor supervisor) =>

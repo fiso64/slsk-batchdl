@@ -78,8 +78,11 @@ internal sealed class AutoProfileWorkflowReporter
     }
 
     public void EmitFinalSummary(Job rootJob)
+        => EmitFinalSummary(rootJob.WorkflowId);
+
+    public void EmitFinalSummary(Guid workflowId)
     {
-        if (!stateByWorkflow.TryRemove(rootJob.WorkflowId, out var state))
+        if (!stateByWorkflow.TryRemove(workflowId, out var state))
             return;
 
         string? summary;
@@ -93,8 +96,11 @@ internal sealed class AutoProfileWorkflowReporter
         }
 
         if (!string.IsNullOrWhiteSpace(summary))
-            events.RaiseWorkflowMessage(rootJob.WorkflowId, LogLevel.Debug, null, $"Auto profiles applied: {summary}");
+            events.RaiseWorkflowMessage(workflowId, LogLevel.Debug, null, $"Auto profiles applied: {summary}");
     }
+
+    public void Retire(Guid workflowId)
+        => stateByWorkflow.TryRemove(workflowId, out _);
 
     private static IEnumerable<Job> EnumerateAutoProfileLogJobs(Job root)
     {

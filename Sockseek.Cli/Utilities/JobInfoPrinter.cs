@@ -9,7 +9,7 @@ internal static class JobInfoPrinter
 {
     private const int LabelWidth = 16;
 
-    public static void Print(JobDetailDto detail)
+    public static void Print(JobDetailDto detail, IReadOnlyList<JobSummaryDto> children)
     {
         var s = detail.Summary;
 
@@ -30,19 +30,19 @@ internal static class JobInfoPrinter
                 PrintSong(song);
                 break;
             case AlbumJobPayloadDto album:
-                PrintAlbum(album, detail.Children);
+                PrintAlbum(album, children);
                 break;
             case ExtractJobPayloadDto extract:
-                PrintExtract(extract, detail.Children);
+                PrintExtract(extract, children);
                 break;
             case AggregateJobPayloadDto agg:
-                PrintAggregate(agg, detail.Children);
+                PrintAggregate(agg, children);
                 break;
             case AlbumAggregateJobPayloadDto albumAgg:
-                PrintAlbumAggregate(albumAgg, detail.Children);
+                PrintAlbumAggregate(albumAgg, children);
                 break;
             case JobListPayloadDto list:
-                PrintJobList(list, detail.Children);
+                PrintJobList(list, children);
                 break;
             case RetrieveFolderJobPayloadDto retrieve:
                 PrintRetrieveFolder(retrieve);
@@ -51,7 +51,7 @@ internal static class JobInfoPrinter
                 PrintRemoteFile(remoteFile);
                 break;
             case RemoteDirectoryJobPayloadDto remoteDirectory:
-                PrintRemoteDirectory(remoteDirectory, detail.Children);
+                PrintRemoteDirectory(remoteDirectory, children);
                 break;
             case GenericJobPayloadDto generic:
                 Field("Info", generic.Text);
@@ -122,13 +122,6 @@ internal static class JobInfoPrinter
         if (p.ResultCount > 0)
             Field("Results", $"{p.ResultCount} folders found");
 
-        if (p.Tracks is { Count: > 0 } tracks)
-        {
-            Printing.WriteLine(force: true);
-            Printing.WriteLine($"  Tracks ({tracks.Count}):", ConsoleColor.Gray, force: true);
-            foreach (var track in tracks)
-                PrintAlbumTrack(track, p.ResolvedFolderPath);
-        }
     }
 
     private static void PrintExtract(ExtractJobPayloadDto p, IReadOnlyList<JobSummaryDto> children)
@@ -233,63 +226,6 @@ internal static class JobInfoPrinter
         }
     }
 
-    private static void PrintAlbumTrack(SongJobPayloadDto track, string? folderPath)
-    {
-        var status = CliJobStatusPresenter.ForSongPayload(track);
-
-        var name = TrackRelativeName(track.ResolvedFilename, folderPath)
-            ?? FormatSongQuery(track.Query)
-            ?? "?";
-
-        var meta = FormatTrackMeta(track);
-
-        if (track.DisplayId is int id)
-            Printing.Write($"    [{id:000}] ", ConsoleColor.DarkGray, force: true);
-        else
-            Printing.Write($"    ", force: true);
-        Printing.Write($"{status.Label,-18}", status.Color, force: true);
-        Printing.Write(": ", ConsoleColor.DarkGray, force: true);
-        Printing.Write(PeerIdentityValidator.ToDisplayText(name), ConsoleColor.White, force: true);
-        if (meta != null)
-        {
-            Printing.Write("  ", ConsoleColor.DarkGray, force: true);
-            Printing.Write($"[{meta}]", ConsoleColor.DarkGray, force: true);
-        }
-        Printing.WriteLine(force: true);
-    }
-
-    private static string? TrackRelativeName(string? filename, string? folderPath)
-    {
-        if (filename == null) return null;
-        var f = filename.Replace('/', '\\').TrimStart('\\');
-        if (folderPath == null) return f;
-        var folder = folderPath.Replace('/', '\\').TrimStart('\\');
-        var prefix = folder.EndsWith('\\') ? folder : folder + "\\";
-        return f.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? f[prefix.Length..] : f;
-    }
-
-    private static string? TransferStateLabel(string? raw)
-    {
-        if (raw == null || !Enum.TryParse<TransferStates>(raw, out var s) || s == TransferStates.None)
-            return null;
-        if (s.HasFlag(TransferStates.InProgress))   return "Downloading";
-        if (s.HasFlag(TransferStates.Queued) && s.HasFlag(TransferStates.Remotely)) return "Queued (R)";
-        if (s.HasFlag(TransferStates.Queued) && s.HasFlag(TransferStates.Locally))  return "Queued (L)";
-        if (s.HasFlag(TransferStates.Initializing)) return "Initialising";
-        if (s.HasFlag(TransferStates.TimedOut))     return "Timed Out";
-        return s.ToString();
-    }
-
-    private static string? FormatTrackMeta(SongJobPayloadDto track)
-    {
-        var parts = new List<string>();
-        if (track.ResolvedSize is long size && size > 0)
-            parts.Add(FormatBytes(size));
-        var attrs = FormatAttributes(track.ResolvedAttributes, track.ResolvedSampleRate, null);
-        if (attrs != null) parts.Add(attrs);
-        return parts.Count > 0 ? string.Join(" · ", parts) : null;
-    }
-
     private static void PrintChildSummary(JobSummaryDto child)
     {
         var status = CliJobStatusPresenter.ForSummary(child);
@@ -380,15 +316,5 @@ internal static class JobInfoPrinter
         if (bytes >= 1_024)         return $"{bytes / 1_024.0:F1} KB";
         return $"{bytes} B";
     }
-
-    private static ConsoleColor TransferStateLabelColor(string label) => label switch
-    {
-        "Downloading"                               => ConsoleColor.Cyan,
-        "Completed" or "Succeeded"                  => ConsoleColor.Green,
-        "Errored" or "Timed Out" or "Rejected"
-            or "Aborted"                            => ConsoleColor.Red,
-        "Cancelled"                                 => ConsoleColor.DarkGray,
-        _                                           => ConsoleColor.Gray,
-    };
 
 }
