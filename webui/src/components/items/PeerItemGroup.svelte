@@ -46,13 +46,15 @@
         <span class:available={peer.freeUploadSlot} class="peer-slot"><i></i>{peer.freeUploadSlot ? 'Free slot' : 'No free slot'}</span>
       {/if}
     </span>
-    {#if peer.uploadSpeedMbps !== undefined}
-      <span class="peer-stat peer-upload-stat"><b>{peer.uploadSpeedMbps.toFixed(1)} MB/s</b><small>upload</small></span>
-    {/if}
-    {#if peer.queueLength !== undefined}
-      <span class="peer-stat"><b>{peer.queueLength}</b><small>queued</small></span>
-    {/if}
-    <span class="peer-result-count">{itemCount} {itemCount === 1 ? itemNoun : itemNounPlural}</span>
+    <span class="peer-metadata" aria-label={`${peer.username} result metadata`}>
+      <span class="peer-stat peer-upload-stat">
+        {#if peer.uploadSpeedMbps !== undefined}<b>{peer.uploadSpeedMbps.toFixed(1)} MB/s</b><small>upload</small>{/if}
+      </span>
+      <span class="peer-stat peer-queue-stat">
+        {#if peer.queueLength !== undefined}<b>{peer.queueLength}</b><small>queued</small>{/if}
+      </span>
+      <span class="peer-result-count">{itemCount} {itemCount === 1 ? itemNoun : itemNounPlural}</span>
+    </span>
   </div>
 
   {#if !collapsed}

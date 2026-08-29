@@ -361,11 +361,9 @@
           </span>
           {#if file.audio}
             <span class="folder-file-audio">{audioSummary(file.audio)}</span>
-          {/if}
-          <span class="folder-file-size">{formatBytes(file.sizeBytes)}</span>
-          {#if file.audio}
             <span class="folder-file-length">{formatLength(file.audio.lengthSeconds)}</span>
           {/if}
+          <span class="folder-file-size">{formatBytes(file.sizeBytes)}</span>
           {#if file.transfer}
             {@const secondaryTransferText = fileTransferSecondary(file.transfer)}
             {@const showProgress = showsInlineTransferProgress(file.transfer)}

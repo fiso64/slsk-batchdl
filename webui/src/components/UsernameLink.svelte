@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import type { UserLinkActions } from '../prototype/navigation';
+  import { anchoredMenu } from '../lib/anchored-menu';
 
   interface Props {
     username: string;
@@ -9,26 +10,10 @@
   }
 
   let { username, actions, title }: Props = $props();
-  let root: HTMLSpanElement;
+  let root = $state<HTMLSpanElement | null>(null);
   let open = $state(false);
-  let menuStyle = $state('');
-
-  function positionMenu(): void {
-    if (typeof window === 'undefined' || !root) return;
-    const rect = root.getBoundingClientRect();
-    const width = 154;
-    const height = 116;
-    const gap = 5;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    const top = window.innerHeight - rect.bottom >= height + gap
-      ? rect.bottom + gap
-      : Math.max(8, rect.top - height - gap);
-    menuStyle = `left:${left}px;top:${top}px`;
-  }
-
   function toggle(event: MouseEvent): void {
     event.stopPropagation();
-    if (!open) positionMenu();
     open = !open;
   }
 
@@ -62,7 +47,7 @@
   >{username}</button>
 
   {#if open}
-    <div class="username-action-menu" role="menu" style={menuStyle}>
+    <div class="username-action-menu" role="menu" use:anchoredMenu={{ anchor: root, align: 'start', gap: 5 }}>
       <button type="button" role="menuitem" onclick={(event) => choose('profile', event)}><Icon name="user" /><span>Profile</span></button>
       <button type="button" role="menuitem" onclick={(event) => choose('shares', event)}><Icon name="folder" /><span>Shares</span></button>
       <button type="button" role="menuitem" onclick={(event) => choose('message', event)}><Icon name="chat" /><span>Message</span></button>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
+  import { anchoredMenu } from '../lib/anchored-menu';
 
   export type BulkCancelMode = 'all' | 'queued' | 'active';
 
@@ -13,6 +14,7 @@
   }
 
   let { mode, canCancel, canRemoveCompleted, onmodechange, oncancel, onremovecompleted }: Props = $props();
+  let splitRoot = $state<HTMLDivElement | null>(null);
   let menuOpen = $state(false);
   let root: HTMLDivElement;
 
@@ -54,7 +56,7 @@
     <span>Remove all completed</span>
   </button>
 
-  <div class="bulk-cancel-split">
+  <div class="bulk-cancel-split" bind:this={splitRoot}>
     <button type="button" class="bulk-cancel-main" disabled={!canCancel} onclick={oncancel}>
       <Icon name="x" />
       <span>{buttonLabel}</span>
@@ -63,6 +65,7 @@
       type="button"
       class="bulk-cancel-menu-button"
       aria-label={`Choose cancel scope. Current: ${currentLabel}`}
+      aria-haspopup="menu"
       aria-expanded={menuOpen}
       onclick={() => (menuOpen = !menuOpen)}
     >
@@ -70,7 +73,7 @@
     </button>
 
     {#if menuOpen}
-      <div class="bulk-cancel-menu" role="menu" aria-label="Cancel scope">
+      <div class="bulk-cancel-menu" role="menu" aria-label="Cancel scope" use:anchoredMenu={{ anchor: splitRoot, align: 'end' }}>
         {#each options as option}
           <button
             type="button"

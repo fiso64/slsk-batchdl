@@ -5,6 +5,7 @@
   import type { UserLinkActions } from '../prototype/navigation';
   import { dashboardContractFor, dashboardData, emptyDashboardData, dashboardRangeIds, dashboardRangeLabels, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
   import { resourceStateForScenario } from '../prototype/resource-state';
+  import { humanizeStateValue, soulseekClientStatusLabel } from '../prototype/status';
 
   interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
   let { scenario, userActions }: Props = $props();
@@ -12,6 +13,9 @@
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'downloads' | 'uploads' | 'content' | 'errors'>('downloads');
   let data = $derived(scenario.id === 'empty' ? emptyDashboardData[range] : dashboardData[range]);
+  let daemonReachable = $derived(scenario.connection === 'connected');
+  let soulseekStatus = $derived(soulseekClientStatusLabel(scenario.soulseekClient, daemonReachable));
+  let daemonStatus = $derived(humanizeStateValue(scenario.connection));
   let resourceState = $derived(resourceStateForScenario(scenario.id, 'dashboard'));
   let contract = $derived(dashboardContractFor(range, { data, partialRetention: scenario.id === 'stress' }));
   let hasDownloadHistory = $derived(data.downloadMbps.some((value) => value > 0) || data.summary.downloadFiles > 0);
@@ -24,7 +28,6 @@
   let downloadRate = $derived(activeDownloads.reduce((sum, transfer) => sum + Number(transfer.progress.bytesPerSecond ?? 0), 0));
   let uploadRate = $derived(activeUploads.reduce((sum, transfer) => sum + Number(transfer.progress.bytesPerSecond ?? 0), 0));
   let queuedTransfers = $derived(activeTransfers.filter((transfer) => transfer.status.state === 'Queued').length);
-  let distinctPeers = $derived(new Set(scenario.snapshot.transfers.map((transfer) => transfer.identity.username)).size);
   let shareRatioSamples = $derived(data.uploadMbps.map((upload, index) => upload / Math.max(data.downloadMbps[index] ?? 0, 0.1)));
 
   function metricBarHeight(values: number[], value: number): number {
@@ -126,8 +129,8 @@
 
     <article class="dashboard-metric-card">
       <div class="metric-label"><span aria-hidden="true">◎</span> Distinct peers</div>
-      <strong>{distinctPeers}</strong>
-      <small>visible in current snapshot</small>
+      <strong>{data.summary.distinctPeers}</strong>
+      <small>across transfers in range</small>
     </article>
   </div>
 
@@ -217,8 +220,8 @@
       <section class="dashboard-panel health-panel">
         <div class="dashboard-panel-heading compact"><h2>Daemon health</h2><span class:offline={scenario.connection === 'offline'} class="health-badge"><i></i>{scenario.connection === 'connected' ? 'Healthy' : 'Offline'}</span></div>
         <div class="health-list">
-          <div><span>Soulseek</span><strong>{scenario.soulseek}</strong></div>
-          <div><span>Daemon</span><strong>{scenario.connection}</strong></div>
+          <div><span>Soulseek</span><strong>{soulseekStatus}</strong></div>
+          <div><span>Daemon</span><strong>{daemonStatus}</strong></div>
           <div><span>Transfer errors</span><strong>{scenario.snapshot.transfers.filter((transfer) => transfer.status.terminalOutcome === 'Failed').length} recent</strong></div>
           <div><span>API latency</span><strong>{scenario.connection === 'connected' ? '14 ms' : '—'}</strong></div>
         </div>

@@ -17,6 +17,7 @@
   import SearchConfigPanel from '../components/SearchConfigPanel.svelte';
   import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
   import Icon from '../components/Icon.svelte';
+  import { anchoredPopover } from '../lib/anchored-menu';
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
@@ -65,6 +66,9 @@
     view: SearchView;
     automaticJobs: AutomaticJobRecord[];
     activeJobId: string | null;
+    selected: Set<string>;
+    selectedAggregateGroups: Set<string>;
+    selectedAggregateFiles: Set<string>;
     userActions: UserLinkActions;
     onopenrecord: (record: SearchRecord) => void;
     onshowlist: () => void;
@@ -80,6 +84,9 @@
     view = $bindable(),
     automaticJobs = $bindable(),
     activeJobId = $bindable(),
+    selected = $bindable(new Set<string>()),
+    selectedAggregateGroups = $bindable(new Set<string>()),
+    selectedAggregateFiles = $bindable(new Set<string>()),
     userActions,
     onopenrecord,
     onshowlist,
@@ -91,8 +98,9 @@
   let filterText = $state('');
   let sort = $state<SearchSort>('relevance');
   let sizeDirection = $state<SizeSortDirection>('desc');
-  let selected = $state<Set<string>>(new Set());
   let conditionsOpen = $state(false);
+  let conditionsButton = $state<HTMLButtonElement | null>(null);
+  let conditionsPopover = $state<HTMLElement | null>(null);
   const JOB_HISTORY_PAGE_SIZE = 8;
 
   let resultPagesRequested = $state(1);
@@ -100,8 +108,6 @@
   let historyLimit = $state(JOB_HISTORY_PAGE_SIZE);
   let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
   let aggregateRepresentativeIds = $state<Record<string, string>>({});
-  let selectedAggregateGroups = $state<Set<string>>(new Set());
-  let selectedAggregateFiles = $state<Set<string>>(new Set());
   let aggregateOptionsGroupId = $state<string | null>(null);
   let albumRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: AlbumSearchResult }>>({});
   let genericRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: GenericDirectoryResult }>>({});
@@ -127,8 +133,6 @@
     historyLimit = JOB_HISTORY_PAGE_SIZE;
     mutation = { phase: 'idle' };
     aggregateRepresentativeIds = {};
-    selectedAggregateGroups = new Set();
-    selectedAggregateFiles = new Set();
     aggregateOptionsGroupId = null;
     albumRetrievalOverrides = {};
     genericRetrievalOverrides = {};
@@ -171,6 +175,9 @@
     searches = searches.filter((item) => item.id !== id);
     mutation = { phase: 'succeeded', label: 'Search removed' };
     if (activeJobId !== id) return;
+    selected = new Set();
+    selectedAggregateGroups = new Set();
+    selectedAggregateFiles = new Set();
     activeJobId = listEntries.find((entry) => entry.id !== id)?.id ?? null;
     view = 'list';
     onshowlist();
@@ -222,6 +229,9 @@
     automaticJobs = automaticJobs.filter((candidate) => !ids.has(candidate.id));
     mutation = { phase: 'succeeded', label: `${target.title} removed` };
     if (activeJobId && ids.has(activeJobId)) {
+      selected = new Set();
+      selectedAggregateGroups = new Set();
+      selectedAggregateFiles = new Set();
       activeJobId = null;
       view = 'list';
       onshowlist();
@@ -592,6 +602,7 @@
     if (event.key !== 'Escape') return;
     if (aggregateOptionsGroupId) aggregateOptionsGroupId = null;
     else if (downloadOptionsOpen) downloadOptionsOpen = false;
+    else if (conditionsOpen) conditionsOpen = false;
   }
 
   function currentResultProjection(record: SearchRecord) {
@@ -747,9 +758,17 @@
   function tierItemCount(groups: PeerGroup[]): number {
     return groups.reduce((total, group) => total + group.items.length, 0);
   }
+
+  function handleWindowPointerDown(event: PointerEvent): void {
+    if (!conditionsOpen) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (conditionsButton?.contains(target) || conditionsPopover?.contains(target)) return;
+    conditionsOpen = false;
+  }
 </script>
 
-<svelte:window onkeydown={handleWindowKeydown} />
+<svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
 
 <section class="page page-search redesigned-search-page">
   {#if view === 'list'}
@@ -759,7 +778,7 @@
     </header>
 
     {#if listResourceState.blocking}
-      <div class="empty-state"><strong>{listResourceState.title}</strong><p>{listResourceState.detail}</p></div>
+      <ResourceStateNotice state={listResourceState} />
     {:else}
       <ResourceStateNotice state={listResourceState} />
       <MutationStatus state={mutation} />
@@ -839,7 +858,7 @@
           <Icon name="search" />
           <span>Search again</span>
         </button>
-        <button type="button" class="delete-search-button" aria-label={`${searchIsActive(activeRecord) ? 'Cancel' : 'Delete'} ${activeRecord.displayQuery}`} title={searchIsActive(activeRecord) ? 'Cancel job' : 'Delete search'} onclick={() => handleSearchAction(activeRecord)}>
+        <button type="button" class:quiet-cancel={searchIsActive(activeRecord)} class="delete-search-button" aria-label={`${searchIsActive(activeRecord) ? 'Cancel' : 'Delete'} ${activeRecord.displayQuery}`} title={searchIsActive(activeRecord) ? 'Cancel job' : 'Delete search'} onclick={() => handleSearchAction(activeRecord)}>
           <Icon name={searchIsActive(activeRecord) ? 'x' : 'trash'} />
           <span>{searchIsActive(activeRecord) ? 'Cancel' : 'Delete'}</span>
         </button>
@@ -847,7 +866,7 @@
     </header>
 
     {#if resultState.blocking}
-      <div class="empty-state"><strong>{resultState.title}</strong><p>{resultState.detail}</p></div>
+      <ResourceStateNotice state={resultState} />
     {:else}
       <ResourceStateNotice state={resultState} />
       <MutationStatus state={mutation} />
@@ -856,7 +875,7 @@
       <div class="result-refine-row">
         <ResultFilterControl bind:value={filterText} placeholder={genericMode ? "Filter files or directories…" : "Filter results…"} ariaLabel="Filter search results" />
 
-        <button type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
+        <button bind:this={conditionsButton} type="button" class:active={conditionsOpen} class="edit-conditions-button" aria-expanded={conditionsOpen} onclick={() => (conditionsOpen = !conditionsOpen)}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h12"/><circle cx="8" cy="5" r="1.6"/><circle cx="13" cy="10" r="1.6"/><circle cx="7" cy="15" r="1.6"/></svg>
           Filtering
         </button>
@@ -900,8 +919,12 @@
       {/if}
 
       {#if conditionsOpen}
-        <button type="button" class="results-config-backdrop" aria-label="Close search configuration" onclick={() => (conditionsOpen = false)}></button>
-        <section class="search-config-popover results-config-popover" aria-label="Result search configuration">
+        <section
+          bind:this={conditionsPopover}
+          class="search-config-popover results-config-popover"
+          aria-label="Result search configuration"
+          use:anchoredPopover={{ anchor: conditionsButton, align: 'start', gap: 8, viewportMargin: 16, minHeight: 240 }}
+        >
           <SearchConfigPanel mode={activeMode} bind:conditions={activeRecord.conditions} title="Search configuration" initialTab="conditions" onclose={() => (conditionsOpen = false)} />
         </section>
       {/if}

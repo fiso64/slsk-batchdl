@@ -11,6 +11,7 @@
   import SearchConditionPills from './SearchConditionPills.svelte';
   import ModeIconToggle from './ModeIconToggle.svelte';
   import SearchConfigPanel from './SearchConfigPanel.svelte';
+  import Icon from './Icon.svelte';
 
   interface Props {
     variant?: 'content' | 'user';
@@ -326,7 +327,7 @@
         {/if}
       </div>
 
-      <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}>•••</button>
+      <button type="button" class:active={settingsOpen} class="search-settings-button" aria-label="Search configuration" aria-expanded={settingsOpen} onclick={toggleSettings}><Icon name="sliders" /></button>
     {/if}
   </div>
 
@@ -335,7 +336,12 @@
   {/if}
 
   {#if variant === 'content' && settingsOpen}
-    <section class="search-config-popover" aria-label="Search configuration" style={`top: ${54 + 8 + (conditionOverlayVisible ? conditionOverlayHeight + 8 : 0)}px`}>
+    {@const configurationTop = 54 + 8 + (conditionOverlayVisible ? conditionOverlayHeight + 8 : 0)}
+    <section
+      class="search-config-popover"
+      aria-label="Search configuration"
+      style={`top: ${configurationTop}px; max-height: calc(100dvh - 9px - ${configurationTop}px - 16px)`}
+    >
       <SearchConfigPanel mode={value.resultMode} bind:conditions onclose={() => (settingsOpen = false)} />
     </section>
   {/if}

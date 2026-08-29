@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import type { AppIconName } from '../prototype/icons';
+  import { anchoredMenu } from '../lib/anchored-menu';
 
   export type ModeIconOption = {
     value: string;
@@ -18,7 +19,7 @@
 
   let { value, options, ariaLabel, onchange, onopenchange }: Props = $props();
   let menuOpen = $state(false);
-  let root: HTMLDivElement;
+  let root = $state<HTMLDivElement | null>(null);
 
   let current = $derived(options.find((option) => option.value === value) ?? options[0]);
 
@@ -67,7 +68,7 @@
   </button>
 
   {#if menuOpen}
-    <div class="mode-icon-menu" role="menu" aria-label={ariaLabel}>
+    <div class="mode-icon-menu" role="menu" aria-label={ariaLabel} use:anchoredMenu={{ anchor: root, align: 'start', gap: 7 }}>
       {#each options as option}
         <button
           type="button"

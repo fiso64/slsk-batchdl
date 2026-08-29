@@ -41,6 +41,7 @@ export interface DashboardRangeData {
     downloadFiles: number;
     uploaded: string;
     uploadFiles: number;
+    distinctPeers: number;
     shareRatio: string;
     ratioDelta: string;
   };
@@ -150,7 +151,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'Peer disconnected', count: 3, lastSeen: '31m ago' },
       { error: 'Transfer timed out', count: 1, lastSeen: '4h ago' },
     ], 2),
-    summary: { downloaded: '1.46 GB', downloadFiles: 18, uploaded: '5.72 GB', uploadFiles: 143, shareRatio: '3.92', ratioDelta: '+0.18' },
+    summary: { downloaded: '1.46 GB', downloadFiles: 18, uploaded: '5.72 GB', uploadFiles: 143, distinctPeers: 54, shareRatio: '3.92', ratioDelta: '+0.18' },
   },
   '7d': {
     label: 'Last 7 days',
@@ -184,7 +185,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'Connection failed', count: 5, lastSeen: '1d ago' },
       { error: 'File unavailable', count: 2, lastSeen: '3d ago' },
     ], 6),
-    summary: { downloaded: '18.7 GB', downloadFiles: 231, uploaded: '42.9 GB', uploadFiles: 1094, shareRatio: '2.29', ratioDelta: '+0.07' },
+    summary: { downloaded: '18.7 GB', downloadFiles: 231, uploaded: '42.9 GB', uploadFiles: 1094, distinctPeers: 168, shareRatio: '2.29', ratioDelta: '+0.07' },
   },
   '30d': {
     label: 'Last 30 days',
@@ -219,7 +220,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'File unavailable', count: 15, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 7, lastSeen: '9d ago' },
     ], 12),
-    summary: { downloaded: '76.4 GB', downloadFiles: 926, uploaded: '192 GB', uploadFiles: 4682, shareRatio: '2.51', ratioDelta: '+0.24' },
+    summary: { downloaded: '76.4 GB', downloadFiles: 926, uploaded: '192 GB', uploadFiles: 4682, distinctPeers: 512, shareRatio: '2.51', ratioDelta: '+0.24' },
   },
   '90d': {
     label: 'Last 90 days',
@@ -254,7 +255,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'File unavailable', count: 46, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 19, lastSeen: '9d ago' },
     ], 18),
-    summary: { downloaded: '238 GB', downloadFiles: 2908, uploaded: '621 GB', uploadFiles: 14834, shareRatio: '2.61', ratioDelta: '+0.39' },
+    summary: { downloaded: '238 GB', downloadFiles: 2908, uploaded: '621 GB', uploadFiles: 14834, distinctPeers: 1248, shareRatio: '2.61', ratioDelta: '+0.39' },
   },
   '1y': {
     label: 'Last 1 year',
@@ -289,7 +290,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'File unavailable', count: 207, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 91, lastSeen: '9d ago' },
     ], 42),
-    summary: { downloaded: '1.12 TB', downloadFiles: 13820, uploaded: '2.78 TB', uploadFiles: 67422, shareRatio: '2.48', ratioDelta: '+0.31' },
+    summary: { downloaded: '1.12 TB', downloadFiles: 13820, uploaded: '2.78 TB', uploadFiles: 67422, distinctPeers: 3912, shareRatio: '2.48', ratioDelta: '+0.31' },
   },
   all: {
     label: 'All retained history',
@@ -324,7 +325,7 @@ export const dashboardData: Record<DashboardRangeId, DashboardRangeData> = {
       { error: 'File unavailable', count: 514, lastSeen: '3d ago' },
       { error: 'File no longer shared', count: 226, lastSeen: '9d ago' },
     ], 78),
-    summary: { downloaded: '2.46 TB', downloadFiles: 30418, uploaded: '6.91 TB', uploadFiles: 164307, shareRatio: '2.81', ratioDelta: '+0.00' },
+    summary: { downloaded: '2.46 TB', downloadFiles: 30418, uploaded: '6.91 TB', uploadFiles: 164307, distinctPeers: 7264, shareRatio: '2.81', ratioDelta: '+0.00' },
   },
 };
 
@@ -344,6 +345,7 @@ function emptyDashboardRange(range: DashboardRangeId): DashboardRangeData {
       downloadFiles: 0,
       uploaded: '0 B',
       uploadFiles: 0,
+      distinctPeers: 0,
       shareRatio: '—',
       ratioDelta: '+0.00',
     },
@@ -388,7 +390,7 @@ export function dashboardContractFor(
   const shareRatio = Number(data.summary.shareRatio);
   const ratioDelta = Number(data.summary.ratioDelta);
   return {
-    contract: 'proposed-dashboard-analytics-v1',
+    contract: 'proposed-dashboard-analytics-v2',
     range: { ...dashboardRangeContracts[range], partialRetention },
     semantics: {
       peerBytes: 'terminal-and-progress-transfer-by-direction-and-remote-username',
@@ -396,6 +398,7 @@ export function dashboardContractFor(
       contentIdentity: 'logical-download-source-path',
       errorPopulation: 'terminal-transfer-attempt-failures',
       shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes',
+      distinctPeers: 'unique-remote-usernames-across-both-directions-in-range',
     },
     downloadMbps: data.downloadMbps,
     uploadMbps: data.uploadMbps,
@@ -406,6 +409,7 @@ export function dashboardContractFor(
     summary: {
       downloadedBytes: decimalBytes(data.summary.downloaded), downloadedFiles: data.summary.downloadFiles,
       uploadedBytes: decimalBytes(data.summary.uploaded), uploadedFiles: data.summary.uploadFiles,
+      distinctPeers: data.summary.distinctPeers,
       shareRatio: Number.isFinite(shareRatio) ? shareRatio : null,
       comparisonShareRatio: dashboardRangeContracts[range].comparisonStartUtc && Number.isFinite(shareRatio) && Number.isFinite(ratioDelta)
         ? Math.max(0, shareRatio - ratioDelta)

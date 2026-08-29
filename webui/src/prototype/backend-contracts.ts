@@ -25,7 +25,7 @@ export interface PrototypeMutationState {
  * implementation cannot silently change what the numbers count.
  */
 export interface ProposedDashboardAnalyticsDto {
-  contract: 'proposed-dashboard-analytics-v1';
+  contract: 'proposed-dashboard-analytics-v2';
   range: {
     startUtc: string;
     endUtc: string;
@@ -40,6 +40,7 @@ export interface ProposedDashboardAnalyticsDto {
     contentIdentity: 'logical-download-source-path';
     errorPopulation: 'terminal-transfer-attempt-failures';
     shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes';
+    distinctPeers: 'unique-remote-usernames-across-both-directions-in-range';
   };
   downloadMbps: number[];
   uploadMbps: number[];
@@ -75,6 +76,7 @@ export interface ProposedDashboardSummaryDto {
   downloadedFiles: number;
   uploadedBytes: number;
   uploadedFiles: number;
+  distinctPeers: number;
   shareRatio: number | null;
   comparisonShareRatio: number | null;
 }

@@ -43,7 +43,7 @@
 
   let { onclose, onstart }: Props = $props();
 
-  let draft = $state<NewJobDraft>({ ...emptyNewJobDraft, artist: 'Autechre', title: 'Gantz Graf' });
+  let draft = $state<NewJobDraft>({ ...emptyNewJobDraft });
   let preview = $state<JobPreviewPlan | null>(null);
   let selectedLeaves = $state<Set<string>>(new Set());
   let filteringOpen = $state(false);
@@ -134,8 +134,8 @@
     csvMappingOpen = false;
     importOptionsOpen = false;
     draft.uploadedFileType = '';
-    if (value === 'song') Object.assign(draft, { artist: 'Autechre', title: 'Gantz Graf', album: '' });
-    else if (value === 'album') Object.assign(draft, { artist: 'Nujabes', album: 'Modal Soul', title: '' });
+    if (value === 'song') Object.assign(draft, { artist: '', title: '', album: '' });
+    else if (value === 'album') Object.assign(draft, { artist: '', album: '', title: '' });
     else if (isInlineSourceChoice(value)) {
       if (value === 'spotify') draft.spotifyInput = 'url';
       draft.source = sourcePreset(value);
@@ -311,11 +311,11 @@
 
           <div class="new-job-config">
           {#if draft.choice === 'song'}
-            <label><span>Artist <small>(optional)</small></span><input value={draft.artist} oninput={(event) => setField('artist', (event.currentTarget as HTMLInputElement).value)} /></label>
-            <label><span>Title</span><input value={draft.title} oninput={(event) => setField('title', (event.currentTarget as HTMLInputElement).value)} /></label>
+            <label><span>Artist <small>(optional)</small></span><input value={draft.artist} placeholder="Artist…" oninput={(event) => setField('artist', (event.currentTarget as HTMLInputElement).value)} /></label>
+            <label><span>Title</span><input value={draft.title} placeholder="Song title…" oninput={(event) => setField('title', (event.currentTarget as HTMLInputElement).value)} /></label>
           {:else if draft.choice === 'album'}
-            <label><span>Artist <small>(optional)</small></span><input value={draft.artist} oninput={(event) => setField('artist', (event.currentTarget as HTMLInputElement).value)} /></label>
-            <label><span>Album</span><input value={draft.album} oninput={(event) => setField('album', (event.currentTarget as HTMLInputElement).value)} /></label>
+            <label><span>Artist <small>(optional)</small></span><input value={draft.artist} placeholder="Artist…" oninput={(event) => setField('artist', (event.currentTarget as HTMLInputElement).value)} /></label>
+            <label><span>Album</span><input value={draft.album} placeholder="Album title…" oninput={(event) => setField('album', (event.currentTarget as HTMLInputElement).value)} /></label>
           {:else if isInlineSourceChoice(draft.choice)}
             {#if draft.choice === 'spotify'}
               <div class="new-job-source-mode">

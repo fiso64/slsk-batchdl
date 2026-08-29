@@ -6,6 +6,7 @@
   import type { PrototypeSearchConditions } from '../prototype/search-config';
   import type { UserBrowseDraft } from '../prototype/users';
   import { chatRuntimeForScenario } from '../prototype/chat';
+  import { humanizeStateValue, soulseekClientStatusLabel } from '../prototype/status';
   import GlobalSearch from './GlobalSearch.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -45,6 +46,9 @@
   let uploadCount = $derived(currentTransfers.filter((transfer) => transfer.identity.direction === 'upload').length);
   let chatRuntime = $derived(chatRuntimeForScenario(scenarioId));
   let unreadChats = $derived(Number(chatRuntime.unreadPrivateMessageCount) + Number(chatRuntime.unreadRoomMessageCount));
+  let daemonReachable = $derived(scenario.connection === 'connected');
+  let soulseekStatus = $derived(soulseekClientStatusLabel(scenario.soulseekClient, daemonReachable));
+  let daemonStatus = $derived(humanizeStateValue(scenario.connection));
 </script>
 
 <div class="app-shell">
@@ -73,14 +77,14 @@
 
     <div class="connection-status" aria-label="Connection status">
       <div>
-        <span class:warning={scenario.soulseek === 'connecting'} class:offline={scenario.soulseek === 'disconnected'} class="status-dot"></span>
+        <span class:warning={daemonReachable && !scenario.soulseekClient.isReady} class:offline={!daemonReachable} class="status-dot"></span>
         <span>Soulseek</span>
-        <strong>{scenario.soulseek}</strong>
+        <strong>{soulseekStatus}</strong>
       </div>
       <div>
-        <span class:offline={scenario.connection === 'offline'} class="status-dot"></span>
+        <span class:offline={!daemonReachable} class="status-dot"></span>
         <span>Daemon</span>
-        <strong>{scenario.connection === 'connected' ? 'local' : 'offline'}</strong>
+        <strong>{daemonStatus}</strong>
       </div>
     </div>
 

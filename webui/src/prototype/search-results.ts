@@ -943,10 +943,16 @@ function conditionsFor(mode: SearchResultMode, variant: 'default' | 'simple' | '
   if (variant === 'default' && family === 'album') {
     // Album mode demonstrates coverage semantics: FLAC determines whether an album
     // is acceptable, but ancillary artwork remains part of an accepted folder.
+    // This saved-search fixture also prefers FLAC so its default result view visibly
+    // demonstrates the Preferred tier rather than requiring a ranking edit first.
     conditions.common.formats = ['FLAC'];
+    conditions.ranking.common.formats = ['FLAC'];
   } else if (variant === 'aphex' && family === 'track') {
     // Track mode uses the same format condition as an individual-file predicate.
+    // Keep the fixture ranking aligned with that condition so one obvious matching
+    // result lands in Preferred under the saved search's default configuration.
     conditions.common.formats = ['FLAC'];
+    conditions.ranking.common.formats = ['FLAC'];
   }
   return conditions;
 }

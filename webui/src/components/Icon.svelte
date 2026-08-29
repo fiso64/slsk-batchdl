@@ -43,6 +43,13 @@
   {:else if name === 'settings'}
     <circle cx="12" cy="12" r="3" />
     <path d="M19 12a7.5 7.5 0 0 0-.1-1l2-1.5-2-3.4-2.5 1a8 8 0 0 0-1.8-1L14.2 3h-4.4l-.4 3.1a8 8 0 0 0-1.8 1l-2.5-1-2 3.4 2 1.5a7.5 7.5 0 0 0 0 2l-2 1.5 2 3.4 2.5-1a8 8 0 0 0 1.8 1l.4 3.1h4.4l.4-3.1a8 8 0 0 0 1.8-1l2.5 1 2-3.4-2-1.5a7.5 7.5 0 0 0 .1-1z" />
+  {:else if name === 'sliders'}
+    <path d="M4 6h4M12 6h8" />
+    <circle cx="10" cy="6" r="2" />
+    <path d="M4 12h10M18 12h2" />
+    <circle cx="16" cy="12" r="2" />
+    <path d="M4 18h2M10 18h10" />
+    <circle cx="8" cy="18" r="2" />
   {:else if name === 'trash'}
     <path d="M5 7h14" />
     <path d="M9 7V4.5h6V7" />

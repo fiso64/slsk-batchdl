@@ -120,9 +120,7 @@
 
   <div class="transfer-resource-state">{#if !resourceState.blocking}<ResourceStateNotice state={resourceState} />{/if}<MutationStatus state={mutation} /></div>
 
-  {#if scenario.connection === 'offline'}
-    <div class="empty-state"><strong>Daemon unavailable</strong><p>Current upload state cannot be loaded while the daemon is offline.</p></div>
-  {:else if resourceState.blocking}
+  {#if resourceState.blocking}
     <ResourceStateNotice state={resourceState} />
   {:else if uploadCount === 0}
     <div class="empty-state"><strong>No uploads</strong><p>Uploads will appear here as peers request shared files.</p></div>

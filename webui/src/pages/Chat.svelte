@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../components/Icon.svelte';
+  import { anchoredMenu } from '../lib/anchored-menu';
   import LinkifiedText from '../components/LinkifiedText.svelte';
   import UsernameLink from '../components/UsernameLink.svelte';
   import LoadMoreButton from '../components/LoadMoreButton.svelte';
@@ -304,14 +305,14 @@
           <div class="chat-thread-identity"><strong>#{activeRoom.name}</strong><small>{activeRoom.kind === 'private' ? 'Private room' : 'Public room'} · {activeRoom.memberCount.toLocaleString()} users · {activeRoom.rosterComplete ? 'roster complete' : 'roster partial'}{activeRoom.phase !== 'Joined' ? ` · ${activeRoom.phase}` : ''}</small></div>
         {/if}
         <div class="chat-thread-options" bind:this={chatOptionsElement}>
-          <button type="button" class="chat-options-button" aria-label="Chat options" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}><Icon name="more" /></button>
-          {#if menuOpen}<div class="chat-options-menu">{#if activeConversation || activeDraft}<button type="button" onclick={blockActiveUser}>{activeUserBlocked ? 'Unblock user' : 'Block user'}</button>{#if activeConversation}<button type="button" class="danger" onclick={deleteActiveConversation}>Delete chat</button>{/if}{:else if activeRoom}<button type="button" class="danger" onclick={leaveActiveRoom}>Leave room</button>{/if}</div>{/if}
+          <button type="button" class="chat-options-button" aria-label="Chat options" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}><Icon name="more" /></button>
+          {#if menuOpen}<div class="chat-options-menu" role="menu" aria-label="Chat options" use:anchoredMenu={{ anchor: chatOptionsElement, align: 'end' }}>{#if activeConversation || activeDraft}<button type="button" role="menuitem" onclick={blockActiveUser}>{activeUserBlocked ? 'Unblock user' : 'Block user'}</button>{#if activeConversation}<button type="button" role="menuitem" class="danger" onclick={deleteActiveConversation}>Delete chat</button>{/if}{:else if activeRoom}<button type="button" role="menuitem" class="danger" onclick={leaveActiveRoom}>Leave room</button>{/if}</div>{/if}
         </div>
       </header>
 
       <div class="chat-resource-state"><MutationStatus state={mutation} /></div>
 
-      <div class="chat-messages" aria-live="polite" bind:this={messagesElement}>
+      <div class:short-thread={activeMessages.length < 6} class="chat-messages" aria-live="polite" bind:this={messagesElement}>
         {#if (activeRoom?.hasEarlierMessages || activeConversation?.hasEarlierMessages)}<LoadMoreButton label="Load earlier messages" onclick={loadEarlierMessages} />{/if}
         {#if activeMessages.length === 0}
           <div class="chat-empty-thread"><strong>{activeDraft ? 'New chat' : 'No messages yet'}</strong></div>

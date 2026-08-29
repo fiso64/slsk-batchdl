@@ -259,13 +259,7 @@
   {:else}
     {@const visibleRows = visibleShareRows(shareProjection.rows)}
     {#if sharesState.blocking}
-      {#if sharesState.phase === 'loading'}
-        <ResourceStateNotice state={sharesState} />
-      {:else}
-        <div class="empty-state">
-          <strong>{sharesState.title}</strong><p>{sharesState.detail}</p>
-        </div>
-      {/if}
+      <ResourceStateNotice state={sharesState} />
     {:else}
       <ResourceStateNotice state={sharesState} />
       <MutationStatus state={mutation} />
