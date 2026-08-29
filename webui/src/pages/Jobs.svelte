@@ -11,8 +11,7 @@
   import FolderItemCard from '../components/items/FolderItemCard.svelte';
   import PeerItemGroup from '../components/items/PeerItemGroup.svelte';
   import NewJobComposer from '../components/jobs/NewJobComposer.svelte';
-  import JobCompactRow from '../components/jobs/JobCompactRow.svelte';
-  import JobTypeBadge from '../components/jobs/JobTypeBadge.svelte';
+  import JobsHistoryList from '../components/jobs/JobsHistoryList.svelte';
   import AutomaticJobDetail from '../components/jobs/AutomaticJobDetail.svelte';
   import SearchConfigPanel from '../components/SearchConfigPanel.svelte';
   import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
@@ -20,15 +19,14 @@
   import { anchoredPopover } from '../lib/anchored-menu';
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { ScenarioId } from '../mock/types';
-  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
+  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/state';
+  import type { ProposedJobHistoryArchiveRequestDto } from '../prototype/contracts/jobs';
   import { buildSubmissionOptions, createPrototypeDownloadOptions, downloadOptionsCustomized, type DownloadOptionCapabilities } from '../prototype/download-options';
   import type { SearchDraft } from '../prototype/search';
   import { isAggregateSearchMode, searchModeFamily, searchModeLabel } from '../prototype/search';
   import type { UserLinkActions } from '../prototype/navigation';
   import {
-    extractSourceLabel,
     isAutomaticJobActive,
-    isSemanticRoot,
     presentationChildren,
     presentationParent,
     presentationTarget,
@@ -101,11 +99,8 @@
   let conditionsOpen = $state(false);
   let conditionsButton = $state<HTMLButtonElement | null>(null);
   let conditionsPopover = $state<HTMLElement | null>(null);
-  const JOB_HISTORY_PAGE_SIZE = 8;
-
   let resultPagesRequested = $state(1);
   let projectionRequestKey = '';
-  let historyLimit = $state(JOB_HISTORY_PAGE_SIZE);
   let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
   let aggregateRepresentativeIds = $state<Record<string, string>>({});
   let aggregateOptionsGroupId = $state<string | null>(null);
@@ -117,20 +112,12 @@
 
   let activeRecord = $derived(searches.find((item) => item.id === activeJobId) ?? null);
   let activeAutomaticJob = $derived(automaticJobs.find((item) => item.id === activeJobId) ?? null);
-  let automaticRoots = $derived(automaticJobs.filter((job) => isSemanticRoot(job, automaticJobs)));
-  let listEntries = $derived([
-    ...searches.map((record) => ({ type: 'search' as const, id: record.id, createdAtUtc: record.createdAtUtc, record })),
-    ...automaticRoots.map((root) => ({ type: 'automatic' as const, id: root.id, createdAtUtc: root.createdAtUtc, root, job: presentationTarget(root, automaticJobs) })),
-  ].sort((a, b) => b.createdAtUtc.localeCompare(a.createdAtUtc)));
-
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
   let aggregateMode = $derived(isAggregateSearchMode(activeMode));
   let genericMode = $derived(activeMode === 'generic');
-  let listResourceState = $derived(resourceStateForScenario(scenarioId, 'search-list'));
 
   $effect(() => {
     scenarioId;
-    historyLimit = JOB_HISTORY_PAGE_SIZE;
     mutation = { phase: 'idle' };
     aggregateRepresentativeIds = {};
     aggregateOptionsGroupId = null;
@@ -169,7 +156,7 @@
   }
 
   function removeSearch(id: string): void {
-    const request: ProposedHistoryDeleteRequestDto = { resourceKind: 'job', resourceIds: [id], semantics: 'archive-from-history' };
+    const request: ProposedJobHistoryArchiveRequestDto = { jobIds: [id], semantics: 'archive-from-history' };
     void request;
     mutation = { phase: 'pending', label: 'Removing search history…' };
     searches = searches.filter((item) => item.id !== id);
@@ -178,7 +165,7 @@
     selected = new Set();
     selectedAggregateGroups = new Set();
     selectedAggregateFiles = new Set();
-    activeJobId = listEntries.find((entry) => entry.id !== id)?.id ?? null;
+    activeJobId = null;
     view = 'list';
     onshowlist();
   }
@@ -223,7 +210,7 @@
     const target = presentationTarget(job, automaticJobs);
     const isRoot = presentationParent(target, automaticJobs) === null;
     const ids = isRoot ? new Set(automaticJobs.filter((candidate) => candidate.workflowId === target.workflowId).map((candidate) => candidate.id)) : automaticSubtreeIds(target);
-    const request: ProposedHistoryDeleteRequestDto = { resourceKind: 'job', resourceIds: [...ids], semantics: 'archive-from-history' };
+    const request: ProposedJobHistoryArchiveRequestDto = { jobIds: [...ids], semantics: 'archive-from-history' };
     void request;
     mutation = { phase: 'pending', label: `Removing ${target.title}…` };
     automaticJobs = automaticJobs.filter((candidate) => !ids.has(candidate.id));
@@ -777,60 +764,16 @@
       <button type="button" class="new-job-button" onclick={() => (newJobOpen = !newJobOpen)}><span>+</span> New job</button>
     </header>
 
-    {#if listResourceState.blocking}
-      <ResourceStateNotice state={listResourceState} />
-    {:else}
-      <ResourceStateNotice state={listResourceState} />
-      <MutationStatus state={mutation} />
-    <div class="search-history-list mixed-job-history-list">
-      {#each listEntries.slice(0, historyLimit) as entry (entry.id)}
-        {#if entry.type === 'search'}
-          {@const record = entry.record}
-          <div class="search-history-row">
-            <button type="button" class="search-history-open" onclick={() => openSearch(record)}>
-              <span class="search-history-query">{record.displayQuery}</span>
-              <span class={`search-status-badge ${record.status}`}><i></i>{statusLabel(record.status)}</span>
-              <span class="search-history-context">
-                <JobTypeBadge icon={record.draft.resultMode} label={searchModeLabel(record.draft.resultMode)} tone="search" />
-                <span class="stat-separator">·</span>
-                <span>{record.when}</span>
-              </span>
-              <span class="search-history-stats">
-                {#if isAggregateSearchMode(record.draft.resultMode)}
-                  <span><strong>{record.aggregateGroupCount ?? 0}</strong> groups</span>
-                  <span class="stat-separator">·</span>
-                {/if}
-                <span><strong>{record.foundFiles}</strong> files</span>
-                <span class="stat-separator">·</span>
-                <span><strong>{record.lockedFiles}</strong> locked</span>
-                <span class="stat-separator">·</span>
-                <span><strong>{record.distinctPeers}</strong> peers</span>
-              </span>
-            </button>
-            <button type="button" class="search-history-remove" aria-label={`${searchIsActive(record) ? 'Cancel' : 'Remove'} ${record.displayQuery}`} title={searchIsActive(record) ? 'Cancel' : 'Remove'} onclick={() => handleSearchAction(record)}>
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
-            </button>
-          </div>
-        {:else}
-          <JobCompactRow
-            job={entry.job}
-            allJobs={automaticJobs}
-            titleOverride={entry.root.title}
-            contextOverride={entry.root.kind === 'extract' ? `${extractSourceLabel(entry.root.payload.sourceType)} import` : undefined}
-            typeToneOverride={entry.root.kind === 'extract' ? 'import' : undefined}
-            whenOverride={entry.root.when}
-            onclick={() => onopenjob(entry.job)}
-            onaction={() => handleAutomaticJobAction(entry.job)}
-          />
-        {/if}
-      {:else}
-        <div class="empty-state">No jobs yet.</div>
-      {/each}
-    </div>
-    {#if listEntries.length > historyLimit}
-      <LoadMoreButton label="Load earlier jobs" onclick={() => (historyLimit = Math.min(listEntries.length, historyLimit + JOB_HISTORY_PAGE_SIZE))} />
-    {/if}
-    {/if}
+    <JobsHistoryList
+      {scenarioId}
+      {searches}
+      {automaticJobs}
+      {mutation}
+      onopenrecord={openSearch}
+      {onopenjob}
+      onsearchaction={handleSearchAction}
+      onautomaticjobaction={handleAutomaticJobAction}
+    />
   {:else if activeRecord}
     {@const resultState = resultResourceState(activeRecord)}
     {@const aggregateResults = aggregateMode ? aggregateGroups(activeRecord) : []}

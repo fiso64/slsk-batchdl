@@ -6,7 +6,8 @@
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
-  import type { PrototypeMutationState, ProposedBulkActionRequestDto, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
+  import type { PrototypeMutationState } from '../prototype/state';
+  import type { ProposedBulkActionRequestDto, ProposedTransferHistoryArchiveRequestDto } from '../prototype/contracts/transfers';
   import type { FolderItemFile, TransferPresentation } from '../prototype/items';
   import { resourceStateForScenario } from '../prototype/resource-state';
   import { uploadsForScenario, type UploadEntry, type UploadFolderEntry } from '../prototype/uploads';
@@ -62,10 +63,11 @@
     mutation = { phase: 'pending', label: 'Removing upload history…' };
     if (item.kind === 'file') {
       if (!isTerminalTransfer(item.transfer)) return;
-      const request: ProposedHistoryDeleteRequestDto = { resourceKind: 'upload-transfer', resourceIds: [item.id], semantics: 'archive-from-history' }; void request;
+      const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' }; void request;
       removeTransfer(item.id);
     } else {
       if (!isTerminalTransfer(item.transfer)) return;
+      const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' }; void request;
       const next = new Set(removedTransfers); for (const file of item.files) next.add(file.id); removedTransfers = next;
     }
     mutation = { phase: 'succeeded', label: 'Removed from history' };
@@ -80,6 +82,7 @@
   function removeFolderFile(entry: TransferTimelineFolderEntry, file: FolderItemFile): void {
     const folder = entry as UploadFolderEntry;
     if (!folder.files.some((candidate) => candidate.id === file.id) || !isTerminalTransfer(file.transfer)) return;
+    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'upload', transferIds: [file.id], semantics: 'archive-from-history' }; void request;
     mutation = { phase: 'pending', label: 'Removing upload history…' }; removeTransfer(file.id); mutation = { phase: 'succeeded', label: 'Removed from history' };
   }
 

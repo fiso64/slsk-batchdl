@@ -1,7 +1,9 @@
 import type { components } from '../api/generated';
 import type { ScenarioId } from '../mock/types';
 import { prototypeNumericId, prototypeUuid } from './ids';
-import type { PrototypeDataLifetime, ProposedShareTreeFilterRequestDto } from './backend-contracts';
+import type { PrototypeDataLifetime } from './state';
+import type { ProposedShareTreeFilterRequestDto } from './contracts/users';
+import { extension as fileExtension } from './file-types';
 
 export type UserProfileDto = components['schemas']['UserProfileDto'];
 export type UserBrowseDto = components['schemas']['UserBrowseDto'];
@@ -32,6 +34,7 @@ export interface UserShareFile {
   id: string;
   name: string;
   sizeBytes: number;
+  extension?: string | null;
   visibility?: ShareVisibility;
 }
 
@@ -75,6 +78,7 @@ export interface ShareTreeRow {
   parentDirectoryId?: string;
   directoryId?: string;
   fileId?: string;
+  extension?: string | null;
   visibility: ShareVisibility;
 }
 
@@ -89,7 +93,7 @@ const MB = 1_000_000;
 const GB = 1_000_000_000;
 
 function file(id: string, name: string, sizeMb: number, visibility: ShareVisibility = 'public'): UserShareFile {
-  return { id, name, sizeBytes: Math.round(sizeMb * MB), visibility };
+  return { id, name, sizeBytes: Math.round(sizeMb * MB), extension: fileExtension(name) || null, visibility };
 }
 
 function stableNumber(value: string): number {
@@ -368,7 +372,7 @@ function materializeFixture(id: ScenarioId, raw: RawUserBrowseFixture): UserBrow
   }));
   const fileDtos: BrowseFileEntryDto[] = rows.filter((row) => row.kind === 'file').map((row) => ({
     fileId: row.fileId!, directoryId: row.parentDirectoryId ?? '0', visibility: row.visibility,
-    file: { name: row.name, size: row.sizeBytes, extension: row.name.includes('.') ? row.name.split('.').at(-1) ?? null : null, bitRate: null, bitDepth: null, sampleRate: null, length: null, attributes: null },
+    file: { name: row.name, size: row.sizeBytes, extension: row.extension ?? (fileExtension(row.name) || null), bitRate: null, bitDepth: null, sampleRate: null, length: null, attributes: null },
   }));
   const result: UserBrowseFixture = { ...raw, profileDto, browseDto, directoryDtos, fileDtos, profileLifetime: 'live-only', browseLifetime: id === 'stress' ? 'expired' : id === 'loading' || id === 'busy' ? 'live' : 'retained' };
   materializedFixtures.set(key, result);
@@ -498,7 +502,7 @@ export function flattenShareTree(folders: readonly UserShareFolder[]): ShareTree
       sizeBytes += item.sizeBytes;
       rows.push({
         kind: 'file', id: fileRowId, name: item.name, path: filePath, depth: depth + 1, sizeBytes: item.sizeBytes,
-        fileIds: [fileRowId], parentFolderIds: nextParents, parentDirectoryId: directoryId, fileId, visibility: item.visibility ?? 'public',
+        fileIds: [fileRowId], parentFolderIds: nextParents, parentDirectoryId: directoryId, fileId, extension: item.extension ?? null, visibility: item.visibility ?? 'public',
       });
     }
 

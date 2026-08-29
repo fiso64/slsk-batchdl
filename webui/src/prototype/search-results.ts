@@ -2,13 +2,14 @@ import type { components } from '../api/generated';
 import type { SearchDraft, SearchResultMode } from './search';
 import { isAggregateSearchMode, searchModeFamily } from './search';
 import type { AudioAttributes, ItemPeerInfo } from './items';
-import { basename, extension } from './items';
+import { basename } from './items';
+import { extension, isAudioFilePath } from './file-types';
+import type { PrototypeDataLifetime } from './state';
 import type {
-  PrototypeDataLifetime,
   ProposedGenericDirectoryRetrievalRequestDto,
   ProposedPreferredResultDto,
   ProposedSearchResultProjectionRequestDto,
-} from './backend-contracts';
+} from './contracts/search';
 import { prototypeUuid } from './ids';
 import {
   cloneSearchConditions,
@@ -659,9 +660,6 @@ function numeric(value: number | string | null | undefined): number | undefined 
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function isAudioPath(path: string): boolean {
-  return ['FLAC', 'MP3', 'OGG', 'OPUS', 'M4A', 'WAV', 'AAC', 'APE'].includes(extension(path));
-}
 
 function fileMatchesPatch(
   record: SearchRecord,
@@ -678,7 +676,7 @@ function fileMatchesPatch(
   if (formats.length && !formats.includes(extension(path))) return false;
   if (allowed.length && !allowed.includes(result.peer.username)) return false;
   if (banned.includes(result.peer.username)) return false;
-  if (patch.acceptMissingProps === false && isAudioPath(path) && !audio) return false;
+  if (patch.acceptMissingProps === false && isAudioFilePath(path) && !audio) return false;
 
   const bitrate = audio?.bitrateKbps;
   const sampleRate = audio?.sampleRateHz;
@@ -733,7 +731,7 @@ function matchesNecessaryProjection(
   }
 
   const folderPatch = request.search.necessaryFolderCond;
-  const audioFiles = result.files.filter((file) => isAudioPath(file.relativePath));
+  const audioFiles = result.files.filter((file) => isAudioFilePath(file.relativePath));
   const matchingFiles = audioFiles.filter((file) => fileMatchesPatch(record, result, file.relativePath, file.audio, request.search.necessaryCond));
   const minTracks = numeric(folderPatch?.minTrackCount);
   const maxTracks = numeric(folderPatch?.maxTrackCount);
@@ -849,7 +847,7 @@ export function buildSearchResultProjectionRequest(
   const family = searchModeFamily(record.draft.resultMode);
   let projection: ProposedSearchResultProjectionRequestDto['projection'];
   if (record.submission.kind === 'generic') {
-    projection = { kind: 'generic-directory', request: { includeFiles: true, includeDescendants: true } };
+    projection = { kind: 'generic-directory', request: {} };
   } else if (record.submission.kind === 'track' || record.submission.kind === 'song-aggregate') {
     projection = {
       kind: 'track',

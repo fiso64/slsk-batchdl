@@ -1,7 +1,7 @@
 import type { PrototypeScenario, TransferStateDto } from '../mock/types';
 import { groupAdjacentBy } from './grouping';
 import type { AudioAttributes, FolderItemFile, TransferPresentation } from './items';
-import type { PrototypeDataLifetime, ResourceActionDto } from './backend-contracts';
+import type { PrototypeDataLifetime, ResourceActionDto } from './state';
 import { formatEta, formatSpeed, progressPercent, type TransferTimelineEntry, type TransferTimelinePeerGroup } from './transfers';
 import { prototypeUuid } from './ids';
 

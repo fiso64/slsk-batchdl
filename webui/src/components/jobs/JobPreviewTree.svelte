@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
-  import { descendantLeafRefs, jobKindIcon, jobKindLabel, type JobPreviewNode } from '../../prototype/jobs';
+  import { jobKindIcon, jobKindLabel } from '../../prototype/jobs';
+  import { descendantLeafRefs, type JobPreviewNode } from '../../prototype/job-preview';
 
   interface Props {
     roots: JobPreviewNode[];

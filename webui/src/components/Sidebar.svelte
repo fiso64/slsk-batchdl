@@ -1,6 +1,6 @@
 <script lang="ts">
   import { navigationItems, type PageId } from '../prototype/navigation';
-  import { displayCountDefinitions } from '../prototype/backend-contracts';
+  import { displayCountDefinitions } from '../prototype/state';
   import Icon from './Icon.svelte';
 
   interface Props {

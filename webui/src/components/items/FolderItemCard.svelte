@@ -3,7 +3,8 @@
   import Icon from '../Icon.svelte';
   import type { AppIconName } from '../../prototype/icons';
   import type { FolderItemFile, TransferPresentation } from '../../prototype/items';
-  import { audioSummary, basename, formatBytes, formatLength, isAudioFilePath } from '../../prototype/items';
+  import { audioSummary, basename, formatBytes, formatLength } from '../../prototype/items';
+  import { fileTypeIcon } from '../../prototype/file-types';
 
   interface Props {
     path: string;
@@ -332,7 +333,7 @@
       {:else}
         {@const file = row.file}
         {@const fileDirectionClass = file.transfer?.direction ? `transfer-${file.transfer.direction}` : ''}
-        {@const isAudioFile = Boolean(file.audio) || isAudioFilePath(file.relativePath)}
+        {@const typeIcon = fileTypeIcon({ filename: file.relativePath, hasAudioMetadata: Boolean(file.audio) })}
         <svelte:element
           this={selectable ? 'label' : 'div'}
           class:locked={file.locked}
@@ -349,8 +350,8 @@
               onchange={(event) => onselectfile?.(file, (event.currentTarget as HTMLInputElement).checked)}
             />
           {:else}
-            <span class:audio={isAudioFile} class="folder-file-type-icon" aria-hidden="true">
-              <Icon name={isAudioFile ? 'track' : 'file'} />
+            <span class:audio={typeIcon === 'track'} class="folder-file-type-icon" aria-hidden="true">
+              <Icon name={typeIcon} />
             </span>
           {/if}
           <span class="folder-file-path" title={file.relativePath}>

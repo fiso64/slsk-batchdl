@@ -7,9 +7,10 @@
   import LoadMoreButton from '../components/LoadMoreButton.svelte';
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { ScenarioId } from '../mock/types';
-  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/backend-contracts';
+  import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/state';
   import { formatSpeed } from '../prototype/transfers';
   import { resourceStateForScenario } from '../prototype/resource-state';
+  import { fileTypeIcon } from '../prototype/file-types';
   import {
     flattenShareTree,
     formatShareSize,
@@ -61,7 +62,7 @@
     selected = new Set();
     sharePagesRequested = 1;
     mutation = { phase: 'idle' };
-    expandedFolders = new Set(rows.filter((row) => row.kind === 'folder').map((row) => row.id));
+    expandedFolders = new Set(rows.filter((row) => row.kind === 'folder' && row.depth === 0).map((row) => row.id));
   });
 
   $effect(() => {
@@ -298,14 +299,23 @@
                   aria-label={`Select ${row.path}`}
                   onchange={(event) => toggleIds(row.fileIds, (event.currentTarget as HTMLInputElement).checked)}
                 />
-                <button type="button" class:expanded={filterText || expandedFolders.has(row.id)} class="share-tree-toggle" aria-label={`${filterText || expandedFolders.has(row.id) ? 'Collapse' : 'Expand'} ${row.name}`} onclick={() => toggleFolder(row.id)} disabled={Boolean(filterText)}>
-                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
+                <button
+                  type="button"
+                  class="share-tree-folder-button"
+                  aria-label={`${Boolean(filterText) || expandedFolders.has(row.id) ? 'Collapse' : 'Expand'} ${row.name}`}
+                  aria-expanded={Boolean(filterText) || expandedFolders.has(row.id)}
+                  onclick={() => toggleFolder(row.id)}
+                  disabled={Boolean(filterText)}
+                >
+                  <span class:expanded={Boolean(filterText) || expandedFolders.has(row.id)} class="share-tree-toggle" aria-hidden="true">
+                    <svg viewBox="0 0 16 16"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
+                  </span>
+                  <span class="share-tree-icon"><Icon name="folder" /></span>
+                  <strong class="share-tree-name" title={row.path}>{row.name}</strong>
+                  {#if row.visibility !== 'public'}<span class={`share-visibility ${row.visibility}`}>{row.visibility === 'locked' ? 'Locked' : 'Mixed'}</span>{/if}
+                  <span class="share-tree-folder-meta">{row.fileIds.length} {row.fileIds.length === 1 ? 'file' : 'files'}</span>
+                  <span class="share-tree-size">{formatShareSize(row.sizeBytes)}</span>
                 </button>
-                <span class="share-tree-icon"><Icon name="folder" /></span>
-                <strong class="share-tree-name" title={row.path}>{row.name}</strong>
-                {#if row.visibility !== 'public'}<span class={`share-visibility ${row.visibility}`}>{row.visibility === 'locked' ? 'Locked' : 'Mixed'}</span>{/if}
-                <span class="share-tree-folder-meta">{row.fileIds.length} {row.fileIds.length === 1 ? 'file' : 'files'}</span>
-                <span class="share-tree-size">{formatShareSize(row.sizeBytes)}</span>
               </div>
             {:else}
               <label class="share-tree-row file" style={`--share-depth:${row.depth}`}>
@@ -315,7 +325,7 @@
                   onchange={(event) => toggleIds([row.id], (event.currentTarget as HTMLInputElement).checked)}
                 />
                 <span class="share-tree-toggle-spacer"></span>
-                <span class="share-tree-icon"><Icon name="file" /></span>
+                <span class="share-tree-icon"><Icon name={fileTypeIcon({ extension: row.extension, filename: row.name })} /></span>
                 <strong class="share-tree-name" title={row.path}>{row.name}</strong>
                 {#if row.visibility !== 'public'}<span class={`share-visibility ${row.visibility}`}>{row.visibility === 'locked' ? 'Locked' : 'Mixed'}</span>{/if}
                 <span class="share-tree-size">{formatShareSize(row.sizeBytes)}</span>

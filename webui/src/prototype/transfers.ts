@@ -1,5 +1,5 @@
 import type { TransferStateDto } from '../mock/types';
-import type { PrototypeDataLifetime } from './backend-contracts';
+import type { PrototypeDataLifetime } from './state';
 import type { AudioAttributes, FolderItemFile, TransferPresentation } from './items';
 
 export interface TransferTimelineFileEntry {

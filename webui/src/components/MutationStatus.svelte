@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PrototypeMutationState } from '../prototype/backend-contracts';
+  import type { PrototypeMutationState } from '../prototype/state';
   interface Props { state: PrototypeMutationState; }
   let { state }: Props = $props();
 </script>

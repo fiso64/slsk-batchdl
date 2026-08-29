@@ -1,6 +1,6 @@
 import type { components } from '../api/generated';
 import type { ScenarioId } from '../mock/types';
-import type { PrototypeDataLifetime } from './backend-contracts';
+import type { PrototypeDataLifetime } from './state';
 import { prototypeUuid } from './ids';
 
 export type ChatMessageDto = components['schemas']['ChatMessageDto'];

@@ -7,7 +7,7 @@
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
-  import type { PrototypeMutationState } from '../prototype/backend-contracts';
+  import type { PrototypeMutationState } from '../prototype/state';
   import { prototypeUuid } from '../prototype/ids';
   import {
     chatInitials,

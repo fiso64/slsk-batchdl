@@ -16,17 +16,6 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
 }
 
-export function extension(path: string): string {
-  const name = basename(path);
-  const dot = name.lastIndexOf('.');
-  return dot >= 0 ? name.slice(dot + 1).toUpperCase() : '';
-}
-
-const audioFileExtensions = new Set(['FLAC', 'MP3', 'WAV', 'OGG', 'OPUS', 'M4A', 'AAC', 'ALAC', 'APE', 'AIFF', 'AIF', 'WMA']);
-
-export function isAudioFilePath(path: string): boolean {
-  return audioFileExtensions.has(extension(path));
-}
 
 export function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`;

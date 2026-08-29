@@ -2467,8 +2467,12 @@ input[type="checkbox"]:indeterminate {
 .share-tree-row:hover { background: var(--surface-subtle); }
 .share-tree-row.folder {
   display: grid;
-  grid-template-columns: 15px 24px 20px minmax(120px, 1fr) auto auto 82px;
-  grid-template-areas: 'check toggle icon name visibility meta size';
+  grid-template-columns: 15px minmax(0, 1fr);
+  grid-template-areas: 'check body';
+  gap: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-right: 0;
 }
 .share-tree-row.file {
   display: grid;
@@ -2477,32 +2481,50 @@ input[type="checkbox"]:indeterminate {
   cursor: pointer;
 }
 .share-tree-row > input { grid-area: check; }
-.share-tree-row > .share-tree-toggle,
-.share-tree-row > .share-tree-toggle-spacer { grid-area: toggle; }
-.share-tree-row > .share-tree-icon { grid-area: icon; }
-.share-tree-row > .share-tree-name { grid-area: name; }
-.share-tree-row > .share-visibility { grid-area: visibility; }
-.share-tree-row > .share-tree-folder-meta { grid-area: meta; }
-.share-tree-row > .share-tree-size { grid-area: size; }
+.share-tree-row.file > .share-tree-toggle-spacer { grid-area: toggle; }
+.share-tree-row.file > .share-tree-icon { grid-area: icon; }
+.share-tree-row.file > .share-tree-name { grid-area: name; }
+.share-tree-row.file > .share-visibility { grid-area: visibility; }
+.share-tree-row.file > .share-tree-size { grid-area: size; }
+.share-tree-folder-button {
+  grid-area: body;
+  min-width: 0;
+  width: 100%;
+  min-height: 42px;
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: 24px 20px minmax(120px, 1fr) auto auto 82px;
+  grid-template-areas: 'toggle icon name visibility meta size';
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.share-tree-folder-button:disabled { opacity: 1; cursor: default; }
+.share-tree-folder-button > .share-tree-toggle { grid-area: toggle; }
+.share-tree-folder-button > .share-tree-icon { grid-area: icon; }
+.share-tree-folder-button > .share-tree-name { grid-area: name; }
+.share-tree-folder-button > .share-visibility { grid-area: visibility; }
+.share-tree-folder-button > .share-tree-folder-meta { grid-area: meta; }
+.share-tree-folder-button > .share-tree-size { grid-area: size; }
 .share-tree-toggle,
 .share-tree-toggle-spacer { width: 24px; height: 24px; }
 .share-tree-toggle {
   display: grid;
   place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
   color: var(--faint);
 }
-.share-tree-toggle:not(:disabled):hover { background: var(--surface-raised); color: var(--text); }
-.share-tree-toggle:disabled { cursor: default; }
 .share-tree-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 120ms ease; }
 .share-tree-toggle.expanded svg { transform: rotate(90deg); }
 .share-tree-icon { --app-icon-size: 17px; display: grid; place-items: center; color: var(--muted); }
 .share-tree-row.folder .share-tree-icon { color: var(--accent); }
 .share-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 540; }
-.share-tree-row.folder > .share-tree-name { font-weight: 600; }
+.share-tree-folder-button > .share-tree-name { font-weight: 600; }
 .share-tree-folder-meta { color: var(--faint); font-size: 0.68rem; white-space: nowrap; }
 .share-tree-size { color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
@@ -2527,8 +2549,13 @@ input[type="checkbox"]:indeterminate {
   .shares-refine-row { align-items: stretch; flex-direction: column; }
   .shares-filter-count { padding-left: 2px; }
   .share-tree-row.folder {
-    grid-template-columns: 15px 22px 18px minmax(0, 1fr) auto 66px;
-    grid-template-areas: 'check toggle icon name visibility size';
+    grid-template-columns: 15px minmax(0, 1fr);
+    grid-template-areas: 'check body';
+  }
+  .share-tree-folder-button {
+    grid-template-columns: 22px 18px minmax(0, 1fr) auto 66px;
+    grid-template-areas: 'toggle icon name visibility size';
+    padding-right: 8px;
   }
   .share-tree-row.file {
     grid-template-columns: 15px 22px 18px minmax(0, 1fr) auto 66px;
@@ -2536,6 +2563,7 @@ input[type="checkbox"]:indeterminate {
   }
   .share-tree-folder-meta { display: none; }
   .share-tree-row { padding-left: calc(8px + var(--share-depth, 0) * 12px); padding-right: 8px; }
+  .share-tree-row.folder { padding-right: 0; }
 }
 
 /* User profile picture lightbox */

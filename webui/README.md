@@ -109,9 +109,9 @@ Filtering and Ranking both expose sample-rate and bit-depth ranges directly, mat
 
 Jobs is the home for all user-initiated daemon jobs. The newest-first list mixes discovery SearchJobs with automatic **Song**, **Album**, **Extract/Import**, and **Job List** work in one shared row grammar; exact **Remote File**, **Remote Directory**, and auxiliary **Retrieve Folder** jobs remain supported as navigable detail nodes when they occur inside a submission. Each root-list row presents its specific job type as the same compact icon + label badge on the secondary line before its timestamp, so **Track Search**, **Album Search**, automatic **Song/Album**, and source-specific imports remain easy to distinguish without grouping, reordering, or row-level highlighting. Search badges use only a restrained accent treatment; imports and automatic jobs retain neutral badge treatments. Search-job type labels remain **File Search**, **Track Search**, **Album Search**, **Song Aggregate**, and **Album Aggregate** so discovery projections stay distinct from automatic download jobs. Submitting the global search still creates a SearchJob and opens Results; automatic work is created explicitly through **New job**. Result selection is ephemeral UI state owned above the Jobs page so switching to another top-level tab and back preserves the active job's selected files/folders; changing job identity or scenario clears that selection. Every list row exposes one lifecycle action in the same place: cancellable jobs cancel, while terminal jobs are removed/archived from history.
 
-**New job** is a modal creation surface rather than an "automatic" checkbox on discovery search. The initial direct choices are **Song** and **Album**; their direct-entry fields open blank with placeholder guidance, only the song/album title is required, and artist remains an optional identity hint. Automatic Aggregate/AlbumAggregate creation is deliberately not exposed yet because their intended interactive workflow needs separate design. Extract creation is presented by explicit source type—**Spotify**, **YouTube**, **Bandcamp**, **MusicBrainz**, and **Soulseek**—plus separate **CSV file** and **List file** upload choices. Spotify exposes playlist/album URL, liked songs, and liked albums as source-specific inputs; CSV normally relies on header auto-detection, with the daemon's configurable artist/title/album/length/description/YouTube-ID/track-count column names available behind an optional Column mapping control. Collection-capable extractors also expose a compact **Import options** disclosure for item limit, offset, and an **Upgrade song items to albums** checkbox; reverse-order extraction is intentionally not surfaced. The generic free-text extractor is intentionally not exposed as a first-class WebUI creation option. These are creation affordances, not new runtime job kinds: they still submit Extract jobs with an explicit input type, which gives each extractor a stable place for source-specific options without duplicating job-detail/navigation code. **Filtering**, **Ranking**, and **Download** are three additional expandable panels available for every creation path, including extract/import roots; they reuse the shared search/download option content and keep Review and Start in the same creation workspace.
+**New job** is a modal creation surface rather than an "automatic" checkbox on discovery search. The initial direct choices are **Song** and **Album**; their direct-entry fields open blank with placeholder guidance, only the song/album title is required, and artist remains an optional identity hint. Source URL/link inputs also open blank and use placeholders rather than fixture-looking example values, so choosing an extractor never appears to submit an existing source by default. Automatic Aggregate/AlbumAggregate creation is deliberately not exposed yet because their intended interactive workflow needs separate design. Extract creation is presented by explicit source type—**Spotify**, **YouTube**, **Bandcamp**, **MusicBrainz**, and **Soulseek**—plus separate **CSV file** and **List file** upload choices. Spotify exposes playlist/album URL, liked songs, and liked albums as source-specific inputs; CSV normally relies on header auto-detection, with the daemon's configurable artist/title/album/length/description/YouTube-ID/track-count column names available behind an optional Column mapping control. Collection-capable extractors also expose a compact **Import options** disclosure for item limit, offset, and an **Upgrade song items to albums** checkbox; reverse-order extraction is intentionally not surfaced. The generic free-text extractor is intentionally not exposed as a first-class WebUI creation option. These are creation affordances, not new runtime job kinds: they still submit Extract jobs with an explicit input type, which gives each extractor a stable place for source-specific options without duplicating job-detail/navigation code. **Filtering**, **Ranking**, and **Download** are three additional expandable panels available for every creation path, including extract/import roots; they reuse the shared search/download option content and keep Review and Start in the same creation workspace.
 
-Review is optional. **Start** submits the configured work immediately, while **Review** resolves extraction/preprocessing recursively before submission so large or nested imports can be inspected and selectively deselected. Preview deliberately stops before Soulseek candidate discovery: a Spotify playlist can expand into its Song jobs, while a direct Song preview remains one logical Song job rather than pretending to know its eventual peer/file. Preview/selection is modeled as an ephemeral server-owned plan, not as fake terminal runtime jobs or job history; editing preview rows is intentionally out of scope for the first implementation.
+Review is optional. **Start** submits the configured work immediately, while **Review** resolves extraction/preprocessing recursively before submission so large or nested imports can be inspected and selectively deselected. Preview deliberately stops before Soulseek candidate discovery: a Spotify playlist can expand into its Song jobs, while a direct Song preview remains one logical Song job rather than pretending to know its eventual peer/file. Preview/selection is modeled as an ephemeral server-owned plan, not as fake terminal runtime jobs or job history; editing preview rows is intentionally out of scope for the first implementation. The latest daemon direction reinforces that boundary: ordinary runtime Job detail remains fixed-size and direct children are traversed through `/api/jobs?parentJobId=...`, while review belongs to a separate short-lived Job Preview resource. The prototype mirrors that separation internally: `job-preview.ts` models review-plan state, `job-preview-runtime.ts` is only the local mock adapter that turns an approved preview selection into runtime fixtures, and `jobs.ts` owns runtime job records/navigation. A production port should keep those domains separate rather than folding preview graphs into runtime job DTOs.
 
 Job detail uses one shared shell with type-specific bodies rather than independent page layouts. Song and Album center the selected File/Folder presentation used elsewhere; Job List uses consistent child rows whose primary line is the job identity, whose secondary line carries type/time context, and whose right-side metadata keeps statistics and lifecycle state together; measurable active progress is the only extra row. Active/failed Extract jobs show their source/input, but once extraction has completed the UI silently presents its semantic `ResultJobId` in place of the wrapper so a CSV/Spotify import opens directly to the useful result. Nested child navigation is one level at a time: the Back control returns to the semantic parent, and the single-line ancestry/type kicker exposes the same hierarchy without moving the page title between job kinds. `ParentJobId` remains execution hierarchy while Extract-result flattening is presentation-only. Manual `AwaitingSelection` behavior is not surfaced in this first automatic-job pass.
 
@@ -136,7 +136,7 @@ The Users destination has two subviews: **User** and **Shares**. While Users is 
 
 The User profile combines the distinct Soulseek concepts we will eventually request from user info/statistics/status calls: presence, optional profile picture and description, shared file/folder counts, average upload speed, lifetime upload count, slot count, queue depth, and free-slot state. The profile keeps the broad three-part layout: a prominent profile picture, identity/description/actions, and a separate compact Upload capacity card, with the four long-lived sharing statistics in the row below. Scenario fixtures deliberately cover missing pictures, missing descriptions, offline state, and long usernames. Usernames shown elsewhere in the prototype use one shared `UsernameLink` action: hovering underlines the name, and activation opens a compact action menu for **Profile**, **Shares**, or **Message** without forcing a profile navigation first. Popup action menus use the shared viewport-aware anchored-menu positioning helper, which clamps horizontally and flips above the trigger when needed so chat, user, mode-picker, and transfer-scope menus stay on-screen near viewport edges. The profile also exposes a Message action that opens or creates that user's private conversation in Chat.
 
-Shares renders the browsed directory tree rather than forcing it through the flat Album presentation. Folders and files are independently selectable, folder checkboxes represent all descendants with indeterminate state, and folders can collapse. The filter bar requests a new daemon-owned mixed-tree projection across the complete browse artifact before pagination; the response preserves matching paths and ancestor context, supplies the total matching-file count, and has its own cursor. It does not filter only the currently loaded tree page. Total browse size is computed by the daemon for the browse artifact and displayed only in the Shares view because Soulseek user statistics provide share counts but not aggregate shared bytes. Search Results and Shares reuse the same filter control and selection/download toolbar.
+Shares renders the browsed directory tree rather than forcing it through the flat Album presentation. Folders and files are independently selectable, folder checkboxes stay in the left selection column and represent all descendants with indeterminate state, and the entire remainder of each folder row is one full-width expand/collapse target rather than another selection target. Only depth-0/root folders start expanded; nested folders start collapsed so large shares open at a useful overview level. File glyphs use the same shared extension/filename classifier as transfer-folder rows: an explicit extension is preferred when available and the filename/path is the fallback. Shares deliberately keeps both audio and generic file glyphs neutral gray, while transfer folders may accent audio glyphs. The filter bar requests a new daemon-owned mixed-tree projection across the complete browse artifact before pagination; the response preserves matching paths and ancestor context, supplies the total matching-file count, and has its own cursor. It does not filter only the currently loaded tree page. Total browse size is computed by the daemon for the browse artifact and displayed only in the Shares view because Soulseek user statistics provide share counts but not aggregate shared bytes. Search Results and Shares reuse the same filter control and selection/download toolbar.
 
 Opening/submitting the Shares view should itself acquire or reacquire the user's browse data when needed; an expired browse artifact must not require a second explicit refresh action from the user.
 
@@ -144,7 +144,7 @@ Opening/submitting the Shares view should itself acquire or reacquire the user's
 
 Downloads and Uploads are raw transfer views built from the same generic file/folder presentation model. `TransferTimeline`, `FileItemCard`, `FolderItemCard`, `PeerItemGroup`, transfer status/progress, contextual cancel/remove actions, and page limiting are shared. Optional file metadata is presentation data rather than a download-only assumption: cards render it when present and collapse cleanly when absent. Logical Song/Album job types belong in Jobs, not in transfer rendering.
 
-Downloads is one newest-first chronological file/folder stream. Adjacent transfers from the same peer share a collapsible peer group but are never regrouped globally. Repeating peer-header metadata uses fixed right-side stat columns so speed, queue/free-slot state, and result counts remain scannable even when usernames have very different lengths; the group count stays visually quieter than the child card metadata beneath it. Folder cards are a transfer presentation and must not require the renderer to know whether the originating job was an Album, remote directory, or another future job type. Transfer-folder summaries stay to two lines: the folder name is the flexible left identity on the first line while count, size, status, and actions form one evenly spaced right-side group, with the lifecycle label after the properties; the second line keeps the path flexible on the left with only the transfer age on the right. Single-file transfer cards use the same compact hierarchy: filename on the left, available audio/length/size metadata followed by lifecycle state and actions on the right, then path plus transfer age on the second line. Completion is conveyed by transfer progress/state rather than repeated in either header, and progress remains in the band immediately below. Inside transfer folders, the left row icon describes file type rather than lifecycle state; when audio metadata is absent, known audio extensions may provide the icon classification without inventing audio attributes. File properties keep stable columns: duration precedes size so size remains the final fundamental file property, and non-audio rows leave the unavailable duration slot empty rather than shifting size into another column. Active progress keeps percentage, bar, and speed/ETA together in one right-side strip. The common Complete, active Downloading/Uploading, and Queued states terminate that strip with the compact circular state icons, while exceptional states such as Failed or Cancelled remain explicit text labels. Queued, active, completed, failed, and cancelled transfers remain in place and are distinguished on the cards themselves.
+Downloads is one newest-first chronological file/folder stream. Adjacent transfers from the same peer share a collapsible peer group but are never regrouped globally. Repeating peer-header metadata uses fixed right-side stat columns so speed, queue/free-slot state, and result counts remain scannable even when usernames have very different lengths; the group count stays visually quieter than the child card metadata beneath it. Folder cards are a transfer presentation and must not require the renderer to know whether the originating job was an Album, remote directory, or another future job type. Transfer-folder summaries stay to two lines: the folder name is the flexible left identity on the first line while count, size, status, and actions form one evenly spaced right-side group, with the lifecycle label after the properties; the second line keeps the path flexible on the left with only the transfer age on the right. Single-file transfer cards use the same compact hierarchy: filename on the left, available audio/length/size metadata followed by lifecycle state and actions on the right, then path plus transfer age on the second line. Completion is conveyed by transfer progress/state rather than repeated in either header, and progress remains in the band immediately below. Inside transfer folders, the left row icon describes file type rather than lifecycle state. File-type classification is centralized in `prototype/file-types.ts`: explicit extension metadata wins when available, with filename/path as the fallback, and known audio extensions may provide the track glyph without inventing audio attributes. Shares consumes the same classifier with different styling rather than maintaining its own extension table. File properties keep stable columns: duration precedes size so size remains the final fundamental file property, and non-audio rows leave the unavailable duration slot empty rather than shifting size into another column. Active progress keeps percentage, bar, and speed/ETA together in one right-side strip. The common Complete, active Downloading/Uploading, and Queued states terminate that strip with the compact circular state icons, while exceptional states such as Failed or Cancelled remain explicit text labels. Queued, active, completed, failed, and cancelled transfers remain in place and are distinguished on the cards themselves.
 
 ## Uploads exploration
 
@@ -185,26 +185,27 @@ src/
   components/
     AppShell.svelte
     GlobalSearch.svelte
-    ModeIconToggle.svelte
-    Icon.svelte
-    LinkifiedText.svelte
-    LoadMoreButton.svelte
-    MutationStatus.svelte
-    ResourceStateNotice.svelte
-    ResultFilterControl.svelte
+    SearchConfigPanel.svelte
     SelectionToolbar.svelte
     TransferBulkActions.svelte
     TransferTimeline.svelte
+    ResourceStateNotice.svelte
     UsernameLink.svelte
-    SearchConditionPills.svelte
-    SearchConfigPanel.svelte
+    jobs/
+      AutomaticJobDetail.svelte
+      JobCompactRow.svelte
+      JobPreviewTree.svelte
+      JobsHistoryList.svelte
+      JobTypeBadge.svelte
+      NewJobComposer.svelte
     items/
       FileItemCard.svelte
       FolderItemCard.svelte
       PeerItemGroup.svelte
       TransferItemActionButton.svelte
-    PrototypeScenarioPicker.svelte
-    Sidebar.svelte
+    ...small shared shell/search/presentation primitives
+  lib/
+    anchored-menu.ts
   mock/
     fixtures/
       transfers.ts
@@ -220,21 +221,32 @@ src/
     Chat.svelte
     Settings.svelte
   prototype/
-    icons.ts
-    navigation.ts
-    backend-contracts.ts
-    resource-state.ts
-    search.ts
+    contracts/
+      dashboard.ts
+      jobs.ts
+      search.ts
+      transfers.ts
+      users.ts
+    file-types.ts
+    state.ts
+    dashboard.ts
+    download-options.ts
+    job-preview.ts
+    job-preview-runtime.ts
+    job-types.ts
+    jobs.ts
+    search-config-schema.ts
     search-config.ts
     search-results.ts
-    users.ts
-    items.ts
-    downloads.ts
-    uploads.ts
-    grouping.ts
+    search-submission.ts
+    status.ts
     transfers.ts
+    users.ts
+    ...other fixture/projection adapters
   App.svelte
 ```
+
+The prototype deliberately separates daemon/runtime concepts from review and presentation concepts. Generated OpenAPI types stay at daemon-facing boundaries; `prototype/*` adapters own fixture/projection semantics; pages own local interaction orchestration; reusable rendering belongs in small components. Prototype interaction state/lifetime/count vocabulary lives in `prototype/state.ts`, while assumptions about missing daemon capabilities are grouped by domain under `prototype/contracts/` instead of a cross-app contract grab-bag. In particular, Jobs history presentation lives in `JobsHistoryList.svelte` instead of being embedded in the already complex Jobs controller, and the preview model has no dependency on runtime job records. `job-preview-runtime.ts` exists only because this unwired prototype needs to emulate committing a preview locally; a real client should replace that adapter with the eventual preview-submit API.
 
 ## Deliberately out of scope
 
@@ -270,7 +282,7 @@ The search configuration UI deliberately keeps the daemon's required-vs-ranking 
 
 ## Backend contract discipline
 
-Current OpenAPI-generated DTOs are used at daemon-facing fixture boundaries; UI-only grouping and presentation remain view models. When the prototype needs data or mutations the daemon does not expose cleanly, define that assumption once in `src/prototype/backend-contracts.ts` rather than reconstructing it ad hoc in components. This includes the proposed search reprojection and mixed share-tree query requests: their mock adapters deliberately apply request semantics before pagination. The backend audit remains in `DAEMON-AUDIT.md`; the README records only durable UI and architecture decisions.
+Current OpenAPI-generated DTOs are used at daemon-facing fixture boundaries; UI-only grouping and presentation remain view models. Milestone 108 refreshes the checked-in `docs/openapi.json` from the supplied 2026-08-29 daemon repository, so generated-type changes in that milestone are intentional and reflect the daemon's fixed-size Job detail/direct-child paging and bounded transfer-detail cleanup. When the prototype needs data or mutations the daemon does not expose cleanly, define that assumption once in the matching domain module under `src/prototype/contracts/` rather than reconstructing it ad hoc in components. Search contracts deliberately model fixed-size top-level summaries **and** separately paged folder/group children; adding only a top-level cursor while retaining unbounded nested arrays would not satisfy the daemon's bounded-resource direction. The proposed Job Preview, Dashboard analytics, transfer mutations, and mixed share-tree query contracts follow the same domain-owned boundary. The backend audit remains in `DAEMON-AUDIT.md`; the README records only durable UI and architecture decisions.
 
 Resource views should keep loading, empty, unavailable, offline, and terminal states distinct without adding explanatory product copy when the state is already visually obvious. When one of those states explains why an entire resource view has no content, it owns a modest centered content-state surface rather than looking like a thin leftover banner; blocking loading states use content-shaped skeleton rows to reduce the jump into the eventual view. Search reruns follow immutable daemon-job semantics while replacing the prior run in the same logical UI slot. New private-chat targets remain frontend drafts until the first accepted send.
 

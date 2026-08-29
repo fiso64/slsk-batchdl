@@ -364,7 +364,7 @@ export const emptyDashboardData = {
 
 // Contract semantics for the future single dashboard aggregate endpoint. These
 // values are intentionally explicit even though the current visual fixtures are mocked.
-import type { ProposedDashboardAnalyticsDto } from './backend-contracts';
+import type { ProposedDashboardAnalyticsDto } from './contracts/dashboard';
 
 const dashboardRangeContracts: Record<DashboardRangeId, ProposedDashboardAnalyticsDto['range']> = {
   '24h': { startUtc: '2026-08-06T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 7_200, comparisonStartUtc: '2026-08-05T08:15:00.000Z', comparisonEndUtc: '2026-08-06T08:15:00.000Z', partialRetention: false },
@@ -390,15 +390,16 @@ export function dashboardContractFor(
   const shareRatio = Number(data.summary.shareRatio);
   const ratioDelta = Number(data.summary.ratioDelta);
   return {
-    contract: 'proposed-dashboard-analytics-v2',
+    contract: 'proposed-dashboard-analytics-v3',
     range: { ...dashboardRangeContracts[range], partialRetention },
     semantics: {
-      peerBytes: 'terminal-and-progress-transfer-by-direction-and-remote-username',
-      peerFiles: 'distinct-terminal-transfer-ids-by-direction',
+      byteAccounting: 'bytes-transferred-during-range-by-direction',
+      peerBytes: 'bytes-transferred-during-range-by-direction-and-remote-username',
+      peerFiles: 'distinct-transfers-with-byte-activity-in-range-by-direction',
       contentIdentity: 'logical-download-source-path',
-      errorPopulation: 'terminal-transfer-attempt-failures',
+      errorPopulation: 'terminal-transfer-attempt-failures-completed-in-range',
       shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes',
-      distinctPeers: 'unique-remote-usernames-across-both-directions-in-range',
+      distinctPeers: 'unique-remote-usernames-with-byte-activity-across-both-directions-in-range',
     },
     downloadMbps: data.downloadMbps,
     uploadMbps: data.uploadMbps,

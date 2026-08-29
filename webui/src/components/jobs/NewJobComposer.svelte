@@ -11,20 +11,20 @@
     type PrototypeSearchConditions,
     type SearchConditionFamily,
   } from '../../prototype/search-config';
+  import type { AutomaticJobRecord } from '../../prototype/jobs';
   import {
-    commitPreview,
     emptyNewJobDraft,
     previewDirectJob,
     previewLeafRefs,
     previewSource,
     previewUploadedFile,
-    type AutomaticJobRecord,
     type InlineExtractSourceType,
     type JobPreviewPlan,
     type NewJobChoice,
     type NewJobDraft,
-  } from '../../prototype/jobs';
-  import type { ProposedInputArtifactUploadDto, ProposedSubmitJobPreviewRequestDto } from '../../prototype/backend-contracts';
+  } from '../../prototype/job-preview';
+  import { commitPreview } from '../../prototype/job-preview-runtime';
+  import type { ProposedCreateJobPreviewRequestDto, ProposedInputArtifactUploadDto, ProposedSubmitJobPreviewRequestDto } from '../../prototype/contracts/jobs';
   import {
     buildImportSettingsPatch,
     buildSubmissionOptions,
@@ -99,16 +99,6 @@
     return value !== 'song' && value !== 'album' && value !== 'csv' && value !== 'list';
   }
 
-  function sourcePreset(sourceType: InlineExtractSourceType): string {
-    switch (sourceType) {
-      case 'spotify': return 'https://open.spotify.com/playlist/37i9dQZEVXcExample';
-      case 'youtube': return 'https://www.youtube.com/playlist?list=PLExample';
-      case 'bandcamp': return 'https://artist.bandcamp.com/album/example';
-      case 'musicbrainz': return 'https://musicbrainz.org/release-group/example';
-      case 'soulseek': return 'slsk://nightshift/Jazz/Casiopea/Mint Jams';
-    }
-  }
-
   function sourcePlaceholder(sourceType: InlineExtractSourceType): string {
     switch (sourceType) {
       case 'spotify': return 'Paste a Spotify URL…';
@@ -138,7 +128,7 @@
     else if (value === 'album') Object.assign(draft, { artist: '', album: '', title: '' });
     else if (isInlineSourceChoice(value)) {
       if (value === 'spotify') draft.spotifyInput = 'url';
-      draft.source = sourcePreset(value);
+      draft.source = '';
     }
   }
 
@@ -199,6 +189,20 @@
     return options;
   }
 
+  function proposedPreviewRequest(): ProposedCreateJobPreviewRequestDto {
+    const source: ProposedCreateJobPreviewRequestDto['source'] = draft.choice === 'csv' || draft.choice === 'list'
+      ? { kind: 'artifact', artifactId: `prototype:${draft.uploadedFileName}`, inputType: draft.choice }
+      : isInlineSourceChoice(draft.choice)
+        ? { kind: 'extract-input', input: resolvedSourceInput(), inputType: draft.choice }
+        : {
+            kind: 'job-draft',
+            draft: draft.choice === 'album'
+              ? { kind: 'album', albumQuery: { artist: draft.artist || null, album: draft.album || null, searchHint: null, uri: null, artistMaybeWrong: false } }
+              : { kind: 'song', songQuery: { artist: draft.artist || null, title: draft.title || null, album: draft.album || null, uri: null, length: null, artistMaybeWrong: false } },
+          };
+    return { source, options: currentSubmissionOptions() };
+  }
+
   function buildPlan(): JobPreviewPlan {
     if (isInlineSourceChoice(draft.choice)) return previewSource(resolvedSourceInput(), draft.choice);
     if (draft.choice === 'csv' || draft.choice === 'list') return previewUploadedFile(draft.uploadedFileName || (draft.choice === 'csv' ? 'import.csv' : 'import.list'), draft.choice);
@@ -207,6 +211,8 @@
 
   function review(): void {
     if (!valid) return;
+    const request = proposedPreviewRequest();
+    void request;
     preview = buildPlan();
     selectedLeaves = new Set(previewLeafRefs(preview));
   }
@@ -236,13 +242,7 @@
     if (file) acceptFile(file);
   }
 
-  function submitPlan(plan: JobPreviewPlan, leaves: Set<string>): void {
-    if (!leaves.size) return;
-    const request: ProposedSubmitJobPreviewRequestDto = {
-      options: currentSubmissionOptions(),
-      selection: { mode: 'only', leafRefs: [...leaves] },
-    };
-    void request;
+  function commitLocalPlan(plan: JobPreviewPlan, leaves: Set<string>): void {
     const result = commitPreview(plan, leaves);
     if (!result.rootId || !result.records.length) return;
     onstart(result.records, result.rootId);
@@ -250,13 +250,18 @@
 
   function startNow(): void {
     if (!valid) return;
+    void currentSubmissionOptions();
     const plan = buildPlan();
-    submitPlan(plan, new Set(previewLeafRefs(plan)));
+    commitLocalPlan(plan, new Set(previewLeafRefs(plan)));
   }
 
   function startReviewed(): void {
-    if (!preview) return;
-    submitPlan(preview, selectedLeaves);
+    if (!preview || !selectedLeaves.size) return;
+    const request: ProposedSubmitJobPreviewRequestDto = {
+      selection: { mode: 'only', leafRefs: [...selectedLeaves] },
+    };
+    void request;
+    commitLocalPlan(preview, selectedLeaves);
   }
 
   function handleWindowKeydown(event: KeyboardEvent): void {

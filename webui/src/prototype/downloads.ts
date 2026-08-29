@@ -1,5 +1,5 @@
 import type { ScenarioId } from '../mock/types';
-import type { PrototypeDataLifetime, ResourceActionDto } from './backend-contracts';
+import type { PrototypeDataLifetime, ResourceActionDto } from './state';
 import { prototypeUuid } from './ids';
 import type { FolderItemFile, TransferPresentation } from './items';
 import type { TransferTimelineEntry, TransferTimelineFileEntry, TransferTimelineFolderEntry } from './transfers';
@@ -20,7 +20,7 @@ function cancelAction(id: string): ResourceActionDto[] {
 
 type UndecoratedDownload =
   | (Omit<TransferTimelineFileEntry, 'id' | 'lifetime' | 'sourceTransferIds'> & { createdAt: string; peer: string })
-  | (Omit<TransferTimelineFolderEntry, 'id' | 'lifetime' | 'sourceTransferIds'> & { createdAt: string; peer: string });
+  | (Omit<TransferTimelineFolderEntry, 'id' | 'lifetime' | 'sourceTransferIds'> & { createdAt: string; peer: string; sourceTransferIds?: string[] });
 
 function decorate(
   item: UndecoratedDownload,
@@ -31,7 +31,7 @@ function decorate(
   const terminal = item.transfer.tone === 'complete' || item.transfer.tone === 'failed' || item.transfer.tone === 'cancelled';
   const availableActions = terminal ? [] : cancelAction(id);
   const lifetime = options.lifetime ?? (terminal ? 'retained' : 'live-only');
-  const sourceTransferIds = item.kind === 'folder' ? item.files.map((file) => file.id) : [id];
+  const sourceTransferIds = item.kind === 'folder' ? (item.sourceTransferIds ?? item.files.map((file) => file.id)) : [id];
   return {
     ...item,
     id,
@@ -131,6 +131,7 @@ function shareFolderFixture(sequence: number, stress = false): DownloadFolderEnt
     totalFileCount: 4,
     // Retained history currently cannot reconstruct authoritative child metadata.
     files: stress ? files : [],
+    sourceTransferIds: files.map((file) => file.id),
   }, sequence, { lifetime: stress ? 'live-only' : 'retained' }) as DownloadFolderEntry;
 }
 

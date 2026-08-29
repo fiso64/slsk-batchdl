@@ -3597,7 +3597,7 @@ export interface paths {
         };
         /**
          * Lists known jobs.
-         * @description Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every matching job.
+         * @description Default results contain execution roots. Set parentJobId for direct children or includeAll=true for a flat workflow list.
          */
         get: {
             parameters: {
@@ -3607,6 +3607,7 @@ export interface paths {
                     skipReason?: components["schemas"]["ServerJobSkipReason"];
                     kind?: components["schemas"]["ServerJobKind"];
                     workflowId?: string;
+                    parentJobId?: string;
                     includeAll: boolean;
                     cursor?: string;
                     limit?: number | string;
@@ -4118,9 +4119,7 @@ export interface paths {
         /** Gets one transfer using a live-first overlay and retained history fallback. */
         get: {
             parameters: {
-                query?: {
-                    attemptLimit?: number | string;
-                };
+                query?: never;
                 header?: never;
                 path: {
                     transferId: string;
@@ -5709,57 +5708,7 @@ export interface paths {
         };
         /**
          * Gets a workflow snapshot by id.
-         * @description Default results contain only execution roots where ParentJobId is null. Set includeAll=true for a flat list of every workflow job. Use /tree for the same jobs grouped by ParentJobId.
-         */
-        get: {
-            parameters: {
-                query?: {
-                    includeAll?: boolean;
-                };
-                header?: never;
-                path: {
-                    workflowId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["WorkflowDetailDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/workflows/{workflowId}/tree": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Gets the execution tree for a workflow.
-         * @description This tree is built only from ParentJobId relationships. Follow-up jobs started from search results remain workflow roots and expose SourceJobId instead.
+         * @description Use the cursor-paged jobs collection to list workflow roots or descendants.
          */
         get: {
             parameters: {
@@ -5778,7 +5727,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["WorkflowTreeDto"];
+                        "application/json": components["schemas"]["WorkflowDetailDto"];
                     };
                 };
                 /** @description Not Found */
@@ -6126,7 +6075,16 @@ export interface components {
             /** Format: double */
             progressPercent: null | number | string;
         };
-        DirectoryTransferPlanDto: unknown;
+        DirectoryTransferEntryDto: {
+            target: components["schemas"]["PeerFileTargetDto"];
+            relativeDirectoryComponents: string[];
+        };
+        DirectoryTransferPlanDto: {
+            displayRoot: string;
+            entries: components["schemas"]["DirectoryTransferEntryDto"][];
+            /** Format: int64 */
+            totalKnownBytes: number | string;
+        };
         /**
          * @default Automatic
          * @enum {unknown}
@@ -6259,7 +6217,8 @@ export interface components {
         JobDetailDto: {
             summary: components["schemas"]["JobSummaryDto"];
             payload: null | components["schemas"]["JobPayloadDto"];
-            children: components["schemas"]["JobSummaryDto"][];
+            /** Format: int32 */
+            childCount: number | string;
         };
         JobDiscoveryFieldsDto: {
             /** Format: int32 */
@@ -6315,7 +6274,6 @@ export interface components {
             kind?: "extract";
             input: string;
             inputType?: null | string;
-            autoStartExtractedResult?: null | boolean;
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
             resultDownloadBehavior?: null | components["schemas"]["DownloadBehaviorPolicyDto"];
             provenance?: null | components["schemas"]["JobProvenanceDto"];
@@ -6341,7 +6299,7 @@ export interface components {
             /** @enum {string} */
             kind?: "remote-file";
             target: components["schemas"]["PeerFileTargetDto"];
-            outputPathComponents?: unknown;
+            outputPathComponents?: null | string[];
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
             provenance?: null | components["schemas"]["JobProvenanceDto"];
         };
@@ -6388,7 +6346,6 @@ export interface components {
             succeededSongCount: number | string;
             /** Format: int32 */
             failedSongCount: number | string;
-            songs?: null | components["schemas"]["SongJobPayloadDto"][];
         };
         JobPayloadDtoAlbumAggregateJobPayloadDto: {
             /** @enum {string} */
@@ -6406,8 +6363,6 @@ export interface components {
             directory: components["schemas"]["DirectoryDownloadStateDto"];
             resolvedFolderUsername: null | string;
             resolvedFolderPath: null | string;
-            results?: null | components["schemas"]["AlbumFolderDto"][];
-            tracks?: null | components["schemas"]["SongJobPayloadDto"][];
         };
         JobPayloadDtoExtractJobPayloadDto: {
             /** @enum {string} */
@@ -6416,8 +6371,6 @@ export interface components {
             inputType: null | string;
             /** Format: uuid */
             resultJobId: null | string;
-            autoProcessResult: boolean;
-            resultDraft: null | components["schemas"]["JobDraftDto"];
         };
         JobPayloadDtoGenericJobPayloadDto: {
             /** @enum {string} */
@@ -6437,7 +6390,6 @@ export interface components {
             succeededJobCount: number | string;
             /** Format: int32 */
             failedJobCount: number | string;
-            directSongs?: null | components["schemas"]["SongJobPayloadDto"][];
         };
         JobPayloadDtoRemoteDirectoryJobPayloadDto: {
             /** @enum {string} */
@@ -6445,8 +6397,6 @@ export interface components {
             sourceKind: components["schemas"]["RemoteDirectorySourceKindDto"];
             sourceUsername: null | string;
             sourceFolderPath: null | string;
-            resolvedPlanSource: null | components["schemas"]["DirectoryTransferPlanDto"];
-            activePlan: null | components["schemas"]["DirectoryTransferPlanDto"];
             directory: components["schemas"]["DirectoryDownloadStateDto"];
         };
         JobPayloadDtoRemoteFileJobPayloadDto: {
@@ -6465,7 +6415,6 @@ export interface components {
             newFilesFoundCount: number | string;
             retrievalOutcome: components["schemas"]["ServerFolderRetrievalOutcome"];
             retrievalCancelled: boolean;
-            folder?: null | components["schemas"]["AlbumFolderDto"];
         };
         JobPayloadDtoSearchJobPayloadDto: {
             /** @enum {string} */
@@ -6501,7 +6450,6 @@ export interface components {
             jobId?: null | string;
             /** Format: int32 */
             displayId?: null | number | string;
-            candidates?: null | components["schemas"]["FileCandidateDto"][];
             lifecycleState?: null | components["schemas"]["ServerJobLifecycleState"];
             activityPhase?: null | components["schemas"]["ServerJobActivityPhase"];
             /** Format: date-time */
@@ -6638,7 +6586,22 @@ export interface components {
             items: components["schemas"]["UserBrowseDto"][];
             nextCursor: null | string;
         };
-        PeerFileTargetDto: unknown;
+        PeerFileTargetDto: {
+            username: string;
+            filename: string;
+            /** Format: int64 */
+            size: null | number | string;
+            extension: null | string;
+            /** Format: int32 */
+            bitRate?: null | number | string;
+            /** Format: int32 */
+            bitDepth?: null | number | string;
+            /** Format: int32 */
+            sampleRate?: null | number | string;
+            /** Format: int32 */
+            length?: null | number | string;
+            attributes?: null | components["schemas"]["FileAttributeDto"][];
+        };
         PeerInfoDto: {
             username: string;
             hasFreeUploadSlot?: null | boolean;
@@ -7085,41 +7048,6 @@ export interface components {
             skipCheckCond?: null | boolean;
             skipCheckPrefCond?: null | boolean;
         };
-        SongJobPayloadDto: {
-            query: components["schemas"]["SongQueryDto"];
-            /** Format: int32 */
-            candidateCount: null | number | string;
-            file: components["schemas"]["FileDownloadStateDto"];
-            resolvedUsername?: null | string;
-            resolvedFilename?: null | string;
-            resolvedHasFreeUploadSlot?: null | boolean;
-            /** Format: int32 */
-            resolvedUploadSpeed?: null | number | string;
-            /** Format: int64 */
-            resolvedSize?: null | number | string;
-            /** Format: int32 */
-            resolvedSampleRate?: null | number | string;
-            resolvedExtension?: null | string;
-            resolvedAttributes?: unknown;
-            /** Format: uuid */
-            jobId?: null | string;
-            /** Format: int32 */
-            displayId?: null | number | string;
-            candidates?: unknown;
-            lifecycleState?: null | components["schemas"]["ServerJobLifecycleState"];
-            activityPhase?: null | components["schemas"]["ServerJobActivityPhase"];
-            /** Format: date-time */
-            activityUntilUtc?: null | string;
-            terminalOutcome?: null | components["schemas"]["ServerJobTerminalOutcome"];
-            skipReason?: null | components["schemas"]["ServerJobSkipReason"];
-            failureReason?: null | components["schemas"]["ServerJobFailureReason"];
-            failureMessage?: null | string;
-            availableActions?: unknown;
-            transferState?: null | string;
-            cancellationSource?: components["schemas"]["ServerJobCancellationSource"];
-            downloadSource?: components["schemas"]["ServerSongDownloadSource"];
-            exactTarget?: null | components["schemas"]["PeerFileTargetDto"];
-        };
         SongQueryDto: {
             artist?: null | string;
             title?: null | string;
@@ -7256,7 +7184,6 @@ export interface components {
         SubmitExtractJobRequestDto: {
             input: string;
             inputType?: null | string;
-            autoStartExtractedResult?: null | boolean;
             options?: null | components["schemas"]["SubmissionOptionsDto"];
             resultDownloadBehavior?: null | components["schemas"]["DownloadBehaviorPolicyDto"];
         };
@@ -7311,7 +7238,9 @@ export interface components {
             live: null | components["schemas"]["TransferStateDto"];
             queueEstimate: null | components["schemas"]["TransferQueueEstimateDto"];
             history: null | components["schemas"]["TransferHistoryDto"];
-            attempts: components["schemas"]["TransferAttemptHistoryDto"][];
+            /** Format: int32 */
+            attemptCount: number | string;
+            latestAttempt: null | components["schemas"]["TransferAttemptHistoryDto"];
         };
         /** @enum {unknown} */
         TransferDetailSource: "Live" | "Historical" | "Merged";
@@ -7557,11 +7486,6 @@ export interface components {
         };
         WorkflowDetailDto: {
             summary: components["schemas"]["WorkflowSummaryDto"];
-            jobs: components["schemas"]["JobSummaryDto"][];
-        };
-        WorkflowJobNodeDto: {
-            summary: components["schemas"]["JobSummaryDto"];
-            children: components["schemas"]["WorkflowJobNodeDto"][];
         };
         WorkflowStateDto: {
             /** Format: int64 */
@@ -7573,17 +7497,14 @@ export interface components {
             workflowId: string;
             title: string;
             state: components["schemas"]["ServerWorkflowState"];
-            rootJobIds: string[];
+            /** Format: int32 */
+            rootJobCount: number | string;
             /** Format: int32 */
             activeJobCount: number | string;
             /** Format: int32 */
             failedJobCount: number | string;
             /** Format: int32 */
             completedJobCount: number | string;
-        };
-        WorkflowTreeDto: {
-            summary: components["schemas"]["WorkflowSummaryDto"];
-            jobs: components["schemas"]["WorkflowJobNodeDto"][];
         };
         YouTubeSettingsPatchDto: {
             apiKey?: null | string;

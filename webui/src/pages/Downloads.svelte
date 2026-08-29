@@ -6,7 +6,8 @@
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
-  import type { PrototypeMutationState, ProposedBulkActionRequestDto, ProposedHistoryDeleteRequestDto } from '../prototype/backend-contracts';
+  import type { PrototypeMutationState } from '../prototype/state';
+  import type { ProposedBulkActionRequestDto, ProposedTransferHistoryArchiveRequestDto } from '../prototype/contracts/transfers';
   import { downloadsForScenario, type DownloadFolderEntry, type DownloadItem } from '../prototype/downloads';
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { FolderItemFile, TransferPresentation } from '../prototype/items';
@@ -105,7 +106,7 @@
   function removeItem(entry: TransferTimelineEntry): void {
     const item = sourceItem(entry.id);
     if (!item || !isTerminalTransfer(presentationFor(item))) return;
-    const request: ProposedHistoryDeleteRequestDto = { resourceKind: 'download-job', resourceIds: [item.id], semantics: 'archive-from-history' };
+    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'download', transferIds: item.sourceTransferIds, semantics: 'archive-from-history' };
     void request;
     mutation = { phase: 'pending', label: 'Removing from history…' };
     removedItems = new Set(removedItems).add(item.id);
@@ -116,6 +117,8 @@
     const folder = sourceFolder(entry.id);
     const sourceFile = folder?.files.find((candidate) => candidate.id === file.id);
     if (!folder || !sourceFile || !isTerminalTransfer(sourceFile.transfer)) return;
+    const request: ProposedTransferHistoryArchiveRequestDto = { direction: 'download', transferIds: [file.id], semantics: 'archive-from-history' };
+    void request;
     mutation = { phase: 'pending', label: 'Removing file history…' };
     removedFiles = new Set(removedFiles).add(fileCancellationKey(folder.id, file.id));
     mutation = { phase: 'succeeded', label: 'File removed' };
