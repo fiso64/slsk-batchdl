@@ -1,6 +1,9 @@
 using System.Text.RegularExpressions;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Sharing;
+using Sockseek.Core.Chat;
+using Sockseek.Core.Extractors;
 
 namespace Sockseek.Core.Settings;
 
@@ -90,6 +93,18 @@ public interface IJobSettingsResolver
     DownloadSettings Resolve(DownloadSettings inherited, Job job);
 }
 
+/// <summary>
+/// Optional lifetime hook for daemon resolvers that retain per-workflow or
+/// per-job submission state. The version prevents an old workflow generation
+/// from deleting options already supplied for a later generation with the same
+/// workflow ID.
+/// </summary>
+public interface IWorkflowSettingsLifetime
+{
+    long CaptureWorkflowVersion(Guid workflowId);
+    void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds, long expectedVersion);
+}
+
 public sealed class DefaultJobSettingsResolver : IJobSettingsResolver
 {
     public static DefaultJobSettingsResolver Instance { get; } = new();
@@ -108,7 +123,6 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
     private readonly IReadOnlyList<SettingsProfile> _namedProfiles;
     private readonly SettingsProfile? _cliProfile;
     private readonly ProfileContext _context;
-    private readonly Action<string>? _warn;
     private readonly Action<DownloadSettings>? _normalize;
 
     public ProfileJobSettingsResolver(
@@ -118,8 +132,7 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
         IReadOnlyList<SettingsProfile> namedProfiles,
         SettingsProfile? cliProfile,
         ProfileContext? context = null,
-        Action<DownloadSettings>? normalize = null,
-        Action<string>? warn = null)
+        Action<DownloadSettings>? normalize = null)
     {
         _baseDefaults = SettingsCloner.Clone(baseDefaults);
         _defaultProfile = defaultProfile;
@@ -128,7 +141,6 @@ public sealed class ProfileJobSettingsResolver : IJobSettingsResolver
         _cliProfile = cliProfile;
         _context = context ?? new ProfileContext();
         _normalize = normalize;
-        _warn = warn;
 
         foreach (var profile in _autoProfiles.Where(p => p.HasEngineSettings))
             throw new Exception($"Input error: Auto-profile '{profile.Name}' contains engine settings, which cannot be applied per job");
@@ -226,11 +238,19 @@ public static class SettingsNormalizer
             engine.LogFilePath = Utils.GetFullPath(Utils.ExpandVariables(engine.LogFilePath, pathContext));
         if (engine.MockFilesDir != null)
             engine.MockFilesDir = Utils.GetFullPath(Utils.ExpandVariables(engine.MockFilesDir, pathContext));
+        if (engine.UserPicturePath != null)
+            engine.UserPicturePath = Utils.GetFullPath(Utils.ExpandVariables(engine.UserPicturePath, pathContext));
+
+        SharingSettingsValidator.NormalizeAndValidate(engine, pathContext);
+        ChatSettingsValidator.NormalizeAndValidate(engine);
     }
 }
 
 public static partial class ProfileConditionEvaluator
 {
+    private const string GenericFileMode = "generic-file";
+    private const string GenericDirectoryMode = "generic-directory";
+
     public static bool Satisfied(string cond, DownloadSettings settings, Job? job = null, ProfileContext? context = null)
     {
         var tokens = new Queue<string>(CondTokenRegex().Split(cond).Where(t => !string.IsNullOrWhiteSpace(t)));
@@ -281,11 +301,14 @@ public static partial class ProfileConditionEvaluator
                 if (tokens.Count == 0)
                     throw new Exception($"Input error: Missing comparison value after '{op}'");
                 string val = tokens.Dequeue().Trim('"').ToLower();
-                string cur = GetVarValue(tok, settings, job, context).ToString()!.ToLower();
+                string? cur = GetVarValue(tok, settings, job, context)?.ToString()?.ToLower();
                 return op == "==" ? cur == val : cur != val;
             }
 
-            return (bool)GetVarValue(tok, settings, job, context);
+            object? value = GetVarValue(tok, settings, job, context);
+            if (value is bool boolean)
+                return boolean;
+            throw new Exception($"Input error: Profile condition variable '{tok}' requires a comparison");
         }
 
         var result = ParseExpression();
@@ -294,31 +317,36 @@ public static partial class ProfileConditionEvaluator
         return result;
     }
 
-    private static object GetVarValue(string var, DownloadSettings settings, Job? job, ProfileContext? context)
+    private static object? GetVarValue(string var, DownloadSettings settings, Job? job, ProfileContext? context)
     {
-        static string ToKebab(string s) =>
-            string.Concat(s.Select((c, i) => char.IsUpper(c) && i > 0 ? "-" + char.ToLower(c) : char.ToLower(c).ToString()));
+        InputType inputType = EffectiveInputType(settings, job);
 
-        string mode = job switch
+        // download-mode describes a concrete semantic download shape. Internal orchestration
+        // job names and source-decided input before extraction are deliberately not modes.
+        string? mode = job switch
         {
+            ExtractJob extract when SoulseekExtractor.InputMatches(extract.Input) =>
+                SoulseekMode(
+                    extract.Input,
+                    extract.RequestedModeOverride ?? settings.Extraction.RequestedMode),
             SearchJob { DefaultFolderProjection: not null } => "album",
             SearchJob { DefaultFileProjection: not null } => "song",
             AlbumAggregateJob => "album-aggregate",
             AlbumJob => "album",
             AggregateJob => "aggregate",
             SongJob => "song",
-            _ when job != null => ToKebab(job.GetType().Name.Replace("Job", "")),
-            _ when SettingsMode(settings) == "album" && settings.Search.IsAggregate => "album-aggregate",
-            _ when SettingsMode(settings) == "song" && settings.Search.IsAggregate => "aggregate",
-            _ when SettingsMode(settings) == "album" => "album",
-            _ when SettingsMode(settings) == "song" => "song",
-            _ when settings.Search.IsAggregate => "aggregate",
-            _ => "normal",
+            RemoteFileJob => GenericFileMode,
+            RemoteDirectoryJob => GenericDirectoryMode,
+            ExtractJob extract => SettingsMode(settings, inputType, extract.RequestedModeOverride),
+            null when inputType == InputType.Soulseek
+                && SoulseekExtractor.InputMatches(settings.Extraction.Input ?? "") =>
+                SoulseekMode(settings.Extraction.Input!, settings.Extraction.RequestedMode),
+            _ => SettingsMode(settings, inputType),
         };
 
         return var switch
         {
-            "input-type" => settings.Extraction.InputType.ToString().ToLower(),
+            "input-type" => inputType.ToString().ToLower(),
             "download-mode" => mode,
             "album" => mode is "album" or "album-aggregate",
             "aggregate" => settings.Search.IsAggregate || mode is "aggregate" or "album-aggregate",
@@ -327,14 +355,53 @@ public static partial class ProfileConditionEvaluator
         };
     }
 
-    private static string SettingsMode(DownloadSettings settings)
-        => settings.Extraction.RequestedMode switch
+    private static InputType EffectiveInputType(DownloadSettings settings, Job? job)
+    {
+        string? input = settings.Extraction.Input;
+        InputType configured = settings.Extraction.InputType;
+        if (job is ExtractJob extract)
+        {
+            input = extract.Input;
+            if (extract.InputType is { } jobInputType && jobInputType != InputType.None)
+                configured = jobInputType;
+        }
+
+        return ExtractorRegistry.TryResolveInputType(input, configured, out InputType resolved)
+            ? resolved
+            : configured;
+    }
+
+    private static string SoulseekMode(string input, ExtractionMode? requestedMode)
+        => SoulseekExtractor.ClassifyLink(input, requestedMode) switch
+        {
+            SoulseekLinkInterpretation.RemoteFile => GenericFileMode,
+            SoulseekLinkInterpretation.RemoteDirectory => GenericDirectoryMode,
+            SoulseekLinkInterpretation.MusicTrack => "song",
+            SoulseekLinkInterpretation.MusicAlbum => "album",
+            _ => throw new ArgumentOutOfRangeException(),
+        };
+
+    private static string? SettingsMode(
+        DownloadSettings settings,
+        InputType inputType,
+        ExtractionMode? requestedModeOverride = null)
+    {
+        string? mode = (requestedModeOverride ?? settings.Extraction.RequestedMode) switch
         {
             ExtractionMode.Album => "album",
             ExtractionMode.Song => "song",
-            _ when settings.Extraction.InputType is InputType.String or InputType.List or InputType.None => "album",
-            _ => "normal",
+            _ when settings.Extraction.UpgradeToAlbum => "album",
+            _ when inputType is InputType.String or InputType.List => "album",
+            _ => null,
         };
+
+        return mode switch
+        {
+            "album" when settings.Search.IsAggregate => "album-aggregate",
+            "song" when settings.Search.IsAggregate => "aggregate",
+            _ => mode,
+        };
+    }
 
     [GeneratedRegex(@"(\s+|\(|\)|&&|\|\||==|!=|!|\"".*?\"")")]
     private static partial Regex CondTokenRegex();
@@ -342,31 +409,26 @@ public static partial class ProfileConditionEvaluator
 
 public static class SettingsCloner
 {
-    public static EngineSettings Clone(EngineSettings source) => new()
+    public static EngineSettings Clone(EngineSettings source)
     {
-        Username = source.Username,
-        Password = source.Password,
-        UseRandomLogin = source.UseRandomLogin,
-        ListenPort = source.ListenPort,
-        ConnectTimeout = source.ConnectTimeout,
-        AutoReconnectAfterKickedFromServer = source.AutoReconnectAfterKickedFromServer,
-        SharedFiles = source.SharedFiles,
-        SharedFolders = source.SharedFolders,
-        UserDescription = source.UserDescription,
-        NoModifyShareCount = source.NoModifyShareCount,
-        ConcurrentJobs = source.ConcurrentJobs,
-        ConcurrentSearches = source.ConcurrentSearches,
-        ConcurrentExtractors = source.ConcurrentExtractors,
-        SearchesPerTime = source.SearchesPerTime,
-        SearchRenewTime = source.SearchRenewTime,
-        LogLevel = source.LogLevel,
-        ReportIntervalProgress = source.ReportIntervalProgress,
-        LogFilePath = source.LogFilePath,
-        MockFilesDir = source.MockFilesDir,
-        MockFilesReadTags = source.MockFilesReadTags,
-        MockFilesSlow = source.MockFilesSlow,
-        MockFilesFailDownloads = source.MockFilesFailDownloads,
-    };
+        var clone = source.ShallowClone();
+        clone.Sharing = source.Sharing.ShallowClone();
+        clone.Sharing.Roots = [.. source.Sharing.Roots.Select(root => new ShareRootSettings
+        {
+            LocalPath = root.LocalPath,
+            Alias = root.Alias,
+            EffectiveAlias = root.EffectiveAlias,
+        })];
+        clone.Sharing.ExcludedDirectories = [.. source.Sharing.ExcludedDirectories];
+        clone.Sharing.Filters = [.. source.Sharing.Filters];
+        clone.Uploads = source.Uploads.ShallowClone();
+        clone.PeerAccess = source.PeerAccess.ShallowClone();
+        clone.PeerAccess.BlockedUsernames = [.. source.PeerAccess.BlockedUsernames];
+        clone.PeerAccess.BlockedIpAddresses = [.. source.PeerAccess.BlockedIpAddresses];
+        clone.Chat = source.Chat.ShallowClone();
+        clone.Chat.AutoJoinRooms = [.. source.Chat.AutoJoinRooms];
+        return clone;
+    }
 
     public static DownloadSettings Clone(DownloadSettings source) => new()
     {
@@ -386,70 +448,36 @@ public static class SettingsCloner
         RuntimePathContext = source.RuntimePathContext,
     };
 
-    public static OutputSettings Clone(OutputSettings source) => new()
+    public static OutputSettings Clone(OutputSettings source)
     {
-        ParentDir = source.ParentDir,
-        NameFormat = source.NameFormat,
-        InvalidReplaceStr = source.InvalidReplaceStr,
-        WritePlaylist = source.WritePlaylist,
-        WriteIndex = source.WriteIndex,
-        HasConfiguredIndex = source.HasConfiguredIndex,
-        M3uFilePath = source.M3uFilePath,
-        IndexFilePath = source.IndexFilePath,
-        IncompleteAlbumAction = new IncompleteAlbumActionSettings
+        var clone = source.ShallowClone();
+        clone.IncompleteAlbumAction = new IncompleteAlbumActionSettings
         {
             Kind = source.IncompleteAlbumAction.Kind,
             Path = source.IncompleteAlbumAction.Path,
-        },
-        OnComplete = source.OnComplete?.ToList(),
-        AlbumArtOnly = source.AlbumArtOnly,
-        AlbumArtOption = source.AlbumArtOption,
-    };
+        };
+        clone.OnComplete = source.OnComplete?.ToList();
+        return clone;
+    }
 
-    public static SearchSettings Clone(SearchSettings source) => new()
+    public static SearchSettings Clone(SearchSettings source)
     {
-        NecessaryCond = new FileConditions(source.NecessaryCond),
-        PreferredCond = new FileConditions(source.PreferredCond),
-        NecessaryFolderCond = new FolderConditions(source.NecessaryFolderCond),
-        PreferredFolderCond = new FolderConditions(source.PreferredFolderCond),
-        StrictAlbumQuality = source.StrictAlbumQuality,
-        SearchTimeout = source.SearchTimeout,
-        MaxStaleTime = source.MaxStaleTime,
-        DownrankOn = source.DownrankOn,
-        IgnoreOn = source.IgnoreOn,
-        FastSearch = source.FastSearch,
-        FastSearchDelay = source.FastSearchDelay,
-        FastSearchMinUpSpeed = source.FastSearchMinUpSpeed,
-        DesperateSearch = source.DesperateSearch,
-        NoRemoveSpecialChars = source.NoRemoveSpecialChars,
-        RemoveSingleCharSearchTerms = source.RemoveSingleCharSearchTerms,
-        NoBrowseFolder = source.NoBrowseFolder,
-        Relax = source.Relax,
-        ArtistMaybeWrong = source.ArtistMaybeWrong,
-        IsAggregate = source.IsAggregate,
-        MinSharesAggregate = source.MinSharesAggregate,
-        AggregateLengthTol = source.AggregateLengthTol,
-    };
+        var clone = source.ShallowClone();
+        clone.NecessaryCond = new FileConditions(source.NecessaryCond);
+        clone.PreferredCond = new FileConditions(source.PreferredCond);
+        clone.NecessaryFolderCond = new FolderConditions(source.NecessaryFolderCond);
+        clone.PreferredFolderCond = new FolderConditions(source.PreferredFolderCond);
+        return clone;
+    }
 
-    public static SkipSettings Clone(SkipSettings source) => new()
-    {
-        SkipExisting = source.SkipExisting,
-        SkipNotFound = source.SkipNotFound,
-        SkipMode = source.SkipMode,
-        SkipMusicDir = source.SkipMusicDir,
-        SkipModeMusicDir = source.SkipModeMusicDir,
-        SkipCheckCond = source.SkipCheckCond,
-        SkipCheckPrefCond = source.SkipCheckPrefCond,
-    };
+    public static SkipSettings Clone(SkipSettings source) => source.ShallowClone();
 
-    public static PreprocessSettings Clone(PreprocessSettings source) => new()
+    public static PreprocessSettings Clone(PreprocessSettings source)
     {
-        RemoveFt = source.RemoveFt,
-        RemoveBrackets = source.RemoveBrackets,
-        ExtractArtist = source.ExtractArtist,
-        ParseTitleTemplate = source.ParseTitleTemplate,
-        Regex = source.Regex?.Select(x => (Clone(x.Item1), Clone(x.Item2))).ToList(),
-    };
+        var clone = source.ShallowClone();
+        clone.Regex = source.Regex?.Select(x => (Clone(x.Item1), Clone(x.Item2))).ToList();
+        return clone;
+    }
 
     private static RegexFields Clone(RegexFields source) => new()
     {
@@ -458,64 +486,17 @@ public static class SettingsCloner
         Album = source.Album,
     };
 
-    public static ExtractionSettings Clone(ExtractionSettings source) => new()
-    {
-        Input = source.Input,
-        InputType = source.InputType,
-        MaxTracks = source.MaxTracks,
-        Offset = source.Offset,
-        Reverse = source.Reverse,
-        RemoveTracksFromSource = source.RemoveTracksFromSource,
-        RequestedMode = source.RequestedMode,
-        UpgradeToAlbum = source.UpgradeToAlbum,
-        SetAlbumMinTrackCount = source.SetAlbumMinTrackCount,
-        SetAlbumMaxTrackCount = source.SetAlbumMaxTrackCount,
-    };
+    public static ExtractionSettings Clone(ExtractionSettings source) => source.ShallowClone();
 
-    public static TransferSettings Clone(TransferSettings source) => new()
-    {
-        MaxDownloadRetries = source.MaxDownloadRetries,
-        UnknownErrorRetries = source.UnknownErrorRetries,
-        NoIncompleteExt = source.NoIncompleteExt,
-        AlbumTrackCountMaxRetries = source.AlbumTrackCountMaxRetries,
-    };
+    public static TransferSettings Clone(TransferSettings source) => source.ShallowClone();
 
-    public static SpotifySettings Clone(SpotifySettings source) => new()
-    {
-        ClientId = source.ClientId,
-        ClientSecret = source.ClientSecret,
-        Token = source.Token,
-        Refresh = source.Refresh,
-    };
+    public static SpotifySettings Clone(SpotifySettings source) => source.ShallowClone();
 
-    public static YouTubeSettings Clone(YouTubeSettings source) => new()
-    {
-        ApiKey = source.ApiKey,
-        GetDeleted = source.GetDeleted,
-        DeletedOnly = source.DeletedOnly,
-    };
+    public static YouTubeSettings Clone(YouTubeSettings source) => source.ShallowClone();
 
-    public static YtDlpSettings Clone(YtDlpSettings source) => new()
-    {
-        UseYtdlp = source.UseYtdlp,
-        YtdlpArgument = source.YtdlpArgument,
-    };
+    public static YtDlpSettings Clone(YtDlpSettings source) => source.ShallowClone();
 
-    public static CsvSettings Clone(CsvSettings source) => new()
-    {
-        ArtistCol = source.ArtistCol,
-        AlbumCol = source.AlbumCol,
-        TitleCol = source.TitleCol,
-        YtIdCol = source.YtIdCol,
-        DescCol = source.DescCol,
-        TrackCountCol = source.TrackCountCol,
-        LengthCol = source.LengthCol,
-        TimeUnit = source.TimeUnit,
-        YtParse = source.YtParse,
-    };
+    public static CsvSettings Clone(CsvSettings source) => source.ShallowClone();
 
-    public static BandcampSettings Clone(BandcampSettings source) => new()
-    {
-        HtmlFromFile = source.HtmlFromFile,
-    };
+    public static BandcampSettings Clone(BandcampSettings source) => source.ShallowClone();
 }

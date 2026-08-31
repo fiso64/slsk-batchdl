@@ -1,5 +1,7 @@
 using Soulseek;
 using Sockseek.Core.Transfers.Downloads.State;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
@@ -7,6 +9,7 @@ internal sealed class StaleDownloadCoordinator
 {
     private readonly ActiveDownloadTracker activeDownloads;
     private readonly TimeProvider timeProvider;
+    private readonly ILogger<StaleDownloadCoordinator> logger;
     private readonly object gate = new();
     private readonly Dictionary<Guid, Attempt> attempts = new();
     // Keep recent peer activity after an attempt completes, so queued same-user
@@ -14,10 +17,14 @@ internal sealed class StaleDownloadCoordinator
     private readonly Dictionary<string, long> latestActivityByUser = new(StringComparer.OrdinalIgnoreCase);
     private TaskCompletionSource deadlinesChanged = NewSignal();
 
-    public StaleDownloadCoordinator(ActiveDownloadTracker activeDownloads, TimeProvider? timeProvider = null)
+    public StaleDownloadCoordinator(
+        ActiveDownloadTracker activeDownloads,
+        TimeProvider? timeProvider = null,
+        ILogger<StaleDownloadCoordinator>? logger = null)
     {
         this.activeDownloads = activeDownloads;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.logger = logger ?? NullLogger<StaleDownloadCoordinator>.Instance;
     }
 
     // Arms stale detection only for the Soulseek peer-transfer call. Search,
@@ -100,7 +107,11 @@ internal sealed class StaleDownloadCoordinator
             }
             catch (Exception ex)
             {
-                SockseekLog.Jobs.Error(ex, "Error in stale download scheduler");
+                DownloadLogMessages.ComponentFailed(
+                    logger,
+                    ex,
+                    "stale-download-scheduler",
+                    null);
                 await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, cancellationToken);
             }
         }
@@ -127,7 +138,7 @@ internal sealed class StaleDownloadCoordinator
             var download = attempt.Download;
             download.MarkStaleCancelled(attempt.MaxStaleTimeMs);
             try { download.Cts.Cancel(); } catch { }
-            activeDownloads.TryRemove(download.Candidate.Filename, out _);
+            activeDownloads.TryRemove(download.TransferId, out _);
         }
 
         return staleAttempts.Count;
@@ -156,7 +167,7 @@ internal sealed class StaleDownloadCoordinator
             {
                 var now = timeProvider.GetTimestamp();
                 attempt.LastOwnActivityTimestamp = now;
-                latestActivityByUser[attempt.Download.Candidate.Username] = now;
+                latestActivityByUser[attempt.Download.Target.Username] = now;
             }
         }
 
@@ -210,7 +221,7 @@ internal sealed class StaleDownloadCoordinator
         var latest = new Dictionary<string, long>(latestActivityByUser, StringComparer.OrdinalIgnoreCase);
         foreach (var attempt in attempts.Values)
         {
-            var username = attempt.Download.Candidate.Username;
+            var username = attempt.Download.Target.Username;
             if (!latest.TryGetValue(username, out var latestActivity)
                 || attempt.LastOwnActivityTimestamp > latestActivity)
             {
@@ -229,7 +240,7 @@ internal sealed class StaleDownloadCoordinator
         // Queued siblings from the same user are protected by any fresh same-user activity;
         // an in-progress transfer must make progress on its own.
         if (!IsInProgress(attempt.State)
-            && latestActivityByUser.TryGetValue(attempt.Download.Candidate.Username, out var latestUserActivity)
+            && latestActivityByUser.TryGetValue(attempt.Download.Target.Username, out var latestUserActivity)
             && latestUserActivity > referenceTimestamp)
         {
             referenceTimestamp = latestUserActivity;

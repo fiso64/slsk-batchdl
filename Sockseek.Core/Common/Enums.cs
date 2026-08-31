@@ -136,6 +136,7 @@ namespace Sockseek.Core;
     {
         Song = 0,
         Album = 1,
+        General = 2,
     }
 
     // backward-compat, remove this

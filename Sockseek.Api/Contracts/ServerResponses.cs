@@ -9,7 +9,8 @@ namespace Sockseek.Api;
 public sealed record ServerInfoDto(
     string Name,
     string Version,
-    DateTimeOffset StartedAtUtc);
+    DateTimeOffset StartedAtUtc,
+    int LiveProtocolVersion);
 
 /// <summary>
 /// Current daemon and engine activity counters.
@@ -20,7 +21,57 @@ public sealed record ServerStatusDto(
     int ActiveJobCount,
     int TotalWorkflowCount,
     int ActiveWorkflowCount,
-    int RestartCount);
+    int RestartCount,
+    PersistenceStatusDto? Persistence = null);
+
+public sealed record PersistenceStatusDto(
+    bool Enabled,
+    bool Initialized,
+    string State,
+    string? SchemaVersion,
+    Guid? RuntimeId,
+    DateTimeOffset? RuntimeStartedAtUtc,
+    DateTimeOffset? LastSuccessfulCommitAtUtc,
+    DateTimeOffset? LastFailureAtUtc,
+    string? LastFailure,
+    int CriticalQueueDepth,
+    int CriticalQueueCapacity,
+    int OrdinaryQueueDepth,
+    int OrdinaryQueueCapacity,
+    int ProgressEntityCount,
+    int ProgressEntityCapacity,
+    int BufferedSearchResultCount,
+    int BufferedSearchResultCapacity,
+    int DegradedProjectionCount,
+    int DegradedProjectionCapacity,
+    long BusyRetryCount,
+    long DroppedOrdinaryCount,
+    long DroppedProgressCount,
+    long DroppedSearchResultCount,
+    long IncompleteSearchCount,
+    long EvictedTerminalProjectionCount,
+    long SuccessfulCommitCount,
+    long RowsWritten,
+    long? DatabaseSizeBytes = null,
+    long? WalSizeBytes = null,
+    double? LastCommitDurationMilliseconds = null,
+    int? LastBatchMutationCount = null,
+    long PermanentlyFailedMutationCount = 0,
+    int IncompleteSearchTrackingCount = 0,
+    int IncompleteSearchTrackingCapacity = 0,
+    bool IncompleteSearchTrackingOverflowed = false,
+    IReadOnlyList<long>? CommitLatencyHistogram = null,
+    IReadOnlyList<long>? BatchSizeHistogram = null,
+    int ReconciledUnfinishedRuntimeCount = 0,
+    int ReconciledInterruptedJobCount = 0,
+    int ReconciledInterruptedTransferCount = 0,
+    int ReconciledInterruptedAttemptCount = 0,
+    int ReconciledInterruptedSearchCount = 0,
+    DateTimeOffset? LastRetentionAtUtc = null,
+    int LastRetentionPrunedJobs = 0,
+    int LastRetentionPrunedSearchResults = 0,
+    int LastRetentionPrunedTransfers = 0,
+    int LastRetentionPrunedTransferAttempts = 0);
 
 /// <summary>
 /// Current Soulseek client connection state.
@@ -47,12 +98,19 @@ public sealed record ProfileSummaryDto(
 /// Error response body for rejected API requests.
 /// </summary>
 public sealed record ApiErrorDto(
-    string Error);
+    string Error,
+    string? Code = null);
 
 /// <summary>
 /// Response body returned when cancelling a workflow.
 /// </summary>
 public sealed record CancelWorkflowResponseDto(
+    int Cancelled);
+
+/// <summary>
+/// Response body returned when cancelling all currently cancellable daemon jobs.
+/// </summary>
+public sealed record CancelJobsResponseDto(
     int Cancelled);
 
 /// <summary>
@@ -182,12 +240,12 @@ public sealed record JobSummaryDto(
 }
 
 /// <summary>
-/// Selected-job snapshot: summary, typed payload, and direct child summaries for client navigation.
+/// Fixed-size selected-job snapshot. Direct children are listed through the jobs collection.
 /// </summary>
 public sealed record JobDetailDto(
     JobSummaryDto Summary,
     JobPayloadDto? Payload,
-    IReadOnlyList<JobSummaryDto> Children);
+    int ChildCount);
 
 /// <summary>
 /// Workflow list item summarizing related jobs submitted under one workflow id.
@@ -196,31 +254,16 @@ public sealed record WorkflowSummaryDto(
     Guid WorkflowId,
     string Title,
     ServerWorkflowState State,
-    IReadOnlyList<Guid> RootJobIds,
+    int RootJobCount,
     int ActiveJobCount,
     int FailedJobCount,
     int CompletedJobCount);
 
 /// <summary>
-/// Workflow snapshot containing execution-root job summaries unless IncludeAll is requested.
+/// Fixed-size workflow detail. Jobs are listed through the jobs collection.
 /// </summary>
 public sealed record WorkflowDetailDto(
-    WorkflowSummaryDto Summary,
-    IReadOnlyList<JobSummaryDto> Jobs);
-
-/// <summary>
-/// Recursive execution tree node built from ParentJobId relationships.
-/// </summary>
-public sealed record WorkflowJobNodeDto(
-    JobSummaryDto Summary,
-    IReadOnlyList<WorkflowJobNodeDto> Children);
-
-/// <summary>
-/// Workflow snapshot shaped as an execution tree.
-/// </summary>
-public sealed record WorkflowTreeDto(
-    WorkflowSummaryDto Summary,
-    IReadOnlyList<WorkflowJobNodeDto> Jobs);
+    WorkflowSummaryDto Summary);
 
 /// <summary>
 /// Query parameters for listing jobs.
@@ -234,4 +277,5 @@ public sealed record JobQuery(
     ServerJobKind? Kind,
     Guid? WorkflowId,
     bool IncludeAll,
-    ServerJobSkipReason? SkipReason = null);
+    ServerJobSkipReason? SkipReason = null,
+    Guid? ParentJobId = null);

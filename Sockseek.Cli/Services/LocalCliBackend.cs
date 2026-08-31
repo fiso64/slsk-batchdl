@@ -4,6 +4,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 
@@ -15,29 +16,33 @@ internal sealed class LocalCliBackend
     private readonly DownloadEngine engine;
     private readonly DownloadSettings? defaultSubmitSettings;
     private readonly SubmissionOptionsJobSettingsResolver? submissionOptionsResolver;
+    private readonly DownloadSettingsPatchDto? explicitCliDownloadSettings;
     private readonly EngineStateStore stateStore = new();
-    private readonly WorkflowClientStore workflowStore = new();
-    private readonly ConcurrentDictionary<Guid, long> workflowUpdateSequences = [];
-    private long nextSequence;
+    private readonly DaemonClientStore daemonStore = new();
+    private readonly ConcurrentDictionary<Guid, byte> liveWorkflowSubscriptions = [];
+    private volatile bool liveDaemonSubscription;
 
-    public event Action<ServerEventEnvelopeDto>? EventReceived;
-    public event Action<WorkflowClientUpdate>? WorkflowUpdated;
+    public event Action<DaemonClientUpdate>? StateUpdated;
+    public event Action<ActivityEventDto>? ActivityReceived;
+    public event Action<StateSnapshotDto>? LiveSnapshotApplied;
+
+    public DaemonClientStore ClientStore => daemonStore;
 
     public LocalCliBackend(
         DownloadEngine engine,
         DownloadSettings? defaultSubmitSettings = null,
-        SubmissionOptionsJobSettingsResolver? submissionOptionsResolver = null)
+        SubmissionOptionsJobSettingsResolver? submissionOptionsResolver = null,
+        DownloadSettingsPatchDto? explicitCliDownloadSettings = null)
     {
         this.engine = engine;
         this.submissionOptionsResolver = submissionOptionsResolver;
+        this.explicitCliDownloadSettings = explicitCliDownloadSettings;
         this.defaultSubmitSettings = defaultSubmitSettings != null
             ? SettingsCloner.Clone(defaultSubmitSettings)
             : null;
         stateStore.AttachEngine(engine);
-        stateStore.JobUpserted += summary => Publish("job.upserted", summary);
-        stateStore.WorkflowUpserted += summary => Publish("workflow.upserted", summary);
-        stateStore.SearchUpdated += update => Publish("search.updated", update);
-        new EngineEventDtoAdapter(GetSummary, Publish).Attach(engine.Events, engine.SearchEvents);
+        stateStore.StateBatchPublished += HandleStateBatch;
+        new EngineActivityDtoAdapter(stateStore, GetSummary).Attach(engine.Events, engine.SearchEvents);
     }
 
     public Task<JobSummaryDto> SubmitExtractJobAsync(SubmitExtractJobRequestDto request, CancellationToken ct = default)
@@ -65,21 +70,49 @@ internal sealed class LocalCliBackend
         => SubmitJobAsync(JobRequestMapper.CreateAlbumAggregateJob(request), request.Options, ct);
 
     public Task<JobSummaryDto> SubmitJobListAsync(SubmitJobListRequestDto request, CancellationToken ct = default)
-        => SubmitJobAsync(JobRequestMapper.CreateJobList(request), request.Options, ct);
+    {
+        var job = JobRequestMapper.CreateJobList(request);
+        ApplyDraftJobOptions(job, request.Jobs);
+        return SubmitJobAsync(job, request.Options, ct, request.Jobs);
+    }
 
     public Task SubscribeWorkflowAsync(Guid workflowId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (liveDaemonSubscription)
+            throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions in one local backend.");
+        if (liveWorkflowSubscriptions.TryAdd(workflowId, 0))
+        {
+            stateStore.ReserveWorkflowStream(workflowId);
+            var snapshot = stateStore.GetWorkflowSnapshot(workflowId);
+            LiveSnapshotApplied?.Invoke(snapshot);
+            var update = daemonStore.ApplySnapshot(snapshot);
+            StateUpdated?.Invoke(update);
+        }
         return Task.CompletedTask;
     }
 
     public Task SubscribeAllAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (!liveWorkflowSubscriptions.IsEmpty)
+            throw new InvalidOperationException("Cannot mix daemon and workflow subscriptions in one local backend.");
+        if (!liveDaemonSubscription)
+        {
+            liveDaemonSubscription = true;
+            var snapshot = stateStore.GetDaemonSnapshot();
+            LiveSnapshotApplied?.Invoke(snapshot);
+            var update = daemonStore.ApplySnapshot(snapshot);
+            StateUpdated?.Invoke(update);
+        }
         return Task.CompletedTask;
     }
 
-    private Task<JobSummaryDto> SubmitJobAsync(Job job, SubmissionOptionsDto? options, CancellationToken ct)
+    private Task<JobSummaryDto> SubmitJobAsync(
+        Job job,
+        SubmissionOptionsDto? options,
+        CancellationToken ct,
+        IReadOnlyList<JobDraftDto>? childDrafts = null)
     {
         ct.ThrowIfCancellationRequested();
         if (defaultSubmitSettings == null)
@@ -89,11 +122,25 @@ internal sealed class LocalCliBackend
             job.WorkflowId = workflowId;
         JobRequestMapper.AssignWorkflowId(job, job.WorkflowId);
 
+        if (!liveDaemonSubscription)
+            SubscribeWorkflowAsync(job.WorkflowId, ct).GetAwaiter().GetResult();
+
         submissionOptionsResolver?.SetJobOptions(job.Id, options);
 
-        var settings = SettingsCloner.Clone(defaultSubmitSettings);
+        var settings = submissionOptionsResolver?.Resolve(defaultSubmitSettings, job)
+            ?? SettingsCloner.Clone(defaultSubmitSettings);
         ApplySubmissionOptionsToInheritedSettings(settings, options);
+        if (ContainsRemoteTransfer(job, settings))
+            RemoteTransferSettingsValidator.ValidateExplicitNameFormat(explicitCliDownloadSettings);
+        if (ContainsRemoteTransfer(job, settings)
+            && options?.DownloadSettings is { } explicitPatch)
+        {
+            RemoteTransferSettingsValidator.ValidateExplicitPatch(explicitPatch);
+        }
+        if (job is JobList jobList && childDrafts != null)
+            ValidateDraftRemoteTransferOverrides(jobList, childDrafts, settings);
         NormalizeLocalSettings(settings);
+        ValidateSubmissionSettings(job, settings);
 
         job.EnsureDisplayId();
         engine.Enqueue(job, settings);
@@ -134,7 +181,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request.SongQuery != null
@@ -150,7 +197,7 @@ internal sealed class LocalCliBackend
                 snapshot.Items.Select(ToFileCandidateDto).ToList()));
         }
 
-        var songJob = stateStore.GetJob<SongJob>(jobId);
+        var songJob = GetRuntimeJob<SongJob>(jobId);
         if (songJob == null)
             return Task.FromResult<SearchResultSnapshotDto<FileCandidateDto>?>(null);
 
@@ -170,7 +217,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = albumQuery != null
@@ -191,8 +238,8 @@ internal sealed class LocalCliBackend
                     folder.FolderPath,
                     new PeerInfoDto(
                         folder.Username,
-                        folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                        folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                        folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                        folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
                     folder.SearchFileCount,
                     folder.SearchAudioFileCount,
                     includeFiles
@@ -203,7 +250,7 @@ internal sealed class LocalCliBackend
                     folder.IsFullyRetrieved)).ToList()));
         }
 
-        var albumJob = stateStore.GetJob<AlbumJob>(jobId);
+        var albumJob = GetRuntimeJob<AlbumJob>(jobId);
         if (albumJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AlbumFolderDto>?>(null);
 
@@ -221,7 +268,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request.SongQuery != null
@@ -241,7 +288,7 @@ internal sealed class LocalCliBackend
                     includeCandidates ? song.Candidates?.Select(ToFileCandidateDto).ToList() : null)).ToList()));
         }
 
-        var aggregateJob = stateStore.GetJob<AggregateJob>(jobId);
+        var aggregateJob = GetRuntimeJob<AggregateJob>(jobId);
         if (aggregateJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AggregateTrackCandidateDto>?>(null);
 
@@ -265,7 +312,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var searchJob = stateStore.GetJob<SearchJob>(jobId);
+        var searchJob = GetRuntimeJob<SearchJob>(jobId);
         if (searchJob?.Config != null)
         {
             var projection = request?.AlbumQuery != null
@@ -288,7 +335,7 @@ internal sealed class LocalCliBackend
                     includeFolders ? [..album.Results.Select(f => ToAlbumFolderDto(f, includeFiles: true))] : null)).ToList()));
         }
 
-        var albumAggregateJob = stateStore.GetJob<AlbumAggregateJob>(jobId);
+        var albumAggregateJob = GetRuntimeJob<AlbumAggregateJob>(jobId);
         if (albumAggregateJob == null)
             return Task.FromResult<SearchResultSnapshotDto<AggregateAlbumCandidateDto>?>(null);
 
@@ -306,7 +353,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<JobSummaryDto?>(null);
 
@@ -314,7 +361,7 @@ internal sealed class LocalCliBackend
         if (folder == null)
             throw new ArgumentException("Requested folder was not found in this job's album candidates.");
 
-        var retrieveJob = new RetrieveFolderJob(folder) { ItemName = folder.FolderPath, WorkflowId = sourceJob.WorkflowId };
+        var retrieveJob = new RetrieveFolderJob(folder.DirectoryIdentity) { ItemName = folder.FolderPath, WorkflowId = sourceJob.WorkflowId };
         stateStore.SetSourceJob(retrieveJob.Id, sourceJobId);
         retrieveJob.EnsureDisplayId();
         engine.Enqueue(retrieveJob, sourceJob.Config);
@@ -325,7 +372,7 @@ internal sealed class LocalCliBackend
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return null;
 
@@ -335,29 +382,35 @@ internal sealed class LocalCliBackend
 
         var retrieveJob = await engine.ProcessFolderRetrieval(folder, sourceJob);
         return new RetrieveFolderJobPayloadDto(
-            retrieveJob.TargetFolder.FolderPath,
-            retrieveJob.TargetFolder.Username,
+            retrieveJob.Directory.FolderPath,
+            retrieveJob.Directory.Username,
             retrieveJob.NewFilesFoundCount,
             EngineStateStore.ToServerFolderRetrievalOutcome(retrieveJob.RetrievalOutcome),
-            retrieveJob.RetrievalCancelled,
-            ToAlbumFolderDto(retrieveJob.TargetFolder, includeFiles: true));
+            retrieveJob.RetrievalCancelled);
     }
 
     public Task<IReadOnlyList<JobSummaryDto>?> StartFileDownloadsAsync(Guid sourceJobId, StartFileDownloadsRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<IReadOnlyList<JobSummaryDto>?>(null);
 
         if (request.Files.Count == 0)
             throw new ArgumentException("At least one file is required.");
+        if (request.RequestedMode == ExtractionMode.Album)
+            throw new ArgumentException("A file selection cannot be interpreted as an album.");
 
         var summaries = new List<JobSummaryDto>();
-        var settings = BuildFollowUpSettings(sourceJob, request.Options);
+        if (request.RequestedMode == ExtractionMode.General
+            && request.Options?.DownloadSettings is { } explicitPatch)
+        {
+            RemoteTransferSettingsValidator.ValidateExplicitPatch(explicitPatch);
+        }
 
-        if (sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
+        if ((request.RequestedMode is null or ExtractionMode.Song)
+            && sourceJob is SongJob manualSong && manualSong.IsAwaitingSelection)
         {
             if (request.Files.Count != 1)
                 throw new ArgumentException("Manual song jobs require exactly one selected file.");
@@ -383,31 +436,43 @@ internal sealed class LocalCliBackend
             if (candidate == null)
                 throw new ArgumentException("Requested file was not found in this job's file candidates.");
 
-            var songQuery = sourceJob switch
+            Job followUpJob;
+            if (request.RequestedMode == ExtractionMode.General)
             {
-                SearchJob searchJob => searchJob.DefaultFileProjection?.Query
-                    ?? Searcher.InferSongQuery(candidate.Filename, new SongQuery { Title = searchJob.QueryText }),
-                SongJob existingSongJob => existingSongJob.Query,
-                AggregateJob aggregateJob => aggregateJob.Songs
-                    .FirstOrDefault(song => song.Candidates?.Contains(candidate) == true)?.Query
-                    ?? Searcher.InferSongQuery(candidate.Filename, aggregateJob.Query),
-                _ => Searcher.InferSongQuery(candidate.Filename, sourceJob.QueryTrack ?? new SongQuery()),
-            };
-
-            var followUpSongJob = new SongJob(new SongQuery(songQuery))
+                followUpJob = new RemoteFileJob(candidate.Target);
+            }
+            else
             {
-                ResolvedTarget = candidate,
-                ItemName = sourceJob.ItemName,
-                WorkflowId = sourceJob.WorkflowId,
-            };
+                var songQuery = sourceJob switch
+                {
+                    SearchJob searchJob => searchJob.DefaultFileProjection?.Query
+                        ?? Searcher.InferSongQuery(candidate.Filename, new SongQuery { Title = searchJob.QueryText }),
+                    SongJob existingSongJob => existingSongJob.Query,
+                    AggregateJob aggregateJob => aggregateJob.Songs
+                        .FirstOrDefault(song => song.Candidates?.Contains(candidate) == true)?.Query
+                        ?? Searcher.InferSongQuery(candidate.Filename, aggregateJob.Query),
+                    _ => Searcher.InferSongQuery(candidate.Filename, sourceJob.QueryTrack ?? new SongQuery()),
+                };
+                followUpJob = new SongJob(new SongQuery(songQuery))
+                {
+                    ResolvedTarget = candidate,
+                };
+            }
+            followUpJob.ItemName = sourceJob.ItemName;
+            followUpJob.WorkflowId = sourceJob.WorkflowId;
+            var settings = BuildFollowUpSettings(sourceJob, followUpJob, request.Options);
+            if (followUpJob is RemoteFileJob)
+            {
+                RemoteTransferSettingsValidator.ValidateExplicitNameFormat(explicitCliDownloadSettings);
+                ValidateSubmissionSettings(followUpJob, settings);
+            }
 
             if (ShouldPropagateSourceMutationToFollowUp(sourceJob))
-                followUpSongJob.CopySourceMutationFrom(sourceJob);
-            stateStore.SetSourceJob(followUpSongJob.Id, sourceJobId);
-            submissionOptionsResolver?.SetJobOptions(followUpSongJob.Id, request.Options);
-            followUpSongJob.EnsureDisplayId();
-            engine.Enqueue(followUpSongJob, settings);
-            summaries.Add(stateStore.GetJobSummary(followUpSongJob.Id) ?? BuildSubmittedJobSummary(followUpSongJob, sourceJobId));
+                followUpJob.CopySourceMutationFrom(sourceJob);
+            stateStore.SetSourceJob(followUpJob.Id, sourceJobId);
+            followUpJob.EnsureDisplayId();
+            engine.Enqueue(followUpJob, settings);
+            summaries.Add(stateStore.GetJobSummary(followUpJob.Id) ?? BuildSubmittedJobSummary(followUpJob, sourceJobId));
         }
 
         return Task.FromResult<IReadOnlyList<JobSummaryDto>?>(summaries);
@@ -416,8 +481,10 @@ internal sealed class LocalCliBackend
     public Task<JobSummaryDto?> StartFolderDownloadAsync(Guid sourceJobId, StartFolderDownloadRequestDto request, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (request.RequestedMode == ExtractionMode.Song)
+            throw new ArgumentException("A directory selection cannot be interpreted as one song.");
 
-        var sourceJob = stateStore.GetJob<Job>(sourceJobId);
+        var sourceJob = GetRuntimeJob<Job>(sourceJobId);
         if (sourceJob?.Config == null)
             return Task.FromResult<JobSummaryDto?>(null);
 
@@ -428,7 +495,29 @@ internal sealed class LocalCliBackend
         folder = JobRequestMapper.ApplySelectedFolderSnapshot(folder, request);
         folder = JobRequestMapper.ApplyFolderDownloadSelection(folder, request.Selection);
 
-        var settings = BuildFollowUpSettings(sourceJob, request.Options);
+        if (request.RequestedMode == ExtractionMode.General
+            && request.Options?.DownloadSettings is { } explicitPatch)
+        {
+            RemoteTransferSettingsValidator.ValidateExplicitPatch(explicitPatch);
+        }
+
+        if (request.RequestedMode == ExtractionMode.General)
+        {
+            var directoryJob = JobRequestMapper.CreateRemoteDirectoryDownload(folder, request.Selection);
+            directoryJob.ItemName = sourceJob.ItemName;
+            directoryJob.WorkflowId = sourceJob.WorkflowId;
+            var settings = BuildFollowUpSettings(sourceJob, directoryJob, request.Options);
+            RemoteTransferSettingsValidator.ValidateExplicitNameFormat(explicitCliDownloadSettings);
+            ValidateSubmissionSettings(directoryJob, settings);
+            if (ShouldPropagateSourceMutationToFollowUp(sourceJob))
+                directoryJob.CopySourceMutationFrom(sourceJob);
+            stateStore.SetSourceJob(directoryJob.Id, sourceJobId);
+            directoryJob.EnsureDisplayId();
+            engine.Enqueue(directoryJob, settings);
+            return Task.FromResult<JobSummaryDto?>(
+                stateStore.GetJobSummary(directoryJob.Id)
+                ?? BuildSubmittedJobSummary(directoryJob, sourceJobId));
+        }
 
         var albumQuery = request.AlbumQuery != null
             ? JobRequestMapper.ToAlbumQuery(request.AlbumQuery)
@@ -467,13 +556,13 @@ internal sealed class LocalCliBackend
             DownloadBehaviorPolicy = new DownloadBehaviorPolicy(),
         };
         JobRequestMapper.ApplyFolderDownloadSelection(followUpAlbumJob, request.Selection);
+        var albumSettings = BuildFollowUpSettings(sourceJob, followUpAlbumJob, request.Options);
         if (ShouldPropagateSourceMutationToFollowUp(sourceJob))
             followUpAlbumJob.CopySourceMutationFrom(sourceJob);
 
         stateStore.SetSourceJob(followUpAlbumJob.Id, sourceJobId);
-        submissionOptionsResolver?.SetJobOptions(followUpAlbumJob.Id, request.Options);
         followUpAlbumJob.EnsureDisplayId();
-        engine.Enqueue(followUpAlbumJob, settings);
+        engine.Enqueue(followUpAlbumJob, albumSettings);
         return Task.FromResult<JobSummaryDto?>(stateStore.GetJobSummary(followUpAlbumJob.Id) ?? BuildSubmittedJobSummary(followUpAlbumJob, sourceJobId));
     }
 
@@ -492,8 +581,123 @@ internal sealed class LocalCliBackend
     private static bool ShouldPropagateSourceMutationToFollowUp(Job sourceJob)
         => sourceJob is not AlbumAggregateJob;
 
-    private DownloadSettings BuildFollowUpSettings(Job sourceJob, SubmissionOptionsDto? options)
+    private void ApplyDraftJobOptions(JobList list, IReadOnlyList<JobDraftDto> drafts)
     {
+        for (int index = 0; index < list.Jobs.Count && index < drafts.Count; index++)
+            ApplyDraftJobOptions(list.Jobs[index], drafts[index]);
+    }
+
+    private void ApplyDraftJobOptions(Job job, JobDraftDto draft)
+    {
+        if (DraftDownloadSettings(draft) is { } patch)
+        {
+            submissionOptionsResolver?.SetJobOptions(
+                job.Id,
+                new SubmissionOptionsDto(DownloadSettings: patch));
+        }
+
+        if (job is JobList childList && draft is JobListJobDraftDto childDraft)
+            ApplyDraftJobOptions(childList, childDraft.Jobs);
+    }
+
+    private static DownloadSettingsPatchDto? DraftDownloadSettings(JobDraftDto draft)
+        => draft switch
+        {
+            ExtractJobDraftDto typed => typed.DownloadSettings,
+            TrackSearchJobDraftDto typed => typed.DownloadSettings,
+            AlbumSearchJobDraftDto typed => typed.DownloadSettings,
+            SongJobDraftDto typed => typed.DownloadSettings,
+            AlbumJobDraftDto typed => typed.DownloadSettings,
+            AggregateJobDraftDto typed => typed.DownloadSettings,
+            AlbumAggregateJobDraftDto typed => typed.DownloadSettings,
+            JobListJobDraftDto typed => typed.DownloadSettings,
+            RemoteFileJobDraftDto typed => typed.DownloadSettings,
+            RemoteDirectoryJobDraftDto typed => typed.DownloadSettings,
+            _ => null,
+        };
+
+    private void ValidateSubmissionSettings(Job job, DownloadSettings settings)
+    {
+        if (IsOrdinaryRemoteTransfer(job, settings))
+        {
+            RemoteTransferNameFormatPolicy.ApplyInherited(settings.Output);
+        }
+
+        if (job is not JobList list)
+            return;
+
+        foreach (Job child in list.Jobs)
+        {
+            var childSettings = submissionOptionsResolver?.Resolve(settings, child)
+                ?? SettingsCloner.Clone(settings);
+            ValidateSubmissionSettings(child, childSettings);
+        }
+    }
+
+    private static bool IsOrdinaryRemoteTransfer(Job job, DownloadSettings settings)
+        => job is RemoteFileJob or RemoteDirectoryJob
+            || (job is ExtractJob extract
+                && Sockseek.Core.Extractors.SoulseekExtractor.InputMatches(extract.Input)
+                && settings.Extraction.RequestedMode is null or ExtractionMode.General);
+
+    private bool ContainsRemoteTransfer(Job job, DownloadSettings settings)
+    {
+        if (IsOrdinaryRemoteTransfer(job, settings))
+            return true;
+        if (job is not JobList list)
+            return false;
+
+        return list.Jobs.Any(child => ContainsRemoteTransfer(child, ResolveChildSettings(settings, child)));
+    }
+
+    private void ValidateDraftRemoteTransferOverrides(
+        JobList list,
+        IReadOnlyList<JobDraftDto> drafts,
+        DownloadSettings parentSettings)
+    {
+        for (int index = 0; index < list.Jobs.Count && index < drafts.Count; index++)
+        {
+            Job child = list.Jobs[index];
+            JobDraftDto draft = drafts[index];
+            DownloadSettingsPatchDto? patch = DraftDownloadSettings(draft);
+            DownloadSettings childSettings = ResolveChildSettings(parentSettings, child, patch);
+            if (patch != null
+                && ContainsRemoteTransfer(child, childSettings))
+            {
+                RemoteTransferSettingsValidator.ValidateExplicitPatch(patch);
+            }
+
+            if (child is JobList childList && draft is JobListJobDraftDto childDraft)
+                ValidateDraftRemoteTransferOverrides(childList, childDraft.Jobs, childSettings);
+        }
+    }
+
+    private DownloadSettings ResolveChildSettings(
+        DownloadSettings parentSettings,
+        Job child,
+        DownloadSettingsPatchDto? fallbackPatch = null)
+    {
+        if (submissionOptionsResolver != null)
+            return submissionOptionsResolver.Resolve(parentSettings, child);
+
+        var settings = SettingsCloner.Clone(parentSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(settings, fallbackPatch);
+        return settings;
+    }
+
+    private DownloadSettings BuildFollowUpSettings(
+        Job sourceJob,
+        Job followUpJob,
+        SubmissionOptionsDto? options)
+    {
+        if (submissionOptionsResolver != null)
+        {
+            submissionOptionsResolver.SetJobOptions(followUpJob.Id, options);
+            return submissionOptionsResolver.Resolve(
+                defaultSubmitSettings ?? sourceJob.Config!,
+                followUpJob);
+        }
+
         var settings = SettingsCloner.Clone(defaultSubmitSettings ?? sourceJob.Config);
         ApplySubmissionOptionsToInheritedSettings(settings, options);
         NormalizeLocalSettings(settings);
@@ -529,6 +733,12 @@ internal sealed class LocalCliBackend
         return await Task.FromResult(engine.CancelJobByDisplayId(displayId, workflowId));
     }
 
+    public Task<int> CancelAllJobsAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(engine.CancelAllJobs());
+    }
+
     public Task<int> CancelWorkflowAsync(Guid workflowId, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -547,113 +757,19 @@ internal sealed class LocalCliBackend
         return Task.FromResult(engine.TryNextCandidateByDisplayId(displayId, workflowId));
     }
 
-    private void Publish(string type, object payload)
+    private void HandleStateBatch(StateUpdateBatchDto batch)
     {
-        var descriptor = ServerEventCatalog.Describe(type);
-        var envelope = new ServerEventEnvelopeDto(
-            Interlocked.Increment(ref nextSequence),
-            type,
-            DateTimeOffset.UtcNow,
-            descriptor.Category,
-            descriptor.SnapshotInvalidation,
-            GetWorkflowId(payload),
-            payload);
-
-        EventReceived?.Invoke(envelope);
-        PublishWorkflowUpdate(envelope);
-    }
-
-    private void PublishWorkflowUpdate(ServerEventEnvelopeDto envelope)
-    {
-        if (envelope.WorkflowId is not Guid workflowId)
+        bool subscribed = batch.Scope.Kind == StateStreamScopeKind.Daemon
+            ? liveDaemonSubscription
+            : liveWorkflowSubscriptions.ContainsKey(batch.Scope.WorkflowId!.Value);
+        if (!subscribed)
             return;
 
-        var sequence = workflowUpdateSequences.AddOrUpdate(workflowId, 1, static (_, current) => current + 1);
-        var batch = envelope.Payload switch
-        {
-            JobSummaryDto summary => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [summary],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: []),
-
-            WorkflowSummaryDto summary => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                summary,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: []),
-
-            SearchUpdatedDto update => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [update],
-                Progress: [],
-                Activity: []),
-
-            DownloadProgressEventDto progress => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [progress],
-                Activity: []),
-
-            _ => new WorkflowUpdateBatchDto(
-                sequence,
-                envelope.OccurredAtUtc,
-                workflowId,
-                Workflow: null,
-                JobUpserts: [],
-                SearchUpdates: [],
-                Progress: [],
-                Activity: [envelope]),
-        };
-
-        WorkflowUpdated?.Invoke(workflowStore.Apply(batch));
+        var update = daemonStore.Apply(batch);
+        StateUpdated?.Invoke(update);
+        foreach (var activity in update.Activity)
+            ActivityReceived?.Invoke(activity);
     }
-
-    private static Guid? GetWorkflowId(object payload)
-        => payload switch
-        {
-            JobSummaryDto summary => summary.WorkflowId,
-            WorkflowSummaryDto summary => summary.WorkflowId,
-            WorkflowDetailDto detail => detail.Summary.WorkflowId,
-            WorkflowTreeDto workflow => workflow.Summary.WorkflowId,
-            JobDetailDto detail => detail.Summary.WorkflowId,
-            SearchUpdatedDto update => update.WorkflowId,
-            ExtractionStartedEventDto e => e.Summary.WorkflowId,
-            ExtractionFailedEventDto e => e.Summary.WorkflowId,
-            JobStartedEventDto e => e.Summary.WorkflowId,
-            JobStatusEventDto e => e.Summary.WorkflowId,
-            JobMessageEventDto e => e.Summary.WorkflowId,
-            WorkflowMessageEventDto e => e.WorkflowId,
-            JobActivityChangedEventDto e => e.Summary.WorkflowId,
-            SongSearchingEventDto e => e.WorkflowId,
-            DownloadStartedEventDto e => e.WorkflowId,
-            DownloadProgressEventDto e => e.WorkflowId,
-            DownloadStateChangedEventDto e => e.WorkflowId,
-            DownloadAttemptFailedEventDto e => e.WorkflowId,
-            SongStateChangedEventDto e => e.WorkflowId,
-            AlbumDownloadStartedEventDto e => e.Summary.WorkflowId,
-            AlbumTrackDownloadStartedEventDto e => e.Summary.WorkflowId,
-            AlbumStateChangedEventDto e => e.Summary.WorkflowId,
-            JobFolderRetrievingEventDto e => e.Summary.WorkflowId,
-            TrackBatchResolvedEventDto e => e.Summary.WorkflowId,
-            _ => null,
-        };
 
     private AlbumFolder? FindAlbumFolderForRetrieval(Job sourceJob, AlbumFolderRefDto folderRef, AlbumQueryDto? albumQuery = null)
     {
@@ -770,39 +886,21 @@ internal sealed class LocalCliBackend
     }
 
     private static FileCandidate? FindRawFileCandidate(SearchJob searchJob, FileCandidateRefDto candidateRef)
-        => searchJob.Snapshot()
-            .Select(pair => new FileCandidate(pair.Response, pair.File))
+        => searchJob.RawSnapshot()
+            .Select(result => result.ProjectionInput.ToFileCandidate())
             .FirstOrDefault(candidate =>
                 string.Equals(candidate.Username, candidateRef.Username, StringComparison.Ordinal)
                 && string.Equals(candidate.Filename, candidateRef.Filename, StringComparison.Ordinal));
 
     private static JobSummaryDto BuildSubmittedJobSummary(Job job, Guid? sourceJobId = null)
-        => new(
-            job.Id,
-            job.DisplayId,
-            job.WorkflowId,
-            EngineStateStore.GetJobKind(job),
-            EngineStateStore.ToServerJobLifecycleState(job.LifecycleState),
-            EngineStateStore.ToServerJobActivityPhase(job.ActivityPhase),
-            job.ActivityUntilUtc,
-            EngineStateStore.ToServerJobTerminalOutcome(job.TerminalOutcome),
-            EngineStateStore.ToServerJobSkipReason(job.SkipReason),
-            job.ItemName,
-            job.ToString(noInfo: true),
-            EngineStateStore.ToServerFailureReason(job.FailureReason),
-            job.FailureMessage,
-            null,
-            null,
-            sourceJobId,
-            job.Discovery?.RawResultCount,
-            job.Discovery?.LockedFileCount,
-            job.Config?.AppliedAutoProfiles?.ToList() ?? [],
-            [],
-            job.FailureDetail,
-            EngineStateStore.ToServerJobCancellationSource(job.CancellationSource));
+        => ServerSnapshotMapper.ToSubmittedJobSummary(job, sourceJobId);
 
-    private JobSummaryDto GetSummary(Job job)
-        => stateStore.GetJobSummary(job.Id) ?? BuildSubmittedJobSummary(job);
+    private JobSummaryDto GetSummary(JobSnapshot job)
+        => stateStore.GetJobSummary(job.Id) ?? ServerSnapshotMapper.ToJobSummary(job);
+
+    private TJob? GetRuntimeJob<TJob>(Guid jobId)
+        where TJob : Job
+        => engine.GetJob(jobId) as TJob;
 
     private static SongQueryDto ToSongQueryDto(SongQuery query)
         => new(Optional(query.Artist), Optional(query.Title), Optional(query.Album), Optional(query.URI), Optional(query.Length), query.ArtistMaybeWrong);
@@ -821,30 +919,38 @@ internal sealed class LocalCliBackend
             new FileCandidateRefDto(candidate.Username, candidate.Filename),
             candidate.Username,
             candidate.Filename,
-            new PeerInfoDto(candidate.Username, candidate.Response.HasFreeUploadSlot, candidate.Response.UploadSpeed),
-            candidate.File.Size,
-            candidate.File.BitRate,
-            candidate.File.SampleRate,
-            candidate.File.Length,
-            candidate.File.Extension,
-            candidate.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList());
+            new PeerInfoDto(candidate.Username, candidate.HasFreeUploadSlot, candidate.UploadSpeed),
+            new FileMetadataDto(
+                Utils.GetFileNameSlsk(candidate.Filename),
+                candidate.Size,
+                candidate.Extension,
+                candidate.BitRate,
+                candidate.BitDepth,
+                candidate.SampleRate,
+                candidate.Length,
+                candidate.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList()));
 
     private static SongJobPayloadDto ToSongJobPayloadDto(SongJob song)
         => new(
             ToSongQueryDto(song.Query),
             song.Candidates?.Count,
-            song.DownloadPath,
+            new FileDownloadStateDto(
+                song.DownloadPath,
+                song.BytesTransferred,
+                song.FileSize ?? song.ResolvedPeerTarget?.Size,
+                (song.FileSize ?? song.ResolvedPeerTarget?.Size) is > 0 and var size
+                    ? Math.Round((double)song.BytesTransferred / size * 100, 2)
+                    : null),
             song.ResolvedTarget?.Username,
             song.ResolvedTarget?.Filename,
-            song.ResolvedTarget?.Response.HasFreeUploadSlot,
-            song.ResolvedTarget?.Response.UploadSpeed,
-            song.ResolvedTarget?.File.Size,
-            song.ResolvedTarget?.File.SampleRate,
-            song.ResolvedTarget?.File.Extension,
-            song.ResolvedTarget?.File.Attributes?.Select(x => new FileAttributeDto(x.Type.ToString(), x.Value)).ToList(),
+            song.ResolvedTarget?.HasFreeUploadSlot,
+            song.ResolvedTarget?.UploadSpeed,
+            song.ResolvedTarget?.Size,
+            song.ResolvedTarget?.SampleRate,
+            song.ResolvedTarget?.Extension,
+            song.ResolvedTarget?.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList(),
             song.Id,
             song.DisplayId,
-            song.Candidates?.Select(ToFileCandidateDto).ToList(),
             EngineStateStore.ToServerJobLifecycleState(song.LifecycleState),
             EngineStateStore.ToServerJobActivityPhase(song.ActivityPhase),
             song.ActivityUntilUtc,
@@ -853,7 +959,20 @@ internal sealed class LocalCliBackend
             EngineStateStore.ToServerFailureReason(song.FailureReason),
             song.FailureMessage,
             CancellationSource: EngineStateStore.ToServerJobCancellationSource(song.CancellationSource),
-            DownloadSource: EngineStateStore.ToServerSongDownloadSource(song.DownloadSource));
+            DownloadSource: EngineStateStore.ToServerSongDownloadSource(song.DownloadSource),
+            ExactTarget: song.ExactTarget == null ? null : ToPeerFileTargetDto(song.ExactTarget));
+
+    private static PeerFileTargetDto ToPeerFileTargetDto(PeerFileTarget target)
+        => new(
+            target.Username,
+            target.Filename,
+            target.Size,
+            target.Extension,
+            target.BitRate,
+            target.BitDepth,
+            target.SampleRate,
+            target.Length,
+            target.Attributes?.Select(x => new FileAttributeDto(x.Type, x.Value)).ToList());
 
     private static AlbumFolderDto ToAlbumFolderDto(AlbumFolder folder, bool includeFiles)
         => new(
@@ -862,8 +981,8 @@ internal sealed class LocalCliBackend
             folder.FolderPath,
             new PeerInfoDto(
                 folder.Username,
-                folder.Files.FirstOrDefault()?.Candidate.Response.HasFreeUploadSlot,
-                folder.Files.FirstOrDefault()?.Candidate.Response.UploadSpeed),
+                folder.Files.FirstOrDefault()?.Candidate.HasFreeUploadSlot,
+                folder.Files.FirstOrDefault()?.Candidate.UploadSpeed),
             folder.SearchFileCount,
             folder.SearchAudioFileCount,
             includeFiles

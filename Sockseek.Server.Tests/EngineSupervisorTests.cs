@@ -1,6 +1,9 @@
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Sockseek.Core;
 using Sockseek.Core.Jobs;
+using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Api;
 using Sockseek.Server;
@@ -23,7 +26,7 @@ public class EngineSupervisorTests
             var supervisor = CreateSupervisor(musicRoot, outputDir);
             var oversized = new string('x', JobRequestMapper.MaxSearchTextLength + 1);
 
-            await Assert.ThrowsExceptionAsync<ArgumentException>(() =>
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
                 supervisor.SubmitSearchJobAsync(new SubmitSearchJobRequestDto(oversized), CancellationToken.None));
 
             Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
@@ -149,18 +152,21 @@ public class EngineSupervisorTests
             Assert.IsNull(detail.Summary.ParentJobId);
             Assert.AreEqual(searchSummary.JobId, detail.Summary.SourceJobId);
 
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(searchSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
+            var workflowJobs = supervisor.StateStore.GetJobs(
+                new JobQuery(null, null, null, searchSummary.WorkflowId, IncludeAll: false));
+            Assert.AreEqual(2, workflowJobs.Count);
             CollectionAssert.AreEquivalent(
                 new[] { searchSummary.JobId, downloadSummary.JobId },
-                workflowTree.Jobs.Select(job => job.Summary.JobId).ToArray());
+                workflowJobs.Select(job => job.JobId).ToArray());
 
             var downloaded = Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories)
                 .Select(Path.GetFileName)
                 .OrderBy(x => x)
                 .ToArray();
-            CollectionAssert.AreEqual(new[] { "01. Track One.mp3", "02. Track Two.mp3" }, downloaded);
+            CollectionAssert.AreEqual(
+                new[] { "01. Track One.mp3", "02. Track Two.mp3" },
+                downloaded,
+                "Actual output files: " + string.Join(", ", downloaded));
 
             cts.Cancel();
             await runTask;
@@ -263,7 +269,7 @@ public class EngineSupervisorTests
                 CancellationToken.None);
 
             await WaitForJobStateAsync(supervisor, searchSummary.JobId, ExpectedJobStatus.Succeeded);
-            var searchJob = supervisor.StateStore.GetJob<SearchJob>(searchSummary.JobId);
+            var searchJob = supervisor.GetRuntimeJob<SearchJob>(searchSummary.JobId);
             Assert.IsNotNull(searchJob);
             Assert.IsTrue(searchJob.Config?.Search.NoBrowseFolder);
 
@@ -277,10 +283,10 @@ public class EngineSupervisorTests
 
             Assert.IsNotNull(downloadSummary);
             await WaitForConditionAsync(
-                () => supervisor.StateStore.GetJob<AlbumJob>(downloadSummary.JobId)?.Config != null,
+                () => supervisor.GetRuntimeJob<AlbumJob>(downloadSummary.JobId)?.Config != null,
                 "Timed out waiting for album download settings.");
 
-            var albumJob = supervisor.StateStore.GetJob<AlbumJob>(downloadSummary.JobId);
+            var albumJob = supervisor.GetRuntimeJob<AlbumJob>(downloadSummary.JobId);
             Assert.IsNotNull(albumJob);
             Assert.IsFalse(albumJob.Config?.Search.NoBrowseFolder, "Download should use default settings, not the search submission delta.");
 
@@ -324,11 +330,13 @@ public class EngineSupervisorTests
                         new TrackSearchJobDraftDto(
                             new SongQueryDto("Artist", "Track One", "", "", -1, false),
                             DownloadSettings: new DownloadSettingsPatchDto(
-                                Search: new SearchSettingsPatchDto(MaxStaleTime: 111, NoBrowseFolder: true))),
+                                Search: new SearchSettingsPatchDto(NoBrowseFolder: true),
+                                Transfer: new TransferSettingsPatchDto(MaxStaleTime: 111))),
                         new TrackSearchJobDraftDto(
                             new SongQueryDto("Artist", "Track Two", "", "", -1, false),
                             DownloadSettings: new DownloadSettingsPatchDto(
-                                Search: new SearchSettingsPatchDto(MaxStaleTime: 222, NoBrowseFolder: false))),
+                                Search: new SearchSettingsPatchDto(NoBrowseFolder: false),
+                                Transfer: new TransferSettingsPatchDto(MaxStaleTime: 222))),
                     ]),
                 CancellationToken.None);
 
@@ -337,7 +345,7 @@ public class EngineSupervisorTests
                 {
                     var children = SearchChildren(supervisor, summary.WorkflowId);
                     return children.Count == 2
-                        && children.All(child => supervisor.StateStore.GetJob<SearchJob>(child.JobId)?.Config != null);
+                        && children.All(child => supervisor.GetRuntimeJob<SearchJob>(child.JobId)?.Config != null);
                 },
                 "Timed out waiting for job-list child settings.");
 
@@ -347,9 +355,9 @@ public class EngineSupervisorTests
             var first = SearchChildByQuery(supervisor, children, "Track One");
             var second = SearchChildByQuery(supervisor, children, "Track Two");
 
-            Assert.AreEqual(111, first.Config.Search.MaxStaleTime);
+            Assert.AreEqual(111, first.Config.Transfer.MaxStaleTime);
             Assert.IsTrue(first.Config.Search.NoBrowseFolder);
-            Assert.AreEqual(222, second.Config.Search.MaxStaleTime);
+            Assert.AreEqual(222, second.Config.Transfer.MaxStaleTime);
             Assert.IsFalse(second.Config.Search.NoBrowseFolder);
 
             cts.Cancel();
@@ -418,7 +426,7 @@ public class EngineSupervisorTests
             var activeFiles = GetChildSongPayloads(supervisor, downloadSummary.JobId);
             var activeAlbumPayload = activeDetail.Payload as AlbumJobPayloadDto;
             Assert.IsNotNull(activeAlbumPayload);
-            Assert.IsTrue(activeAlbumPayload.SelectedFolderFileCount >= activeFiles.Count);
+            Assert.IsTrue(activeAlbumPayload.Directory.FileCount >= activeFiles.Count);
             var cancellableFile = activeFiles.FirstOrDefault(file =>
                 file.AvailableActions?.Any(action => action.Kind == ServerResourceActionKind.Cancel) == true);
             Assert.IsNotNull(cancellableFile, "Active album payload files should expose cancel actions.");
@@ -447,9 +455,9 @@ public class EngineSupervisorTests
 
             var cancelledAlbumPayload = supervisor.StateStore.GetJobDetail(downloadSummary.JobId)?.Payload as AlbumJobPayloadDto;
             Assert.IsNotNull(cancelledAlbumPayload);
-            Assert.IsTrue(cancelledAlbumPayload.SelectedFolderFileCount >= activeFiles.Count);
-            Assert.IsTrue(cancelledAlbumPayload.SelectedFolderCompletedFileCount >= 1);
-            Assert.IsTrue(cancelledAlbumPayload.SelectedFolderFailedFileCount >= 1);
+            Assert.IsTrue(cancelledAlbumPayload.Directory.FileCount >= activeFiles.Count);
+            Assert.IsTrue(cancelledAlbumPayload.Directory.TerminalFileCount >= 1);
+            Assert.IsTrue(cancelledAlbumPayload.Directory.FailedFileCount >= 1);
 
             var cancelled = supervisor.CancelWorkflow(downloadSummary.WorkflowId);
             Assert.IsTrue(cancelled > 0, "CancelWorkflow should cancel the active album download job.");
@@ -541,7 +549,7 @@ public class EngineSupervisorTests
         try
         {
             var supervisor = CreateSupervisor(musicRoot, outputDir);
-            var updates = new ConcurrentBag<SearchUpdatedDto>();
+            var updates = new ConcurrentBag<SearchStateDto>();
             supervisor.StateStore.SearchUpdated += update => updates.Add(update);
 
             runTask = supervisor.RunAsync(cts.Token);
@@ -622,14 +630,16 @@ public class EngineSupervisorTests
             Assert.IsNotNull(retrieveDetail);
             var payload = retrieveDetail.Payload as RetrieveFolderJobPayloadDto;
             Assert.IsNotNull(payload);
-            Assert.AreEqual(1, payload.NewFilesFoundCount);
+            Assert.AreEqual(
+                1,
+                payload.NewFilesFoundCount);
 
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(searchSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
+            var workflowJobs = supervisor.StateStore.GetJobs(
+                new JobQuery(null, null, null, searchSummary.WorkflowId, IncludeAll: false));
+            Assert.AreEqual(2, workflowJobs.Count);
             CollectionAssert.AreEquivalent(
                 new[] { searchSummary.JobId, retrieveSummary.JobId },
-                workflowTree.Jobs.Select(job => job.Summary.JobId).ToArray());
+                workflowJobs.Select(job => job.JobId).ToArray());
 
             var afterRetrieve = supervisor.GetFolderResults(searchSummary.JobId, includeFiles: true);
             Assert.IsNotNull(afterRetrieve);
@@ -661,78 +671,6 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
-    public async Task ExtractJobPayload_ExposesResultDraftForTypedResubmission()
-    {
-        string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
-        string albumDir = Path.Combine(musicRoot, "Artist", "Album");
-        string outputDir = Path.Combine(musicRoot, "out");
-        Directory.CreateDirectory(albumDir);
-        Directory.CreateDirectory(outputDir);
-
-        File.WriteAllText(Path.Combine(albumDir, "01. Track One.mp3"), "a");
-
-        using var cts = new CancellationTokenSource();
-        Task runTask = Task.CompletedTask;
-        try
-        {
-            var supervisor = CreateSupervisor(musicRoot, outputDir, settings =>
-            {
-                settings.Extraction.IsAlbum = true;
-                settings.Search.NoBrowseFolder = true;
-            });
-            runTask = supervisor.RunAsync(cts.Token);
-
-            var extractSummary = await supervisor.SubmitExtractJobAsync(
-                new SubmitExtractJobRequestDto(
-                    "Artist Album",
-                    "String",
-                    AutoStartExtractedResult: false),
-                CancellationToken.None);
-
-            await WaitForJobStateAsync(supervisor, extractSummary.JobId, ExpectedJobStatus.Succeeded);
-
-            var extractDetail = supervisor.StateStore.GetJobDetail(extractSummary.JobId);
-            Assert.IsNotNull(extractDetail);
-            var extractPayload = extractDetail.Payload as ExtractJobPayloadDto;
-            Assert.IsNotNull(extractPayload);
-            var albumDraft = extractPayload.ResultDraft as AlbumJobDraftDto;
-            Assert.IsNotNull(albumDraft);
-
-            var started = await supervisor.SubmitAlbumSearchJobAsync(
-                new SubmitAlbumSearchJobRequestDto(
-                    albumDraft.AlbumQuery,
-                    new SubmissionOptionsDto(WorkflowId: extractSummary.WorkflowId)),
-                CancellationToken.None);
-
-            Assert.AreEqual(ServerJobKind.Search, started.Kind);
-            Assert.AreEqual(extractSummary.WorkflowId, started.WorkflowId);
-
-            await WaitForJobStateAsync(supervisor, started.JobId, ExpectedJobStatus.Succeeded);
-
-            var workflowTree = supervisor.StateStore.GetWorkflowTree(extractSummary.WorkflowId);
-            Assert.IsNotNull(workflowTree);
-            Assert.AreEqual(2, workflowTree.Jobs.Count);
-            Assert.IsTrue(workflowTree.Jobs.Any(job => job.Summary.JobId == extractSummary.JobId));
-            Assert.IsTrue(workflowTree.Jobs.Any(job => job.Summary.JobId == started.JobId));
-
-            var albums = supervisor.GetFolderResults(started.JobId, includeFiles: true);
-            Assert.IsNotNull(albums);
-            Assert.AreEqual(1, albums.Items.Count);
-            Assert.AreEqual(@"Artist\Album", albums.Items[0].FolderPath);
-
-            cts.Cancel();
-            await runTask;
-        }
-        finally
-        {
-            cts.Cancel();
-            await runTask;
-            if (Directory.Exists(musicRoot))
-                Directory.Delete(musicRoot, true);
-        }
-    }
-
-    [TestMethod]
     public async Task SubmitJobAsync_AppliesServerAutoProfileFromClientContext()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
@@ -747,8 +685,9 @@ public class EngineSupervisorTests
         Task runTask = Task.CompletedTask;
         try
         {
-            var profile = CreateProfile("my-interactive", settings => settings.Search.MaxStaleTime = 9999999)
-                with { Condition = "interactive && album" };
+            var profile = CreateProfile("my-interactive", settings => settings.Transfer.MaxStaleTime = 9999999)
+                with
+            { Condition = "interactive && album" };
             var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
             {
                 AutoProfiles = [profile],
@@ -767,9 +706,9 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
-            Assert.AreEqual(9999999, job.Config?.Search.MaxStaleTime);
+            Assert.AreEqual(9999999, job.Config?.Transfer.MaxStaleTime);
             CollectionAssert.Contains(job.Config?.AppliedAutoProfiles?.ToList(), "my-interactive");
 
             cts.Cancel();
@@ -800,7 +739,8 @@ public class EngineSupervisorTests
         try
         {
             var profile = CreateProfile("album-inbox", settings => settings.Output.ParentDir = "~/Music/Inbox")
-                with { Condition = "album" };
+                with
+            { Condition = "album" };
             var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
             {
                 AutoProfiles = [profile],
@@ -815,7 +755,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(
                 Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Music", "Inbox")),
@@ -854,13 +794,14 @@ public class EngineSupervisorTests
             var profile = CreateProfile("album-profile", settings =>
                 {
                     settings.Output.ParentDir = "~/Music/Inbox";
-                    settings.Search.MaxStaleTime = 999999;
+                    settings.Transfer.MaxStaleTime = 999999;
                 })
-                with { Condition = "album" };
+                with
+            { Condition = "album" };
             var supervisor = CreateSupervisor(
                 musicRoot,
                 outputDir,
-                configureDownload: settings => settings.Search.MaxStaleTime = 111,
+                configureDownload: settings => settings.Transfer.MaxStaleTime = 111,
                 profiles: new ProfileCatalog
                 {
                     AutoProfiles = [profile],
@@ -868,7 +809,7 @@ public class EngineSupervisorTests
                 },
                 launchDownloadSettings: new DownloadSettingsPatchDto(
                     Output: new OutputSettingsPatchDto(ParentDir: launchOutputDir),
-                    Search: new SearchSettingsPatchDto(MaxStaleTime: 222)));
+                    Transfer: new TransferSettingsPatchDto(MaxStaleTime: 222)));
             runTask = supervisor.RunAsync(cts.Token);
 
             var summary = await supervisor.SubmitAlbumSearchJobAsync(
@@ -878,10 +819,10 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.AreEqual(Path.GetFullPath(launchOutputDir), job.Config?.Output.ParentDir);
-            Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
+            Assert.AreEqual(222, job.Config?.Transfer.MaxStaleTime);
 
             cts.Cancel();
             await runTask;
@@ -910,7 +851,7 @@ public class EngineSupervisorTests
         Task runTask = Task.CompletedTask;
         try
         {
-            var named = CreateProfile("long-search", settings => settings.Search.MaxStaleTime = 123456);
+            var named = CreateProfile("long-search", settings => settings.Transfer.MaxStaleTime = 123456);
             var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
             {
                 NamedProfiles = [named],
@@ -929,9 +870,9 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
-            Assert.AreEqual(123456, job.Config?.Search.MaxStaleTime);
+            Assert.AreEqual(123456, job.Config?.Transfer.MaxStaleTime);
 
             cts.Cancel();
             await runTask;
@@ -946,7 +887,7 @@ public class EngineSupervisorTests
     }
 
     [TestMethod]
-    public async Task SubmitJobAsync_AppliesClientDownloadSettingsDeltaAfterProfiles()
+    public async Task SubmitJobAsync_AppliesClientDownloadSettingsPatchAfterProfiles()
     {
         string musicRoot = Path.Combine(Path.GetTempPath(), "Sockseek-server-test-" + Guid.NewGuid());
         string trackDir = Path.Combine(musicRoot, "Artist");
@@ -960,7 +901,7 @@ public class EngineSupervisorTests
         Task runTask = Task.CompletedTask;
         try
         {
-            var named = CreateProfile("short-search", settings => settings.Search.MaxStaleTime = 111);
+            var named = CreateProfile("short-search", settings => settings.Transfer.MaxStaleTime = 111);
             var supervisor = CreateSupervisor(musicRoot, outputDir, profiles: new ProfileCatalog
             {
                 NamedProfiles = [named],
@@ -969,7 +910,7 @@ public class EngineSupervisorTests
 
             var baseline = new DownloadSettings();
             var cliSettings = SettingsCloner.Clone(baseline);
-            cliSettings.Search.MaxStaleTime = 222;
+            cliSettings.Transfer.MaxStaleTime = 222;
             cliSettings.Search.NecessaryCond.Formats = ["flac"];
 
             var summary = await supervisor.SubmitTrackSearchJobAsync(
@@ -982,9 +923,9 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
-            Assert.AreEqual(222, job.Config?.Search.MaxStaleTime);
+            Assert.AreEqual(222, job.Config?.Transfer.MaxStaleTime);
             CollectionAssert.AreEqual(new[] { "flac" }, job.Config?.Search.NecessaryCond.Formats);
 
             cts.Cancel();
@@ -1032,7 +973,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             Assert.IsTrue(job.Config?.Skip.SkipExisting);
 
@@ -1082,7 +1023,7 @@ public class EngineSupervisorTests
 
             await WaitForJobStateAsync(supervisor, summary.JobId, ExpectedJobStatus.Succeeded);
 
-            var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+            var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
             Assert.IsNotNull(job);
             CollectionAssert.AreEqual(new[] { "-- first", "-- second" }, job.Config?.Output.OnComplete);
 
@@ -1098,13 +1039,450 @@ public class EngineSupervisorTests
         }
     }
 
+    [TestMethod]
+    public async Task StartFileDownloadsAsync_GeneralIntentCreatesRemoteFileJob()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-general-file-" + Guid.NewGuid());
+        string output = Path.Combine(root, "out");
+        Directory.CreateDirectory(Path.Combine(root, "Artist"));
+        Directory.CreateDirectory(output);
+        File.WriteAllText(Path.Combine(root, "Artist", "Track.mp3"), "data");
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(root, output);
+            runTask = supervisor.RunAsync(cts.Token);
+            var search = await supervisor.SubmitSearchJobAsync(
+                new SubmitSearchJobRequestDto("Track.mp3"),
+                CancellationToken.None);
+            await WaitForJobStateAsync(supervisor, search.JobId, ExpectedJobStatus.Succeeded);
+            var files = supervisor.GetFileResults(search.JobId);
+            Assert.IsNotNull(files);
+
+            var downloads = await supervisor.StartFileDownloadsAsync(
+                search.JobId,
+                new StartFileDownloadsRequestDto(
+                    [files.Items.Single().Ref],
+                    RequestedMode: ExtractionMode.General),
+                CancellationToken.None);
+
+            Assert.IsNotNull(downloads);
+            Assert.AreEqual(1, downloads.Count);
+            Assert.AreEqual(ServerJobKind.RemoteFile, downloads[0].Kind);
+            await WaitForJobStateAsync(supervisor, downloads[0].JobId, ExpectedJobStatus.Succeeded);
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task StartFolderDownloadAsync_OrdinaryRemoteIntentCreatesRemoteDirectoryJob()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-remote-directory-" + Guid.NewGuid());
+        string album = Path.Combine(root, "Organization", "Folder");
+        string output = Path.Combine(root, "out");
+        Directory.CreateDirectory(album);
+        Directory.CreateDirectory(output);
+        File.WriteAllText(Path.Combine(album, "One.mp3"), "1");
+        File.WriteAllText(Path.Combine(album, "Two.mp3"), "2");
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(root, output);
+            runTask = supervisor.RunAsync(cts.Token);
+            var search = await supervisor.SubmitAlbumSearchJobAsync(
+                new SubmitAlbumSearchJobRequestDto(
+                    new AlbumQueryDto("Organization", "Folder", "", "", false)),
+                CancellationToken.None);
+            await WaitForJobStateAsync(supervisor, search.JobId, ExpectedJobStatus.Succeeded);
+            var folders = supervisor.GetFolderResults(search.JobId, includeFiles: true);
+            Assert.IsNotNull(folders);
+
+            var download = await supervisor.StartFolderDownloadAsync(
+                search.JobId,
+                new StartFolderDownloadRequestDto(
+                    folders.Items.Single().Ref,
+                    SelectedFolder: folders.Items.Single(),
+                    RequestedMode: ExtractionMode.General),
+                CancellationToken.None);
+
+            Assert.IsNotNull(download);
+            await WaitForJobStateAsync(supervisor, download.JobId, ExpectedJobStatus.Succeeded);
+            Assert.IsNotNull(supervisor.GetRuntimeJob<RemoteDirectoryJob>(download.JobId));
+            Assert.IsNull(supervisor.GetRuntimeJob<AlbumJob>(download.JobId));
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SubmitJobListAsync_RemoteDraftRejectsMusicOnlyOverrideBeforeAdmission()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-remote-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+            var request = new SubmitJobListRequestDto(
+                "invalid remote settings",
+                [
+                    new RemoteFileJobDraftDto(
+                        new PeerFileTargetDto("Peer", @"Share\File.bin", 4, ".bin"),
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(WritePlaylist: true))),
+                ]);
+
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+                supervisor.SubmitJobListAsync(request, CancellationToken.None));
+            Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SubmitJobListAsync_RemoteDraftAllowsPathBasedSkipExistingOnly()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-remote-skip-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+            var target = new PeerFileTargetDto("Peer", @"Share\File.bin", 4, ".bin");
+
+            JobSummaryDto accepted = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "valid remote settings",
+                    [new RemoteFileJobDraftDto(
+                        target,
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Skip: new SkipSettingsPatchDto(SkipExisting: false)))]),
+                CancellationToken.None);
+
+            Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "invalid remote settings",
+                    [new RemoteFileJobDraftDto(
+                        target,
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Skip: new SkipSettingsPatchDto(SkipMode: SkipMode.Name)))]),
+                CancellationToken.None));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SoulseekDraftSettingsValidation_UsesTheEffectiveInterpretation()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-slsk-settings-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() => supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "ordinary",
+                    [new ExtractJobDraftDto(
+                        "slsk://Peer/Share/File.bin",
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(WritePlaylist: true)))]),
+                CancellationToken.None));
+
+            JobSummaryDto accepted = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "music",
+                    [new ExtractJobDraftDto(
+                        "slsk://Peer/Share/File.mp3",
+                        DownloadSettings: new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(
+                                NameFormat: "{artist}/{title}",
+                                WritePlaylist: true),
+                            Extraction: new ExtractionSettingsPatchDto(RequestedMode: ExtractionMode.Song)))]),
+                CancellationToken.None);
+
+            Assert.AreEqual(ServerJobKind.JobList, accepted.Kind);
+            Assert.AreNotEqual(Guid.Empty, accepted.WorkflowId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SoulseekLink_InheritedMusicNameFormatFallsBackToRemoteFilename()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-slsk-inherited-format-" + Guid.NewGuid());
+        string output = Path.Combine(root, "out");
+        string source = Path.Combine(root, "Share", "File.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(output);
+        await File.WriteAllTextAsync(source, "data");
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(
+                root,
+                output,
+                settings => settings.Output.NameFormat = "{artist}/{filename}");
+            runTask = supervisor.RunAsync(cts.Token);
+
+            var submitted = await supervisor.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(ToSoulseekFileUri(source), "Soulseek"),
+                CancellationToken.None);
+            await WaitForJobStateAsync(supervisor, submitted.JobId, ExpectedJobStatus.Succeeded);
+
+            var extract = supervisor.GetRuntimeJob<ExtractJob>(submitted.JobId);
+            var remote = extract?.Result as RemoteFileJob;
+            Assert.IsNotNull(remote);
+            await WaitForJobStateAsync(supervisor, remote.Id, ExpectedJobStatus.Succeeded);
+            Assert.AreEqual("", remote.Config.Output.NameFormat);
+            Assert.IsTrue(File.Exists(Path.Combine(output, "File.bin")));
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SoulseekLink_GenericAutoProfileOverridesInheritedMusicNameFormat()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-slsk-auto-format-" + Guid.NewGuid());
+        string output = Path.Combine(root, "out");
+        string source = Path.Combine(root, "Share", "File.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(output);
+        await File.WriteAllTextAsync(source, "data");
+        var remotePatch = new DownloadSettingsPatch();
+        remotePatch.Add(settings =>
+            settings.Output.NameFormat = "{peer-username}/{filename}");
+        var profiles = new ProfileCatalog
+        {
+            AutoProfiles =
+            [
+                new SettingsProfile
+                {
+                    Name = "generic-file-layout",
+                    Condition = "download-mode == \"generic-file\"",
+                    Download = remotePatch,
+                },
+            ],
+        };
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(
+                root,
+                output,
+                settings => settings.Output.NameFormat = "{artist}/{filename}",
+                profiles: profiles);
+            runTask = supervisor.RunAsync(cts.Token);
+
+            var submitted = await supervisor.SubmitExtractJobAsync(
+                new SubmitExtractJobRequestDto(ToSoulseekFileUri(source), "Soulseek"),
+                CancellationToken.None);
+            await WaitForJobStateAsync(supervisor, submitted.JobId, ExpectedJobStatus.Succeeded);
+
+            var extract = supervisor.GetRuntimeJob<ExtractJob>(submitted.JobId);
+            var remote = extract?.Result as RemoteFileJob;
+            Assert.IsNotNull(remote);
+            await WaitForJobStateAsync(supervisor, remote.Id, ExpectedJobStatus.Succeeded);
+            Assert.AreEqual("{peer-username}/{filename}", remote.Config.Output.NameFormat);
+            CollectionAssert.Contains(remote.Config.AppliedAutoProfiles.ToList(), "generic-file-layout");
+            string expectedPath = Path.Combine(output, "local", "File.bin");
+            Assert.IsTrue(
+                File.Exists(expectedPath),
+                $"Expected '{expectedPath}'. Actual files: {string.Join(", ", Directory.GetFiles(output, "*", SearchOption.AllDirectories))}");
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task SoulseekLink_ExplicitMusicNameFormatIsRejectedBeforeAdmission()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-slsk-explicit-format-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+
+            var exception = await Assert.ThrowsExactlyAsync<UnsupportedNameFormatVariableException>(() =>
+                supervisor.SubmitExtractJobAsync(
+                    new SubmitExtractJobRequestDto(
+                        "slsk://Peer/Share/File.bin",
+                        Options: new SubmissionOptionsDto(
+                            DownloadSettings: new DownloadSettingsPatchDto(
+                                Output: new OutputSettingsPatchDto(
+                                    NameFormat: "{artist|filename}")))),
+                    CancellationToken.None));
+
+            Assert.AreEqual("artist", exception.Variable);
+            Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task ResolvedDirectoryDraft_DoesNotRejectLargeKnownByteCount()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-directory-admission-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            const long largeKnownBytes = 3L * 1024 * 1024 * 1024 * 1024;
+            var supervisor = CreateSupervisor(root, root);
+            var plan = new DirectoryTransferPlanDto(
+                "Root",
+                [new DirectoryTransferEntryDto(
+                    new PeerFileTargetDto("Peer", @"Root\Huge.bin", largeKnownBytes, ".bin"),
+                    [])],
+                largeKnownBytes);
+
+            var submitted = await supervisor.SubmitJobListAsync(
+                new SubmitJobListRequestDto(
+                    "large directory",
+                    [new RemoteDirectoryJobDraftDto(Plan: plan)]),
+                CancellationToken.None);
+
+            Assert.AreNotEqual(Guid.Empty, submitted.JobId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task FollowUpSelection_RejectsIncompatibleInterpretationBeforeSourceLookup()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-selection-mode-" + Guid.NewGuid());
+        Directory.CreateDirectory(root);
+        try
+        {
+            var supervisor = CreateSupervisor(root, root);
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+                supervisor.StartFileDownloadsAsync(
+                    Guid.NewGuid(),
+                    new StartFileDownloadsRequestDto(
+                        [new FileCandidateRefDto("Peer", @"Share\File.bin")],
+                        RequestedMode: ExtractionMode.Album),
+                    CancellationToken.None));
+            await Assert.ThrowsExactlyAsync<ArgumentException>(() =>
+                supervisor.StartFolderDownloadAsync(
+                    Guid.NewGuid(),
+                    new StartFolderDownloadRequestDto(
+                        new AlbumFolderRefDto("Peer", "Share"),
+                        RequestedMode: ExtractionMode.Song),
+                    CancellationToken.None));
+
+            Assert.AreEqual(0, supervisor.StateStore.GetWorkflows().Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task TerminalDaemonWorkflowWithoutPersistencePublishesFinalRemovalAndHasNoHistoryFallback()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "Sockseek-server-retirement-" + Guid.NewGuid());
+        string output = Path.Combine(root, "out");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(output);
+        using var cts = new CancellationTokenSource();
+        Task runTask = Task.CompletedTask;
+
+        try
+        {
+            var supervisor = CreateSupervisor(
+                root,
+                output,
+                retireTerminalWorkflows: true);
+            var finalJobs = new ConcurrentBag<JobSummaryDto>();
+            var batches = new ConcurrentBag<StateUpdateBatchDto>();
+            supervisor.StateStore.JobUpserted += summary =>
+            {
+                if (summary.LifecycleState == ServerJobLifecycleState.Terminal)
+                    finalJobs.Add(summary);
+            };
+            supervisor.StateStore.StateBatchPublished += batches.Add;
+            runTask = supervisor.RunAsync(cts.Token);
+
+            var submitted = await supervisor.SubmitSearchJobAsync(
+                new SubmitSearchJobRequestDto("missing"),
+                CancellationToken.None);
+            await WaitForConditionAsync(
+                () => batches.Any(batch => batch.State.RemovedJobIds.Contains(submitted.JobId)),
+                "Timed out waiting for terminal workflow retirement.");
+
+            Assert.IsTrue(finalJobs.Any(job => job.JobId == submitted.JobId));
+            Assert.IsNull(supervisor.StateStore.GetJobSummary(submitted.JobId));
+            Assert.IsNull(supervisor.StateStore.GetWorkflowSummary(submitted.WorkflowId));
+            Assert.IsNull(supervisor.GetRuntimeJob<Job>(submitted.JobId));
+            Assert.IsNull(supervisor.GetFileResults(submitted.JobId));
+            Assert.IsFalse(supervisor.CancelJob(submitted.JobId));
+            Assert.IsNull(await supervisor.StartFileDownloadsAsync(
+                submitted.JobId,
+                new StartFileDownloadsRequestDto([
+                    new FileCandidateRefDto("peer", @"Share\missing.mp3"),
+                ]),
+                CancellationToken.None));
+        }
+        finally
+        {
+            cts.Cancel();
+            await runTask;
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static EngineSupervisor CreateSupervisor(
         string musicRoot,
         string outputDir,
         Action<DownloadSettings>? configureDownload = null,
         Action<EngineSettings>? configureEngine = null,
         ProfileCatalog? profiles = null,
-        DownloadSettingsPatchDto? launchDownloadSettings = null)
+        DownloadSettingsPatchDto? launchDownloadSettings = null,
+        bool retireTerminalWorkflows = false)
     {
         var engineSettings = new EngineSettings
         {
@@ -1129,9 +1507,21 @@ public class EngineSupervisorTests
             DefaultDownload = defaultDownload,
             LaunchDownloadSettings = launchDownloadSettings,
             Profiles = profiles ?? ProfileCatalog.Empty,
+            Persistence = new ServerPersistenceOptions
+            {
+                DataDirectory = Path.Combine(musicRoot, ".sockseek-test-data"),
+            },
         });
 
-        return new EngineSupervisor(options);
+        // Most tests in this class exercise submission/execution mechanics and
+        // inspect terminal runtime objects directly. Production daemon retirement
+        // is covered separately; keeping it off here avoids turning those tests
+        // into persistence-history integration tests.
+        return new EngineSupervisor(
+            options,
+            persistence: null,
+            loggerFactory: null,
+            retireTerminalWorkflows: retireTerminalWorkflows);
     }
 
     private static SettingsProfile CreateProfile(string name, Action<DownloadSettings> applyDownload)
@@ -1145,31 +1535,47 @@ public class EngineSupervisorTests
         };
     }
 
-    private static async Task WaitForJobStateAsync(EngineSupervisor supervisor, Guid jobId, ExpectedJobStatus expectedState, int timeoutMs = 5000)
+    private static string ToSoulseekFileUri(string path)
+        => "slsk://local/" + path.Replace('\\', '/');
+
+    private static async Task WaitForJobStateAsync(
+        EngineSupervisor supervisor,
+        Guid jobId,
+        ExpectedJobStatus expectedState,
+        int timeoutMs = 15000)
     {
-        using var timeout = new CancellationTokenSource(timeoutMs);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         JobSummaryDto? lastSummary = null;
 
-        while (!timeout.IsCancellationRequested)
+        void Observe(JobSummaryDto summary)
         {
-            var summary = supervisor.StateStore.GetJobSummary(jobId);
-            lastSummary = summary;
-            if (summary != null && ProjectState(summary) == expectedState)
+            if (summary.JobId != jobId)
                 return;
+            lastSummary = summary;
+            if (ProjectState(summary) == expectedState)
+                reached.TrySetResult();
+        }
 
-            try
-            {
-                await Task.Delay(50, timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+        supervisor.StateStore.JobUpserted += Observe;
+        try
+        {
+            JobSummaryDto? current = supervisor.StateStore.GetJobSummary(jobId);
+            if (current != null)
+                Observe(current);
+            await reached.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+            return;
+        }
+        catch (TimeoutException)
+        {
+        }
+        finally
+        {
+            supervisor.StateStore.JobUpserted -= Observe;
         }
 
         var last = lastSummary == null
             ? "<missing>"
-            : $"{ProjectState(lastSummary)} lifecycle={lastSummary.LifecycleState} activity={lastSummary.ActivityPhase} outcome={lastSummary.TerminalOutcome} skip={lastSummary.SkipReason} failure={lastSummary.FailureReason}";
+            : $"{ProjectState(lastSummary)} lifecycle={lastSummary.LifecycleState} activity={lastSummary.ActivityPhase} outcome={lastSummary.TerminalOutcome} skip={lastSummary.SkipReason} failure={lastSummary.FailureReason} message={lastSummary.FailureMessage} detail={lastSummary.FailureDetail}";
         Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'. Last summary: {last}.");
     }
 
@@ -1230,11 +1636,11 @@ public class EngineSupervisorTests
 
     private static List<SongJobPayloadDto> GetChildSongPayloads(EngineSupervisor supervisor, Guid parentJobId)
     {
-        var parent = supervisor.StateStore.GetJobDetail(parentJobId);
-        return parent?.Children
+        return supervisor.StateStore
+            .GetJobs(new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: parentJobId))
             .Select(child => supervisor.StateStore.GetJobDetail(child.JobId)?.Payload)
             .OfType<SongJobPayloadDto>()
-            .ToList() ?? [];
+            .ToList();
     }
 
     private static List<JobSummaryDto> SearchChildren(EngineSupervisor supervisor, Guid workflowId)
@@ -1246,7 +1652,7 @@ public class EngineSupervisorTests
     private static SearchJob SearchChildByQuery(EngineSupervisor supervisor, IReadOnlyList<JobSummaryDto> children, string queryText)
     {
         var summary = children.Single(child => child.QueryText?.Contains(queryText, StringComparison.OrdinalIgnoreCase) == true);
-        var job = supervisor.StateStore.GetJob<SearchJob>(summary.JobId);
+        var job = supervisor.GetRuntimeJob<SearchJob>(summary.JobId);
         Assert.IsNotNull(job);
         return job;
     }

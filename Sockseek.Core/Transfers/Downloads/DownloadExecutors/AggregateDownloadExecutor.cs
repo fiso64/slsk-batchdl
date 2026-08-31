@@ -31,12 +31,12 @@ internal sealed class AggregateDownloadExecutor
                 DownloadBehaviorPolicy = job.DownloadBehaviorPolicy,
             };
 
-            context.Contexts[songList.Id] = GeneratedAggregateChildContext(ctx);
+            context.Contexts.Set(songList, GeneratedAggregateChildContext(ctx));
             foreach (var song in pendingSongs)
             {
                 song.WorkflowId = job.WorkflowId;
                 song.Config = config;
-                context.Contexts[song.Id] = GeneratedAggregateChildContext(ctx);
+                context.Contexts.Set(song, GeneratedAggregateChildContext(ctx));
             }
 
             context.RegisterJob(songList, job);

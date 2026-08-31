@@ -1,12 +1,13 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using Sockseek.Cli;
 using Sockseek.Core;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Server;
 using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Sockets;
 using Sockseek.Api;
 using Tests.ClientTests;
 
@@ -15,16 +16,124 @@ namespace Tests.Cli;
 [TestClass]
 public class CliBackendParityTests
 {
-    [TestInitialize]
-    public void Initialize()
+    private const string DynamicLoopbackUrl = "http://127.0.0.1:0";
+
+    [TestMethod]
+    public async Task CliBackendParity_LiveTerminalJobUpdates_AreEquivalent()
     {
-        SockseekLog.RemoveNonFileOutputs();
+        var projections = new ConcurrentBag<string[]>();
+        await RunForEachBackendAsync(
+            seedMusic: musicRoot =>
+            {
+                string trackDir = Path.Combine(musicRoot, "Artist");
+                Directory.CreateDirectory(trackDir);
+                File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+            },
+            scenario: async ctx =>
+            {
+                var terminalJobs = new ConcurrentDictionary<Guid, JobSummaryDto>();
+                void CaptureTerminal(DaemonClientUpdate update)
+                {
+                    foreach (JobSummaryDto job in update.ChangedJobs.Where(job =>
+                        job.LifecycleState == ServerJobLifecycleState.Terminal))
+                        terminalJobs[job.JobId] = job;
+                }
+                ctx.Backend.StateUpdated += CaptureTerminal;
+                var summary = await ctx.Backend.SubmitTrackSearchJobAsync(
+                    new SubmitTrackSearchJobRequestDto(
+                        new SongQueryDto("Artist", "Track One", "", "", -1, false)),
+                    ctx.Token);
+                try
+                {
+                    JobSummaryDto? observedTerminal = await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(terminalJobs.GetValueOrDefault(summary.JobId)),
+                        job => job != null,
+                        $"{ctx.Name} did not publish a live terminal update for job {summary.JobId}.",
+                        job => job == null ? "<missing>" : FormatState(job));
+                    Assert.IsNotNull(observedTerminal);
+                    JobSummaryDto terminal = observedTerminal;
+                    projections.Add(
+                    [
+                        $"{terminal.Kind}:{terminal.LifecycleState}:{terminal.ActivityPhase}:" +
+                        $"{terminal.TerminalOutcome}:{terminal.ParentJobId.HasValue}",
+                    ]);
+                }
+                finally
+                {
+                    ctx.Backend.StateUpdated -= CaptureTerminal;
+                }
+            });
+
+        Assert.AreEqual(2, projections.Count);
+        var projectionArray = projections.ToArray();
+        CollectionAssert.AreEqual(projectionArray[0], projectionArray[1]);
+    }
+
+    [TestMethod]
+    public async Task RemoteBackend_RetiredSearchHistoryMatchesItsLiveTerminalUpdate()
+    {
+        await RunAsync(
+            () => ParityBackendContext.CreateRemoteAsync(musicRoot =>
+            {
+                string trackDir = Path.Combine(musicRoot, "Artist");
+                Directory.CreateDirectory(trackDir);
+                File.WriteAllText(Path.Combine(trackDir, "Artist - Track One.mp3"), "a");
+            }),
+            async ctx =>
+            {
+                var terminalJobs = new ConcurrentDictionary<Guid, JobSummaryDto>();
+                void CaptureTerminal(DaemonClientUpdate update)
+                {
+                    foreach (JobSummaryDto job in update.ChangedJobs.Where(job =>
+                        job.LifecycleState == ServerJobLifecycleState.Terminal))
+                        terminalJobs[job.JobId] = job;
+                }
+                ctx.Backend.StateUpdated += CaptureTerminal;
+                try
+                {
+                    var summary = await ctx.Backend.SubmitTrackSearchJobAsync(
+                        new SubmitTrackSearchJobRequestDto(
+                            new SongQueryDto("Artist", "Track One", "", "", -1, false)),
+                        ctx.Token);
+                    JobSummaryDto? observedTerminal = await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(terminalJobs.GetValueOrDefault(summary.JobId)),
+                        job => job != null,
+                        $"Remote live state did not publish terminal job {summary.JobId}.",
+                        job => job == null ? "<missing>" : FormatState(job));
+                    Assert.IsNotNull(observedTerminal);
+                    JobSummaryDto liveTerminal = observedTerminal;
+                    await BackendTestWaiter.UntilAsync(
+                        ctx.Backend,
+                        _ => Task.FromResult(
+                            ctx.Backend.ClientStore.GetWorkflowJobs(summary.WorkflowId).Count == 0),
+                        "Remote workflow did not retire from live state.");
+
+                    var retainedJobs = await ctx.Backend.GetJobsAsync(
+                        new JobQuery(null, null, null, summary.WorkflowId, IncludeAll: true),
+                        ctx.Token);
+                    JobSummaryDto retained = retainedJobs.Single(job => job.JobId == summary.JobId);
+                    Assert.AreEqual(liveTerminal.LifecycleState, retained.LifecycleState);
+                    Assert.AreEqual(liveTerminal.TerminalOutcome, retained.TerminalOutcome);
+                    Assert.AreEqual(liveTerminal.ActivityPhase, retained.ActivityPhase);
+
+                    var projection = await ctx.Backend.GetFileResultsAsync(summary.JobId, ctx.Token);
+                    Assert.IsNotNull(projection);
+                    Assert.IsTrue(projection.IsComplete);
+                    Assert.AreEqual("Complete", projection.PersistenceState);
+                    Assert.AreEqual(1, projection.Items.Count);
+                }
+                finally
+                {
+                    ctx.Backend.StateUpdated -= CaptureTerminal;
+                }
+            });
     }
 
     [TestCleanup]
     public void Cleanup()
     {
-        SockseekLog.RemoveNonFileOutputs();
     }
 
     [TestMethod]
@@ -279,10 +388,11 @@ public class CliBackendParityTests
             scenario: async ctx =>
             {
                 var messages = new ConcurrentBag<string>();
-                ctx.Backend.EventReceived += envelope =>
+                var observed = new ConcurrentBag<string>();
+                ctx.Backend.ActivityReceived += activity =>
                 {
-                    if (envelope.Type == "workflow.message"
-                        && envelope.Payload is WorkflowMessageEventDto message)
+                    observed.Add($"{activity.Type}:{activity.Payload.GetType().Name}");
+                    if (activity.Payload is WorkflowMessageActivityDto message)
                     {
                         messages.Add(message.Message);
                     }
@@ -294,8 +404,9 @@ public class CliBackendParityTests
 
                 await WaitForWorkflowStateAsync(ctx.Backend, summary.WorkflowId, ServerWorkflowState.Completed);
                 await WaitForConditionAsync(
+                    ctx.Backend,
                     () => messages.Contains("Auto profiles active: album-auto"),
-                    $"Timed out waiting for workflow message on {ctx.Name}.");
+                    $"Timed out waiting for workflow message on {ctx.Name}. Observed: {string.Join(", ", observed)}");
             },
             profiles: AlbumAutoProfileCatalog());
     }
@@ -348,11 +459,9 @@ public class CliBackendParityTests
         Func<ParityBackendContext, Task> scenario,
         ProfileCatalog? profiles = null)
     {
-        await using (var local = await ParityBackendContext.CreateLocalAsync(seedMusic, profiles))
-            await scenario(local);
-
-        await using (var remote = await ParityBackendContext.CreateRemoteAsync(seedMusic, profiles))
-            await scenario(remote);
+        await Task.WhenAll(
+            RunAsync(() => ParityBackendContext.CreateLocalAsync(seedMusic, profiles), scenario),
+            RunAsync(() => ParityBackendContext.CreateRemoteAsync(seedMusic, profiles), scenario));
     }
 
     private static async Task RunForEachInjectedClientBackendAsync(
@@ -360,12 +469,18 @@ public class CliBackendParityTests
         Func<ParityBackendContext, Task> scenario)
     {
         var localClient = createClient();
-        await using (var local = await ParityBackendContext.CreateLocalAsync(localClient.Client, localClient.Gate))
-            await scenario(local);
-
         var remoteClient = createClient();
-        await using (var remote = await ParityBackendContext.CreateRemoteAsync(remoteClient.Client, remoteClient.Gate))
-            await scenario(remote);
+        await Task.WhenAll(
+            RunAsync(() => ParityBackendContext.CreateLocalAsync(localClient.Client, localClient.Gate), scenario),
+            RunAsync(() => ParityBackendContext.CreateRemoteAsync(remoteClient.Client, remoteClient.Gate), scenario));
+    }
+
+    private static async Task RunAsync(
+        Func<Task<ParityBackendContext>> createContext,
+        Func<ParityBackendContext, Task> scenario)
+    {
+        await using var context = await createContext();
+        await scenario(context);
     }
 
     private static ProfileCatalog AlbumAutoProfileCatalog()
@@ -386,7 +501,6 @@ public class CliBackendParityTests
             new SubmitExtractJobRequestDto(
                 listPath,
                 InputType: "List",
-                AutoStartExtractedResult: true,
                 Options: new SubmissionOptionsDto(),
                 ResultDownloadBehavior: new DownloadBehaviorPolicyDto(
                     Album: DownloadBehavior.Manual,
@@ -516,16 +630,20 @@ public class CliBackendParityTests
             string outputDir = CreateTempDir("Sockseek-cli-parity-remote-out-");
             seedMusic(musicRoot);
 
-            int port = GetFreeTcpPort();
-            string url = $"http://127.0.0.1:{port}";
             var app = ServerHost.Build([], new ServerOptions
             {
                 Engine = CreateEngineSettings(musicRoot),
                 DefaultDownload = CreateDownloadSettings(outputDir),
                 Profiles = profiles ?? ProfileCatalog.Empty,
-            }, url);
+                Persistence = new ServerPersistenceOptions
+                {
+                    Enabled = true,
+                    DataDirectory = Path.Combine(outputDir, ".server-data"),
+                },
+            }, DynamicLoopbackUrl);
 
             await app.StartAsync();
+            string url = GetBoundUrl(app);
             var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -544,8 +662,6 @@ public class CliBackendParityTests
             string musicRoot = CreateTempDir("Sockseek-cli-parity-remote-music-");
             string outputDir = CreateTempDir("Sockseek-cli-parity-remote-out-");
 
-            int port = GetFreeTcpPort();
-            string url = $"http://127.0.0.1:{port}";
             var downloadSettings = CreateDownloadSettings(outputDir);
             downloadSettings.Output.NameFormat = "{filename}";
             var app = ServerHost.Build([], new ServerOptions
@@ -554,9 +670,15 @@ public class CliBackendParityTests
                 DefaultDownload = downloadSettings,
                 Profiles = ProfileCatalog.Empty,
                 ClientFactory = _ => client,
-            }, url);
+                Persistence = new ServerPersistenceOptions
+                {
+                    Enabled = true,
+                    DataDirectory = Path.Combine(outputDir, ".server-data"),
+                },
+            }, DynamicLoopbackUrl);
 
             await app.StartAsync();
+            string url = GetBoundUrl(app);
             var backend = new RemoteCliBackend(url);
             await backend.StartAsync();
 
@@ -574,6 +696,7 @@ public class CliBackendParityTests
         public string[] DownloadedRelativePaths()
             => Directory.GetFiles(OutputDir, "*", SearchOption.AllDirectories)
                 .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}failed{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}.server-data{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
                 .Select(path => Path.GetRelativePath(OutputDir, path).Replace(Path.DirectorySeparatorChar, '/'))
                 .OrderBy(path => path, StringComparer.Ordinal)
                 .ToArray();
@@ -591,10 +714,11 @@ public class CliBackendParityTests
                         engineCompleted = true;
                     }
 
-                    var completed = await Task.WhenAny(engineTask, Task.Delay(TimeSpan.FromSeconds(5)));
-                    if (completed != engineTask)
-                        cts.Cancel();
-
+                    // Assertions have already observed the terminal workflow.
+                    // Cancellation is the test harness's prompt teardown signal;
+                    // waiting for the production idle loop adds seconds of
+                    // contention across the parallel parity fixtures.
+                    cts.Cancel();
                     try { await engineTask; }
                     catch (OperationCanceledException) { }
                 }
@@ -662,42 +786,31 @@ public class CliBackendParityTests
                     ]),
             ]);
 
-    private static async Task WaitForJobStateAsync(ICliBackend backend, Guid jobId, ExpectedJobStatus expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
+    private static Task WaitForJobStateAsync(
+        ICliBackend backend,
+        Guid jobId,
+        ExpectedJobStatus expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetJobDetailAsync(jobId, ct),
+            detail => detail?.Summary is { } summary && ProjectState(summary) == expectedState,
+            $"Timed out waiting for job {jobId} to reach state '{expectedState}'.",
+            detail => FormatState(detail?.Summary),
+            timeoutMs);
 
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
-            if (detail?.Summary is { } summary && ProjectState(summary) == expectedState)
-                return;
-
-            await Task.Delay(50, CancellationToken.None);
-        }
-
-        var finalDetail = await backend.GetJobDetailAsync(jobId, CancellationToken.None);
-        Assert.Fail($"Timed out waiting for job {jobId} to reach state '{expectedState}'. Final state: {FormatState(finalDetail?.Summary)}.");
-    }
-
-    private static async Task WaitForWorkflowStateAsync(ICliBackend backend, Guid workflowId, ServerWorkflowState expectedState, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            var detail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-            if (detail?.Summary.State == expectedState)
-                return;
-
-            await Task.Delay(50, CancellationToken.None);
-        }
-
-        var finalDetail = await backend.GetWorkflowAsync(workflowId, CancellationToken.None);
-        string jobs = finalDetail == null
-            ? "<missing>"
-            : string.Join(", ", finalDetail.Jobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)} parent={job.ParentJobId?.ToString() ?? "-"} result={job.ResultJobId?.ToString() ?? "-"}"));
-        Assert.Fail($"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'. Jobs: {jobs}");
-    }
+    private static Task WaitForWorkflowStateAsync(
+        ICliBackend backend,
+        Guid workflowId,
+        ServerWorkflowState expectedState,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetWorkflowAsync(workflowId, ct),
+            detail => detail?.Summary.State == expectedState,
+            $"Timed out waiting for workflow {workflowId} to reach state '{expectedState}'.",
+            detail => detail?.Summary.State.ToString() ?? "<missing>",
+            timeoutMs);
 
     private static async Task<JobSummaryDto> WaitForWorkflowJobAsync(
         ICliBackend backend,
@@ -705,37 +818,29 @@ public class CliBackendParityTests
         Func<JobSummaryDto, bool> predicate,
         int timeoutMs = 5000)
     {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            var jobs = await backend.GetJobsAsync(new JobQuery(null, null, null, workflowId, IncludeAll: true), CancellationToken.None);
-            var match = jobs.FirstOrDefault(predicate);
-            if (match != null)
-                return match;
-
-            await Task.Delay(50, CancellationToken.None);
-        }
-
-        var finalJobs = await backend.GetJobsAsync(new JobQuery(null, null, null, workflowId, IncludeAll: true), CancellationToken.None);
-        Assert.Fail($"Timed out waiting for matching workflow job. Jobs: {string.Join(", ", finalJobs.Select(job => $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)}"))}");
-        throw new InvalidOperationException("Unreachable after Assert.Fail.");
+        var jobs = await BackendTestWaiter.UntilAsync(
+            backend,
+            ct => backend.GetJobsAsync(
+                new JobQuery(null, null, null, workflowId, IncludeAll: true),
+                ct),
+            items => items.Any(predicate),
+            "Timed out waiting for matching workflow job.",
+            items => string.Join(", ", items.Select(job =>
+                $"[{job.DisplayId}] {job.Kind}:{ProjectState(job)}")),
+            timeoutMs);
+        return jobs.First(predicate);
     }
 
-    private static async Task WaitForConditionAsync(Func<bool> condition, string failureMessage, int timeoutMs = 5000)
-    {
-        using var timeout = new CancellationTokenSource(timeoutMs);
-
-        while (!timeout.IsCancellationRequested)
-        {
-            if (condition())
-                return;
-
-            await Task.Delay(50, CancellationToken.None);
-        }
-
-        Assert.Fail(failureMessage);
-    }
+    private static Task WaitForConditionAsync(
+        ICliBackend backend,
+        Func<bool> condition,
+        string failureMessage,
+        int timeoutMs = 5_000)
+        => BackendTestWaiter.UntilAsync(
+            backend,
+            _ => Task.FromResult(condition()),
+            failureMessage,
+            timeoutMs);
 
     private static ExpectedJobStatus ProjectState(JobSummaryDto summary)
         => ProjectState(summary.LifecycleState, summary.ActivityPhase, summary.TerminalOutcome, summary.SkipReason);
@@ -783,12 +888,14 @@ public class CliBackendParityTests
             Directory.Delete(path, recursive: true);
     }
 
-    private static int GetFreeTcpPort()
+    private static string GetBoundUrl(Microsoft.AspNetCore.Builder.WebApplication app)
     {
-        TcpListener listener = new(IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        var addresses = app.Services
+            .GetRequiredService<IServer>()
+            .Features
+            .Get<IServerAddressesFeature>()?
+            .Addresses;
+        return addresses?.SingleOrDefault(address => address.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The test server did not publish its bound HTTP address.");
     }
 }

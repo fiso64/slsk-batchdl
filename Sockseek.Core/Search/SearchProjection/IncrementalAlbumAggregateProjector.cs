@@ -11,10 +11,10 @@ public sealed class IncrementalAlbumAggregateProjector
     private readonly int maxDiff;
     private readonly Dictionary<int, Dictionary<int, List<AlbumAggregateBucket>>> byTrackCountAndFirstLength = [];
     private readonly Dictionary<AlbumFolder, SongQuery?> representativeQueries = [];
-    private readonly Dictionary<string, int> folderOrder = new(StringComparer.Ordinal);
+    private readonly Dictionary<PeerPathKey, int> folderOrder = [];
     private readonly AlbumFolderAggregateComparer folderComparer;
     private readonly List<AlbumAggregateBucket> buckets = [];
-    private readonly HashSet<string> seenFolders = new(StringComparer.Ordinal);
+    private readonly HashSet<PeerPathKey> seenFolders = [];
 
     public IncrementalAlbumAggregateProjector(AlbumQuery query, SearchSettings search)
     {
@@ -41,7 +41,7 @@ public sealed class IncrementalAlbumAggregateProjector
         int added = 0;
         foreach (var folder in albums)
         {
-            string key = folder.Username + '\\' + folder.FolderPath;
+            var key = new PeerPathKey(folder.Username, folder.FolderPath);
             if (!seenFolders.Add(key))
                 continue;
 
@@ -77,6 +77,15 @@ public sealed class IncrementalAlbumAggregateProjector
         Clear();
         UpdateFolderOrder(albumList);
         AddRange(albumList);
+    }
+
+    internal void ResetBatch(IEnumerable<AlbumFolder> albums)
+    {
+        var albumList = albums as IReadOnlyList<AlbumFolder> ?? albums.ToList();
+        Clear();
+        UpdateFolderOrder(albumList);
+        foreach (AlbumFolder folder in albumList)
+            Add(folder);
     }
 
     public List<AlbumJob> Snapshot()
@@ -149,8 +158,8 @@ public sealed class IncrementalAlbumAggregateProjector
     private int CompareFolders(AlbumFolder x, AlbumFolder y)
         => folderComparer.Compare(x, y);
 
-    private static string FolderKey(AlbumFolder folder)
-        => folder.Username + '\\' + folder.FolderPath;
+    private static PeerPathKey FolderKey(AlbumFolder folder)
+        => new(folder.Username, folder.FolderPath);
 
     private bool LengthsAreSimilar(int[] s1, int[] s2)
     {
@@ -171,7 +180,7 @@ public sealed class IncrementalAlbumAggregateProjector
             ? folder.SearchSortedAudioLengths
             : folder.Files
                 .Where(f => !f.IsNotAudio)
-                .Select(f => f.Candidate.File.Length ?? -1)
+                .Select(f => f.Candidate.Length ?? -1)
                 .OrderBy(x => x)
                 .ToArray();
 

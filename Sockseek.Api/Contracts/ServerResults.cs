@@ -75,7 +75,23 @@ public sealed record SearchRawResultDto(
 public sealed record SearchResultSnapshotDto<T>(
     int Revision,
     bool IsComplete,
-    IReadOnlyList<T> Items);
+    IReadOnlyList<T> Items,
+    string? PersistenceState = null,
+    DateTimeOffset? ResultsPrunedAtUtc = null);
+
+/// <summary>
+/// Presentation-safe facts about a file leaf. This is not a remote identity;
+/// resource-specific DTOs retain their own references.
+/// </summary>
+public sealed record FileMetadataDto(
+    string Name,
+    long Size,
+    string? Extension,
+    int? BitRate,
+    int? BitDepth,
+    int? SampleRate,
+    int? Length,
+    IReadOnlyList<FileAttributeDto>? Attributes = null);
 
 /// <summary>
 /// Downloadable file candidate shown in track search results.
@@ -85,12 +101,7 @@ public sealed record FileCandidateDto(
     string Username,
     string Filename,
     PeerInfoDto Peer,
-    long Size,
-    int? BitRate,
-    int? SampleRate,
-    int? Length,
-    string? Extension = null,
-    IReadOnlyList<FileAttributeDto>? Attributes = null);
+    FileMetadataDto File);
 
 /// <summary>
 /// Album folder candidate shown in album search results.

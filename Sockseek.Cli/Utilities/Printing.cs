@@ -11,6 +11,7 @@ public static class Printing
 {
     public static readonly object ConsoleLock = new();
     internal static Action<string, ConsoleColor>? LiveWriteLine { get; set; }
+    private static readonly AsyncLocal<TextWriter?> ScopedOutput = new();
 
     private static bool _isBuffering;
     private static readonly List<(string value, ConsoleColor color, bool isNewLine)> _buffer = new();
@@ -52,7 +53,9 @@ public static class Printing
         string fileSize    = $"{file.Size / (float)(1024 * 1024):F1}MB";
         string user        = showUser && response?.Username != null ? response.Username + "\\" : "";
         string speed       = showSpeed && response?.Username != null ? $"({response.UploadSpeed / 1024.0 / 1024.0:F2}MB/s) " : "";
-        string fname       = fullpath ? file.Filename : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath);
+        string fname       = PeerIdentityValidator.ToDisplayText(fullpath
+            ? file.Filename
+            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(file.Filename) : customPath));
         string length      = Utils.IsMusicFile(file.Filename) ? (file.Length ?? -1).ToString() + "s" : "";
         string displayText;
         if (!infoFirst)
@@ -72,6 +75,39 @@ public static class Printing
         if (nec != null || pref != null)
             cond = $" ({(necStr + prefStr).TrimEnd(' ', ',')})";
 
+        return displayText + cond;
+    }
+
+    public static string DisplayString(SongQuery query, FileCandidate candidate,
+        FileConditions? nec = null, FileConditions? pref = null, bool fullpath = false, string customPath = "",
+        bool infoFirst = false, bool showUser = true, bool showSpeed = false)
+    {
+        string sampleRate = candidate.SampleRate.HasValue ? $"{(candidate.SampleRate.Value / 1000.0).Normalize()}kHz" : "";
+        string bitRate = candidate.BitRate.HasValue ? $"{candidate.BitRate}kbps" : "";
+        string fileSize = $"{candidate.Size / (float)(1024 * 1024):F1}MB";
+        string user = showUser ? candidate.Username + "\\" : "";
+        string speed = showSpeed && candidate.UploadSpeed.HasValue
+            ? $"({candidate.UploadSpeed.Value / 1024.0 / 1024.0:F2}MB/s) "
+            : "";
+        string fname = PeerIdentityValidator.ToDisplayText(fullpath
+            ? candidate.Filename
+            : (showUser ? "..\\" : "") + (customPath.Length == 0 ? Utils.GetFileNameSlsk(candidate.Filename) : customPath));
+        string length = Utils.IsMusicFile(candidate.Filename) ? (candidate.Length ?? -1) + "s" : "";
+        string displayText;
+        if (!infoFirst)
+        {
+            string info = string.Join('/', new[] { length, sampleRate + bitRate, fileSize }.Where(value => value.Length > 0));
+            displayText = $"{speed}{user}{fname} [{info}]";
+        }
+        else
+        {
+            string info = string.Join('/', new[] { length.PadRight(4), (sampleRate + bitRate).PadRight(8), fileSize.PadLeft(6) });
+            displayText = $"[{info}] {speed}{user}{fname}";
+        }
+
+        string necStr = nec != null ? $"nec:{nec.GetNotSatisfiedName(candidate, query)}, " : "";
+        string prefStr = pref != null ? $"prf:{pref.GetNotSatisfiedName(candidate, query)}" : "";
+        string cond = nec != null || pref != null ? $" ({(necStr + prefStr).TrimEnd(' ', ',')})" : "";
         return displayText + cond;
     }
 
@@ -102,9 +138,9 @@ public static class Printing
                         Write($" [{i + 1:D2}]", ConsoleColor.DarkGray);
                     }
                     if (ancestor.Length == 0)
-                        WriteLine("    " + DisplayString(songList[i].Query, c.File, c.Response, infoFirst: infoFirst, showUser: showUser));
+                        WriteLine("    " + DisplayString(songList[i].Query, c, infoFirst: infoFirst, showUser: showUser));
                     else
-                        WriteLine("    " + DisplayString(songList[i].Query, c.File, c.Response, customPath: c.File.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
+                        WriteLine("    " + DisplayString(songList[i].Query, c, customPath: c.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
                 }
             }
         }
@@ -138,9 +174,9 @@ public static class Printing
                     foreach (var c in s.Candidates)
                     {
                         if (ancestor.Length == 0)
-                            WriteLine("    " + DisplayString(s.Query, c.File, c.Response, infoFirst: infoFirst, showUser: showUser));
+                            WriteLine("    " + DisplayString(s.Query, c, infoFirst: infoFirst, showUser: showUser));
                         else
-                            WriteLine("    " + DisplayString(s.Query, c.File, c.Response, customPath: c.File.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
+                            WriteLine("    " + DisplayString(s.Query, c, customPath: c.Filename.Replace(ancestor, "").TrimStart('\\'), infoFirst: infoFirst, showUser: showUser));
                     }
                     if (s.Candidates.Count > 0) WriteLine();
                 }
@@ -235,12 +271,21 @@ public static class Printing
 
     public static void PrintComplete(int successes, int fails, int skipped)
     {
-        if (successes + fails + skipped > 1 || fails > 0 || skipped > 0)
-        {
-            WriteLine();
-            var skippedPart = skipped > 0 ? $", {skipped} skipped" : "";
-            SockseekLog.Info($"Completed: {successes} succeeded{skippedPart}, {fails} failed.");
-        }
+        string? message = FormatComplete(successes, fails, skipped);
+        if (message is null)
+            return;
+
+        WriteLine();
+        WriteLine(message);
+    }
+
+    internal static string? FormatComplete(int successes, int fails, int skipped)
+    {
+        if (successes + fails + skipped <= 1 && fails == 0 && skipped == 0)
+            return null;
+
+        var skippedPart = skipped > 0 ? $", {skipped} skipped" : "";
+        return $"Completed: {successes} succeeded{skippedPart}, {fails} failed.";
     }
 
     public static bool IsSuccessfulCompletion(Job job)
@@ -275,7 +320,7 @@ public static class Printing
         }
         else if (summary && !printOnly && (isNormal || skippedTracks.Length > 0))
         {
-            SockseekLog.Info($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
+            WriteLine($"Downloading {toBeDownloaded.Count} tracks{skippedTracks}{(allSkipped ? '.' : ':')}");
         }
 
         if (toBeDownloaded.Count > 0)
@@ -318,6 +363,21 @@ public static class Printing
         WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
     }
 
+    public static void PrintTrackCandidates(IEnumerable<FileCandidate> orderedResults, SongQuery query,
+        bool full = false, FileConditions? necCond = null, FileConditions? prefCond = null)
+    {
+        Console.ResetColor();
+        int count = 0;
+        foreach (var candidate in orderedResults)
+        {
+            WriteLine(DisplayString(query, candidate,
+                full ? necCond : null, full ? prefCond : null,
+                fullpath: full, infoFirst: true, showSpeed: full));
+            count++;
+        }
+        WriteLine($"Total: {count}\n", ConsoleColor.Yellow);
+    }
+
 
     public static void PrintLink(string username, string filename)
     {
@@ -342,10 +402,13 @@ public static class Printing
         lock (ConsoleLock)
         {
             Console.ResetColor();
-            var firstResponse = folder.Files[0].Candidate.Response;
-            string noSlot   = !firstResponse.HasFreeUploadSlot ? ", no upload slots" : "";
-            string userInfo = $"{firstResponse.Username} ({((float)firstResponse.UploadSpeed / (1024 * 1024)):F3}MB/s{noSlot})";
-            var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.Candidate.File), folder.FolderPath);
+            var firstCandidate = folder.Files[0].Candidate;
+            string noSlot = firstCandidate.HasFreeUploadSlot == false ? ", no upload slots" : "";
+            string speed = firstCandidate.UploadSpeed.HasValue
+                ? $"{firstCandidate.UploadSpeed.Value / (1024f * 1024f):F3}MB/s"
+                : "unknown speed";
+            string userInfo = $"{firstCandidate.Username} ({speed}{noSlot})";
+            var (parents, propsList) = FolderInfo(folder.Files.Select(f => f.Candidate), folder.FolderPath);
 
             string format     = propsList.FirstOrDefault() ?? "";
             string otherProps = propsList.Count > 1 ? " / " + string.Join(" / ", propsList.Skip(1)) : "";
@@ -371,8 +434,8 @@ public static class Printing
             {
                 Write($" [{i + 1:D2}]", ConsoleColor.DarkGray, force: force);
             }
-            string customPath = PathRelativeToFolder(af.Candidate.File.Filename, ancestor);
-            WriteLine("    " + DisplayString(af.Query, af.Candidate.File, af.Candidate.Response, customPath: customPath, showUser: false), ConsoleColor.Gray, force: force);
+            string customPath = PathRelativeToFolder(af.Candidate.Filename, ancestor);
+            WriteLine("    " + DisplayString(af.Query, af.Candidate, customPath: customPath, showUser: false), ConsoleColor.Gray, force: force);
             i++;
         }
 
@@ -399,12 +462,12 @@ public static class Printing
         if (folderPath.Length == 0)
             return "";
 
-        return filename.StartsWith(folderPath + "\\", StringComparison.OrdinalIgnoreCase)
+        return filename.StartsWith(folderPath + "\\", StringComparison.Ordinal)
             ? filename[(folderPath.Length + 1)..]
             : Utils.GetFileNameSlsk(filename);
     }
 
-    static (string parents, List<string> props) FolderInfo(IEnumerable<SlFile> files, string? folderPath = null)
+    static (string parents, List<string> props) FolderInfo(IEnumerable<FileCandidate> files, string? folderPath = null)
     {
         var fileList = files.ToList();
         int totalLengthInSeconds = fileList.Sum(f => f.Length ?? 0);
@@ -460,11 +523,17 @@ public static class Printing
     public static void RefreshOrPrint(int current, string item, bool print = false)
     {
         if (print)
-            SockseekLog.Info(item);
+            WriteLine(item);
     }
 
     public static void WriteLine(string value = "", ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
+        if (ScopedOutput.Value is { } output)
+        {
+            output.WriteLine(value);
+            return;
+        }
+
         if (!force)
         {
             lock (ConsoleLock)
@@ -493,6 +562,12 @@ public static class Printing
 
     public static void Write(string value, ConsoleColor color = ConsoleColor.Gray, bool force = false)
     {
+        if (ScopedOutput.Value is { } output)
+        {
+            output.Write(value);
+            return;
+        }
+
         if (!force)
         {
             lock (ConsoleLock)
@@ -510,6 +585,25 @@ public static class Printing
             Console.ForegroundColor = color;
             Console.Write(value);
             Console.ResetColor();
+        }
+    }
+
+    internal static IDisposable RedirectOutput(TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        TextWriter? previous = ScopedOutput.Value;
+        ScopedOutput.Value = output;
+        return new OutputScope(previous);
+    }
+
+    private sealed class OutputScope(TextWriter? previous) : IDisposable
+    {
+        private int disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+                ScopedOutput.Value = previous;
         }
     }
 }

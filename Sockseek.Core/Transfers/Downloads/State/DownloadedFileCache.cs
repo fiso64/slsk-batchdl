@@ -7,8 +7,12 @@ namespace Sockseek.Core.Transfers.Downloads.State;
 
 internal sealed class DownloadedFileCache
 {
+    internal sealed record CachedDownload(
+        string OutputPath,
+        PeerFileTarget Target);
+
     private readonly object gate = new();
-    private readonly ConcurrentDictionary<string, FileDownloadResult> downloadedFiles = new();
+    private readonly ConcurrentDictionary<PeerFileIdentity, CachedDownload> downloadedFiles = new();
 
     public T WithExclusiveAccess<T>(Func<T> action)
     {
@@ -16,40 +20,38 @@ internal sealed class DownloadedFileCache
             return action();
     }
 
-    public bool TryGetReusable(FileCandidate candidate, [NotNullWhen(true)] out FileDownloadResult? result)
+    public bool TryGetReusable(
+        PeerFileTarget target,
+        [NotNullWhen(true)] out CachedDownload? result)
     {
-        var fileKey = Key(candidate);
+        ArgumentNullException.ThrowIfNull(target);
 
         lock (gate)
         {
-            if (!downloadedFiles.TryGetValue(fileKey, out var cached))
+            if (!downloadedFiles.TryGetValue(target.Identity, out var cached))
             {
                 result = null;
                 return false;
             }
 
             var existingFileInfo = new FileInfo(cached.OutputPath);
-            if (existingFileInfo.Exists && existingFileInfo.Length == candidate.File.Size)
+            var expectedSize = target.Size ?? cached.Target.Size;
+            if (existingFileInfo.Exists
+                && (expectedSize is null || existingFileInfo.Length == expectedSize.Value))
             {
                 result = cached;
                 return true;
             }
 
-            downloadedFiles.TryRemove(fileKey, out _);
+            downloadedFiles.TryRemove(target.Identity, out _);
             result = null;
             return false;
         }
     }
 
-    public void Publish(FileDownloadResult result)
-        => Publish(result.OutputPath, result.Candidate);
-
-    public void Publish(string outputPath, FileCandidate candidate)
+    public void Publish(string outputPath, PeerFileTarget target)
     {
         lock (gate)
-            downloadedFiles[Key(candidate)] = new FileDownloadResult(outputPath, candidate);
+            downloadedFiles[target.Identity] = new CachedDownload(outputPath, target);
     }
-
-    private static string Key(FileCandidate candidate)
-        => candidate.Username + '\\' + candidate.Filename;
 }

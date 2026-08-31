@@ -17,7 +17,7 @@ public class StaleDownloadCoordinatorTests
     private static readonly TimeSpan MaxStaleTime = TimeSpan.FromSeconds(5);
 
     [TestMethod]
-    public void StaleCoordinator_IsOnlyArmedByDownloaderPeerTransferScope()
+    public void StaleCoordinator_IsOnlyArmedByExactPeerTransferRunner()
     {
         var repositoryRoot = FindRepositoryRoot();
         var coreRoot = Path.Combine(repositoryRoot, "Sockseek.Core");
@@ -30,7 +30,7 @@ public class StaleDownloadCoordinatorTests
         var watchPattern = new Regex(@"\.WatchPeerTransferAsync\s*\(", RegexOptions.Singleline);
         var allowedWatchFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            Path.Combine(coreRoot, "Transfers", "Downloads", "Downloader.cs"),
+            Path.Combine(coreRoot, "Transfers", "Downloads", "ExactPeerFileTransferRunner.cs"),
             Path.Combine(coreRoot, "Transfers", "Downloads", "StaleDetection", "StaleDownloadCoordinator.cs"),
         };
 
@@ -52,7 +52,7 @@ public class StaleDownloadCoordinatorTests
             .ToList();
 
         if (offenders.Count > 0)
-            Assert.Fail("Stale cancellation must only be armed by Downloader via StaleDownloadCoordinator.WatchPeerTransferAsync:\n" + string.Join("\n", offenders));
+            Assert.Fail("Stale cancellation must only be armed by ExactPeerFileTransferRunner via StaleDownloadCoordinator.WatchPeerTransferAsync:\n" + string.Join("\n", offenders));
     }
 
     [TestMethod]
@@ -69,7 +69,7 @@ public class StaleDownloadCoordinatorTests
         scenario.Advance(TimeSpan.FromMilliseconds(1));
         Assert.AreEqual(1, scenario.CancelStaleDownloads());
         AssertStaleTransferCancelled(attempt);
-        Assert.IsFalse(scenario.ActiveDownloads.Contains(attempt.Download.Candidate.Filename));
+        Assert.IsFalse(scenario.ActiveDownloads.Contains(attempt.Download.TransferId));
     }
 
     [TestMethod]
@@ -224,29 +224,6 @@ public class StaleDownloadCoordinatorTests
         Assert.IsFalse(attempt.Download.Cts.IsCancellationRequested);
     }
 
-    [TestMethod]
-    public void StaleCoordinator_DoesNotWriteUserFacingAttemptLogs()
-    {
-        SockseekLog.RemoveNonFileOutputs();
-        var entries = new List<SockseekLog.StructuredLogEntry>();
-        SockseekLog.AddStructuredSink((entry, _) => entries.Add(entry));
-        try
-        {
-            using var scenario = new Scenario();
-            scenario.Start("user-a", @"Music\Artist - Song.mp3");
-
-            scenario.Advance(MaxStaleTime);
-            Assert.AreEqual(1, scenario.CancelStaleDownloads());
-
-            Assert.IsFalse(entries.Any(entry => entry.CategoryName == SockseekLog.Categories.Jobs),
-                "The coordinator is only the watchdog; Downloader/album orchestration own user-facing stale diagnostics.");
-        }
-        finally
-        {
-            SockseekLog.RemoveNonFileOutputs();
-        }
-    }
-
     private static void AssertStaleTransferCancelled(AttemptHandle attempt)
     {
         Assert.IsFalse(attempt.Song.Cts?.IsCancellationRequested == true);
@@ -293,12 +270,12 @@ public class StaleDownloadCoordinatorTests
         {
             var response = new SearchResponse(username, 1, true, 100_000, 0, []);
             var file = TestHelpers.CreateSlFile(filename, size: 50_000, length: 180);
-            var candidate = new FileCandidate(response, file);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
             var song = new SongJob(new SongQuery { Artist = "Artist", Title = Path.GetFileNameWithoutExtension(filename) })
             {
                 Cts = new CancellationTokenSource(),
             };
-            var activeDownload = new ActiveDownload(song, candidate, new CancellationTokenSource(), parentJob);
+            var activeDownload = new ActiveDownload(Guid.NewGuid(), song, candidate, "C:/downloads/song.mp3", new CancellationTokenSource(), parentJob);
             ActiveDownloads.TryAdd(activeDownload);
             var activityReady = new TaskCompletionSource<StaleDownloadCoordinator.PeerTransferActivity>(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -340,11 +317,11 @@ public class StaleDownloadCoordinatorTests
         private static Transfer CreateTransfer(AttemptHandle attempt, TransferStates state, long bytesTransferred)
             => new(
                 TransferDirection.Download,
-                attempt.Download.Candidate.Username,
-                attempt.Download.Candidate.Filename,
+                attempt.Download.Target.Username,
+                attempt.Download.Target.Filename,
                 1,
                 state,
-                attempt.Download.Candidate.File.Size,
+                attempt.Download.Target.Size ?? 0,
                 0,
                 bytesTransferred);
 

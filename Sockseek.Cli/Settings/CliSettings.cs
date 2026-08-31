@@ -17,4 +17,7 @@ public class CliSettings
     /// When true, the CLI uses JsonStreamProgressReporter instead of the default CLI reporter.
     public bool ProgressJson { get; set; }
 
+    /// When true, the remote CLI subscribes to the daemon-wide live stream.
+    public bool Monitor { get; set; }
+
 }

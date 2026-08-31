@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Soulseek;
 using System.Collections.Concurrent;
+using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
@@ -18,32 +19,137 @@ namespace Tests.Unit
             var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", length: 180);
             var response = new SearchResponse("User1", 1, true, 100, 2, [file]);
             var rawEvents = 0;
-            session.RawResultReceived += (_, _, _) => rawEvents++;
+            session.RawResultReceived += _ => rawEvents++;
 
             session.AddResponse(response);
             session.AddResponse(response);
 
-            Assert.AreEqual(1, session.Results.Count, "Duplicate raw result keys should not be added twice.");
+            Assert.AreEqual(1, session.ResultCount, "Duplicate raw result keys should not be added twice.");
             Assert.AreEqual(1, session.Revision, "Revision should change only when a new raw result is added.");
             Assert.AreEqual(1, rawEvents, "Raw result event should fire only for newly added files.");
         }
 
         [TestMethod]
-        public async Task SearchJob_TypedProjectionCache_ReusesSameRevisionAndInvalidatesOnNewRawResult()
+        public void SearchSession_DistinguishesPeerAndFilenameComponentsThatContainSeparators()
         {
-            var index = new List<SearchResponse>
-            {
-                new("User1", 1, true, 100, 0,
-                [
-                    TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", length: 180),
-                ]),
-            };
-            var config = TestHelpers.CreateDefaultSettings().Download;
-            var registry = TestHelpers.CreateUserSuccessTracker();
-            var searcher = new Searcher(new ClientTests.MockSoulseekClient(index), registry, new DownloadEvents(), 10, 10);
-            var job = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track" });
+            var session = new SearchSession();
+            session.AddResponse(new SearchResponse("alpha", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"beta\track.mp3", length: 180),
+            ]));
+            session.AddResponse(new SearchResponse(@"alpha\beta", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile("track.mp3", length: 181),
+            ]));
 
-            await searcher.Search(job, config.Search, new ResponseData(), CancellationToken.None);
+            Assert.AreEqual(2, session.ResultCount,
+                "Exact peer/file identities must not collide when either component contains a path separator.");
+            CollectionAssert.AreEquivalent(
+                new[] { "alpha", @"alpha\beta" },
+                session.RawSnapshot().Select(result => result.Username).ToArray());
+        }
+
+        [TestMethod]
+        public void SearchSession_AddResponse_PublishesImmutableSearchResultChanges()
+        {
+            var jobId = Guid.NewGuid();
+            var session = new SearchSession(jobId);
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.flac", bitrate: 1000, length: 180);
+            var response = new SearchResponse("User1", 1, true, 123_456, 2, [file]);
+            SearchResultsAddedChange? added = null;
+            SearchCompletedChange? completed = null;
+
+            session.ResultsAdded += change => added = change;
+            session.SearchCompleted += change => completed = change;
+
+            session.AddResponse(response);
+            session.Complete();
+
+            Assert.IsNotNull(added);
+            Assert.AreEqual(jobId, added.JobId);
+            Assert.AreEqual(1, added.Revision);
+            Assert.AreEqual(1, added.Results.Count);
+            Assert.AreEqual("User1", added.Results[0].Username);
+            Assert.AreEqual(@"Music\Artist\Track.flac", added.Results[0].Filename);
+            Assert.AreEqual(file.Size, added.Results[0].Size);
+            Assert.AreEqual(file.Extension, added.Results[0].Extension);
+            Assert.AreEqual(response.UploadSpeed, added.Results[0].UploadSpeed);
+            Assert.AreEqual(response.HasFreeUploadSlot, added.Results[0].HasFreeUploadSlot);
+            Assert.IsNotNull(completed);
+            Assert.AreEqual(jobId, completed.JobId);
+            Assert.AreEqual(2, completed.Revision);
+        }
+
+        [TestMethod]
+        public void SearchSession_UsesInjectedClock_AndIsolatesObservers()
+        {
+            var now = new DateTimeOffset(2033, 5, 6, 7, 8, 9, TimeSpan.Zero);
+            var session = new SearchSession(Guid.NewGuid(), new FixedTimeProvider(now));
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.flac", length: 180);
+            var response = new SearchResponse("User1", 1, true, 100, 0, [file]);
+            var successfulObservers = 0;
+            var published = new List<CoreChange>();
+            var observerFailures = new List<(string Name, Exception Exception)>();
+
+            session.ResultsAdded += _ => throw new InvalidOperationException("observer failed");
+            session.ResultsAdded += _ => successfulObservers++;
+            session.ChangePublished += published.Add;
+            session.ObserverFailed += (name, exception) => observerFailures.Add((name, exception));
+
+            session.AddResponse(response);
+            session.Complete();
+
+            Assert.AreEqual(1, successfulObservers);
+            Assert.AreEqual(1, observerFailures.Count);
+            Assert.AreEqual(nameof(session.ResultsAdded), observerFailures[0].Name);
+            Assert.AreEqual("observer failed", observerFailures[0].Exception.Message);
+            Assert.AreEqual(2, published.Count);
+            Assert.IsTrue(published.All(change => change.OccurredAtUtc == now));
+        }
+
+        [TestMethod]
+        public async Task SearchSession_CompletionBarrier_RejectsConcurrentLateResults()
+        {
+            var session = new SearchSession(Guid.NewGuid());
+            using var completionPublished = new ManualResetEventSlim();
+            using var releaseCompletionObserver = new ManualResetEventSlim();
+            session.SearchCompleted += _ =>
+            {
+                completionPublished.Set();
+                releaseCompletionObserver.Wait();
+            };
+
+            var completeTask = Task.Run(session.Complete);
+            Assert.IsTrue(completionPublished.Wait(TimeSpan.FromSeconds(2)), "Completion publication did not reach the deterministic barrier.");
+
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Late.flac", length: 180);
+            var response = new SearchResponse("LateUser", 1, true, 100, 3, [file]);
+            var addTask = Task.Run(() => session.AddResponse(response));
+            Assert.IsFalse(addTask.IsCompleted, "Late result admission should wait for the in-flight completion barrier.");
+
+            releaseCompletionObserver.Set();
+            await Task.WhenAll(completeTask, addTask);
+
+            Assert.IsTrue(session.IsComplete);
+            Assert.AreEqual(0, session.ResultCount);
+            Assert.AreEqual(1, session.Revision);
+            Assert.AreEqual(0, session.LockedFileCount);
+        }
+
+        private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+        {
+            public override DateTimeOffset GetUtcNow() => utcNow;
+        }
+
+        [TestMethod]
+        public void SearchJob_TypedProjectionCache_ReusesSameRevisionAndInvalidatesOnNewRawResult()
+        {
+            var config = TestHelpers.CreateDefaultSettings().Download;
+            var job = new SearchJob(new SongQuery { Artist = "Artist", Title = "Track" });
+            job.Session.AddResponse(new SearchResponse("User1", 1, true, 100, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", length: 180),
+            ]));
 
             var userSuccessCounts = new ConcurrentDictionary<string, int>();
             var first = job.GetSortedTrackCandidates(config.Search, userSuccessCounts);
@@ -60,6 +166,25 @@ namespace Tests.Unit
             Assert.AreEqual(1, first.Items.Count);
             Assert.AreEqual(2, third.Items.Count);
             Assert.AreNotSame(first, third);
+        }
+
+        [TestMethod]
+        public void SearchJob_ProjectionCacheDoesNotAliasDistinctDelimiterBearingQueries()
+        {
+            var job = new SearchJob("cache identity");
+            var search = TestHelpers.CreateDefaultSettings().Download.Search;
+            var userSuccessCounts = new ConcurrentDictionary<string, int>();
+            var first = job.GetSortedTrackCandidates(
+                new FileSearchProjection(new SongQuery { Artist = "a\0b", Title = "c" }, true),
+                search,
+                userSuccessCounts);
+            var second = job.GetSortedTrackCandidates(
+                new FileSearchProjection(new SongQuery { Artist = "a", Title = "b\0c" }, true),
+                search,
+                userSuccessCounts);
+
+            Assert.AreNotSame(first, second,
+                "Distinct query components must not alias the same incremental projector state.");
         }
 
         [TestMethod]
@@ -145,7 +270,7 @@ namespace Tests.Unit
             Assert.AreEqual(1, first.Revision);
             Assert.IsFalse(first.IsComplete);
             Assert.IsTrue(completed.IsComplete);
-            Assert.AreEqual(first.Revision, completed.Revision);
+            Assert.AreEqual(first.Revision + 1, completed.Revision);
             Assert.AreNotSame(first, completed, "Completion changes should invalidate cached snapshots even when no new raw results arrived.");
         }
 

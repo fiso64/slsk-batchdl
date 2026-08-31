@@ -9,6 +9,15 @@ public sealed record CollectionPatchDto<T>(
     IReadOnlyList<T>? Replace = null,
     IReadOnlyList<T>? Append = null);
 
+public sealed record RegexRuleDto(
+    RegexFieldsDto Match,
+    RegexFieldsDto Replace);
+
+public sealed record RegexFieldsDto(
+    string Title,
+    string Artist,
+    string Album);
+
 public sealed record DownloadSettingsPatchDto(
     OutputSettingsPatchDto? Output = null,
     SearchSettingsPatchDto? Search = null,
@@ -47,7 +56,6 @@ public sealed record SearchSettingsPatchDto(
     FolderConditionsPatchDto? NecessaryFolderCond = null,
     FolderConditionsPatchDto? PreferredFolderCond = null,
     int? SearchTimeout = null,
-    int? MaxStaleTime = null,
     int? DownrankOn = null,
     int? IgnoreOn = null,
     bool? FastSearch = null,
@@ -121,7 +129,8 @@ public sealed record TransferSettingsPatchDto(
     int? MaxDownloadRetries = null,
     int? UnknownErrorRetries = null,
     bool? NoIncompleteExt = null,
-    int? AlbumTrackCountMaxRetries = null);
+    int? AlbumTrackCountMaxRetries = null,
+    int? MaxStaleTime = null);
 
 public sealed record SpotifySettingsPatchDto(
     string? ClientId = null,
@@ -176,17 +185,440 @@ public static class DownloadSettingsPatchDtoMapper
 
     public static DownloadSettingsPatchDto? FromDifference(DownloadSettings baseline, DownloadSettings effective)
     {
-        var operations = DownloadSettingsDeltaMapper.DifferenceOperations(baseline, effective);
-        return FromOperations(operations);
+        var patch = new DownloadSettingsPatchDto(
+            Difference(baseline.Output, effective.Output),
+            Difference(baseline.Search, effective.Search),
+            Difference(baseline.Skip, effective.Skip),
+            Difference(baseline.Preprocess, effective.Preprocess),
+            Difference(baseline.Extraction, effective.Extraction),
+            Difference(baseline.Transfer, effective.Transfer),
+            Difference(baseline.Spotify, effective.Spotify),
+            Difference(baseline.YouTube, effective.YouTube),
+            Difference(baseline.YtDlp, effective.YtDlp),
+            Difference(baseline.Csv, effective.Csv),
+            Difference(baseline.Bandcamp, effective.Bandcamp),
+            Changed(baseline.PrintOption, effective.PrintOption));
+
+        return NullIfEmpty(patch, new DownloadSettingsPatchDto());
     }
 
-    public static DownloadSettingsPatchDto? FromOperations(IEnumerable<DownloadSettingOperationDto> operations)
+    public static DownloadSettingsPatchDto? Combine(
+        DownloadSettingsPatchDto? first,
+        DownloadSettingsPatchDto? second)
     {
-        var patch = new PatchBuilder();
-        foreach (var operation in operations)
-            patch.Add(operation);
-        return patch.Build();
+        if (first == null) return second;
+        if (second == null) return first;
+
+        return new DownloadSettingsPatchDto(
+            Combine(first.Output, second.Output),
+            Combine(first.Search, second.Search),
+            Combine(first.Skip, second.Skip),
+            Combine(first.Preprocess, second.Preprocess),
+            Combine(first.Extraction, second.Extraction),
+            Combine(first.Transfer, second.Transfer),
+            Combine(first.Spotify, second.Spotify),
+            Combine(first.YouTube, second.YouTube),
+            Combine(first.YtDlp, second.YtDlp),
+            Combine(first.Csv, second.Csv),
+            Combine(first.Bandcamp, second.Bandcamp),
+            second.PrintOption ?? first.PrintOption);
     }
+
+    private static OutputSettingsPatchDto? Difference(OutputSettings before, OutputSettings after)
+    {
+        var incompleteAlbumAction = before.IncompleteAlbumAction.Kind != after.IncompleteAlbumAction.Kind
+            || before.IncompleteAlbumAction.Path != after.IncompleteAlbumAction.Path
+                ? new IncompleteAlbumActionSettingsPatchDto(
+                    after.IncompleteAlbumAction.Kind,
+                    after.IncompleteAlbumAction.Path)
+                : null;
+        var patch = new OutputSettingsPatchDto(
+            Changed(before.ParentDir, after.ParentDir),
+            Changed(before.NameFormat, after.NameFormat),
+            Changed(before.InvalidReplaceStr, after.InvalidReplaceStr),
+            Changed(before.WritePlaylist, after.WritePlaylist),
+            Changed(before.WriteIndex, after.WriteIndex),
+            Changed(before.HasConfiguredIndex, after.HasConfiguredIndex),
+            Changed(before.M3uFilePath, after.M3uFilePath),
+            Changed(before.IndexFilePath, after.IndexFilePath),
+            incompleteAlbumAction,
+            Changed(before.OnComplete, after.OnComplete),
+            Changed(before.AlbumArtOnly, after.AlbumArtOnly),
+            Changed(before.AlbumArtOption, after.AlbumArtOption));
+        return NullIfEmpty(patch, new OutputSettingsPatchDto());
+    }
+
+    private static SearchSettingsPatchDto? Difference(SearchSettings before, SearchSettings after)
+    {
+        var patch = new SearchSettingsPatchDto(
+            Difference(before.NecessaryCond, after.NecessaryCond),
+            Difference(before.PreferredCond, after.PreferredCond),
+            Difference(before.NecessaryFolderCond, after.NecessaryFolderCond),
+            Difference(before.PreferredFolderCond, after.PreferredFolderCond),
+            Changed(before.SearchTimeout, after.SearchTimeout),
+            Changed(before.DownrankOn, after.DownrankOn),
+            Changed(before.IgnoreOn, after.IgnoreOn),
+            Changed(before.FastSearch, after.FastSearch),
+            Changed(before.FastSearchDelay, after.FastSearchDelay),
+            Changed(before.FastSearchMinUpSpeed, after.FastSearchMinUpSpeed),
+            Changed(before.DesperateSearch, after.DesperateSearch),
+            Changed(before.NoRemoveSpecialChars, after.NoRemoveSpecialChars),
+            Changed(before.RemoveSingleCharSearchTerms, after.RemoveSingleCharSearchTerms),
+            Changed(before.NoBrowseFolder, after.NoBrowseFolder),
+            Changed(before.Relax, after.Relax),
+            Changed(before.StrictAlbumQuality, after.StrictAlbumQuality),
+            Changed(before.ArtistMaybeWrong, after.ArtistMaybeWrong),
+            Changed(before.IsAggregate, after.IsAggregate),
+            Changed(before.MinSharesAggregate, after.MinSharesAggregate),
+            Changed(before.AggregateLengthTol, after.AggregateLengthTol));
+        return NullIfEmpty(patch, new SearchSettingsPatchDto());
+    }
+
+    private static FileConditionsPatchDto? Difference(FileConditions before, FileConditions after)
+    {
+        var patch = new FileConditionsPatchDto(
+            ChangedNullable(before.LengthTolerance, after.LengthTolerance),
+            ChangedNullable(before.MinBitrate, after.MinBitrate),
+            ChangedNullable(before.MaxBitrate, after.MaxBitrate),
+            ChangedNullable(before.MinSampleRate, after.MinSampleRate),
+            ChangedNullable(before.MaxSampleRate, after.MaxSampleRate),
+            ChangedNullable(before.MinBitDepth, after.MinBitDepth),
+            ChangedNullable(before.MaxBitDepth, after.MaxBitDepth),
+            Changed(before.StrictTitle, after.StrictTitle),
+            Changed(before.StrictArtist, after.StrictArtist),
+            Changed(before.StrictAlbum, after.StrictAlbum),
+            Changed(before.Formats, after.Formats),
+            Changed(before.BannedUsers, after.BannedUsers),
+            Changed(before.AllowedUsers, after.AllowedUsers),
+            Changed(before.AcceptNoLength, after.AcceptNoLength),
+            Changed(before.AcceptMissingProps, after.AcceptMissingProps));
+        return NullIfEmpty(patch, new FileConditionsPatchDto());
+    }
+
+    private static FolderConditionsPatchDto? Difference(FolderConditions before, FolderConditions after)
+    {
+        var patch = new FolderConditionsPatchDto(
+            ChangedNullable(before.MinTrackCount, after.MinTrackCount),
+            ChangedNullable(before.MaxTrackCount, after.MaxTrackCount),
+            Changed(before.RequiredTrackTitles, after.RequiredTrackTitles));
+        return NullIfEmpty(patch, new FolderConditionsPatchDto());
+    }
+
+    private static SkipSettingsPatchDto? Difference(SkipSettings before, SkipSettings after)
+    {
+        var patch = new SkipSettingsPatchDto(
+            Changed(before.SkipExisting, after.SkipExisting),
+            Changed(before.SkipNotFound, after.SkipNotFound),
+            Changed(before.SkipMode, after.SkipMode),
+            Changed(before.SkipMusicDir, after.SkipMusicDir),
+            Changed(before.SkipModeMusicDir, after.SkipModeMusicDir),
+            Changed(before.SkipCheckCond, after.SkipCheckCond),
+            Changed(before.SkipCheckPrefCond, after.SkipCheckPrefCond));
+        return NullIfEmpty(patch, new SkipSettingsPatchDto());
+    }
+
+    private static PreprocessSettingsPatchDto? Difference(PreprocessSettings before, PreprocessSettings after)
+    {
+        var beforeRegex = before.Regex?.Select(ToRegexRuleDto);
+        var afterRegex = after.Regex?.Select(ToRegexRuleDto);
+        var patch = new PreprocessSettingsPatchDto(
+            Changed(before.RemoveFt, after.RemoveFt),
+            Changed(before.RemoveBrackets, after.RemoveBrackets),
+            Changed(before.ExtractArtist, after.ExtractArtist),
+            Changed(before.ParseTitleTemplate, after.ParseTitleTemplate),
+            Changed(beforeRegex, afterRegex));
+        return NullIfEmpty(patch, new PreprocessSettingsPatchDto());
+    }
+
+    private static ExtractionSettingsPatchDto? Difference(ExtractionSettings before, ExtractionSettings after)
+    {
+        var patch = new ExtractionSettingsPatchDto(
+            Changed(before.Input, after.Input),
+            Changed(before.InputType, after.InputType),
+            Changed(before.MaxTracks, after.MaxTracks),
+            Changed(before.Offset, after.Offset),
+            Changed(before.Reverse, after.Reverse),
+            Changed(before.RemoveTracksFromSource, after.RemoveTracksFromSource),
+            ChangedNullable(before.RequestedMode, after.RequestedMode),
+            Changed(before.UpgradeToAlbum, after.UpgradeToAlbum),
+            Changed(before.SetAlbumMinTrackCount, after.SetAlbumMinTrackCount),
+            Changed(before.SetAlbumMaxTrackCount, after.SetAlbumMaxTrackCount));
+        return NullIfEmpty(patch, new ExtractionSettingsPatchDto());
+    }
+
+    private static TransferSettingsPatchDto? Difference(TransferSettings before, TransferSettings after)
+    {
+        var patch = new TransferSettingsPatchDto(
+            Changed(before.MaxDownloadRetries, after.MaxDownloadRetries),
+            Changed(before.UnknownErrorRetries, after.UnknownErrorRetries),
+            Changed(before.NoIncompleteExt, after.NoIncompleteExt),
+            Changed(before.AlbumTrackCountMaxRetries, after.AlbumTrackCountMaxRetries),
+            Changed(before.MaxStaleTime, after.MaxStaleTime));
+        return NullIfEmpty(patch, new TransferSettingsPatchDto());
+    }
+
+    private static SpotifySettingsPatchDto? Difference(SpotifySettings before, SpotifySettings after)
+    {
+        var patch = new SpotifySettingsPatchDto(
+            Changed(before.ClientId, after.ClientId),
+            Changed(before.ClientSecret, after.ClientSecret),
+            Changed(before.Token, after.Token),
+            Changed(before.Refresh, after.Refresh));
+        return NullIfEmpty(patch, new SpotifySettingsPatchDto());
+    }
+
+    private static YouTubeSettingsPatchDto? Difference(YouTubeSettings before, YouTubeSettings after)
+    {
+        var patch = new YouTubeSettingsPatchDto(
+            Changed(before.ApiKey, after.ApiKey),
+            Changed(before.GetDeleted, after.GetDeleted),
+            Changed(before.DeletedOnly, after.DeletedOnly));
+        return NullIfEmpty(patch, new YouTubeSettingsPatchDto());
+    }
+
+    private static YtDlpSettingsPatchDto? Difference(YtDlpSettings before, YtDlpSettings after)
+    {
+        var patch = new YtDlpSettingsPatchDto(
+            Changed(before.UseYtdlp, after.UseYtdlp),
+            Changed(before.YtdlpArgument, after.YtdlpArgument));
+        return NullIfEmpty(patch, new YtDlpSettingsPatchDto());
+    }
+
+    private static CsvSettingsPatchDto? Difference(CsvSettings before, CsvSettings after)
+    {
+        var patch = new CsvSettingsPatchDto(
+            Changed(before.ArtistCol, after.ArtistCol),
+            Changed(before.AlbumCol, after.AlbumCol),
+            Changed(before.TitleCol, after.TitleCol),
+            Changed(before.YtIdCol, after.YtIdCol),
+            Changed(before.DescCol, after.DescCol),
+            Changed(before.TrackCountCol, after.TrackCountCol),
+            Changed(before.LengthCol, after.LengthCol),
+            Changed(before.TimeUnit, after.TimeUnit),
+            Changed(before.YtParse, after.YtParse));
+        return NullIfEmpty(patch, new CsvSettingsPatchDto());
+    }
+
+    private static BandcampSettingsPatchDto? Difference(BandcampSettings before, BandcampSettings after)
+    {
+        var patch = new BandcampSettingsPatchDto(Changed(before.HtmlFromFile, after.HtmlFromFile));
+        return NullIfEmpty(patch, new BandcampSettingsPatchDto());
+    }
+
+    private static OutputSettingsPatchDto? Combine(OutputSettingsPatchDto? first, OutputSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new OutputSettingsPatchDto(
+            second.ParentDir ?? first.ParentDir,
+            second.NameFormat ?? first.NameFormat,
+            second.InvalidReplaceStr ?? first.InvalidReplaceStr,
+            second.WritePlaylist ?? first.WritePlaylist,
+            second.WriteIndex ?? first.WriteIndex,
+            second.HasConfiguredIndex ?? first.HasConfiguredIndex,
+            second.M3uFilePath ?? first.M3uFilePath,
+            second.IndexFilePath ?? first.IndexFilePath,
+            second.IncompleteAlbumAction ?? first.IncompleteAlbumAction,
+            Combine(first.OnComplete, second.OnComplete),
+            second.AlbumArtOnly ?? first.AlbumArtOnly,
+            second.AlbumArtOption ?? first.AlbumArtOption);
+    }
+
+    private static SearchSettingsPatchDto? Combine(SearchSettingsPatchDto? first, SearchSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new SearchSettingsPatchDto(
+            Combine(first.NecessaryCond, second.NecessaryCond),
+            Combine(first.PreferredCond, second.PreferredCond),
+            Combine(first.NecessaryFolderCond, second.NecessaryFolderCond),
+            Combine(first.PreferredFolderCond, second.PreferredFolderCond),
+            second.SearchTimeout ?? first.SearchTimeout,
+            second.DownrankOn ?? first.DownrankOn,
+            second.IgnoreOn ?? first.IgnoreOn,
+            second.FastSearch ?? first.FastSearch,
+            second.FastSearchDelay ?? first.FastSearchDelay,
+            second.FastSearchMinUpSpeed ?? first.FastSearchMinUpSpeed,
+            second.DesperateSearch ?? first.DesperateSearch,
+            second.NoRemoveSpecialChars ?? first.NoRemoveSpecialChars,
+            second.RemoveSingleCharSearchTerms ?? first.RemoveSingleCharSearchTerms,
+            second.NoBrowseFolder ?? first.NoBrowseFolder,
+            second.Relax ?? first.Relax,
+            second.StrictAlbumQuality ?? first.StrictAlbumQuality,
+            second.ArtistMaybeWrong ?? first.ArtistMaybeWrong,
+            second.IsAggregate ?? first.IsAggregate,
+            second.MinSharesAggregate ?? first.MinSharesAggregate,
+            second.AggregateLengthTol ?? first.AggregateLengthTol);
+    }
+
+    private static FileConditionsPatchDto? Combine(FileConditionsPatchDto? first, FileConditionsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new FileConditionsPatchDto(
+            second.LengthTolerance ?? first.LengthTolerance,
+            second.MinBitrate ?? first.MinBitrate,
+            second.MaxBitrate ?? first.MaxBitrate,
+            second.MinSampleRate ?? first.MinSampleRate,
+            second.MaxSampleRate ?? first.MaxSampleRate,
+            second.MinBitDepth ?? first.MinBitDepth,
+            second.MaxBitDepth ?? first.MaxBitDepth,
+            second.StrictTitle ?? first.StrictTitle,
+            second.StrictArtist ?? first.StrictArtist,
+            second.StrictAlbum ?? first.StrictAlbum,
+            Combine(first.Formats, second.Formats),
+            Combine(first.BannedUsers, second.BannedUsers),
+            Combine(first.AllowedUsers, second.AllowedUsers),
+            second.AcceptNoLength ?? first.AcceptNoLength,
+            second.AcceptMissingProps ?? first.AcceptMissingProps);
+    }
+
+    private static FolderConditionsPatchDto? Combine(FolderConditionsPatchDto? first, FolderConditionsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new FolderConditionsPatchDto(
+            second.MinTrackCount ?? first.MinTrackCount,
+            second.MaxTrackCount ?? first.MaxTrackCount,
+            Combine(first.RequiredTrackTitles, second.RequiredTrackTitles));
+    }
+
+    private static SkipSettingsPatchDto? Combine(SkipSettingsPatchDto? first, SkipSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new SkipSettingsPatchDto(
+            second.SkipExisting ?? first.SkipExisting,
+            second.SkipNotFound ?? first.SkipNotFound,
+            second.SkipMode ?? first.SkipMode,
+            second.SkipMusicDir ?? first.SkipMusicDir,
+            second.SkipModeMusicDir ?? first.SkipModeMusicDir,
+            second.SkipCheckCond ?? first.SkipCheckCond,
+            second.SkipCheckPrefCond ?? first.SkipCheckPrefCond);
+    }
+
+    private static PreprocessSettingsPatchDto? Combine(PreprocessSettingsPatchDto? first, PreprocessSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new PreprocessSettingsPatchDto(
+            second.RemoveFt ?? first.RemoveFt,
+            second.RemoveBrackets ?? first.RemoveBrackets,
+            second.ExtractArtist ?? first.ExtractArtist,
+            second.ParseTitleTemplate ?? first.ParseTitleTemplate,
+            Combine(first.Regex, second.Regex));
+    }
+
+    private static ExtractionSettingsPatchDto? Combine(ExtractionSettingsPatchDto? first, ExtractionSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new ExtractionSettingsPatchDto(
+            second.Input ?? first.Input,
+            second.InputType ?? first.InputType,
+            second.MaxTracks ?? first.MaxTracks,
+            second.Offset ?? first.Offset,
+            second.Reverse ?? first.Reverse,
+            second.RemoveTracksFromSource ?? first.RemoveTracksFromSource,
+            second.RequestedMode ?? first.RequestedMode,
+            second.UpgradeToAlbum ?? first.UpgradeToAlbum,
+            second.SetAlbumMinTrackCount ?? first.SetAlbumMinTrackCount,
+            second.SetAlbumMaxTrackCount ?? first.SetAlbumMaxTrackCount);
+    }
+
+    private static TransferSettingsPatchDto? Combine(TransferSettingsPatchDto? first, TransferSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new TransferSettingsPatchDto(
+            second.MaxDownloadRetries ?? first.MaxDownloadRetries,
+            second.UnknownErrorRetries ?? first.UnknownErrorRetries,
+            second.NoIncompleteExt ?? first.NoIncompleteExt,
+            second.AlbumTrackCountMaxRetries ?? first.AlbumTrackCountMaxRetries,
+            second.MaxStaleTime ?? first.MaxStaleTime);
+    }
+
+    private static SpotifySettingsPatchDto? Combine(SpotifySettingsPatchDto? first, SpotifySettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new SpotifySettingsPatchDto(
+            second.ClientId ?? first.ClientId,
+            second.ClientSecret ?? first.ClientSecret,
+            second.Token ?? first.Token,
+            second.Refresh ?? first.Refresh);
+    }
+
+    private static YouTubeSettingsPatchDto? Combine(YouTubeSettingsPatchDto? first, YouTubeSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new YouTubeSettingsPatchDto(
+            second.ApiKey ?? first.ApiKey,
+            second.GetDeleted ?? first.GetDeleted,
+            second.DeletedOnly ?? first.DeletedOnly);
+    }
+
+    private static YtDlpSettingsPatchDto? Combine(YtDlpSettingsPatchDto? first, YtDlpSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new YtDlpSettingsPatchDto(
+            second.UseYtdlp ?? first.UseYtdlp,
+            second.YtdlpArgument ?? first.YtdlpArgument);
+    }
+
+    private static CsvSettingsPatchDto? Combine(CsvSettingsPatchDto? first, CsvSettingsPatchDto? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        return new CsvSettingsPatchDto(
+            second.ArtistCol ?? first.ArtistCol,
+            second.AlbumCol ?? first.AlbumCol,
+            second.TitleCol ?? first.TitleCol,
+            second.YtIdCol ?? first.YtIdCol,
+            second.DescCol ?? first.DescCol,
+            second.TrackCountCol ?? first.TrackCountCol,
+            second.LengthCol ?? first.LengthCol,
+            second.TimeUnit ?? first.TimeUnit,
+            second.YtParse ?? first.YtParse);
+    }
+
+    private static BandcampSettingsPatchDto? Combine(BandcampSettingsPatchDto? first, BandcampSettingsPatchDto? second)
+        => second ?? first;
+
+    private static CollectionPatchDto<T>? Combine<T>(CollectionPatchDto<T>? first, CollectionPatchDto<T>? second)
+    {
+        if (first == null) return second;
+        if (second == null) return first;
+        IReadOnlyList<T>? append = first.Append == null && second.Append == null
+            ? null
+            : [.. first.Append ?? [], .. second.Append ?? []];
+        return new CollectionPatchDto<T>(
+            second.Replace ?? first.Replace,
+            append);
+    }
+
+    private static T? Changed<T>(T before, T after) where T : struct
+        => EqualityComparer<T>.Default.Equals(before, after) ? null : after;
+
+    private static T? ChangedNullable<T>(T? before, T? after) where T : struct
+        => EqualityComparer<T?>.Default.Equals(before, after) ? null : after;
+
+    private static string? Changed(string? before, string? after)
+        => before == after ? null : after;
+
+    private static CollectionPatchDto<T>? Changed<T>(IEnumerable<T>? before, IEnumerable<T>? after)
+    {
+        var beforeItems = before?.ToArray() ?? [];
+        var afterItems = after?.ToArray() ?? [];
+        return beforeItems.SequenceEqual(afterItems)
+            ? null
+            : new CollectionPatchDto<T>(Replace: afterItems);
+    }
+
+    private static T? NullIfEmpty<T>(T value, T empty) where T : class
+        => EqualityComparer<T>.Default.Equals(value, empty) ? null : value;
 
     private static void ApplyOutput(OutputSettings target, OutputSettingsPatchDto? patch)
     {
@@ -222,7 +654,6 @@ public static class DownloadSettingsPatchDtoMapper
         ApplyFolderConditions(target.NecessaryFolderCond, patch.NecessaryFolderCond);
         ApplyFolderConditions(target.PreferredFolderCond, patch.PreferredFolderCond);
         if (patch.SearchTimeout is { } searchTimeout) target.SearchTimeout = searchTimeout;
-        if (patch.MaxStaleTime is { } maxStaleTime) target.MaxStaleTime = maxStaleTime;
         if (patch.DownrankOn is { } downrankOn) target.DownrankOn = downrankOn;
         if (patch.IgnoreOn is { } ignoreOn) target.IgnoreOn = ignoreOn;
         if (patch.FastSearch is { } fastSearch) target.FastSearch = fastSearch;
@@ -317,6 +748,7 @@ public static class DownloadSettingsPatchDtoMapper
         if (patch.UnknownErrorRetries is { } unknownErrorRetries) target.UnknownErrorRetries = unknownErrorRetries;
         if (patch.NoIncompleteExt is { } noIncompleteExt) target.NoIncompleteExt = noIncompleteExt;
         if (patch.AlbumTrackCountMaxRetries is { } albumTrackCountMaxRetries) target.AlbumTrackCountMaxRetries = albumTrackCountMaxRetries;
+        if (patch.MaxStaleTime is { } maxStaleTime) target.MaxStaleTime = maxStaleTime;
     }
 
     private static void ApplySpotify(SpotifySettings target, SpotifySettingsPatchDto? patch)
@@ -388,338 +820,10 @@ public static class DownloadSettingsPatchDtoMapper
     private static RegexFields ToRegexFields(RegexFieldsDto fields)
         => new() { Title = fields.Title, Artist = fields.Artist, Album = fields.Album };
 
-    private sealed class PatchBuilder
-    {
-        private OutputBuilder? output;
-        private SearchBuilder? search;
-        private SkipBuilder? skip;
-        private PreprocessBuilder? preprocess;
-        private ExtractionBuilder? extraction;
-        private TransferBuilder? transfer;
-        private SpotifyBuilder? spotify;
-        private YouTubeBuilder? youtube;
-        private YtDlpBuilder? ytDlp;
-        private CsvBuilder? csv;
-        private BandcampBuilder? bandcamp;
-        private PrintOption? printOption;
-
-        public void Add(DownloadSettingOperationDto op)
-        {
-            switch (op.Path)
-            {
-                case "Output.ParentDir": Output.ParentDir = op.StringValue; break;
-                case "Output.NameFormat": Output.NameFormat = op.StringValue ?? ""; break;
-                case "Output.InvalidReplaceStr": Output.InvalidReplaceStr = op.StringValue ?? ""; break;
-                case "Output.WritePlaylist": Output.WritePlaylist = Bool(op); break;
-                case "Output.WriteIndex": Output.WriteIndex = Bool(op); break;
-                case "Output.HasConfiguredIndex": Output.HasConfiguredIndex = Bool(op); break;
-                case "Output.M3uFilePath": Output.M3uFilePath = op.StringValue; break;
-                case "Output.IndexFilePath": Output.IndexFilePath = op.StringValue; break;
-                case "Output.IncompleteAlbumAction.Kind": Output.IncompleteAlbumAction.SetKind(op.IncompleteAlbumActionKindValue); break;
-                case "Output.IncompleteAlbumAction.Path": Output.IncompleteAlbumAction.SetPath(op.StringValue); break;
-                case "Output.OnComplete": Output.OnComplete = Collection(Output.OnComplete, op); break;
-                case "Output.AlbumArtOnly": Output.AlbumArtOnly = Bool(op); break;
-                case "Output.AlbumArtOption": Output.AlbumArtOption = op.AlbumArtOptionValue; break;
-
-                case "Search.SearchTimeout": Search.SearchTimeout = Int(op); break;
-                case "Search.MaxStaleTime": Search.MaxStaleTime = Int(op); break;
-                case "Search.DownrankOn": Search.DownrankOn = Int(op); break;
-                case "Search.IgnoreOn": Search.IgnoreOn = Int(op); break;
-                case "Search.FastSearch": Search.FastSearch = Bool(op); break;
-                case "Search.FastSearchDelay": Search.FastSearchDelay = Int(op); break;
-                case "Search.FastSearchMinUpSpeed": Search.FastSearchMinUpSpeed = Double(op); break;
-                case "Search.DesperateSearch": Search.DesperateSearch = Bool(op); break;
-                case "Search.NoRemoveSpecialChars": Search.NoRemoveSpecialChars = Bool(op); break;
-                case "Search.RemoveSingleCharSearchTerms": Search.RemoveSingleCharSearchTerms = Bool(op); break;
-                case "Search.NoBrowseFolder": Search.NoBrowseFolder = Bool(op); break;
-                case "Search.Relax": Search.Relax = Bool(op); break;
-                case "Search.StrictAlbumQuality": Search.StrictAlbumQuality = Bool(op); break;
-                case "Search.ArtistMaybeWrong": Search.ArtistMaybeWrong = Bool(op); break;
-                case "Search.IsAggregate": Search.IsAggregate = Bool(op); break;
-                case "Search.MinSharesAggregate": Search.MinSharesAggregate = Int(op); break;
-                case "Search.AggregateLengthTol": Search.AggregateLengthTol = Int(op); break;
-
-                case "Search.NecessaryCond.LengthTolerance": Search.NecessaryCond.LengthTolerance = op.IntValue; break;
-                case "Search.NecessaryCond.MinBitrate": Search.NecessaryCond.MinBitrate = op.IntValue; break;
-                case "Search.NecessaryCond.MaxBitrate": Search.NecessaryCond.MaxBitrate = op.IntValue; break;
-                case "Search.NecessaryCond.MinSampleRate": Search.NecessaryCond.MinSampleRate = op.IntValue; break;
-                case "Search.NecessaryCond.MaxSampleRate": Search.NecessaryCond.MaxSampleRate = op.IntValue; break;
-                case "Search.NecessaryCond.MinBitDepth": Search.NecessaryCond.MinBitDepth = op.IntValue; break;
-                case "Search.NecessaryCond.MaxBitDepth": Search.NecessaryCond.MaxBitDepth = op.IntValue; break;
-                case "Search.NecessaryCond.StrictTitle": Search.NecessaryCond.StrictTitle = op.BoolValue; break;
-                case "Search.NecessaryCond.StrictArtist": Search.NecessaryCond.StrictArtist = op.BoolValue; break;
-                case "Search.NecessaryCond.StrictAlbum": Search.NecessaryCond.StrictAlbum = op.BoolValue; break;
-                case "Search.NecessaryCond.Formats": Search.NecessaryCond.Formats = Collection(Search.NecessaryCond.Formats, op); break;
-                case "Search.NecessaryCond.BannedUsers": Search.NecessaryCond.BannedUsers = Collection(Search.NecessaryCond.BannedUsers, op); break;
-                case "Search.NecessaryCond.AllowedUsers": Search.NecessaryCond.AllowedUsers = Collection(Search.NecessaryCond.AllowedUsers, op); break;
-                case "Search.NecessaryCond.AcceptNoLength": Search.NecessaryCond.AcceptNoLength = op.BoolValue; break;
-                case "Search.NecessaryCond.AcceptMissingProps": Search.NecessaryCond.AcceptMissingProps = op.BoolValue; break;
-
-                case "Search.PreferredCond.LengthTolerance": Search.PreferredCond.LengthTolerance = op.IntValue; break;
-                case "Search.PreferredCond.MinBitrate": Search.PreferredCond.MinBitrate = op.IntValue; break;
-                case "Search.PreferredCond.MaxBitrate": Search.PreferredCond.MaxBitrate = op.IntValue; break;
-                case "Search.PreferredCond.MinSampleRate": Search.PreferredCond.MinSampleRate = op.IntValue; break;
-                case "Search.PreferredCond.MaxSampleRate": Search.PreferredCond.MaxSampleRate = op.IntValue; break;
-                case "Search.PreferredCond.MinBitDepth": Search.PreferredCond.MinBitDepth = op.IntValue; break;
-                case "Search.PreferredCond.MaxBitDepth": Search.PreferredCond.MaxBitDepth = op.IntValue; break;
-                case "Search.PreferredCond.StrictTitle": Search.PreferredCond.StrictTitle = op.BoolValue; break;
-                case "Search.PreferredCond.StrictArtist": Search.PreferredCond.StrictArtist = op.BoolValue; break;
-                case "Search.PreferredCond.StrictAlbum": Search.PreferredCond.StrictAlbum = op.BoolValue; break;
-                case "Search.PreferredCond.Formats": Search.PreferredCond.Formats = Collection(Search.PreferredCond.Formats, op); break;
-                case "Search.PreferredCond.BannedUsers": Search.PreferredCond.BannedUsers = Collection(Search.PreferredCond.BannedUsers, op); break;
-                case "Search.PreferredCond.AllowedUsers": Search.PreferredCond.AllowedUsers = Collection(Search.PreferredCond.AllowedUsers, op); break;
-                case "Search.PreferredCond.AcceptNoLength": Search.PreferredCond.AcceptNoLength = op.BoolValue; break;
-                case "Search.PreferredCond.AcceptMissingProps": Search.PreferredCond.AcceptMissingProps = op.BoolValue; break;
-
-                case "Search.NecessaryFolderCond.MinTrackCount": Search.NecessaryFolderCond.MinTrackCount = Int(op); break;
-                case "Search.NecessaryFolderCond.MaxTrackCount": Search.NecessaryFolderCond.MaxTrackCount = Int(op); break;
-                case "Search.NecessaryFolderCond.RequiredTrackTitles": Search.NecessaryFolderCond.RequiredTrackTitles = Collection(Search.NecessaryFolderCond.RequiredTrackTitles, op); break;
-                case "Search.PreferredFolderCond.MinTrackCount": Search.PreferredFolderCond.MinTrackCount = Int(op); break;
-                case "Search.PreferredFolderCond.MaxTrackCount": Search.PreferredFolderCond.MaxTrackCount = Int(op); break;
-                case "Search.PreferredFolderCond.RequiredTrackTitles": Search.PreferredFolderCond.RequiredTrackTitles = Collection(Search.PreferredFolderCond.RequiredTrackTitles, op); break;
-
-                case "Skip.SkipExisting": Skip.SkipExisting = Bool(op); break;
-                case "Skip.SkipNotFound": Skip.SkipNotFound = Bool(op); break;
-                case "Skip.SkipMode": Skip.SkipMode = op.SkipModeValue; break;
-                case "Skip.SkipMusicDir": Skip.SkipMusicDir = op.StringValue; break;
-                case "Skip.SkipModeMusicDir": Skip.SkipModeMusicDir = op.SkipModeValue; break;
-                case "Skip.SkipCheckCond": Skip.SkipCheckCond = Bool(op); break;
-                case "Skip.SkipCheckPrefCond": Skip.SkipCheckPrefCond = Bool(op); break;
-
-                case "Preprocess.RemoveFt": Preprocess.RemoveFt = Bool(op); break;
-                case "Preprocess.RemoveBrackets": Preprocess.RemoveBrackets = Bool(op); break;
-                case "Preprocess.ExtractArtist": Preprocess.ExtractArtist = Bool(op); break;
-                case "Preprocess.ParseTitleTemplate": Preprocess.ParseTitleTemplate = op.StringValue; break;
-                case "Preprocess.Regex": Preprocess.Regex = RegexCollection(Preprocess.Regex, op); break;
-
-                case "Extraction.Input": Extraction.Input = op.StringValue; break;
-                case "Extraction.InputType": Extraction.InputType = op.InputTypeValue; break;
-                case "Extraction.MaxTracks": Extraction.MaxTracks = Int(op); break;
-                case "Extraction.Offset": Extraction.Offset = Int(op); break;
-                case "Extraction.Reverse": Extraction.Reverse = Bool(op); break;
-                case "Extraction.RemoveTracksFromSource": Extraction.RemoveTracksFromSource = Bool(op); break;
-                case "Extraction.RequestedMode": Extraction.RequestedMode = op.ExtractionModeValue; break;
-                case "Extraction.UpgradeToAlbum": Extraction.UpgradeToAlbum = Bool(op); break;
-                case "Extraction.SetAlbumMinTrackCount": Extraction.SetAlbumMinTrackCount = Bool(op); break;
-                case "Extraction.SetAlbumMaxTrackCount": Extraction.SetAlbumMaxTrackCount = Bool(op); break;
-
-                case "Transfer.MaxDownloadRetries": Transfer.MaxDownloadRetries = Int(op); break;
-                case "Transfer.UnknownErrorRetries": Transfer.UnknownErrorRetries = Int(op); break;
-                case "Transfer.NoIncompleteExt": Transfer.NoIncompleteExt = Bool(op); break;
-                case "Transfer.AlbumTrackCountMaxRetries": Transfer.AlbumTrackCountMaxRetries = Int(op); break;
-
-                case "Spotify.ClientId": Spotify.ClientId = op.StringValue; break;
-                case "Spotify.ClientSecret": Spotify.ClientSecret = op.StringValue; break;
-                case "Spotify.Token": Spotify.Token = op.StringValue; break;
-                case "Spotify.Refresh": Spotify.Refresh = op.StringValue; break;
-                case "YouTube.ApiKey": YouTube.ApiKey = op.StringValue; break;
-                case "YouTube.GetDeleted": YouTube.GetDeleted = Bool(op); break;
-                case "YouTube.DeletedOnly": YouTube.DeletedOnly = Bool(op); break;
-                case "YtDlp.UseYtdlp": YtDlp.UseYtdlp = Bool(op); break;
-                case "YtDlp.YtdlpArgument": YtDlp.YtdlpArgument = op.StringValue; break;
-                case "Csv.ArtistCol": Csv.ArtistCol = op.StringValue ?? ""; break;
-                case "Csv.AlbumCol": Csv.AlbumCol = op.StringValue ?? ""; break;
-                case "Csv.TitleCol": Csv.TitleCol = op.StringValue ?? ""; break;
-                case "Csv.YtIdCol": Csv.YtIdCol = op.StringValue ?? ""; break;
-                case "Csv.DescCol": Csv.DescCol = op.StringValue ?? ""; break;
-                case "Csv.TrackCountCol": Csv.TrackCountCol = op.StringValue ?? ""; break;
-                case "Csv.LengthCol": Csv.LengthCol = op.StringValue ?? ""; break;
-                case "Csv.TimeUnit": Csv.TimeUnit = op.StringValue ?? ""; break;
-                case "Csv.YtParse": Csv.YtParse = Bool(op); break;
-                case "Bandcamp.HtmlFromFile": Bandcamp.HtmlFromFile = op.StringValue; break;
-                case "PrintOption": printOption = op.PrintOptionValue; break;
-                default:
-                    throw new ArgumentException($"Unknown download setting operation path '{op.Path}'.");
-            }
-        }
-
-        public DownloadSettingsPatchDto? Build()
-        {
-            var result = new DownloadSettingsPatchDto(
-                output?.Build(),
-                search?.Build(),
-                skip?.Build(),
-                preprocess?.Build(),
-                extraction?.Build(),
-                transfer?.Build(),
-                spotify?.Build(),
-                youtube?.Build(),
-                ytDlp?.Build(),
-                csv?.Build(),
-                bandcamp?.Build(),
-                printOption);
-
-            return result == new DownloadSettingsPatchDto() ? null : result;
-        }
-
-        private OutputBuilder Output => output ??= new();
-        private SearchBuilder Search => search ??= new();
-        private SkipBuilder Skip => skip ??= new();
-        private PreprocessBuilder Preprocess => preprocess ??= new();
-        private ExtractionBuilder Extraction => extraction ??= new();
-        private TransferBuilder Transfer => transfer ??= new();
-        private SpotifyBuilder Spotify => spotify ??= new();
-        private YouTubeBuilder YouTube => youtube ??= new();
-        private YtDlpBuilder YtDlp => ytDlp ??= new();
-        private CsvBuilder Csv => csv ??= new();
-        private BandcampBuilder Bandcamp => bandcamp ??= new();
-    }
-
-    private sealed class OutputBuilder
-    {
-        public string? ParentDir, NameFormat, InvalidReplaceStr, M3uFilePath, IndexFilePath;
-        public IncompleteAlbumActionBuilder IncompleteAlbumAction { get; } = new();
-        public bool? WritePlaylist, WriteIndex, HasConfiguredIndex, AlbumArtOnly;
-        public AlbumArtOption? AlbumArtOption;
-        public CollectionPatchDto<string>? OnComplete;
-        public OutputSettingsPatchDto Build() => new(ParentDir, NameFormat, InvalidReplaceStr, WritePlaylist, WriteIndex, HasConfiguredIndex, M3uFilePath, IndexFilePath, IncompleteAlbumAction.Build(), OnComplete, AlbumArtOnly, AlbumArtOption);
-    }
-
-    private sealed class IncompleteAlbumActionBuilder
-    {
-        private bool touched;
-        private IncompleteAlbumActionKind? kind;
-        private string? path;
-
-        public void SetKind(IncompleteAlbumActionKind? value)
-        {
-            kind = value;
-            touched = true;
-        }
-
-        public void SetPath(string? value)
-        {
-            path = value;
-            touched = true;
-        }
-
-        public IncompleteAlbumActionSettingsPatchDto? Build()
-            => touched ? new IncompleteAlbumActionSettingsPatchDto(kind, path) : null;
-    }
-
-    private sealed class SearchBuilder
-    {
-        public FileConditionsBuilder NecessaryCond { get; } = new();
-        public FileConditionsBuilder PreferredCond { get; } = new();
-        public FolderConditionsBuilder NecessaryFolderCond { get; } = new();
-        public FolderConditionsBuilder PreferredFolderCond { get; } = new();
-        public int? SearchTimeout, MaxStaleTime, DownrankOn, IgnoreOn, FastSearchDelay, MinSharesAggregate, AggregateLengthTol;
-        public double? FastSearchMinUpSpeed;
-        public bool? FastSearch, DesperateSearch, NoRemoveSpecialChars, RemoveSingleCharSearchTerms, NoBrowseFolder, Relax, StrictAlbumQuality, ArtistMaybeWrong, IsAggregate;
-        public SearchSettingsPatchDto Build() => new(NecessaryCond.Build(), PreferredCond.Build(), NecessaryFolderCond.Build(), PreferredFolderCond.Build(), SearchTimeout, MaxStaleTime, DownrankOn, IgnoreOn, FastSearch, FastSearchDelay, FastSearchMinUpSpeed, DesperateSearch, NoRemoveSpecialChars, RemoveSingleCharSearchTerms, NoBrowseFolder, Relax, StrictAlbumQuality, ArtistMaybeWrong, IsAggregate, MinSharesAggregate, AggregateLengthTol);
-    }
-
-    private sealed class FileConditionsBuilder
-    {
-        public int? LengthTolerance, MinBitrate, MaxBitrate, MinSampleRate, MaxSampleRate, MinBitDepth, MaxBitDepth;
-        public bool? StrictTitle, StrictArtist, StrictAlbum, AcceptNoLength, AcceptMissingProps;
-        public CollectionPatchDto<string>? Formats, BannedUsers, AllowedUsers;
-        public FileConditionsPatchDto? Build()
-        {
-            var result = new FileConditionsPatchDto(LengthTolerance, MinBitrate, MaxBitrate, MinSampleRate, MaxSampleRate, MinBitDepth, MaxBitDepth, StrictTitle, StrictArtist, StrictAlbum, Formats, BannedUsers, AllowedUsers, AcceptNoLength, AcceptMissingProps);
-            return result == new FileConditionsPatchDto() ? null : result;
-        }
-    }
-
-    private sealed class FolderConditionsBuilder
-    {
-        public int? MinTrackCount, MaxTrackCount;
-        public CollectionPatchDto<string>? RequiredTrackTitles;
-        public FolderConditionsPatchDto? Build()
-        {
-            var result = new FolderConditionsPatchDto(MinTrackCount, MaxTrackCount, RequiredTrackTitles);
-            return result == new FolderConditionsPatchDto() ? null : result;
-        }
-    }
-
-    private sealed class SkipBuilder
-    {
-        public bool? SkipExisting, SkipNotFound, SkipCheckCond, SkipCheckPrefCond;
-        public SkipMode? SkipMode, SkipModeMusicDir;
-        public string? SkipMusicDir;
-        public SkipSettingsPatchDto Build() => new(SkipExisting, SkipNotFound, SkipMode, SkipMusicDir, SkipModeMusicDir, SkipCheckCond, SkipCheckPrefCond);
-    }
-
-    private sealed class PreprocessBuilder
-    {
-        public bool? RemoveFt, RemoveBrackets, ExtractArtist;
-        public string? ParseTitleTemplate;
-        public CollectionPatchDto<RegexRuleDto>? Regex;
-        public PreprocessSettingsPatchDto Build() => new(RemoveFt, RemoveBrackets, ExtractArtist, ParseTitleTemplate, Regex);
-    }
-
-    private sealed class ExtractionBuilder
-    {
-        public string? Input;
-        public InputType? InputType;
-        public int? MaxTracks, Offset;
-        public ExtractionMode? RequestedMode;
-        public bool? Reverse, RemoveTracksFromSource, UpgradeToAlbum, SetAlbumMinTrackCount, SetAlbumMaxTrackCount;
-        public ExtractionSettingsPatchDto Build() => new(Input, InputType, MaxTracks, Offset, Reverse, RemoveTracksFromSource, RequestedMode, UpgradeToAlbum, SetAlbumMinTrackCount, SetAlbumMaxTrackCount);
-    }
-
-    private sealed class TransferBuilder
-    {
-        public int? MaxDownloadRetries, UnknownErrorRetries, AlbumTrackCountMaxRetries;
-        public bool? NoIncompleteExt;
-        public TransferSettingsPatchDto Build() => new(MaxDownloadRetries, UnknownErrorRetries, NoIncompleteExt, AlbumTrackCountMaxRetries);
-    }
-
-    private sealed class SpotifyBuilder
-    {
-        public string? ClientId, ClientSecret, Token, Refresh;
-        public SpotifySettingsPatchDto Build() => new(ClientId, ClientSecret, Token, Refresh);
-    }
-
-    private sealed class YouTubeBuilder
-    {
-        public string? ApiKey;
-        public bool? GetDeleted, DeletedOnly;
-        public YouTubeSettingsPatchDto Build() => new(ApiKey, GetDeleted, DeletedOnly);
-    }
-
-    private sealed class YtDlpBuilder
-    {
-        public bool? UseYtdlp;
-        public string? YtdlpArgument;
-        public YtDlpSettingsPatchDto Build() => new(UseYtdlp, YtdlpArgument);
-    }
-
-    private sealed class CsvBuilder
-    {
-        public string? ArtistCol, AlbumCol, TitleCol, YtIdCol, DescCol, TrackCountCol, LengthCol, TimeUnit;
-        public bool? YtParse;
-        public CsvSettingsPatchDto Build() => new(ArtistCol, AlbumCol, TitleCol, YtIdCol, DescCol, TrackCountCol, LengthCol, TimeUnit, YtParse);
-    }
-
-    private sealed class BandcampBuilder
-    {
-        public string? HtmlFromFile;
-        public BandcampSettingsPatchDto Build() => new(HtmlFromFile);
-    }
-
-    private static CollectionPatchDto<string> Collection(CollectionPatchDto<string>? current, DownloadSettingOperationDto op)
-        => op.Operation == SettingOperationKind.Append
-            ? current == null ? new CollectionPatchDto<string>(Append: op.StringListValue ?? []) : current with { Append = [.. current.Append ?? [], .. op.StringListValue ?? []] }
-            : current == null ? new CollectionPatchDto<string>(Replace: op.StringListValue ?? []) : current with { Replace = op.StringListValue ?? [] };
-
     private static void ValidateOnCompletePatch(CollectionPatchDto<string> patch)
     {
         OnCompleteExecutor.ValidateCommands(patch.Replace);
         OnCompleteExecutor.ValidateCommands(patch.Append);
     }
 
-    private static CollectionPatchDto<RegexRuleDto> RegexCollection(CollectionPatchDto<RegexRuleDto>? current, DownloadSettingOperationDto op)
-        => op.Operation == SettingOperationKind.Append
-            ? current == null ? new CollectionPatchDto<RegexRuleDto>(Append: op.RegexListValue ?? []) : current with { Append = [.. current.Append ?? [], .. op.RegexListValue ?? []] }
-            : current == null ? new CollectionPatchDto<RegexRuleDto>(Replace: op.RegexListValue ?? []) : current with { Replace = op.RegexListValue ?? [] };
-
-    private static int Int(DownloadSettingOperationDto op)
-        => op.IntValue ?? throw new ArgumentException($"Operation '{op.Path}' requires an integer value.");
-
-    private static double Double(DownloadSettingOperationDto op)
-        => op.DoubleValue ?? throw new ArgumentException($"Operation '{op.Path}' requires a double value.");
-
-    private static bool Bool(DownloadSettingOperationDto op)
-        => op.BoolValue ?? throw new ArgumentException($"Operation '{op.Path}' requires a boolean value.");
 }

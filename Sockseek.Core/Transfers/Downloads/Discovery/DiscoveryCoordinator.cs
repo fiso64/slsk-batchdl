@@ -12,6 +12,7 @@ using Sockseek.Core.Transfers.Downloads.Runtime;
 using Sockseek.Core.Transfers.Downloads.Skipping;
 using Sockseek.Core.Transfers.Downloads.SourceMutations;
 using Sockseek.Core.Extractors;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
@@ -25,11 +26,13 @@ internal sealed class DiscoveryCoordinator
 {
     private readonly DownloadExecutionContext context;
     private readonly JobOrchestrator jobs;
+    private readonly ILogger<DiscoveryCoordinator> logger;
 
     public DiscoveryCoordinator(DownloadExecutionContext context, JobOrchestrator jobs)
     {
         this.context = context;
         this.jobs = jobs;
+        logger = context.LoggerFactory.CreateLogger<DiscoveryCoordinator>();
     }
     public async Task<ExtractJobResult> ProcessExtractJob(ExtractJob job, Job? parentJob, CancellationToken parentToken)
     {
@@ -48,6 +51,9 @@ internal sealed class DiscoveryCoordinator
         }
 
         job.InputType = inputType;
+        // Preserve the resolved extractor identity in the inherited settings so input-type
+        // auto profiles continue to match jobs produced by this extraction.
+        job.Config.Extraction.InputType = inputType;
 
         Job extracted;
         try
@@ -57,16 +63,23 @@ internal sealed class DiscoveryCoordinator
                 job.UpdateActivity(JobActivityPhase.Extracting);
                 job.Cts.Token.ThrowIfCancellationRequested();
                 var extraction = EffectiveExtractionSettings(job);
-                var result = await extractor.GetTracks(job.Input, extraction, ExtractorContext.ForExtractJob(job, context.Events, ExtractorLogSource(inputType)));
+                var result = await extractor.GetTracks(
+                    job.Input,
+                    extraction,
+                    ExtractorContext.ForExtractJob(
+                        job,
+                        context.Events,
+                        ExtractorLogSource(inputType),
+                        context.SensitiveOutput));
                 job.Cts.Token.ThrowIfCancellationRequested();
                 return result;
             });
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             return new(JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken)), null, extractor);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e)
         {
             return new(DownloadOutcomes.ExtractionFailed(e), null, extractor);
         }
@@ -154,13 +167,17 @@ internal sealed class DiscoveryCoordinator
             : extracted is SongJob song
                 ? new[] { song }.AsEnumerable()
                 : Enumerable.Empty<SongJob>()).ToList();
-        SockseekLog.Jobs.Debug($"[{job.DisplayId}] ExtractJob: extracted {DescribeExtractedResult(extracted, allSongs.Count)}: {job.Input}");
+        DownloadLogMessages.JobDecision(
+            logger,
+            job.Id,
+            "extraction-completed",
+            allSongs.Count);
         if (allSongs.Count > 0)
             context.Events.RaiseTrackListReady(allSongs);
 
         var newContexts = JobPreparer.PrepareSubtree(extracted, job.Config, context.JobSettingsResolver, parentJob as JobList, context.Ctx(job));
         foreach (var (id, ctx) in newContexts)
-            context.Contexts[id] = ctx;
+            context.Contexts.Set(id, extracted.WorkflowId, ctx);
 
         EnsureDisplayIdsForExecutableSubtree(extracted);
         context.ObservePreparedAutoProfiles(extracted);
@@ -271,7 +288,7 @@ internal sealed class DiscoveryCoordinator
             var result = await RunSearchWithReconnect(job.Cts!.Token, searchAction);
             return (result, null);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             var outcome = JobOutcome.Cancelled(jobs.CancellationSourceFor(job, parentToken));
             JobOutcomeCommitter.Commit(job, outcome);
@@ -290,20 +307,19 @@ internal sealed class DiscoveryCoordinator
 
     public async Task<JobOutcome> ProcessRetrieveFolderJob(RetrieveFolderJob job, CancellationToken parentToken)
     {
-        await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
-
         try
         {
+            await context.ClientManager.WaitUntilReadyAsync(job.Cts!.Token);
             job.UpdateActivity(JobActivityPhase.RetrievingFolder);
-            int newFilesFound = await context.Runtime.Searcher.CompleteFolder(job.TargetFolder, job.Cts!.Token);
-            job.NewFilesFoundCount = newFilesFound;
+            job.Result = await context.Runtime.Searcher.RetrieveDirectory(job.Directory, job.Cts!.Token);
+            job.NewFilesFoundCount = job.ResultObserver?.Invoke(job.Result) ?? job.Result.Files.Count;
             job.RetrievalOutcome = FolderRetrievalOutcome.Completed;
-            job.Discovery = new DiscoverySummary { RawResultCount = newFilesFound, LockedFileCount = 0 };
+            job.Discovery = new DiscoverySummary { RawResultCount = job.NewFilesFoundCount, LockedFileCount = 0 };
             var outcome = JobOutcome.Done();
             JobOutcomeCommitter.Commit(job, outcome);
             return outcome;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(job, parentToken))
         {
             job.Discovery = new DiscoverySummary { RawResultCount = 0, LockedFileCount = 0 };
             job.RetrievalOutcome = FolderRetrievalOutcome.Cancelled;
@@ -311,6 +327,10 @@ internal sealed class DiscoveryCoordinator
             JobOutcomeCommitter.Commit(job, outcome);
             context.Events.RaiseJobStatus(job, "cancelled");
             return outcome;
+        }
+        catch (Exception e)
+        {
+            return CommitFolderRetrievalFailure(job, e);
         }
     }
 
@@ -333,7 +353,7 @@ internal sealed class DiscoveryCoordinator
             return outcome;
         }
 
-        if (job.DownloadBehavior != DownloadBehavior.Manual || job.ResolvedTarget != null)
+        if (job.DownloadBehavior != DownloadBehavior.Manual || job.ResolvedPeerTarget != null)
             return null;
 
         var responseData = new ResponseData();
@@ -368,10 +388,10 @@ internal sealed class DiscoveryCoordinator
             if (job.Results.Count == 0)
                 job.Results = [job.ResolvedTarget];
 
-            if (job.ResolvedTargetNeedsInitialFolderRetrieval)
+            if (job.DirectoryResolutionPolicy == AlbumDirectoryResolutionPolicy.RetrieveBeforeSelection)
             {
                 var retrieval = await ProcessFolderRetrieval(job.ResolvedTarget, job);
-                job.ResolvedTargetNeedsInitialFolderRetrieval = false;
+                job.DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot;
                 if (retrieval.RetrievalCancelled || job.ResolvedTarget.Files.Count == 0)
                     job.Results.Clear();
             }
@@ -544,7 +564,7 @@ internal sealed class DiscoveryCoordinator
         {
             aj.ItemName ??= job.ItemName;
             aj.Config = job.Config;
-            context.Contexts[aj.Id] = new JobContext
+            context.Contexts.Set(aj, new JobContext
             {
                 IndexEditor = ctx.IndexEditor,
                 PlaylistEditor = ctx.PlaylistEditor,
@@ -552,9 +572,9 @@ internal sealed class DiscoveryCoordinator
                 MusicDirSkipper = ctx.MusicDirSkipper,
                 OutputScope = ctx.OutputScope,
                 PreprocessTracks = false,
-            };
+            });
         }
-        context.Contexts[albumList.Id] = new JobContext
+        context.Contexts.Set(albumList, new JobContext
         {
             IndexEditor = ctx.IndexEditor,
             PlaylistEditor = ctx.PlaylistEditor,
@@ -562,7 +582,7 @@ internal sealed class DiscoveryCoordinator
             MusicDirSkipper = ctx.MusicDirSkipper,
             OutputScope = ctx.OutputScope,
             PreprocessTracks = false,
-        };
+        });
 
         context.RegisterJob(albumList, job);
         job.UpdateActivity(JobActivityPhase.RunningChildren);
@@ -617,17 +637,22 @@ internal sealed class DiscoveryCoordinator
     {
         if (folder.IsFullyRetrieved)
         {
-            SockseekLog.Jobs.Debug($"[{parentJob.DisplayId}] {DownloadExecutorCoordinator.JobLogKind(parentJob)}: folder already fully retrieved: {folder.FolderPath}");
-            var completedJob = new RetrieveFolderJob(folder)
+            DownloadLogMessages.JobDecision(
+                logger,
+                parentJob.Id,
+                "folder-already-retrieved",
+                folder.Files.Count);
+            var completedJob = new RetrieveFolderJob(folder.DirectoryIdentity)
             {
                 WorkflowId = parentJob.WorkflowId,
                 Config = parentJob.Config,
+                Result = folder.Directory,
                 RetrievalOutcome = FolderRetrievalOutcome.Completed,
             };
             return completedJob;
         }
 
-        var rfJob = new RetrieveFolderJob(folder) { WorkflowId = parentJob.WorkflowId, Config = parentJob.Config };
+        var rfJob = new RetrieveFolderJob(folder.DirectoryIdentity) { WorkflowId = parentJob.WorkflowId, Config = parentJob.Config };
         rfJob.Cts = CancellationTokenSource.CreateLinkedTokenSource(context.Runtime.Token, parentJob.Cts!.Token);
         context.RegisterJob(rfJob, parentJob);
         var parentActivityBeforeRetrieval = parentJob.ActivityPhase;
@@ -635,7 +660,11 @@ internal sealed class DiscoveryCoordinator
         if (!parentJob.IsTerminal)
             parentJob.UpdateActivity(JobActivityPhase.RetrievingFolder);
         rfJob.UpdateActivity(JobActivityPhase.RetrievingFolder);
-        SockseekLog.Jobs.Debug($"[{rfJob.DisplayId}] RetrieveFolderJob: retrieving folder for parent [{parentJob.DisplayId}] {DownloadExecutorCoordinator.JobLogKind(parentJob)}: {folder.FolderPath}");
+        DownloadLogMessages.JobDecision(
+            logger,
+            rfJob.Id,
+            "folder-retrieval-started",
+            null);
 
         int count = 0;
         try
@@ -643,7 +672,9 @@ internal sealed class DiscoveryCoordinator
             async Task<int> CompleteFolder()
             {
                 rfJob.UpdateActivity(JobActivityPhase.RetrievingFolder);
-                return await context.Runtime.Searcher.CompleteFolder(rfJob.TargetFolder, rfJob.Cts.Token);
+                var snapshot = await context.Runtime.Searcher.RetrieveDirectory(rfJob.Directory, rfJob.Cts.Token);
+                rfJob.Result = snapshot;
+                return Searcher.ApplyDirectorySnapshot(folder, snapshot);
             }
 
             count = consumeJobSlot
@@ -651,17 +682,30 @@ internal sealed class DiscoveryCoordinator
                 : await CompleteFolder();
             rfJob.NewFilesFoundCount = count;
             rfJob.RetrievalOutcome = FolderRetrievalOutcome.Completed;
-            rfJob.SetDone();
-            SockseekLog.Jobs.Debug($"[{rfJob.DisplayId}] RetrieveFolderJob: retrieved folder with {count} new file{(count == 1 ? "" : "s")}: {folder.FolderPath}");
+            JobOutcomeCommitter.Commit(rfJob, JobOutcome.Done());
+            DownloadLogMessages.JobDecision(
+                logger,
+                rfJob.Id,
+                "folder-retrieval-completed",
+                count);
             return rfJob;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (jobs.IsJobCancellationRequested(rfJob, parentJob.Cts!.Token))
         {
             // Suppress upward exception so cancelling this retrieval job doesn't cancel its parent.
             rfJob.RetrievalOutcome = FolderRetrievalOutcome.Cancelled;
-            rfJob.SetCancelled(jobs.CancellationSourceFor(rfJob, parentJob.Cts!.Token));
+            JobOutcomeCommitter.Commit(rfJob, JobOutcome.Cancelled(jobs.CancellationSourceFor(rfJob, parentJob.Cts!.Token)));
             context.Events.RaiseJobStatus(rfJob, "cancelled");
-            SockseekLog.Jobs.Info(rfJob, $"Cancelled folder retrieval for {folder.FolderPath}");
+            context.Events.RaiseJobMessage(
+                rfJob,
+                LogLevel.Information,
+                null,
+                "folder retrieval cancelled");
+            return rfJob;
+        }
+        catch (Exception e)
+        {
+            CommitFolderRetrievalFailure(rfJob, e);
             return rfJob;
         }
         finally
@@ -676,6 +720,19 @@ internal sealed class DiscoveryCoordinator
             rfJob.Discovery = new DiscoverySummary { RawResultCount = count, LockedFileCount = 0 };
             context.Events.RaiseJobExecutionCompleted(rfJob);
         }
+    }
+
+    private JobOutcome CommitFolderRetrievalFailure(RetrieveFolderJob job, Exception exception)
+    {
+        job.Discovery = new DiscoverySummary { RawResultCount = 0, LockedFileCount = 0 };
+        job.RetrievalOutcome = FolderRetrievalOutcome.Failed;
+        var outcome = DownloadOutcomes.ExceptionFailure(JobFailureReason.Other, exception);
+        JobOutcomeCommitter.Commit(job, outcome);
+        DownloadLogMessages.FolderCompletionFailed(
+            logger,
+            exception,
+            LogIdentity.Hash(job.Directory.Username + "\0" + job.Directory.FolderPath));
+        return outcome;
     }
 
 

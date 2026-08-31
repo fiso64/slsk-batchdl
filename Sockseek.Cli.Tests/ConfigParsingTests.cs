@@ -20,6 +20,28 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void LoggingDefaults_AreInformationForForegroundAndDebugForDaemon()
+        {
+            Assert.AreEqual(LogLevel.Information, new EngineSettings().LogLevel);
+
+            var foreground = new EngineSettings();
+            EngineSettings daemon = Sockseek.Cli.Program.CreateDaemonEngineSettings(foreground);
+
+            Assert.AreEqual(LogLevel.Information, foreground.LogLevel);
+            Assert.AreEqual(LogLevel.Debug, daemon.LogLevel);
+        }
+
+        [TestMethod]
+        public void DaemonLoggingDefault_PreservesMoreVerboseSelection()
+        {
+            var configured = new EngineSettings { LogLevel = LogLevel.Trace };
+
+            EngineSettings daemon = Sockseek.Cli.Program.CreateDaemonEngineSettings(configured);
+
+            Assert.AreEqual(LogLevel.Trace, daemon.LogLevel);
+        }
+
+        [TestMethod]
         public void Defaults_NecessaryCondFormats_AreSet()
         {
             var config = Cfg();
@@ -280,7 +302,7 @@ namespace Tests.ConfigParsingTests
         public void MaxStaleTime_SetsValue()
         {
             var config = Cfg("--max-stale-time", "60000", "some input");
-            Assert.AreEqual(60000, config.Search.MaxStaleTime);
+            Assert.AreEqual(60000, config.Transfer.MaxStaleTime);
         }
 
         [TestMethod]
@@ -556,6 +578,27 @@ namespace Tests.ConfigParsingTests
         }
 
         [TestMethod]
+        public void DatabaseAndRetentionFlags_BindToDaemonSettings()
+        {
+            string dataDirectory = Path.Combine(Path.GetTempPath(), "sockseek-data");
+            var (_, _, _, daemon, _) = BindAll(
+                "--data-dir", dataDirectory,
+                "--no-retention",
+                "--successful-job-retention-days", "45",
+                "--unsuccessful-job-retention-days", "forever",
+                "--transfer-retention-days", "60",
+                "--search-result-retention-days", "10");
+
+            Assert.AreEqual(Path.GetFullPath(dataDirectory), daemon.DataDirectory);
+            Assert.IsFalse(daemon.RetentionEnabled);
+            Assert.AreEqual(TimeSpan.FromDays(45), daemon.CompletedJobRetention);
+            Assert.IsNull(daemon.UnsuccessfulJobRetention);
+            Assert.AreEqual(TimeSpan.FromDays(10), daemon.SearchResultRetention);
+            Assert.AreEqual(TimeSpan.FromDays(60), daemon.TransferRetention);
+            Assert.IsNull(daemon.MaximumRetainedJobs);
+        }
+
+        [TestMethod]
         public void Enum_SkipMode_ParsedCaseInsensitive()
         {
             var (_, dl, _) = Bind("--skip-mode-output-dir", "name");
@@ -615,10 +658,11 @@ namespace Tests.ConfigParsingTests
                     "skip-music-dir = {configdir}/skip",
                     "incomplete-album-action = move:{configdir}/failed",
                     "log-file = {configdir}/logs/sockseek.log",
-                    "mock-files-dir = {configdir}/mock"));
+                    "mock-files-dir = {configdir}/mock",
+                    "data-dir = {configdir}/data"));
 
                 var file = ConfigManager.Load(configPath);
-                var (engine, download, _) = ConfigManager.Bind(file, ["input"]);
+                var (engine, download, _, daemon, _) = ConfigManager.BindAll(file, ["input"]);
 
                 Assert.AreEqual(tempDir, download.RuntimePathContext.ConfigDir);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "downloads")), download.Output.ParentDir);
@@ -629,6 +673,7 @@ namespace Tests.ConfigParsingTests
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "failed")), download.Output.IncompleteAlbumAction.Path);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "logs", "sockseek.log")), engine.LogFilePath);
                 Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "mock")), engine.MockFilesDir);
+                Assert.AreEqual(Path.GetFullPath(Path.Join(tempDir, "data")), daemon.DataDirectory);
             }
             finally
             {
@@ -855,6 +900,18 @@ namespace Tests.ConfigParsingTests
         {
             var (_, _, _, _, remote) = BindAll("--remote", "http://127.0.0.1:5030");
             Assert.AreEqual("http://127.0.0.1:5030", remote.ServerUrl);
+        }
+
+        [TestMethod]
+        public void Monitor_IsIndependentBooleanCliOption()
+        {
+            var (_, _, cli, _, remote) = BindAll(
+                "--remote",
+                "http://127.0.0.1:5030",
+                "--monitor");
+
+            Assert.IsTrue(cli.Monitor);
+            Assert.IsTrue(remote.IsEnabled);
         }
 
         [TestMethod]

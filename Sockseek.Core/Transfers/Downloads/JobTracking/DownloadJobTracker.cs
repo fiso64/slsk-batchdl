@@ -9,6 +9,8 @@ internal sealed class DownloadJobTracker
     private readonly DownloadEvents events;
     private readonly ConcurrentDictionary<Guid, Job> jobsById = new();
     private readonly ConcurrentDictionary<int, Job> jobsByDisplayId = new();
+    private readonly ConcurrentDictionary<Guid, Guid> sourceJobIds = new();
+    private readonly ConcurrentDictionary<Guid, Action<Job, JobStateTransition>> stateHandlersByJobId = new();
 
     public DownloadJobTracker(DownloadEvents events)
     {
@@ -26,8 +28,14 @@ internal sealed class DownloadJobTracker
         .OrderBy(job => job.DisplayId)
         .ToList();
 
-    public void Register(Job job, Job? parent)
+    public void AssociateSource(Guid jobId, Guid sourceJobId)
+        => sourceJobIds[jobId] = sourceJobId;
+
+    public void Register(Job job, Job? parent, Guid? sourceJobId = null)
     {
+        if (sourceJobId is Guid sourceId)
+            AssociateSource(job.Id, sourceId);
+
         job.EnsureDisplayId();
         bool firstRegistration = jobsById.TryAdd(job.Id, job);
         jobsByDisplayId[job.DisplayId] = job;
@@ -35,7 +43,7 @@ internal sealed class DownloadJobTracker
         if (!firstRegistration)
             return;
 
-        job.StateChanged += (_, transition) =>
+        Action<Job, JobStateTransition> stateHandler = (_, transition) =>
         {
             events.RaiseJobStateChanged(job);
             if (transition.ActivityChanged
@@ -45,7 +53,34 @@ internal sealed class DownloadJobTracker
                 events.RaiseJobActivityChanged(job, job.ActivityPhase, job.ActivityUntilUtc);
             }
         };
+        stateHandlersByJobId[job.Id] = stateHandler;
+        job.StateChanged += stateHandler;
 
-        events.RaiseJobRegistered(job, parent);
+        events.RaiseJobRegistered(
+            job,
+            parent?.Id,
+            sourceJobIds.TryGetValue(job.Id, out var registeredSourceId) ? registeredSourceId : null);
     }
+
+    public IReadOnlyList<Job> Retire(IReadOnlyCollection<Guid> jobIds)
+    {
+        var retired = new List<Job>(jobIds.Count);
+        foreach (Guid jobId in jobIds)
+        {
+            sourceJobIds.TryRemove(jobId, out _);
+            if (!jobsById.TryRemove(jobId, out var job))
+                continue;
+
+            jobsByDisplayId.TryRemove(
+                new KeyValuePair<int, Job>(job.DisplayId, job));
+            if (stateHandlersByJobId.TryRemove(jobId, out var handler))
+                job.StateChanged -= handler;
+            job.Cts?.Dispose();
+            job.Cts = null;
+            retired.Add(job);
+        }
+        return retired;
+    }
+
+    internal int Count => jobsById.Count;
 }

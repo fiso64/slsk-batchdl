@@ -37,7 +37,13 @@ namespace Sockseek.Core.Extractors;
             if (string.IsNullOrEmpty(_spotify.ClientId) || string.IsNullOrEmpty(_spotify.ClientSecret))
                 throw new Exception("Spotify client ID and secret are required. Create a Spotify developer app and pass --spotify-id and --spotify-secret.");
 
-            using var spotifySession = new Spotify(_spotify.ClientId ?? "", _spotify.ClientSecret ?? "", _spotify.Token ?? "", _spotify.Refresh ?? "", context.Log);
+            using var spotifySession = new Spotify(
+                _spotify.ClientId ?? "",
+                _spotify.ClientSecret ?? "",
+                _spotify.Token ?? "",
+                _spotify.Refresh ?? "",
+                context.Log,
+                context.SensitiveOutput);
             spotifyClient = spotifySession;
             await spotifyClient.Authorize(needLogin, extraction.RemoveTracksFromSource);
 
@@ -195,15 +201,23 @@ namespace Sockseek.Core.Extractors;
         private string _clientRefreshToken;
         private SpotifyClient? _client;
         private readonly IJobLog _log;
+        private readonly ISensitiveOutput _sensitiveOutput;
         private bool loggedIn = false;
 
-        public Spotify(string clientId = "", string clientSecret = "", string token = "", string refreshToken = "", IJobLog? log = null)
+        public Spotify(
+            string clientId = "",
+            string clientSecret = "",
+            string token = "",
+            string refreshToken = "",
+            IJobLog? log = null,
+            ISensitiveOutput? sensitiveOutput = null)
         {
             _clientId           = clientId ?? "";
             _clientSecret       = clientSecret ?? "";
             _clientToken        = token ?? "";
             _clientRefreshToken = refreshToken ?? "";
             _log                = log ?? ExtractorContext.None.Log;
+            _sensitiveOutput    = sensitiveOutput ?? NullSensitiveOutput.Instance;
         }
 
         public async Task Authorize(bool login = false, bool needModify = false)
@@ -315,11 +329,11 @@ namespace Sockseek.Core.Extractors;
                 new AuthorizationCodeTokenRequest(_clientId, _clientSecret, response.Code, new Uri("http://127.0.0.1:48721/callback")));
 
             _log.Debug("Got token");
-            SockseekLog.LogConsoleOnly(LogLevel.Information, "spotify-token=" + tokenResponse.AccessToken);
+            _sensitiveOutput.WriteLine("spotify-token=" + tokenResponse.AccessToken);
             _clientToken = tokenResponse.AccessToken;
-            SockseekLog.LogConsoleOnly(LogLevel.Information, "");
-            SockseekLog.LogConsoleOnly(LogLevel.Information, "spotify-refresh=" + tokenResponse.RefreshToken);
-            SockseekLog.LogConsoleOnly(LogLevel.Information, "");
+            _sensitiveOutput.WriteLine("");
+            _sensitiveOutput.WriteLine("spotify-refresh=" + tokenResponse.RefreshToken);
+            _sensitiveOutput.WriteLine("");
             _clientRefreshToken = tokenResponse.RefreshToken;
             _client             = new SpotifyClient(tokenResponse.AccessToken);
             loggedIn            = true;

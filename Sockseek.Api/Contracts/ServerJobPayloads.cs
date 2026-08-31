@@ -15,25 +15,57 @@ namespace Sockseek.Api;
 [JsonDerivedType(typeof(AlbumAggregateJobPayloadDto), ServerProtocol.JobKinds.AlbumAggregate)]
 [JsonDerivedType(typeof(JobListPayloadDto), ServerProtocol.JobKinds.JobList)]
 [JsonDerivedType(typeof(RetrieveFolderJobPayloadDto), ServerProtocol.JobKinds.RetrieveFolder)]
+[JsonDerivedType(typeof(RemoteFileJobPayloadDto), ServerProtocol.JobKinds.RemoteFile)]
+[JsonDerivedType(typeof(RemoteDirectoryJobPayloadDto), ServerProtocol.JobKinds.RemoteDirectory)]
 [JsonDerivedType(typeof(GenericJobPayloadDto), ServerProtocol.JobKinds.Generic)]
 public abstract record JobPayloadDto;
+
+public sealed record PeerFileTargetDto(
+    string Username,
+    string Filename,
+    long? Size,
+    string? Extension,
+    int? BitRate = null,
+    int? BitDepth = null,
+    int? SampleRate = null,
+    int? Length = null,
+    IReadOnlyList<FileAttributeDto>? Attributes = null);
+
+public sealed record DirectoryTransferEntryDto(
+    PeerFileTargetDto Target,
+    IReadOnlyList<string> RelativeDirectoryComponents);
+
+public sealed record DirectoryTransferPlanDto(
+    string DisplayRoot,
+    IReadOnlyList<DirectoryTransferEntryDto> Entries,
+    long TotalKnownBytes);
+
+public sealed record FileDownloadStateDto(
+    string? DownloadPath,
+    long BytesTransferred,
+    long? FileSize,
+    double? ProgressPercent);
+
+public sealed record DirectoryDownloadStateDto(
+    string Phase,
+    int? AttemptNumber,
+    string? DownloadPath,
+    int FileCount,
+    int TerminalFileCount,
+    int SuccessfulFileCount,
+    int FailedFileCount,
+    long BytesTransferred,
+    long TotalKnownBytes,
+    double? ProgressPercent);
 
 /// <summary>
 /// Payload for extract jobs.
 /// </summary>
-/// <param name="ResultJobId">
-/// Semantic job produced by extraction. It may be started separately when auto-processing is off.
-/// </param>
-/// <param name="ResultDraft">
-/// Typed draft for the produced job. Submit it through the normal job submission endpoints to
-/// continue manually.
-/// </param>
+/// <param name="ResultJobId">Semantic job produced and automatically processed by extraction.</param>
 public sealed record ExtractJobPayloadDto(
     string Input,
     string? InputType,
-    Guid? ResultJobId,
-    bool AutoProcessResult,
-    JobDraftDto? ResultDraft) : JobPayloadDto;
+    Guid? ResultJobId) : JobPayloadDto;
 
 /// <summary>
 /// Payload for search jobs. Use the matching /results endpoint for the actual result items.
@@ -56,10 +88,6 @@ public sealed record SearchJobPayloadDto(
 /// <param name="JobId">
 /// Present when the row corresponds to a registered job and can be addressed directly.
 /// </param>
-/// <param name="Candidates">
-/// Reserved for compatibility. General job detail payloads do not inline candidates;
-/// use /api/jobs/{jobId}/results/files for full result rows.
-/// </param>
 /// <param name="AvailableActions">
 /// Actions currently valid for this song.
 /// </param>
@@ -69,7 +97,7 @@ public sealed record SearchJobPayloadDto(
 public sealed record SongJobPayloadDto(
     SongQueryDto Query,
     int? CandidateCount,
-    string? DownloadPath,
+    FileDownloadStateDto File,
     string? ResolvedUsername = null,
     string? ResolvedFilename = null,
     bool? ResolvedHasFreeUploadSlot = null,
@@ -80,7 +108,6 @@ public sealed record SongJobPayloadDto(
     IReadOnlyList<FileAttributeDto>? ResolvedAttributes = null,
     Guid? JobId = null,
     int? DisplayId = null,
-    IReadOnlyList<FileCandidateDto>? Candidates = null,
     ServerJobLifecycleState? LifecycleState = null,
     ServerJobActivityPhase? ActivityPhase = null,
     DateTimeOffset? ActivityUntilUtc = null,
@@ -88,13 +115,11 @@ public sealed record SongJobPayloadDto(
     ServerJobSkipReason? SkipReason = null,
     ServerJobFailureReason? FailureReason = null,
     string? FailureMessage = null,
-    long? BytesTransferred = null,
-    long? TotalBytes = null,
-    double? ProgressPercent = null,
     IReadOnlyList<ResourceActionDto>? AvailableActions = null,
     string? TransferState = null,
     ServerJobCancellationSource CancellationSource = ServerJobCancellationSource.None,
-    ServerSongDownloadSource DownloadSource = ServerSongDownloadSource.None) : JobPayloadDto;
+    ServerSongDownloadSource DownloadSource = ServerSongDownloadSource.None,
+    PeerFileTargetDto? ExactTarget = null) : JobPayloadDto;
 
 /// <summary>
 /// Payload for album search/download jobs.
@@ -105,38 +130,30 @@ public sealed record SongJobPayloadDto(
 /// <param name="ResolvedFolderPath">
 /// Folder path selected/downloaded by the album job, when known.
 /// </param>
-/// <param name="SelectedFolderFileCount">
-/// Number of files in the selected folder, when known. This is the count the album job is processing.
-/// </param>
-/// <param name="SelectedFolderCompletedFileCount">
-/// Number of selected folder files that reached a terminal state, successful or failed.
-/// </param>
-/// <param name="SelectedFolderSucceededFileCount">
-/// Number of selected folder files that completed successfully or already existed.
-/// </param>
-/// <param name="SelectedFolderFailedFileCount">
-/// Number of selected folder files that failed or were skipped.
-/// </param>
-/// <param name="Results">
-/// Reserved for compatibility. General job detail payloads do not inline album results;
-/// use /api/jobs/{jobId}/results/folders for full folder rows.
-/// </param>
-/// <param name="Tracks">
-/// Reserved for compatibility. General job detail payloads do not inline child tracks;
-/// use JobDetailDto.Children or /api/jobs with the parent id to inspect child jobs.
-/// </param>
 public sealed record AlbumJobPayloadDto(
     AlbumQueryDto Query,
     int ResultCount,
-    string? DownloadPath,
+    DirectoryDownloadStateDto Directory,
     string? ResolvedFolderUsername,
-    string? ResolvedFolderPath,
-    int? SelectedFolderFileCount = null,
-    int? SelectedFolderCompletedFileCount = null,
-    int? SelectedFolderSucceededFileCount = null,
-    int? SelectedFolderFailedFileCount = null,
-    IReadOnlyList<AlbumFolderDto>? Results = null,
-    IReadOnlyList<SongJobPayloadDto>? Tracks = null) : JobPayloadDto;
+    string? ResolvedFolderPath) : JobPayloadDto;
+
+public sealed record RemoteFileJobPayloadDto(
+    PeerFileTargetDto Target,
+    IReadOnlyList<string> OutputPathComponents,
+    FileDownloadStateDto File) : JobPayloadDto;
+
+[JsonConverter(typeof(JsonStringEnumConverter<RemoteDirectorySourceKindDto>))]
+public enum RemoteDirectorySourceKindDto
+{
+    PeerDirectory,
+    Resolved,
+}
+
+public sealed record RemoteDirectoryJobPayloadDto(
+    RemoteDirectorySourceKindDto SourceKind,
+    string? SourceUsername,
+    string? SourceFolderPath,
+    DirectoryDownloadStateDto Directory) : JobPayloadDto;
 
 /// <summary>
 /// Payload for aggregate track download jobs.
@@ -146,8 +163,7 @@ public sealed record AggregateJobPayloadDto(
     int SongCount,
     int CompletedSongCount,
     int SucceededSongCount,
-    int FailedSongCount,
-    IReadOnlyList<SongJobPayloadDto>? Songs = null) : JobPayloadDto;
+    int FailedSongCount) : JobPayloadDto;
 
 /// <summary>
 /// Payload for album-aggregate jobs, which search for distinct album candidates.
@@ -157,16 +173,14 @@ public sealed record AlbumAggregateJobPayloadDto(
     int ResultCount) : JobPayloadDto;
 
 /// <summary>
-/// Payload for job-list jobs. DirectSongs is reserved for compatibility; use
-/// JobDetailDto.Children or /api/jobs with the parent id to inspect direct children.
+/// Payload for job-list jobs. Direct children are listed through the jobs collection.
 /// </summary>
 public sealed record JobListPayloadDto(
     int Count,
     int ActiveJobCount,
     int CompletedJobCount,
     int SucceededJobCount,
-    int FailedJobCount,
-    IReadOnlyList<SongJobPayloadDto>? DirectSongs = null) : JobPayloadDto;
+    int FailedJobCount) : JobPayloadDto;
 
 /// <summary>
 /// Payload for full-folder retrieval jobs started from album result views.
@@ -176,8 +190,7 @@ public sealed record RetrieveFolderJobPayloadDto(
     string Username,
     int NewFilesFoundCount,
     ServerFolderRetrievalOutcome RetrievalOutcome,
-    bool RetrievalCancelled,
-    AlbumFolderDto? Folder = null) : JobPayloadDto;
+    bool RetrievalCancelled) : JobPayloadDto;
 
 /// <summary>
 /// Fallback payload for job kinds without a specialized DTO.

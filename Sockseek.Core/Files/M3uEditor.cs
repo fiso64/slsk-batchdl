@@ -186,7 +186,6 @@ public class M3uEditor
 
     public void Update()
     {
-        SockseekLog.Trace($"M3uEditor.Update() called for {path} (Option: {option}, Queue length: {queue.Jobs.Count})");
         if (option == M3uOption.None)
             return;
 
@@ -216,7 +215,6 @@ public class M3uEditor
 
                 if (needUpdate)
                 {
-                    SockseekLog.Trace($"M3uEditor: Updating entry for {key}");
                     if (prev == null)
                     {
                         previousRunData[key] = new IndexEntry
@@ -242,7 +240,6 @@ public class M3uEditor
 
             foreach (var job in queue.AllJobs())
             {
-                SockseekLog.Trace($"M3uEditor: Checking job {job.GetType().Name} (ID: {job.DisplayId}, Lifecycle: {job.LifecycleState}, Activity: {job.ActivityPhase}, Outcome: {job.TerminalOutcome}, Skip: {job.SkipReason})");
                 var albumJobs = job switch
                 {
                     AlbumJob aj => new[] { aj },
@@ -273,7 +270,6 @@ public class M3uEditor
 
                 foreach (var song in songs)
                 {
-                    SockseekLog.Trace($"M3uEditor: Checking song {song.Query.Title} (Lifecycle: {song.LifecycleState}, Activity: {song.ActivityPhase}, Outcome: {song.TerminalOutcome}, Skip: {song.SkipReason}, Path: {song.DownloadPath})");
                     if (song.IsPending)
                         continue;
 
@@ -293,27 +289,20 @@ public class M3uEditor
                     {
                         var line = SongToLine(song);
                         newLines.Add(line);
-                        SockseekLog.Trace($"M3uEditor: Added line to newLines: {line}");
                     }
                 }
             }
 
             if (option == M3uOption.Playlist && !newLines.SequenceEqual(lines))
             {
-                SockseekLog.Trace($"M3uEditor: newLines changed (count: {newLines.Count} vs {lines.Count})");
                 lines = newLines;
                 needUpdate = true;
             }
 
             if (needUpdate || needFirstUpdate)
             {
-                SockseekLog.Trace($"M3uEditor: Writing all lines (needUpdate: {needUpdate}, needFirstUpdate: {needFirstUpdate})");
                 needFirstUpdate = false;
                 WriteAllLines();
-            }
-            else
-            {
-                SockseekLog.Trace($"M3uEditor: No update needed.");
             }
         }
     }
@@ -328,7 +317,6 @@ public class M3uEditor
 
     private void WriteAllLines()
     {
-        SockseekLog.Trace($"M3uEditor: Writing file to {path}");
         if (!Directory.Exists(parent))
             Directory.CreateDirectory(parent);
 

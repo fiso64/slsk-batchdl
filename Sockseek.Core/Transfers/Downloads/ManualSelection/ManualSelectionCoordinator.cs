@@ -10,18 +10,19 @@ internal sealed class ManualSelectionCoordinator
 {
     private readonly Func<Guid, Job?> getJob;
     private readonly DownloadJobContextStore contexts;
-    private readonly Action<Job, Job?> registerJob;
+    private readonly Action<Job, Job?, Guid?> registerJob;
     private readonly Action<Job> observePreparedAutoProfiles;
     private readonly Action<Job> resumeJob;
     private readonly Func<Job, Task> flushTerminalEffects;
     private readonly Func<Job, bool> isSuccessfulTerminal;
     private readonly ConcurrentDictionary<Guid, Guid> aggregateParentByAlbumId = new();
     private readonly ConcurrentDictionary<Guid, byte> closedAggregateSelections = new();
+    private readonly ConcurrentDictionary<Guid, byte> closedManualSelections = new();
 
     public ManualSelectionCoordinator(
         Func<Guid, Job?> getJob,
         DownloadJobContextStore contexts,
-        Action<Job, Job?> registerJob,
+        Action<Job, Job?, Guid?> registerJob,
         Action<Job> observePreparedAutoProfiles,
         Action<Job> resumeJob,
         Func<Job, Task> flushTerminalEffects,
@@ -81,7 +82,8 @@ internal sealed class ManualSelectionCoordinator
             return true;
         }
 
-        job.Fail(JobFailureReason.NoMatchingResults);
+        closedManualSelections.TryAdd(job.Id, 0);
+        JobOutcomeCommitter.Commit(job, JobOutcome.Failed(JobFailureReason.NoMatchingResults));
         await flushTerminalEffects(job);
         return true;
     }
@@ -92,7 +94,11 @@ internal sealed class ManualSelectionCoordinator
         if (job == null || !job.IsAwaitingSelection || job.Config == null)
             return false;
 
-        job.SetSkipped(JobSkipReason.Manual);
+        if (job is AlbumAggregateJob aggregateJob)
+            closedAggregateSelections.TryAdd(aggregateJob.Id, 0);
+        else
+            closedManualSelections.TryAdd(job.Id, 0);
+        JobOutcomeCommitter.Commit(job, JobOutcome.Skipped(JobSkipReason.Manual));
         await flushTerminalEffects(job);
         return true;
     }
@@ -117,9 +123,41 @@ internal sealed class ManualSelectionCoordinator
         resumeJob(albumJob);
     }
 
-    private static bool CanStartManualAlbumSelection(AlbumJob albumJob)
+    public bool HasResumableState(IReadOnlyCollection<Job> workflowJobs)
+    {
+        if (workflowJobs.Any(job => job.IsAwaitingSelection))
+            return true;
+
+        return workflowJobs.OfType<AlbumJob>().Any(album =>
+            album.DownloadBehavior == DownloadBehavior.Manual
+            && album.IsUnsuccessfulTerminal
+            && !closedManualSelections.ContainsKey(album.Id)
+            && (!aggregateParentByAlbumId.TryGetValue(album.Id, out Guid aggregateId)
+                || !closedAggregateSelections.ContainsKey(aggregateId)));
+    }
+
+    public void Retire(IReadOnlyCollection<Guid> jobIds)
+    {
+        var ids = jobIds.ToHashSet();
+        foreach (Guid jobId in ids)
+        {
+            closedManualSelections.TryRemove(jobId, out _);
+            closedAggregateSelections.TryRemove(jobId, out _);
+            aggregateParentByAlbumId.TryRemove(jobId, out _);
+        }
+
+        foreach (var pair in aggregateParentByAlbumId.Where(pair => ids.Contains(pair.Value)))
+            aggregateParentByAlbumId.TryRemove(pair.Key, out _);
+    }
+
+    private bool CanStartManualAlbumSelection(AlbumJob albumJob)
         => albumJob.DownloadBehavior == DownloadBehavior.Manual
+            && !closedManualSelections.ContainsKey(albumJob.Id)
             && (albumJob.IsAwaitingSelection || albumJob.IsUnsuccessfulTerminal);
+
+    internal int RetainedStateCount => aggregateParentByAlbumId.Count
+        + closedAggregateSelections.Count
+        + closedManualSelections.Count;
 
     private static AlbumJob? FindAggregateAlbumForSelection(AlbumAggregateJob aggregateJob, AlbumFolder selectedFolder, AlbumQuery? albumQuery)
         => aggregateJob.Albums.FirstOrDefault(album =>
@@ -134,13 +172,13 @@ internal sealed class ManualSelectionCoordinator
         albumJob.DownloadBehaviorPolicy = albumJob.DownloadBehaviorPolicy with { Album = DownloadBehavior.Manual };
 
         aggregateParentByAlbumId[albumJob.Id] = aggregateJob.Id;
-        registerJob(albumJob, aggregateJob);
+        registerJob(albumJob, aggregateJob, aggregateJob.Id);
 
         if (contexts.ContainsKey(albumJob.Id))
             return;
 
         var parentCtx = contexts.Get(aggregateJob);
-        contexts[albumJob.Id] = new JobContext
+        contexts.Set(albumJob, new JobContext
         {
             IndexEditor = parentCtx.IndexEditor,
             PlaylistEditor = parentCtx.PlaylistEditor,
@@ -148,7 +186,7 @@ internal sealed class ManualSelectionCoordinator
             MusicDirSkipper = parentCtx.MusicDirSkipper,
             OutputScope = parentCtx.OutputScope,
             PreprocessTracks = false,
-        };
+        });
 
         observePreparedAutoProfiles(albumJob);
     }
@@ -169,7 +207,7 @@ internal sealed class ManualSelectionCoordinator
 
         if (selectedAlbums.Count == 0)
         {
-            aggregateJob.Fail(JobFailureReason.NoMatchingResults);
+            JobOutcomeCommitter.Commit(aggregateJob, JobOutcome.Failed(JobFailureReason.NoMatchingResults));
             await flushTerminalEffects(aggregateJob);
             return;
         }
@@ -177,10 +215,10 @@ internal sealed class ManualSelectionCoordinator
         if (selectedAlbums.Any(IsActiveManualSelectionChild))
             return;
 
-        if (selectedAlbums.All(isSuccessfulTerminal))
-            aggregateJob.SetDone();
-        else
-            aggregateJob.Fail(JobFailureReason.NoMatchingResults);
+        var outcome = selectedAlbums.All(isSuccessfulTerminal)
+            ? JobOutcome.Done()
+            : JobOutcome.Failed(JobFailureReason.NoMatchingResults);
+        JobOutcomeCommitter.Commit(aggregateJob, outcome);
 
         await flushTerminalEffects(aggregateJob);
     }

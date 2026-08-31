@@ -3,6 +3,7 @@ using Sockseek.Core.Models;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Extractors;
 using Sockseek.Core.Services;
+using Sockseek.Core.Sharing;
 using Sockseek.Core.Settings;
 using Sockseek.Api;
 using Sockseek.Server;
@@ -89,9 +90,26 @@ public static partial class ConfigManager
 
         ApplyTokens(NormalizeArgs(cliArgs), engine, dl, cli, daemon, remote);
 
-        PostProcess(engine, dl, file.ConfigDir);
+        PostProcess(engine, dl, daemon, file.ConfigDir);
 
         return (engine, dl, cli, daemon, remote);
+    }
+
+    /// Loads the selected/default config file and applies config, named profile,
+    /// and CLI precedence through the one canonical startup path.
+    public static (
+        ConfigFile File,
+        EngineSettings Engine,
+        DownloadSettings Download,
+        CliSettings Cli,
+        DaemonSettings Daemon,
+        RemoteSettings Remote)
+        LoadAndBindAll(IReadOnlyList<string> cliArgs)
+    {
+        string configPath = ExtractConfigPath(cliArgs);
+        ConfigFile file = Load(configPath);
+        var (engine, download, cli, daemon, remote) = BindAll(file, cliArgs);
+        return (file, engine, download, cli, daemon, remote);
     }
 
     public static IJobSettingsResolver CreateJobSettingsResolver(
@@ -115,8 +133,7 @@ public static partial class ConfigManager
             namedProfiles,
             cliProfile,
             context,
-            normalize: settings => PostProcessDownload(settings, new PathVariableContext(ConfigDir: file.ConfigDir)),
-            warn: msg => SockseekLog.Warn(msg));
+            normalize: settings => PostProcessDownload(settings, new PathVariableContext(ConfigDir: file.ConfigDir)));
     }
 
     public static DownloadSettings BindCliDownloadTokens(IReadOnlyList<string> cliArgs)
@@ -133,7 +150,7 @@ public static partial class ConfigManager
 
     public static DownloadSettingsPatchDto? CreateCliDownloadSettingsPatch(IReadOnlyList<string> cliArgs)
     {
-        var builder = new DownloadSettingsDeltaBuilder();
+        var builder = new DownloadSettingsPatchBuilder();
         ParseTokensAsProfile("<remote-cli>", NormalizeArgs(cliArgs), builder);
         return builder.Build();
     }
@@ -162,7 +179,7 @@ public static partial class ConfigManager
         };
     }
 
-    public static void ApplyAutoProfileCliSettings(ConfigFile file, DownloadSettings root, CliSettings cli, Job? job = null)
+    public static void ApplyAutoProfileCliSettings(ConfigFile file, DownloadSettings root, CliSettings cli)
     {
         // Client settings can themselves affect profile context, e.g. one profile
         // enables interactive mode and another condition depends on interactive.
@@ -171,23 +188,24 @@ public static partial class ConfigManager
 
         for (int pass = 0; pass < maxPasses; pass++)
         {
-            var before = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            var before = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson, cli.Monitor);
             var context = CreateProfileContext(cli);
 
             foreach (var profile in file.Profiles
                          .Where(x => x.Key != "default" && x.Value.Condition != null)
                          .Select(x => ToProfileEntry(x.Value))
-                         .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, root, job, context)))
+                         .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, root, job: null, context: context)))
             {
                 profile.Cli.ApplyTo(cli);
             }
 
-            var after = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson);
+            var after = (cli.InteractiveMode, cli.NoProgress, cli.ProgressJson, cli.Monitor);
             if (after.Equals(before))
                 return;
         }
 
-        SockseekLog.Warn("Warning: Client profile settings did not stabilize after repeated auto-profile passes");
+        Console.Error.WriteLine(
+            "[warn] [cli] Client profile settings did not stabilize after repeated auto-profile passes");
     }
 
     public static IReadOnlyList<string> GetProfileNames(ConfigFile file)
@@ -204,6 +222,7 @@ public static partial class ConfigManager
         context.Values["interactive"] = cli.InteractiveMode;
         context.Values["progress-json"] = cli.ProgressJson;
         context.Values["no-progress"] = cli.NoProgress;
+        context.Values["monitor"] = cli.Monitor;
         return context;
     }
 
@@ -262,16 +281,16 @@ public static partial class ConfigManager
     private static ProfileEntry ParseTokensAsProfile(
         string name,
         IList<string> tokens,
-        DownloadSettingsDeltaBuilder? downloadDeltaBuilder = null)
+        DownloadSettingsPatchBuilder? downloadPatchBuilder = null)
         => ParseTokensAsProfile(
             name,
             tokens.Select(static value => new NormalizedArg(value, AllowsLeadingHyphen: true)).ToList(),
-            downloadDeltaBuilder);
+            downloadPatchBuilder);
 
     private static ProfileEntry ParseTokensAsProfile(
         string name,
         IList<NormalizedArg> tokens,
-        DownloadSettingsDeltaBuilder? downloadDeltaBuilder = null)
+        DownloadSettingsPatchBuilder? downloadPatchBuilder = null)
     {
         var entry = new ProfileEntry(
             new SettingsProfile { Name = name },
@@ -286,7 +305,7 @@ public static partial class ConfigManager
 
             if (!t.StartsWith('-'))
             {
-                AddProfileOption(entry, "--input", t, downloadDeltaBuilder);
+                AddProfileOption(entry, "--input", t, downloadPatchBuilder);
                 continue;
             }
 
@@ -302,7 +321,7 @@ public static partial class ConfigManager
                 default:
                     if (IsValuelessOption(t))
                     {
-                        AddProfileOption(entry, t, "true", downloadDeltaBuilder);
+                        AddProfileOption(entry, t, "true", downloadPatchBuilder);
                     }
                     else if (OptionUsesBoolValue(t))
                     {
@@ -310,11 +329,11 @@ public static partial class ConfigManager
                         if (i + 1 < tokens.Count
                             && (tokens[i + 1].IsAttachedValue || IsBoolLiteral(tokens[i + 1].Value)))
                             value = tokens[++i].Value;
-                        AddProfileOption(entry, t, value, downloadDeltaBuilder);
+                        AddProfileOption(entry, t, value, downloadPatchBuilder);
                     }
                     else
                     {
-                        AddProfileOption(entry, t, Next(tokens, ref i, t), downloadDeltaBuilder);
+                        AddProfileOption(entry, t, Next(tokens, ref i, t), downloadPatchBuilder);
                     }
                     break;
             }
@@ -325,11 +344,20 @@ public static partial class ConfigManager
 
     // ── Post-processing ───────────────────────────────────────────────────────
 
-    private static void PostProcess(EngineSettings engine, DownloadSettings dl, string? configDir)
+    private static void PostProcess(
+        EngineSettings engine,
+        DownloadSettings dl,
+        DaemonSettings daemon,
+        string? configDir)
     {
         var pathContext = new PathVariableContext(ConfigDir: configDir);
         PostProcessDownload(dl, pathContext);
         SettingsNormalizer.NormalizeEnginePaths(engine, pathContext);
+        if (!string.IsNullOrWhiteSpace(daemon.DataDirectory))
+        {
+            daemon.DataDirectory = Path.GetFullPath(
+                Utils.ExpandVariables(daemon.DataDirectory, pathContext));
+        }
     }
 
     private static void PostProcessDownload(DownloadSettings dl, PathVariableContext pathContext)
@@ -408,7 +436,7 @@ public static partial class ConfigManager
         ProfileEntry entry,
         string flag,
         string value,
-        DownloadSettingsDeltaBuilder? downloadDeltaBuilder = null,
+        DownloadSettingsPatchBuilder? downloadPatchBuilder = null,
         OptionProbe? probe = null)
     {
         var tr = StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries;
@@ -429,7 +457,7 @@ public static partial class ConfigManager
             else
             {
                 entry.Profile.Download.Add(action);
-                downloadDeltaBuilder?.Record(flag, value, action);
+                downloadPatchBuilder?.Record(flag, value, action);
             }
         }
         void Cli(Action<CliSettings> action)
@@ -481,7 +509,40 @@ public static partial class ConfigManager
                 return 1.0;
             return ParseDouble(value, flag);
         }
+        TimeSpan? RetentionDays()
+        {
+            if (probe != null) return TimeSpan.FromDays(1);
+            if (string.Equals(value, "forever", StringComparison.OrdinalIgnoreCase)) return null;
+            double days = ParseDouble(value, flag);
+            if (days <= 0) throw new ArgumentException($"{flag} must be a positive number of days or 'forever'.");
+            return TimeSpan.FromDays(days);
+        }
+        TimeSpan? RescanInterval()
+        {
+            if (probe != null)
+                return TimeSpan.FromMinutes(1);
+            return ParseOptionalDuration(value, flag);
+        }
+        (bool Append, string Item) ListOperation()
+        {
+            string trimmed = value.TrimStart();
+            bool append = trimmed.StartsWith("+ ", StringComparison.Ordinal);
+            string item = append ? trimmed[2..].Trim() : value.Trim();
+            if (item.Length == 0)
+                throw new ArgumentException($"Input error: Option '{flag}' requires a non-empty value.");
+            return (append, item);
+        }
+        void DaemonEngine(Action<EngineSettings> action)
+        {
+            if (entry.Profile.Name != "default"
+                && !entry.Profile.Name.StartsWith('<'))
+            {
+                throw new ArgumentException(
+                    $"Input error: Daemon setting '{flag}' is not allowed in named or automatic profile '{entry.Profile.Name}'.");
+            }
 
+            Engine(action);
+        }
         switch (flag)
         {
             // ── Meta ─────────────────────────────────────────────────────────
@@ -519,8 +580,6 @@ public static partial class ConfigManager
                 Engine(e => e.SearchesPerTime = Int()); break;
             case "--srt": case "--searches-renew-time":
                 Engine(e => e.SearchRenewTime = Int()); break;
-            case "--nmsc": case "--no-modify-share-count":
-                Engine(e => e.NoModifyShareCount = Bool()); break;
             case "-v": case "--verbose": case "--debug":
                 Engine(e => e.LogLevel = LogLevel.Debug); break;
             case "-vv": case "--trace":
@@ -531,10 +590,82 @@ public static partial class ConfigManager
                 Engine(e => e.ConnectTimeout = Int()); break;
             case "--user-description":
                 Engine(e => e.UserDescription = value); break;
-            case "--shared-files":
-                Engine(e => e.SharedFiles = Int()); break;
-            case "--shared-folders":
-                Engine(e => e.SharedFolders = Int()); break;
+            case "--user-picture":
+                DaemonEngine(e => e.UserPicturePath = value); break;
+            case "--share":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.Roots.Clear();
+                        e.Sharing.Roots.Add(ShareRootParser.Parse(operation.Item));
+                    });
+                    break;
+                }
+            case "--share-exclude":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.ExcludedDirectories.Clear();
+                        e.Sharing.ExcludedDirectories.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--share-filter":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Sharing.Filters.Clear();
+                        e.Sharing.Filters.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--share-scan-on-start":
+                DaemonEngine(e => e.Sharing.ScanOnStart = Bool()); break;
+            case "--share-rescan-interval":
+                DaemonEngine(e => e.Sharing.RescanInterval = RescanInterval()); break;
+            case "--upload-slots":
+                DaemonEngine(e => e.Uploads.Slots = Int()); break;
+            case "--upload-speed-limit-kib":
+                DaemonEngine(e => e.Uploads.SpeedLimitKiBPerSecond = Int()); break;
+            case "--peer-blocked-user":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.PeerAccess.BlockedUsernames.Clear();
+                        e.PeerAccess.BlockedUsernames.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--peer-blocked-ip":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.PeerAccess.BlockedIpAddresses.Clear();
+                        e.PeerAccess.BlockedIpAddresses.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--chat-room":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.Chat.AutoJoinRooms.Clear();
+                        e.Chat.AutoJoinRooms.Add(operation.Item);
+                    });
+                    break;
+                }
             case "--mock-files-dir":
                 Engine(e => e.MockFilesDir = value); break;
             case "--mock-files-no-read-tags":
@@ -553,10 +684,42 @@ public static partial class ConfigManager
                 Cli(c => c.NoProgress = !Bool()); break;
             case "--progress-json":
                 Cli(c => c.ProgressJson = Bool()); break;
+            case "--monitor":
+                Cli(c => c.Monitor = Bool()); break;
             case "--server-ip": case "--daemon-ip": case "--api-ip":
                 Daemon(d => d.ListenIp = value); break;
             case "--server-port": case "--daemon-port": case "--api-port":
                 Daemon(d => d.ListenPort = Port()); break;
+            case "--data-dir":
+                Daemon(d => d.DataDirectory = value); break;
+            case "--no-retention":
+                Daemon(d => d.RetentionEnabled = false); break;
+            case "--successful-job-retention-days":
+                Daemon(d =>
+                {
+                    var retention = RetentionDays();
+                    d.CompletedJobRetention = retention;
+                    if (retention == null)
+                        d.MaximumRetainedJobs = null;
+                });
+                break;
+            case "--unsuccessful-job-retention-days":
+                Daemon(d =>
+                {
+                    var retention = RetentionDays();
+                    d.UnsuccessfulJobRetention = retention;
+                    if (retention == null)
+                        d.MaximumRetainedJobs = null;
+                });
+                break;
+            case "--transfer-retention-days":
+                Daemon(d => d.TransferRetention = RetentionDays()); break;
+            case "--search-result-retention-days":
+                Daemon(d => d.SearchResultRetention = RetentionDays()); break;
+            case "--private-message-retention-days":
+                Daemon(d => d.PrivateMessageRetention = RetentionDays()); break;
+            case "--room-message-retention-days":
+                Daemon(d => d.RoomMessageRetention = RetentionDays()); break;
             case "--remote": case "--server-url":
                 Remote(r => r.ServerUrl = value); break;
 
@@ -729,7 +892,7 @@ public static partial class ConfigManager
             case "--st": case "--search-time": case "--search-timeout":
                 Download(d => d.Search.SearchTimeout = Int()); break;
             case "--Mst": case "--stale-time": case "--max-stale-time":
-                Download(d => d.Search.MaxStaleTime = Int()); break;
+                Download(d => d.Transfer.MaxStaleTime = Int()); break;
             case "--Mr": case "--retries": case "--max-retries":
                 Download(d => d.Transfer.MaxDownloadRetries = Int()); break;
             case "--uer": case "--unknown-error-retries":
@@ -909,19 +1072,19 @@ public static partial class ConfigManager
         }
     }
 
-    private sealed class DownloadSettingsDeltaBuilder
+    private sealed class DownloadSettingsPatchBuilder
     {
-        private readonly List<DownloadSettingOperationDto> operations = [];
+        private DownloadSettingsPatchDto? patch;
 
         public DownloadSettingsPatchDto? Build()
-            => DownloadSettingsPatchDtoMapper.FromOperations(operations);
+            => patch;
 
         public void Record(string flag, string value, Action<DownloadSettings> action)
         {
             if (TryRecordSpecial(flag, value))
                 return;
 
-            AddDiffOperations(action, CreateSentinelSettings(
+            AddDifference(action, CreateSentinelSettings(
                 boolSeed: false,
                 intSeed: -987654321,
                 doubleSeed: -987654321.5,
@@ -931,7 +1094,7 @@ public static partial class ConfigManager
                 skipSeed: SkipMode.Name,
                 albumArtSeed: AlbumArtOption.Default));
 
-            AddDiffOperations(action, CreateSentinelSettings(
+            AddDifference(action, CreateSentinelSettings(
                 boolSeed: true,
                 intSeed: -987654320,
                 doubleSeed: -987654320.5,
@@ -948,7 +1111,8 @@ public static partial class ConfigManager
             {
                 case "-i":
                 case "--input":
-                    Add(DownloadSettingsDeltaMapper.Set("Extraction.Input", value));
+                    Add(new DownloadSettingsPatchDto(
+                        Extraction: new ExtractionSettingsPatchDto(Input: value)));
                     return true;
 
                 case "--oc":
@@ -956,9 +1120,10 @@ public static partial class ConfigManager
                     var onComplete = ParseOnCompleteConfigValue(value);
                     if (onComplete.Append)
                     {
-                        Add(DownloadSettingsDeltaMapper.Append(
-                            "Output.OnComplete",
-                            [onComplete.Command]));
+                        Add(new DownloadSettingsPatchDto(
+                            Output: new OutputSettingsPatchDto(
+                                OnComplete: new CollectionPatchDto<string>(
+                                    Append: [onComplete.Command]))));
                         return true;
                     }
                     return false;
@@ -969,22 +1134,23 @@ public static partial class ConfigManager
                     {
                         var preprocess = new PreprocessSettings();
                         ApplyRegex(value, preprocess);
-                        Add(DownloadSettingsDeltaMapper.AppendRegex(
-                            "Preprocess.Regex",
-                            preprocess.Regex?.Select(ToRegexRuleDto).ToList() ?? []));
+                        Add(new DownloadSettingsPatchDto(
+                            Preprocess: new PreprocessSettingsPatchDto(
+                                Regex: new CollectionPatchDto<RegexRuleDto>(
+                                    Append: preprocess.Regex?.Select(ToRegexRuleDto).ToList() ?? []))));
                         return true;
                     }
                     return false;
 
                 case "--cond":
                 case "--conditions":
-                    AddConditionOperations("Search.NecessaryCond", "Search.NecessaryFolderCond", value);
+                    AddConditions(value, preferred: false);
                     return true;
 
                 case "--pc":
                 case "--pref":
                 case "--preferred-conditions":
-                    AddConditionOperations("Search.PreferredCond", "Search.PreferredFolderCond", value);
+                    AddConditions(value, preferred: true);
                     return true;
 
                 default:
@@ -992,79 +1158,51 @@ public static partial class ConfigManager
             }
         }
 
-        private void AddConditionOperations(string filePrefix, string folderPrefix, string value)
+        private void AddConditions(string value, bool preferred)
         {
             var folder = new FolderConditionPatch();
             var file = ConditionParser.ParseFileConditions(value, folder);
-            AddFileConditionOperations(filePrefix, file);
-
-            if (folder.MinTrackCount != null)
-                Add(DownloadSettingsDeltaMapper.Set($"{folderPrefix}.MinTrackCount", folder.MinTrackCount));
-            if (folder.MaxTrackCount != null)
-                Add(DownloadSettingsDeltaMapper.Set($"{folderPrefix}.MaxTrackCount", folder.MaxTrackCount));
-            if (folder.RequiredTrackTitles?.Count > 0)
-                Add(DownloadSettingsDeltaMapper.Append($"{folderPrefix}.RequiredTrackTitles", folder.RequiredTrackTitles));
+            var filePatch = new FileConditionsPatchDto(
+                file.LengthTolerance,
+                file.MinBitrate,
+                file.MaxBitrate,
+                file.MinSampleRate,
+                file.MaxSampleRate,
+                file.MinBitDepth,
+                file.MaxBitDepth,
+                file.StrictTitle,
+                file.StrictArtist,
+                file.StrictAlbum,
+                file.Formats == null ? null : new CollectionPatchDto<string>(Replace: file.Formats),
+                file.BannedUsers == null ? null : new CollectionPatchDto<string>(Replace: file.BannedUsers),
+                file.AllowedUsers == null ? null : new CollectionPatchDto<string>(Replace: file.AllowedUsers),
+                file.AcceptNoLength,
+                file.AcceptMissingProps);
+            var folderPatch = new FolderConditionsPatchDto(
+                folder.MinTrackCount,
+                folder.MaxTrackCount,
+                folder.RequiredTrackTitles?.Count > 0
+                    ? new CollectionPatchDto<string>(Append: folder.RequiredTrackTitles)
+                    : null);
+            var searchPatch = preferred
+                ? new SearchSettingsPatchDto(
+                    PreferredCond: filePatch,
+                    PreferredFolderCond: folderPatch)
+                : new SearchSettingsPatchDto(
+                    NecessaryCond: filePatch,
+                    NecessaryFolderCond: folderPatch);
+            Add(new DownloadSettingsPatchDto(Search: searchPatch));
         }
 
-        private void AddFileConditionOperations(string prefix, FileConditionPatch file)
-        {
-            if (file.LengthTolerance != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.LengthTolerance", file.LengthTolerance));
-            if (file.MinBitrate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinBitrate", file.MinBitrate));
-            if (file.MaxBitrate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxBitrate", file.MaxBitrate));
-            if (file.MinSampleRate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinSampleRate", file.MinSampleRate));
-            if (file.MaxSampleRate != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxSampleRate", file.MaxSampleRate));
-            if (file.MinBitDepth != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MinBitDepth", file.MinBitDepth));
-            if (file.MaxBitDepth != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.MaxBitDepth", file.MaxBitDepth));
-            if (file.StrictTitle != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictTitle", file.StrictTitle));
-            if (file.StrictArtist != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictArtist", file.StrictArtist));
-            if (file.StrictAlbum != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.StrictAlbum", file.StrictAlbum));
-            if (file.Formats != null) Add(DownloadSettingsDeltaMapper.Replace($"{prefix}.Formats", file.Formats));
-            if (file.BannedUsers != null) Add(DownloadSettingsDeltaMapper.Replace($"{prefix}.BannedUsers", file.BannedUsers));
-            if (file.AllowedUsers != null) Add(DownloadSettingsDeltaMapper.Replace($"{prefix}.AllowedUsers", file.AllowedUsers));
-            if (file.AcceptNoLength != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.AcceptNoLength", file.AcceptNoLength));
-            if (file.AcceptMissingProps != null) Add(DownloadSettingsDeltaMapper.Set($"{prefix}.AcceptMissingProps", file.AcceptMissingProps));
-        }
-
-        private void AddDiffOperations(Action<DownloadSettings> action, DownloadSettings before)
+        private void AddDifference(Action<DownloadSettings> action, DownloadSettings before)
         {
             var after = SettingsCloner.Clone(before);
             action(after);
-
-            foreach (var operation in DownloadSettingsDeltaMapper.DifferenceOperations(before, after))
-                Add(operation);
+            Add(DownloadSettingsPatchDtoMapper.FromDifference(before, after));
         }
 
-        private void Add(DownloadSettingOperationDto operation)
-        {
-            if (operations.Any(existing => SameOperation(existing, operation)))
-                return;
-
-            operations.Add(operation);
-        }
-
-        private static bool SameOperation(DownloadSettingOperationDto left, DownloadSettingOperationDto right)
-            => left.Path == right.Path
-            && left.Operation == right.Operation
-            && left.StringValue == right.StringValue
-            && left.IntValue == right.IntValue
-            && left.DoubleValue == right.DoubleValue
-            && left.BoolValue == right.BoolValue
-            && left.PrintOptionValue == right.PrintOptionValue
-            && left.InputTypeValue == right.InputTypeValue
-            && left.ExtractionModeValue == right.ExtractionModeValue
-            && left.SkipModeValue == right.SkipModeValue
-            && left.AlbumArtOptionValue == right.AlbumArtOptionValue
-            && left.IncompleteAlbumActionKindValue == right.IncompleteAlbumActionKindValue
-            && ListEqual(left.StringListValue, right.StringListValue)
-            && RegexListEqual(left.RegexListValue, right.RegexListValue);
-
-        private static bool ListEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
-            => left == null && right == null
-            || left != null && right != null && left.SequenceEqual(right);
-
-        private static bool RegexListEqual(IReadOnlyList<RegexRuleDto>? left, IReadOnlyList<RegexRuleDto>? right)
-            => left == null && right == null
-            || left != null && right != null && left.SequenceEqual(right);
+        private void Add(DownloadSettingsPatchDto? next)
+            => patch = DownloadSettingsPatchDtoMapper.Combine(patch, next);
 
         private static DownloadSettings CreateSentinelSettings(
             bool boolSeed,
@@ -1100,7 +1238,7 @@ public static partial class ConfigManager
             settings.Search.NecessaryFolderCond = SentinelFolderConditions(intSeed, stringSeed);
             settings.Search.PreferredFolderCond = SentinelFolderConditions(intSeed, stringSeed);
             settings.Search.SearchTimeout = intSeed;
-            settings.Search.MaxStaleTime = intSeed;
+            settings.Transfer.MaxStaleTime = intSeed;
             settings.Search.DownrankOn = intSeed;
             settings.Search.IgnoreOn = intSeed;
             settings.Search.FastSearch = boolSeed;
@@ -1313,6 +1451,7 @@ public static partial class ConfigManager
         "--no-listen"
         or "-v" or "--verbose" or "--debug" or "-vv" or "--trace"
         or "--mock-files-no-read-tags"
+        or "--no-retention"
         or "--np" or "--no-progress"
         or "--progress"
         or "--nwp" or "--no-write-playlist"
@@ -1419,6 +1558,47 @@ public static partial class ConfigManager
         if (!double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double v))
             throw new Exception($"Input error: Option '{flag}' requires a numeric parameter, got '{s}'");
         return v;
+    }
+
+    private static TimeSpan? ParseOptionalDuration(string value, string flag)
+    {
+        value = value.Trim();
+        if (value.Equals("off", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (TimeSpan.TryParse(
+                value,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        if (value.Length > 1
+            && double.TryParse(
+                value[..^1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out double amount))
+        {
+            return char.ToLowerInvariant(value[^1]) switch
+            {
+                'm' => TimeSpan.FromMinutes(amount),
+                'h' => TimeSpan.FromHours(amount),
+                'd' => TimeSpan.FromDays(amount),
+                _ => throw InvalidDuration(),
+            };
+        }
+
+        throw InvalidDuration();
+
+        ArgumentException InvalidDuration()
+            => new(
+                $"Input error: Option '{flag}' requires a duration such as " +
+                "'00:30:00', '30m', '12h', '7d', or 'off'.");
     }
 
     private static bool ParseBool(string s, string flag)

@@ -10,8 +10,16 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Extractors;
 
 namespace Sockseek.Core.Transfers.Downloads.Runtime;
+
+internal sealed record PendingTerminalTransfer(
+    Guid TransferId,
+    int AttemptCount,
+    PeerFileTarget? Target,
+    string SourceReference,
+    string InitialOutputPath);
 
 internal sealed class DownloadExecutionContext
 {
@@ -32,7 +40,9 @@ internal sealed class DownloadExecutionContext
         DownloadJobTracker jobs,
         AutoProfileWorkflowReporter autoProfiles,
         SkipEvaluationCoordinator skipEvaluation,
-        DownloadRunScope runtime)
+        DownloadRunScope runtime,
+        ILoggerFactory loggerFactory,
+        ISensitiveOutput sensitiveOutput)
     {
         EngineSettings = engineSettings;
         ClientManager = clientManager;
@@ -49,6 +59,8 @@ internal sealed class DownloadExecutionContext
         AutoProfiles = autoProfiles;
         SkipEvaluation = skipEvaluation;
         Runtime = runtime;
+        LoggerFactory = loggerFactory;
+        SensitiveOutput = sensitiveOutput;
     }
 
     public EngineSettings EngineSettings { get; }
@@ -66,14 +78,32 @@ internal sealed class DownloadExecutionContext
     public AutoProfileWorkflowReporter AutoProfiles { get; }
     public SkipEvaluationCoordinator SkipEvaluation { get; }
     public DownloadRunScope Runtime { get; }
+    public ILoggerFactory LoggerFactory { get; }
+    public ISensitiveOutput SensitiveOutput { get; }
+    public ConcurrentDictionary<Guid, PendingTerminalTransfer> PendingTerminalTransfers { get; } = new();
 
     public JobContext Ctx(Job job) => Contexts.Get(job);
 
-    public void RegisterJob(Job job, Job? parent) => Jobs.Register(job, parent);
+    public void RegisterJob(Job job, Job? parent, Guid? sourceJobId = null) => Jobs.Register(job, parent, sourceJobId);
 
     public void ObservePreparedAutoProfiles(Job preparedRoot) => AutoProfiles.ObservePreparedRoot(preparedRoot);
 
     public void EmitAutoProfileFinalSummary(Job rootJob) => AutoProfiles.EmitFinalSummary(rootJob);
+
+    public void EmitAutoProfileFinalSummary(Guid workflowId) => AutoProfiles.EmitFinalSummary(workflowId);
+
+    public void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds)
+    {
+        musicDirectoryIndexBuildLoggedByWorkflow.TryRemove(workflowId, out _);
+        foreach (Guid jobId in jobIds)
+            PendingTerminalTransfers.TryRemove(jobId, out _);
+        AutoProfiles.Retire(workflowId);
+    }
+
+    internal (int WorkflowDiagnostics, int PendingTerminalTransfers, int AutoProfileWorkflows) RetainedStateCounts
+        => (musicDirectoryIndexBuildLoggedByWorkflow.Count,
+            PendingTerminalTransfers.Count,
+            AutoProfiles.RetainedWorkflowCount);
 
     public void RaiseBuildingMusicDirectoryIndex(Job job)
     {

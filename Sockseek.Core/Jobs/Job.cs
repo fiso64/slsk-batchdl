@@ -37,11 +37,13 @@ namespace Sockseek.Core.Jobs;
     // snapshots, but callers still imperatively choose individual transitions and the reducer does not
     // yet validate the full state machine. Next step: make transitions explicit command/result values,
     // reject illegal state combinations centrally, and keep all lifecycle/activity/outcome/failure
-    // mutations inside that reducer before moving the Job model itself toward immutability.
+    // mutations inside that reducer before moving the Job model itself toward immutability. Until that
+    // exists, Core architecture tests require production code to commit terminal states through
+    // JobOutcomeCommitter instead of calling SetDone/Fail/SetSkipped/SetCancelled directly.
     //
     // TODO [ARCHITECTURE]: Convert Job models to immutable types and implement Unidirectional Data Flow.
     // Jobs still act as globally mutable state containers. Properties like `BytesTransferred`
-    // and `DownloadPath` are mutated directly by Downloader/Searcher on background threads.
+    // and `DownloadPath` are mutated directly by transfer/search services on background threads.
     // Because INotifyPropertyChanged fires on the mutating thread, this forces the UI/CLI layers to use
     // liberal lock() statements to avoid race conditions and visual tearing.
     // Later refactor:
@@ -49,10 +51,12 @@ namespace Sockseek.Core.Jobs;
     // 2. Background workers should yield `ProgressEvent` structs to a Channel.
     // 3. A central reducer reads the channel, creates a *new* copy of the Job via the `with` expression,
     //    and pushes the unified snapshot to the UI.
+    // 4. Replace runtime query/projection escape hatches with read models so server/CLI follow-up
+    //    operations no longer need GetRuntimeJob-style access to mutable Job instances.
     public abstract class Job : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
-        public event Action<Job, JobStateTransition>? StateChanged;
+        internal event Action<Job, JobStateTransition>? StateChanged;
 
         private bool _deferPropertyChanged;
         private readonly List<string> _deferredPropertyChanges = [];
@@ -69,7 +73,6 @@ namespace Sockseek.Core.Jobs;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
 
-        private static int _nextDisplayId = 0;
         private int _displayId;
         private readonly object displayIdLock = new();
 
@@ -85,7 +88,7 @@ namespace Sockseek.Core.Jobs;
             lock (displayIdLock)
             {
                 if (_displayId == 0)
-                    _displayId = Interlocked.Increment(ref _nextDisplayId);
+                    _displayId = JobDisplayIds.Next();
 
                 return _displayId;
             }

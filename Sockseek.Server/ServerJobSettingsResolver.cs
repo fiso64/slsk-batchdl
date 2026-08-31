@@ -5,7 +5,7 @@ using Sockseek.Api;
 
 namespace Sockseek.Server;
 
-internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
+internal sealed class ServerJobSettingsResolver : IJobSettingsResolver, IWorkflowSettingsLifetime
 {
     private readonly DownloadSettings baseDefaults;
     private readonly ProfileCatalog catalog;
@@ -37,45 +37,42 @@ internal sealed class ServerJobSettingsResolver : IJobSettingsResolver
     public void SetJobOptions(Guid jobId, SubmissionOptionsDto? options)
         => submissionOptions.SetJobOptions(jobId, options);
 
+    public void RemoveWorkflowOptions(Guid workflowId)
+        => submissionOptions.RemoveWorkflowOptions(workflowId);
+
+    public long CaptureWorkflowVersion(Guid workflowId)
+        => submissionOptions.CaptureWorkflowVersion(workflowId);
+
+    public void RetireWorkflow(Guid workflowId, IReadOnlyCollection<Guid> jobIds, long expectedVersion)
+        => submissionOptions.RetireWorkflow(workflowId, jobIds, expectedVersion);
+
     public DownloadSettings Resolve(DownloadSettings inherited, Job job)
     {
         if (inherited.PrintOption != PrintOption.None)
             return SettingsCloner.Clone(inherited);
 
-        var options = submissionOptions.GetOptions(job);
-        var context = ToProfileContext(options?.ProfileContext);
-
-        var matchingAutoProfiles = catalog.AutoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, inherited, job, context))
-            .ToList();
-
-        var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
-
-        var settings = SettingsCloner.Clone(baseDefaults);
-        catalog.DefaultProfile?.Download.ApplyTo(settings);
-
-        foreach (var profile in matchingAutoProfiles)
-            profile.Download.ApplyTo(settings);
-
-        foreach (var profile in namedProfiles)
-            profile.Download.ApplyTo(settings);
-
-        DownloadSettingsPatchDtoMapper.ApplyTo(settings, launchDownloadSettings);
-        submissionOptions.ApplyTo(settings, options, job.Id);
-
-        settings.AppliedAutoProfiles = [.. matchingAutoProfiles.Select(p => p.Name)];
-        NormalizeForServer(settings, pathContext);
-        return settings;
+        return ResolveCore(job, submissionOptions.GetOptions(job), inherited);
     }
 
     public DownloadSettings ResolveFollowUp(Job job, SubmissionOptionsDto? options)
+        => ResolveCore(job, options, baseDefaults);
+
+    private DownloadSettings ResolveCore(
+        Job job,
+        SubmissionOptionsDto? options,
+        DownloadSettings conditionBaseline)
     {
         var context = ToProfileContext(options?.ProfileContext);
-        var matchingAutoProfiles = catalog.AutoProfiles
-            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, baseDefaults, job, context))
-            .ToList();
-
         var namedProfiles = catalog.ResolveNamedProfiles(options?.ProfileNames);
+        var conditionSettings = SettingsCloner.Clone(conditionBaseline);
+        catalog.DefaultProfile?.Download.ApplyTo(conditionSettings);
+        foreach (var profile in namedProfiles)
+            profile.Download.ApplyTo(conditionSettings);
+        DownloadSettingsPatchDtoMapper.ApplyTo(conditionSettings, launchDownloadSettings);
+        submissionOptions.ApplyTo(conditionSettings, options, job.Id);
+        var matchingAutoProfiles = catalog.AutoProfiles
+            .Where(p => p.Condition != null && ProfileConditionEvaluator.Satisfied(p.Condition, conditionSettings, job, context))
+            .ToList();
 
         var settings = SettingsCloner.Clone(baseDefaults);
         catalog.DefaultProfile?.Download.ApplyTo(settings);

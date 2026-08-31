@@ -17,6 +17,7 @@ namespace Sockseek.Core.Extractors;
             {
                 ExtractionMode.Album => true,
                 ExtractionMode.Song => false,
+                ExtractionMode.General => throw new ArgumentException("General extraction mode is only valid for exact remote-file sources."),
                 _ => !HasExplicitNonEmptyTitleKey(input),
             };
 

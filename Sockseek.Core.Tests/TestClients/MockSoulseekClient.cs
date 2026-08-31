@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using Sockseek.Core.Services;
+using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 using Soulseek;
 
 namespace Tests.ClientTests
 {
-    public partial class MockSoulseekClient : ISoulseekClient
+    public partial class MockSoulseekClient : ISoulseekClient, IPeerDirectorySource
     {
         public IReadOnlyCollection<Transfer> Downloads => throw new NotImplementedException();
 
@@ -21,11 +23,11 @@ namespace Tests.ClientTests
         private List<Soulseek.SearchResponse> index;
         private readonly int searchDelayMs;
         private readonly HashSet<string> failingUsers;
-        private readonly HashSet<string> disconnectingUsers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> disconnectingUsers = new(StringComparer.Ordinal);
         private int disconnectingSearches;
         private int failingSearches;
 
-        public int SearchesCancelledMidDelay { get; private set; }
+        public int SearchesCancelledAfterFirstResponse { get; private set; }
         public int ConnectCallCount;
         public int SearchCallCount;
         public int DownloadCallCount;
@@ -35,9 +37,14 @@ namespace Tests.ClientTests
         public Func<string, string, CancellationToken, Task>? BeforeDownloadStartsAsync;
         public Func<string, string, CancellationToken, Task>? BeforeDownloadCompletesAsync;
         public Func<string, string, TransferStates, CancellationToken, Task>? AfterDownloadStateChangedAsync;
+        public Func<SearchQuery, CancellationToken, Task>? BeforeSearchAsync;
+        public Func<CancellationToken, Task>? AfterFirstSearchResponseAsync;
         public bool BrowseReturnsBasenames { get; set; }
+        public BrowseResponse? BrowseResponseOverride { get; set; }
+        public long? BrowseProgressSize { get; set; }
         public bool IsDisposed { get; private set; }
         public Exception? ConnectException { get; set; }
+        public Action? Connecting { get; set; }
 
         public void FailNextDownloadWithDisconnect(string username)
             => disconnectingUsers.Add(username);
@@ -55,6 +62,18 @@ namespace Tests.ClientTests
             KickedFromServer?.Invoke(this, EventArgs.Empty);
         }
 
+        public void RaiseExcludedSearchPhrases(params string[] phrases)
+            => ExcludedSearchPhrasesReceived?.Invoke(this, phrases);
+
+        public void RaiseStateChanged(SoulseekClientStates state)
+        {
+            SoulseekClientStates previous = State;
+            State = state;
+            StateChanged?.Invoke(
+                this,
+                new SoulseekClientStateChangedEventArgs(previous, state, "test"));
+        }
+
         public MockSoulseekClient(
             List<Soulseek.SearchResponse> index,
             int searchDelayMs = 0,
@@ -63,15 +82,12 @@ namespace Tests.ClientTests
         {
             this.index         = index;
             this.searchDelayMs = searchDelayMs;
-            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            this.failingUsers  = new HashSet<string>(failingUsers ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             State = initialState;
         }
 
         public static MockSoulseekClient FromLocalPaths(bool useTags, params string[] localPaths)
         {
-            if (useTags)
-                SockseekLog.Info($"Reading tags from mock files dir, this may take a while. Use --mock-files-no-read-tags if tags are not needed.");
-
             var files = localPaths.SelectMany(path =>
                 System.IO.Directory.Exists(path)
                     ? System.IO.Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)
@@ -103,7 +119,7 @@ namespace Tests.ClientTests
                                         attributes.Add(new Soulseek.FileAttribute(FileAttributeType.BitDepth, file.Properties.BitsPerSample));
                                 }
                             }
-                            catch (Exception ex) { SockseekLog.Warn($"Failed to read tags for '{path}': {ex.Message}"); }
+                            catch (Exception) { }
                         }
                         else
                         {
@@ -149,14 +165,15 @@ namespace Tests.ClientTests
         public Task ConnectAsync(string address, int port, string username, string password, CancellationToken? cancellationToken = null)
         {
             Interlocked.Increment(ref ConnectCallCount);
+            Connecting?.Invoke();
 
             if (ConnectException != null)
             {
-                State = SoulseekClientStates.None;
+                RaiseStateChanged(SoulseekClientStates.None);
                 return Task.FromException(ConnectException);
             }
 
-            State = SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn;
+            RaiseStateChanged(SoulseekClientStates.Connected | SoulseekClientStates.LoggedIn);
             return Task.CompletedTask;
         }
 
@@ -174,6 +191,18 @@ namespace Tests.ClientTests
             var ct = cancellationToken.GetValueOrDefault(CancellationToken.None);
             await Task.Yield();
             ct.ThrowIfCancellationRequested();
+
+            if (BrowseProgressSize is long browseSize)
+            {
+                options?.ProgressUpdated?.Invoke((
+                    username,
+                    browseSize,
+                    0,
+                    100,
+                    browseSize));
+            }
+            if (BrowseResponseOverride is { } responseOverride)
+                return responseOverride;
 
             var user = index.FirstOrDefault(x => x.Username == username);
 
@@ -198,6 +227,16 @@ namespace Tests.ClientTests
             return new BrowseResponse(directories);
         }
 
+        public async Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+            PeerDirectoryIdentity directory,
+            CancellationToken cancellationToken = default)
+        {
+            var response = await BrowseAsync(
+                directory.Username,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return PeerDirectorySnapshotFactory.FromBrowseResponse(directory, response);
+        }
+
         public Task<(Search Search, IReadOnlyCollection<SearchResponse> Responses)> SearchAsync(SearchQuery query, SearchScope? scope = null, int? token = null, SearchOptions? options = null, CancellationToken? cancellationToken = null)
         {
             return SearchAsyncInternal(query, null, scope, token, options, cancellationToken);
@@ -220,7 +259,7 @@ namespace Tests.ClientTests
 
                 if (Interlocked.CompareExchange(ref disconnectingSearches, current - 1, current) == current)
                 {
-                    State = SoulseekClientStates.None;
+                    RaiseStateChanged(SoulseekClientStates.None);
                     throw new SoulseekClientException("Simulated disconnect during search");
                 }
             }
@@ -242,6 +281,9 @@ namespace Tests.ClientTests
             var totalLockedFileCount = 0;
             var ct = cancellationToken ?? CancellationToken.None;
             bool firstResponse = true;
+
+            if (BeforeSearchAsync is not null)
+                await BeforeSearchAsync(query, ct);
 
             foreach (var user in index)
             {
@@ -285,13 +327,19 @@ namespace Tests.ClientTests
 
                         // After firing the first response, simulate the search still running.
                         // This lets fast-search tests race the provisional download against the delay.
-                        if (firstResponse && searchDelayMs > 0)
+                        if (firstResponse && (searchDelayMs > 0 || AfterFirstSearchResponseAsync != null))
                         {
                             firstResponse = false;
-                            try { await Task.Delay(searchDelayMs, ct); }
+                            try
+                            {
+                                if (AfterFirstSearchResponseAsync != null)
+                                    await AfterFirstSearchResponseAsync(ct);
+                                else
+                                    await Task.Delay(searchDelayMs, ct);
+                            }
                             catch (OperationCanceledException)
                             {
-                                SearchesCancelledMidDelay++;
+                                SearchesCancelledAfterFirstResponse++;
                                 break;
                             }
                         }
@@ -353,7 +401,7 @@ namespace Tests.ClientTests
 
             if (disconnectingUsers.Remove(username))
             {
-                State = SoulseekClientStates.None;
+                RaiseStateChanged(SoulseekClientStates.None);
                 throw new SoulseekClientException($"Simulated disconnect during download for user {username}");
             }
 
@@ -383,7 +431,7 @@ namespace Tests.ClientTests
                 }
 
                 // Find the file in the directories
-                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.OrdinalIgnoreCase));
+                Soulseek.File? foundFile = user.Files.FirstOrDefault(x => x.Filename.Equals(remoteFilename, StringComparison.Ordinal));
                 if (foundFile == null)
                 {
                     throw new FileNotFoundException($"File {remoteFilename} not found for user {username}");

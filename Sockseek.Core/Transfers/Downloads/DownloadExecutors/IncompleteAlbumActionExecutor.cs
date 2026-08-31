@@ -3,6 +3,7 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Services;
+using Microsoft.Extensions.Logging;
 
 using Directory = System.IO.Directory;
 using File = System.IO.File;
@@ -12,10 +13,12 @@ namespace Sockseek.Core;
 internal sealed class IncompleteAlbumActionExecutor
 {
     private readonly DownloadExecutionContext context;
+    private readonly ILogger<IncompleteAlbumActionExecutor> logger;
 
     public IncompleteAlbumActionExecutor(DownloadExecutionContext context)
     {
         this.context = context;
+        logger = context.LoggerFactory.CreateLogger<IncompleteAlbumActionExecutor>();
     }
 
     public void HandleIncompleteAlbum(AlbumJob job, AlbumFolder folder, ResolvedIncompleteAlbumAction action, DownloadSettings config)
@@ -31,14 +34,17 @@ internal sealed class IncompleteAlbumActionExecutor
 
         if (filesToHandle.Count == 0)
         {
-            SockseekLog.Jobs.Debug($"[{job.DisplayId}] AlbumJob: skipping failed-album action; no completed files were downloaded for failed folder {folder.FolderPath}");
+            DownloadLogMessages.JobDecision(
+                logger,
+                job.Id,
+                "incomplete-album-action-not-needed",
+                0);
             return;
         }
 
         if (action.Kind == IncompleteAlbumActionKind.Delete)
         {
             context.Events.RaiseJobStatus(job, "deleting files");
-            SockseekLog.Jobs.Info(job, "Deleting album files");
         }
         else if (action.Kind == IncompleteAlbumActionKind.Move)
         {
@@ -48,7 +54,6 @@ internal sealed class IncompleteAlbumActionExecutor
                 throw new InvalidOperationException("Cannot move incomplete album files because incomplete album action path is not set.");
 
             context.Events.RaiseJobStatus(job, $"moving to {failedAlbumPath}");
-            SockseekLog.Jobs.Info(job, $"Moving album files to {failedAlbumPath}");
         }
 
         foreach (var af in filesToHandle)
@@ -77,7 +82,16 @@ internal sealed class IncompleteAlbumActionExecutor
             }
             catch (Exception e)
             {
-                SockseekLog.Jobs.Error(job, $"Unable to move or delete file '{downloadPath}' after album fail: {e}");
+                DownloadLogMessages.ComponentFailed(
+                    logger,
+                    e,
+                    "incomplete-album-action",
+                    job.Id);
+                context.Events.RaiseJobMessage(
+                    job,
+                    LogLevel.Error,
+                    null,
+                    "unable to move or delete a completed file after the album failed");
             }
         }
 

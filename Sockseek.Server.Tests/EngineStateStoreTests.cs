@@ -1,8 +1,10 @@
 using System.Reflection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
+using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.Snapshots;
 using Sockseek.Api;
 using Sockseek.Server;
 using Soulseek;
@@ -12,6 +14,146 @@ namespace Tests.Server;
 [TestClass]
 public class EngineStateStoreTests
 {
+    [TestMethod]
+    public void SnapshotAndEverySubsequentDelta_MatchCurrentServerProjection()
+    {
+        var server = new EngineStateStore();
+        var client = new DaemonClientStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var scope = StateStreamScopeDto.Workflow(song.WorkflowId);
+        server.ReserveWorkflowStream(song.WorkflowId);
+        client.ApplySnapshot(server.GetWorkflowSnapshot(song.WorkflowId));
+        server.StateBatchPublished += batch =>
+        {
+            if (batch.Scope == scope)
+                Assert.AreEqual(DaemonClientApplyStatus.Applied, client.Apply(batch).Status);
+        };
+
+        Register(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        song.UpdateActivity(JobActivityPhase.Downloading);
+        UpdateState(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        DownloadStateChanged(server, song, TransferStates.InProgress);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+
+        song.SetDone("C:/music/track.mp3");
+        UpdateState(server, song);
+        AssertClientMatchesProjection(server, client, song.WorkflowId);
+    }
+
+    [TestMethod]
+    public void UnknownWorkflowSnapshots_DoNotRetainStreamState()
+    {
+        var store = new EngineStateStore();
+
+        for (int i = 0; i < 1_000; i++)
+            store.GetWorkflowSnapshot(Guid.NewGuid());
+
+        Assert.AreEqual(0, store.RetainedWorkflowStateCounts.WorkflowStreamEpochs);
+        Assert.AreEqual(0, store.RetainedWorkflowStateCounts.WorkflowStreamSequences);
+        Assert.AreEqual(0, store.RetainedWorkflowStateCounts.WorkflowStreamReservations);
+    }
+
+    [TestMethod]
+    public void WorkflowStreamReservation_AlignsInitialSnapshotAndReleasesUnknownScope()
+    {
+        var store = new EngineStateStore();
+        Guid workflowId = Guid.NewGuid();
+
+        store.ReserveWorkflowStream(workflowId);
+        Guid initialEpoch = store.GetWorkflowSnapshot(workflowId).Position.Epoch;
+        var job = new SearchJob("reserved") { WorkflowId = workflowId };
+        StateUpdateBatchDto? firstWorkflowBatch = null;
+        store.StateBatchPublished += batch =>
+        {
+            if (batch.Scope == StateStreamScopeDto.Workflow(workflowId))
+                firstWorkflowBatch ??= batch;
+        };
+
+        Register(store, job);
+
+        Assert.IsNotNull(firstWorkflowBatch);
+        Assert.AreEqual(initialEpoch, firstWorkflowBatch.Epoch);
+
+        InvokePrivate(store, "OnWorkflowRetired", new WorkflowRetiredChange(
+            2,
+            DateTimeOffset.UtcNow,
+            workflowId));
+        store.ReleaseWorkflowStreamReservation(workflowId);
+        Assert.AreEqual(0, store.RetainedWorkflowStateCounts.WorkflowStreamEpochs);
+        Assert.AreEqual(0, store.RetainedWorkflowStateCounts.WorkflowStreamReservations);
+    }
+
+    [TestMethod]
+    public async Task ConcurrentCompletions_PublishWorkflowBatchesInSequence()
+    {
+        var server = new EngineStateStore();
+        var client = new DaemonClientStore();
+        var first = new SongJob(new SongQuery { Artist = "Artist", Title = "First" });
+        var second = new SongJob(new SongQuery { Artist = "Artist", Title = "Second" })
+        {
+            WorkflowId = first.WorkflowId,
+        };
+        Register(server, first);
+        Register(server, second);
+
+        var scope = StateStreamScopeDto.Workflow(first.WorkflowId);
+        client.ApplySnapshot(server.GetWorkflowSnapshot(first.WorkflowId));
+        var statuses = new List<DaemonClientApplyStatus>();
+        server.StateBatchPublished += batch =>
+        {
+            if (batch.Scope != scope)
+                return;
+
+            lock (statuses)
+                statuses.Add(client.Apply(batch).Status);
+        };
+
+        using var firstUpsertEntered = new ManualResetEventSlim();
+        using var releaseFirstUpsert = new ManualResetEventSlim();
+        server.JobUpserted += summary =>
+        {
+            if (summary.JobId != first.Id)
+                return;
+
+            firstUpsertEntered.Set();
+            releaseFirstUpsert.Wait(TimeSpan.FromSeconds(5));
+        };
+
+        var firstCompletion = Task.Factory.StartNew(
+            () => ExecutionCompleted(server, first),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        var secondCompletion = Task.CompletedTask;
+        try
+        {
+            Assert.IsTrue(firstUpsertEntered.Wait(TimeSpan.FromSeconds(5)));
+            secondCompletion = Task.Factory.StartNew(
+                () => ExecutionCompleted(server, second),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            await secondCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseFirstUpsert.Set();
+            await Task.WhenAll(firstCompletion, secondCompletion).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        lock (statuses)
+        {
+            CollectionAssert.AreEqual(
+                new[] { DaemonClientApplyStatus.Applied, DaemonClientApplyStatus.Applied },
+                statuses.ToArray());
+        }
+        AssertClientMatchesProjection(server, client, first.WorkflowId);
+    }
+
     [TestMethod]
     public void SongPayload_IncludesSnapshotProgress()
     {
@@ -27,9 +169,183 @@ public class EngineStateStoreTests
 
         var payload = store.GetJobDetail(song.Id)?.Payload as SongJobPayloadDto;
         Assert.IsNotNull(payload);
-        Assert.AreEqual(25, payload.BytesTransferred);
-        Assert.AreEqual(100, payload.TotalBytes);
-        Assert.AreEqual(25d, payload.ProgressPercent);
+        Assert.AreEqual(25, payload.File.BytesTransferred);
+        Assert.AreEqual(100, payload.File.FileSize);
+        Assert.AreEqual(25d, payload.File.ProgressPercent);
+    }
+
+    [TestMethod]
+    public void LiveTransferDetail_ProjectsLatestDownloadAndUploadAttempts()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var transfer = Transfer(song, TransferStates.InProgress) with
+        {
+            Id = Guid.NewGuid(),
+            AttemptCount = 1,
+        };
+        Guid attemptId = Guid.NewGuid();
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+        InvokePrivate(store, "OnDownloadStateChanged", new DownloadStateChangedChange(
+            1, startedAt, Snapshot(song), transfer));
+        InvokePrivate(store, "OnTransferAttemptStarted", new TransferAttemptStartedChange(
+            2,
+            startedAt,
+            Snapshot(song),
+            transfer,
+            attemptId,
+            1,
+            1,
+            TransferAttemptSource.SoulseekPeer,
+            "C:/downloads/Track.mp3.incomplete"));
+
+        var started = store.GetLiveTransferDetail(transfer.Id);
+        Assert.IsNotNull(started);
+        Assert.AreEqual(1, started.Transfer.Status.AttemptCount);
+        Assert.AreEqual("Started", started.LatestAttempt?.State);
+        Assert.AreEqual(startedAt, started.LatestAttempt?.StartedAtUtc);
+
+        DateTimeOffset completedAt = DateTimeOffset.UtcNow;
+        InvokePrivate(store, "OnTransferAttemptCompleted", new TransferAttemptCompletedChange(
+            3,
+            completedAt,
+            Snapshot(song),
+            transfer,
+            attemptId,
+            1,
+            2));
+        var completed = store.GetLiveTransferDetail(transfer.Id);
+        Assert.IsNotNull(completed);
+        Assert.AreEqual("Completed", completed.LatestAttempt?.State);
+        Assert.AreEqual(completedAt, completed.LatestAttempt?.CompletedAtUtc);
+
+        Guid uploadId = Guid.NewGuid();
+        Guid uploadAttemptId = Guid.NewGuid();
+        store.UpdateUploadTransfer(new Sockseek.Core.Transfers.Uploads.UploadTransferSnapshot(
+            uploadId,
+            Revision: 4,
+            Username: "upload-peer",
+            RemotePath: @"Share\Track.mp3",
+            SizeBytes: 100,
+            RequestedAtUtc: startedAt,
+            State: Sockseek.Core.Transfers.Uploads.UploadTransferState.InProgress,
+            FailureReason: Sockseek.Core.Transfers.Uploads.UploadFailureReason.None,
+            CancellationSource: Sockseek.Core.Transfers.Uploads.UploadCancellationSource.None,
+            BytesTransferred: 50,
+            BytesPerSecond: 25,
+            LastProgressAtUtc: completedAt,
+            Attempt: new Sockseek.Core.Transfers.Uploads.UploadAttemptSnapshot(
+                uploadAttemptId,
+                Number: 1,
+                StartedAtUtc: startedAt,
+                FinishedAtUtc: null,
+                BytesTransferred: 50,
+                BytesPerSecond: 25),
+            FinishedAtUtc: null));
+
+        var upload = store.GetLiveTransferDetail(uploadId);
+        Assert.IsNotNull(upload);
+        Assert.AreEqual("Upload", upload.Transfer.Identity.Direction);
+        Assert.AreEqual(uploadAttemptId, upload.LatestAttempt?.AttemptId);
+        Assert.AreEqual("Started", upload.LatestAttempt?.State);
+        Assert.AreEqual("upload-peer", upload.LatestAttempt?.SourceUsername);
+    }
+
+    [TestMethod]
+    public void WorkflowRetirementPublishesFinalRemovalAndReleasesAllWorkflowIndexes()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var parent = new JobList("workflow") { WorkflowId = song.WorkflowId };
+        parent.Add(song);
+        var batches = new List<StateUpdateBatchDto>();
+        store.StateBatchPublished += batches.Add;
+
+        Register(store, parent);
+        Register(store, song, parent);
+        Guid transferId = Guid.NewGuid();
+        InvokePrivate(store, "OnDownloadStateChanged", new DownloadStateChangedChange(
+            3,
+            DateTimeOffset.UtcNow,
+            Snapshot(song),
+            Transfer(song, TransferStates.InProgress) with { Id = transferId }));
+        Guid priorEpoch = store.GetWorkflowSnapshot(song.WorkflowId).Position.Epoch;
+
+        InvokePrivate(store, "OnWorkflowRetired", new WorkflowRetiredChange(
+            4,
+            DateTimeOffset.UtcNow,
+            song.WorkflowId));
+
+        Assert.IsNull(store.GetJobSummary(song.Id));
+        Assert.IsNull(store.GetJobSummary(parent.Id));
+        Assert.IsNull(store.GetWorkflowSummary(song.WorkflowId));
+        Assert.IsNull(store.GetLiveTransfer(transferId));
+        Assert.AreEqual(
+            new EngineStateStoreRetainedWorkflowCounts(
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            store.RetainedWorkflowStateCounts);
+
+        var removal = batches.Last(batch =>
+            batch.State.RemovedWorkflowIds.Contains(song.WorkflowId));
+        CollectionAssert.AreEquivalent(
+            new[] { parent.Id, song.Id },
+            removal.State.RemovedJobIds.ToArray());
+        CollectionAssert.Contains(removal.State.RemovedTransferIds.ToArray(), transferId);
+
+        var successor = new SearchJob("successor") { WorkflowId = song.WorkflowId };
+        Register(store, successor);
+        Assert.AreNotEqual(
+            priorEpoch,
+            store.GetWorkflowSnapshot(song.WorkflowId).Position.Epoch,
+            "A reused workflow ID starts a new recoverable stream generation.");
+    }
+
+    [TestMethod]
+    public void ExactSongPayload_UsesExactTargetWithoutFabricatingSearchEvidence()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" })
+        {
+            ExactTarget = new PeerFileTarget(
+                new PeerFileIdentity(" Peer ", @"Share\File.bin"),
+                42,
+                ".bin"),
+        };
+
+        Register(store, song);
+
+        var payload = store.GetJobDetail(song.Id)?.Payload as SongJobPayloadDto;
+        Assert.IsNotNull(payload);
+        Assert.IsNotNull(payload.ExactTarget);
+        Assert.AreEqual(" Peer ", payload.ExactTarget.Username);
+        Assert.IsNull(payload.ResolvedUsername);
+        Assert.IsNull(payload.ResolvedFilename);
+        Assert.IsNull(payload.ResolvedHasFreeUploadSlot);
+    }
+
+    [TestMethod]
+    public void ResolvedDirectoryPayload_ReportsScalarPlanStateWithoutInliningEntries()
+    {
+        var store = new EngineStateStore();
+        var target = new PeerFileTarget(
+            new PeerFileIdentity("Peer", @"Root\File.bin"),
+            42,
+            ".bin");
+        var plan = new DirectoryTransferPlan("Root", [
+            new DirectoryTransferEntry(target, []),
+        ]);
+        var job = new RemoteDirectoryJob(new RemoteDirectorySource.Resolved(plan));
+
+        Register(store, job);
+
+        var payload = store.GetJobDetail(job.Id)?.Payload as RemoteDirectoryJobPayloadDto;
+        Assert.IsNotNull(payload);
+        Assert.AreEqual(RemoteDirectorySourceKindDto.Resolved, payload.SourceKind);
+        Assert.IsNull(payload.SourceUsername);
+        Assert.IsNull(payload.SourceFolderPath);
+        Assert.AreEqual("planned", payload.Directory.Phase);
+        Assert.AreEqual(1, payload.Directory.AttemptNumber);
     }
 
     [TestMethod]
@@ -199,7 +515,7 @@ public class EngineStateStoreTests
         var initial = store.GetWorkflowSummary(list.WorkflowId);
         Assert.IsNotNull(initial);
         Assert.AreEqual("batch", initial.Title);
-        CollectionAssert.AreEqual(new[] { list.Id }, initial.RootJobIds.ToArray());
+        Assert.AreEqual(1, initial.RootJobCount);
         Assert.AreEqual(ServerWorkflowState.Active, initial.State);
         Assert.AreEqual(3, initial.ActiveJobCount);
         Assert.AreEqual(0, initial.CompletedJobCount);
@@ -286,7 +602,7 @@ public class EngineStateStoreTests
     }
 
     [TestMethod]
-    public void AlbumDetail_TracksReflectCurrentTransferState()
+    public void AlbumDetail_ReportsChildCountWithoutInliningTracks()
     {
         var store = new EngineStateStore();
         var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" });
@@ -299,57 +615,20 @@ public class EngineStateStoreTests
         Register(store, song1, album);
         Register(store, song2, album);
 
-        // Fire transfer state after registration — the cached record payload won't have it
-        DownloadStateChanged(store, song1, TransferStates.InProgress);
-        DownloadStateChanged(store, song2, TransferStates.Queued | TransferStates.Remotely);
-
-        var tracks = (store.GetJobDetail(album.Id)?.Payload as AlbumJobPayloadDto)?.Tracks;
-        Assert.IsNotNull(tracks);
-        Assert.AreEqual(2, tracks.Count);
-        Assert.AreEqual(TransferStates.InProgress.ToString(), tracks[0].TransferState);
-        Assert.AreEqual((TransferStates.Queued | TransferStates.Remotely).ToString(), tracks[1].TransferState);
+        var detail = store.GetJobDetail(album.Id);
+        Assert.IsNotNull(detail);
+        Assert.IsInstanceOfType<AlbumJobPayloadDto>(detail.Payload);
+        Assert.AreEqual(2, detail.ChildCount);
+        CollectionAssert.AreEquivalent(
+            new[] { song1.Id, song2.Id },
+            store.GetJobs(new JobQuery(null, null, null, null, IncludeAll: true, ParentJobId: album.Id))
+                .Select(job => job.JobId)
+                .ToArray());
     }
 
 
     [TestMethod]
-    public void ResultDraft_RoundTripsSourceMutationProvenance()
-    {
-        var store = new EngineStateStore();
-        var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" })
-        {
-            ItemNumber = 2,
-            LineNumber = 4,
-            SourceMutation = SourceMutation.ClearCsvRow("input.csv", 4, 2, 3),
-        };
-        var extract = new ExtractJob("input.csv", InputType.CSV)
-        {
-            AutoProcessResult = false,
-            Result = album,
-        };
-
-        Register(store, extract);
-
-        var payload = store.GetJobDetail(extract.Id)?.Payload as ExtractJobPayloadDto;
-        Assert.IsNotNull(payload);
-        var draft = payload.ResultDraft as AlbumJobDraftDto;
-        Assert.IsNotNull(draft);
-        Assert.IsNotNull(draft.Provenance);
-        Assert.AreEqual(2, draft.Provenance.ItemNumber);
-        Assert.AreEqual(4, draft.Provenance.LineNumber);
-        Assert.AreEqual(nameof(SourceMutationKind.ClearCsvRow), draft.Provenance.SourceMutation?.Kind);
-        Assert.AreEqual("input.csv", draft.Provenance.SourceMutation?.Source);
-        Assert.AreEqual(3, draft.Provenance.SourceMutation?.CsvColumnCount);
-
-        var roundTripped = JobRequestMapper.CreateJob(draft);
-        Assert.AreEqual(2, roundTripped.ItemNumber);
-        Assert.AreEqual(4, roundTripped.LineNumber);
-        Assert.AreEqual(SourceMutationKind.ClearCsvRow, roundTripped.SourceMutation?.Kind);
-        Assert.AreEqual("input.csv", roundTripped.SourceMutation?.Source);
-        Assert.AreEqual(3, roundTripped.SourceMutation?.CsvColumnCount);
-    }
-
-    [TestMethod]
-    public void AutoProcessedExtractPayload_DoesNotInlineResultDraft()
+    public void ExtractPayload_ExposesScalarSemanticResultRelationship()
     {
         var store = new EngineStateStore();
         var list = new JobList("batch");
@@ -365,8 +644,9 @@ public class EngineStateStoreTests
 
         var payload = store.GetJobDetail(extract.Id)?.Payload as ExtractJobPayloadDto;
         Assert.IsNotNull(payload);
+        Assert.AreEqual("input.csv", payload.Input);
+        Assert.AreEqual(nameof(InputType.CSV), payload.InputType);
         Assert.AreEqual(list.Id, payload.ResultJobId);
-        Assert.IsNull(payload.ResultDraft);
     }
 
     [TestMethod]
@@ -390,59 +670,87 @@ public class EngineStateStoreTests
 
     private static void Register(EngineStateStore store, Job job, Job? parent = null)
     {
+        job.EnsureDisplayId();
+        parent?.EnsureDisplayId();
         typeof(EngineStateStore)
             .GetMethod("OnJobRegistered", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job, parent]);
+            .Invoke(store, [new JobRegisteredChange(1, DateTimeOffset.UtcNow, Snapshot(job), parent?.Id, null)]);
     }
 
     private static void UpdateState(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobStateChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobStateChangedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void DiscoveryChanged(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobDiscoveryChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobDiscoveryChangedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void ResultCreated(EngineStateStore store, ExtractJob job, Job result)
     {
+        job.EnsureDisplayId();
+        result.EnsureDisplayId();
         typeof(EngineStateStore)
             .GetMethod("OnJobResultCreated", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job, result]);
+            .Invoke(store, [new JobResultCreatedChange(1, DateTimeOffset.UtcNow, Snapshot(job), Snapshot(result))]);
     }
 
     private static void ExecutionCompleted(EngineStateStore store, Job job)
     {
         typeof(EngineStateStore)
             .GetMethod("OnJobExecutionCompleted", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [job]);
+            .Invoke(store, [new JobExecutionCompletedChange(1, DateTimeOffset.UtcNow, Snapshot(job))]);
     }
 
     private static void DownloadStateChanged(EngineStateStore store, SongJob song, TransferStates state)
     {
         typeof(EngineStateStore)
             .GetMethod("OnDownloadStateChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(store, [song, state]);
+            .Invoke(store, [new DownloadStateChangedChange(1, DateTimeOffset.UtcNow, Snapshot(song), Transfer(song, state))]);
+    }
+
+    private static void InvokePrivate(EngineStateStore store, string methodName, CoreChange change)
+        => typeof(EngineStateStore)
+            .GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(store, [change]);
+
+    private static JobSnapshot Snapshot(Job job)
+        => CoreSnapshotFactory.CreateJob(job, revision: 1);
+
+    private static TransferSnapshot Transfer(SongJob song, TransferStates state)
+    {
+        var response = new SearchResponse("user", 1, true, 100_000, 0, []);
+        var file = new Soulseek.File(1, $"{song.Query.Title}.mp3", song.FileSize is > 0 ? song.FileSize.Value : 100, ".mp3");
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
+        return CoreSnapshotFactory.CreateDownloadTransfer(
+            Guid.NewGuid(),
+            song,
+            candidate,
+            $"C:/downloads/{song.Query.Title}.mp3",
+            revision: 1,
+            state: state.ToString(),
+            bytesTransferred: song.BytesTransferred,
+            totalBytes: song.FileSize is > 0 ? song.FileSize.Value : file.Size,
+            attemptCount: 0);
     }
 
     private static void AssertWorkflowSummaryMatchesBruteForceSnapshot(EngineStateStore store, Guid workflowId)
     {
         var cached = store.GetWorkflowSummary(workflowId);
-        var detail = store.GetWorkflow(workflowId, includeAll: true);
+        var jobs = store.GetJobs(new JobQuery(null, null, null, workflowId, IncludeAll: true));
 
         Assert.IsNotNull(cached);
-        Assert.IsNotNull(detail);
 
-        var expected = BuildBruteForceWorkflowSummary(workflowId, detail.Jobs);
+        var expected = BuildBruteForceWorkflowSummary(workflowId, jobs);
         Assert.AreEqual(expected.WorkflowId, cached.WorkflowId);
         Assert.AreEqual(expected.Title, cached.Title);
         Assert.AreEqual(expected.State, cached.State);
-        CollectionAssert.AreEqual(expected.RootJobIds.ToArray(), cached.RootJobIds.ToArray());
+        Assert.AreEqual(expected.RootJobCount, cached.RootJobCount);
         Assert.AreEqual(expected.ActiveJobCount, cached.ActiveJobCount);
         Assert.AreEqual(expected.FailedJobCount, cached.FailedJobCount);
         Assert.AreEqual(expected.CompletedJobCount, cached.CompletedJobCount);
@@ -466,7 +774,7 @@ public class EngineStateStoreTests
             workflowId,
             title,
             state,
-            ordered.Where(job => job.ParentJobId == null).Select(job => job.JobId).ToList(),
+            ordered.Count(job => job.ParentJobId == null),
             active,
             failed,
             completed);
@@ -478,4 +786,27 @@ public class EngineStateStoreTests
             or ServerJobTerminalOutcome.PartialSuccess
             || (job.TerminalOutcome == ServerJobTerminalOutcome.Skipped
                 && job.SkipReason != ServerJobSkipReason.AlreadyExists);
+
+    private static void AssertClientMatchesProjection(
+        EngineStateStore server,
+        DaemonClientStore client,
+        Guid workflowId)
+    {
+        var expected = server.GetWorkflowSnapshot(workflowId);
+        Assert.AreEqual(expected.Position, client.GetPosition(expected.Scope));
+        CollectionAssert.AreEqual(
+            expected.Workflows.Select(row => row.Summary).ToArray(),
+            client.GetWorkflows().Where(row => row.WorkflowId == workflowId).ToArray());
+        CollectionAssert.AreEqual(
+            expected.Jobs.Select(row => row.ToSummary()).OrderBy(row => row.JobId).ToArray(),
+            client.GetWorkflowJobs(workflowId).OrderBy(row => row.JobId).ToArray());
+        CollectionAssert.AreEqual(
+            expected.Transfers.OrderBy(row => row.TransferId).ToArray(),
+            client.GetTransfers()
+                .Where(row => row.Identity.WorkflowId == workflowId)
+                .OrderBy(row => row.TransferId)
+                .ToArray());
+        foreach (var search in expected.Searches)
+            Assert.AreEqual(search, client.GetSearchState(search.JobId));
+    }
 }

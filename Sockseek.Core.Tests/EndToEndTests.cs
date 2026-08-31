@@ -17,9 +17,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-mock-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Main", "TestArtist", "TestAlbum");
@@ -73,9 +70,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-playlist-test-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-playlist-test-out-" + Guid.NewGuid());
@@ -126,9 +120,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-index-test-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-index-test-out-" + Guid.NewGuid());
@@ -439,9 +430,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var tempRoot  = Path.Combine(Path.GetTempPath(), "slsk-nested-index-" + Guid.NewGuid());
             var sourceDir = Path.Combine(tempRoot, "src");
@@ -611,6 +599,60 @@ namespace Tests.EndToEnd
         }
 
         [TestMethod]
+        public async Task AutoProfile_AutoDetectedInputTypeAndConcreteMode_MatchExtractedChild()
+        {
+            string csvPath = Path.Combine(Path.GetTempPath(), "slsk-auto-profile-input-type-" + Guid.NewGuid() + ".csv");
+            await File.WriteAllTextAsync(csvPath, "artist,title\nTest Artist,Test Track\n");
+
+            try
+            {
+                var eng = new EngineSettings { Username = "u", Password = "p" };
+                var rootSettings = new DownloadSettings();
+                rootSettings.Extraction.Input = csvPath;
+
+                var autoProfile = new SettingsProfile
+                {
+                    Name = "csv-song",
+                    Condition = "input-type == \"csv\" && download-mode == \"song\"",
+                    Download = new DownloadSettingsPatch(),
+                };
+                autoProfile.Download.Add(dl => dl.Transfer.MaxStaleTime = 4242);
+
+                var resolver = new ProfileJobSettingsResolver(
+                    rootSettings,
+                    defaultProfile: null,
+                    autoProfiles: [autoProfile],
+                    namedProfiles: [],
+                    cliProfile: null,
+                    normalize: SettingsNormalizer.Normalize);
+
+                var extract = new ExtractJob(csvPath, InputType.None);
+                var app = new DownloadEngine(
+                    eng,
+                    TestHelpers.CreateMockClientManager(new ClientTests.MockSoulseekClient([]), eng),
+                    resolver);
+                app.Enqueue(extract, rootSettings);
+                app.CompleteEnqueue();
+
+                await app.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(InputType.CSV, extract.InputType);
+                Assert.AreEqual(InputType.CSV, extract.Config.Extraction.InputType);
+                Assert.IsNotNull(extract.Result);
+                var song = extract.Result is JobList list
+                    ? list.Jobs.OfType<SongJob>().Single()
+                    : (SongJob)extract.Result;
+                CollectionAssert.Contains(song.Config.AppliedAutoProfiles.ToList(), "csv-song");
+                Assert.AreEqual(4242, song.Config.Transfer.MaxStaleTime);
+            }
+            finally
+            {
+                if (File.Exists(csvPath))
+                    File.Delete(csvPath);
+            }
+        }
+
+        [TestMethod]
         public async Task AutoProfile_ListAlbumLines_LogsNewProfilesOnceAndDebugSummary()
         {
             var listPath = Path.Combine(Path.GetTempPath(), "slsk-auto-profile-list-" + Guid.NewGuid() + ".txt");
@@ -644,8 +686,8 @@ namespace Tests.EndToEnd
 
                 var messages = new List<(string Scope, LogLevel Level, string Message)>();
                 var app = new DownloadEngine(eng, TestHelpers.CreateMockClientManager(new ClientTests.MockSoulseekClient([]), eng), resolver);
-                app.Events.JobMessage += (_, level, _, message) => messages.Add(("job", level, message));
-                app.Events.WorkflowMessage += (_, level, _, message) => messages.Add(("workflow", level, message));
+                app.Events.JobMessage += change => messages.Add(("job", change.Level, change.Message));
+                app.Events.WorkflowMessage += change => messages.Add(("workflow", change.Level, change.Message));
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
                 app.CompleteEnqueue();
 
@@ -1052,9 +1094,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-e2e", Guid.NewGuid().ToString());
@@ -1107,9 +1146,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-list-format-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Album2");
@@ -1168,9 +1204,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-list-strict-album-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Album", "Disc 1");
@@ -1229,9 +1262,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-list-strict-count-out-" + Guid.NewGuid());
             var listPath  = Path.GetTempFileName();
@@ -1297,9 +1327,10 @@ namespace Tests.EndToEnd
                     normalize: SettingsNormalizer.Normalize);
                 var app = new DownloadEngine(engineSettings, clientManager, resolver);
                 AlbumJob? albumJob = null;
-                app.Events.JobRegistered += (job, _) =>
+                app.Events.JobRegistered += change =>
                 {
-                    if (job is AlbumJob aj)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && app.GetJob(change.Job.Id) is AlbumJob aj)
                         albumJob = aj;
                 };
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
@@ -1339,9 +1370,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-list-track-count-browse-out-" + Guid.NewGuid());
             var listPath  = Path.GetTempFileName();
@@ -1392,9 +1420,10 @@ namespace Tests.EndToEnd
                     normalize: SettingsNormalizer.Normalize);
                 var app = new DownloadEngine(engineSettings, clientManager, resolver);
                 AlbumJob? albumJob = null;
-                app.Events.JobRegistered += (job, _) =>
+                app.Events.JobRegistered += change =>
                 {
-                    if (job is AlbumJob aj)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                        && app.GetJob(change.Job.Id) is AlbumJob aj)
                         albumJob = aj;
                 };
                 app.Enqueue(new ExtractJob(listPath, InputType.List), rootSettings);
@@ -1426,9 +1455,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Error);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "Artist", "Chosen Album");
@@ -1459,7 +1485,7 @@ namespace Tests.EndToEnd
                 var concreteJob = new AlbumJob(new AlbumQuery { Artist = "Wrong Artist", Album = "Wrong Album" })
                 {
                     ResolvedTarget = selected,
-                    AllowBrowseResolvedTarget = false,
+                    DirectoryResolutionPolicy = AlbumDirectoryResolutionPolicy.UseSelectedSnapshot,
                     Results = [selected],
                 };
 
@@ -1487,9 +1513,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Error);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-preselected-song-music-" + Guid.NewGuid());
             var songDir   = Path.Combine(musicRoot, "Artist");
@@ -1695,9 +1718,10 @@ namespace Tests.EndToEnd
                 var clientManager = TestHelpers.CreateMockClientManager(testClient, engineSettings);
                 var app = new DownloadEngine(engineSettings, clientManager);
                 var searchedAlbumJobs = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Searching && job is AlbumJob)
+                    if (change.ActivityPhase == JobActivityPhase.Searching
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         searchedAlbumJobs++;
                 };
                 app.Enqueue(aggregateJob, rootSettings);
@@ -1766,11 +1790,13 @@ namespace Tests.EndToEnd
                 var app = new DownloadEngine(engineSettings, clientManager);
                 var searchedAlbumJobs = 0;
                 var albumDownloadsStarted = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job.ActivityPhase == JobActivityPhase.Searching && job is AlbumJob)
+                    if (change.ActivityPhase == JobActivityPhase.Searching
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         searchedAlbumJobs++;
-                    else if (job.ActivityPhase == JobActivityPhase.Downloading && job is AlbumJob)
+                    else if (change.ActivityPhase == JobActivityPhase.Downloading
+                        && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         albumDownloadsStarted++;
                 };
                 app.Enqueue(aggregateJob, rootSettings);
@@ -1800,9 +1826,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-song-rfs-" + Guid.NewGuid());
@@ -1845,9 +1868,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var testClient = new ClientTests.MockSoulseekClient(TestHelpers.CreateTestIndex());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-album-rfs-" + Guid.NewGuid());
@@ -1890,9 +1910,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-song-ae-music-" + Guid.NewGuid());
             var outputDir = Path.Combine(Path.GetTempPath(), "slsk-csv-song-ae-out-" + Guid.NewGuid());
@@ -2087,9 +2104,6 @@ namespace Tests.EndToEnd
         {
             Console.ResetColor();
             Console.OutputEncoding = Encoding.UTF8;
-            SockseekLog.SetupExceptionHandling();
-            SockseekLog.AddConsole();
-            SockseekLog.SetConsoleLogLevel(LogLevel.Debug);
 
             var musicRoot = Path.Combine(Path.GetTempPath(), "slsk-csv-album-ae-music-" + Guid.NewGuid());
             var albumDir  = Path.Combine(musicRoot, "TestArtist", "TestAlbum");
@@ -2221,12 +2235,13 @@ namespace Tests.EndToEnd
 
                 var songSearchesStarted = 0;
                 var downloadsStarted = 0;
-                app.Events.JobStateChanged += job =>
+                app.Events.JobStateChanged += change =>
                 {
-                    if (job is SongJob && job.ActivityPhase == JobActivityPhase.Searching)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Song
+                        && change.ActivityPhase == JobActivityPhase.Searching)
                         songSearchesStarted++;
                 };
-                app.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                app.Events.DownloadStarted += _ => downloadsStarted++;
                 app.Enqueue(aggregateJob, rootSettings);
                 app.CompleteEnqueue();
 

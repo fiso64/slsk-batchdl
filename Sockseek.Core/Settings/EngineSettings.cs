@@ -5,8 +5,12 @@ namespace Sockseek.Core.Settings;
 /// Engine-lifetime settings — stable for the lifetime of a DownloadEngine instance.
 /// Set once at construction; shared across all submissions.
 /// Does NOT include display/UI concerns (see CliSettings).
+// TODO: Engine means DownloadEngine, yet many of these settings are not strictly download related
+// (e.g. Sharing, Username & Password). Split EngineSettings and reorganize.
 public class EngineSettings
 {
+    internal EngineSettings ShallowClone() => (EngineSettings)MemberwiseClone();
+
     // ── Soulseek connection ───────────────────────────────────────────────────
 
     public string? Username { get; set; }
@@ -24,15 +28,25 @@ public class EngineSettings
     /// clearly so they do not fight another client using the same Soulseek account.
     public bool AutoReconnectAfterKickedFromServer { get; set; }
 
-    // ── Sharing ───────────────────────────────────────────────────────────────
-
-    public int SharedFiles { get; set; }
-
-    public int SharedFolders { get; set; }
+    // ── Sharing and uploads ───────────────────────────────────────────────────
 
     public string? UserDescription { get; set; }
 
-    public bool NoModifyShareCount { get; set; }
+    /// <summary>
+    /// Path to the daemon-lifetime profile picture. The daemon normalizes the
+    /// image once at startup and never exposes the original bytes.
+    /// </summary>
+    public string? UserPicturePath { get; set; }
+
+    public SharingSettings Sharing { get; set; } = new();
+
+    public UploadSettings Uploads { get; set; } = new();
+
+    public PeerAccessSettings PeerAccess { get; set; } = new();
+
+    // ── Chats ────────────────────────────────────────────────────────────────
+
+    public ChatSettings Chat { get; set; } = new();
 
     // ── Concurrency ───────────────────────────────────────────────────────────
 

@@ -5,6 +5,8 @@ namespace Sockseek.Core.Settings;
 /// Controls when and how already-downloaded tracks are skipped.
 public class SkipSettings
 {
+    internal SkipSettings ShallowClone() => (SkipSettings)MemberwiseClone();
+
     public bool SkipExisting { get; set; } = true;
 
     public bool SkipNotFound { get; set; }

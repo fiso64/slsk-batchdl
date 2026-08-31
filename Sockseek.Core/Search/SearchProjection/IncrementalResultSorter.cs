@@ -13,7 +13,7 @@ public sealed class IncrementalResultSorter
     private readonly SearchSettings search;
     private readonly bool requireFileSatisfies;
     private List<ResultSorter.SortEntry> entries = [];
-    private readonly HashSet<string> seen = new(StringComparer.Ordinal);
+    private readonly HashSet<PeerPathKey> seen = [];
     private int nextOriginalIndex;
 
     public IncrementalResultSorter(
@@ -53,7 +53,7 @@ public sealed class IncrementalResultSorter
         var newEntries = new List<ResultSorter.SortEntry>();
         foreach (var (response, file) in results)
         {
-            string key = response.Username + '\\' + file.Filename;
+            var key = new PeerPathKey(response.Username, file.Filename);
             if (!seen.Add(key))
                 continue;
 
@@ -70,6 +70,28 @@ public sealed class IncrementalResultSorter
         if (newEntries.Count == 0)
             return 0;
 
+        newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
+        MergeSortedEntries(newEntries);
+        return newEntries.Count;
+    }
+
+    public int AddRange(IEnumerable<SearchProjectionInput> results)
+    {
+        var newEntries = new List<ResultSorter.SortEntry>();
+        foreach (var input in results)
+        {
+            var key = new PeerPathKey(input.Username, input.Filename);
+            if (!seen.Add(key))
+                continue;
+            if (requireFileSatisfies
+                && !ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, input, query))
+                continue;
+            var entry = ResultSorter.CreateSortEntry(input, keyContext, nextOriginalIndex++);
+            if (entry.HasValue)
+                newEntries.Add(entry.Value);
+        }
+        if (newEntries.Count == 0)
+            return 0;
         newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
         MergeSortedEntries(newEntries);
         return newEntries.Count;
@@ -108,7 +130,7 @@ public sealed class IncrementalResultSorter
     internal IEnumerable<(SearchResponse Response, SlFile File)> OrderedResults()
     {
         for (int i = 0; i < entries.Count; i++)
-            yield return (entries[i].Response, entries[i].File);
+            yield return (entries[i].Response!, entries[i].File!);
     }
 
     public List<(SearchResponse Response, SlFile File)> Snapshot()
@@ -117,4 +139,7 @@ public sealed class IncrementalResultSorter
         snapshot.AddRange(OrderedResults());
         return snapshot;
     }
+
+    public List<SearchProjectionInput> SnapshotInputs()
+        => entries.Select(entry => entry.Input).ToList();
 }

@@ -2,6 +2,8 @@ using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Transfers.Downloads.State;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Sockseek.Core.Services;
 
@@ -19,7 +21,7 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
                 retainedPath == null
                     ? exception.Message
                     : $"{exception.Message}{Environment.NewLine}Downloaded payload retained at: {retainedPath}",
-                SockseekLog.ExceptionDetail(exception)),
+                Diagnostics.ExceptionText.Detail(exception)),
             exception);
 }
 
@@ -29,10 +31,17 @@ internal sealed record OutputFinalizationResult(JobOutcome Outcome, FileOrganiza
 internal sealed class OutputFinalizer
 {
     private readonly DownloadedFileCache downloadedFiles;
+    private readonly DownloadEvents? events;
+    private readonly ILogger<OutputFinalizer> logger;
 
-    public OutputFinalizer(DownloadedFileCache downloadedFiles)
+    public OutputFinalizer(
+        DownloadedFileCache downloadedFiles,
+        DownloadEvents? events = null,
+        ILogger<OutputFinalizer>? logger = null)
     {
         this.downloadedFiles = downloadedFiles;
+        this.events = events;
+        this.logger = logger ?? NullLogger<OutputFinalizer>.Instance;
     }
 
     public InitialDownloadTarget GetInitialDownloadTarget(
@@ -47,6 +56,20 @@ internal sealed class OutputFinalizer
         var sourceFileName = Utils.GetFileNameSlsk(candidate.Filename).CleanPath(config.Output.InvalidReplaceStr);
         var stagingPath = Path.Join(OutputStaging.Root(config.Output), song.Id.ToString("N"), sourceFileName);
 
+        return new(stagingPath, PublishToDuplicateCache: false);
+    }
+
+    public InitialDownloadTarget GetInitialDownloadTarget(
+        DownloadSettings config,
+        SongJob song,
+        FileManager organizer,
+        PeerFileTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(config.Output.NameFormat))
+            return new(organizer.GetSavePath(target.Filename), PublishToDuplicateCache: true);
+
+        var sourceFileName = Utils.GetFileNameSlsk(target.Filename).CleanPath(config.Output.InvalidReplaceStr);
+        var stagingPath = Path.Join(OutputStaging.Root(config.Output), song.Id.ToString("N"), sourceFileName);
         return new(stagingPath, PublishToDuplicateCache: false);
     }
 
@@ -73,7 +96,7 @@ internal sealed class OutputFinalizer
             catch (Exception ex)
             {
                 var organizationException = AsOrganizationException(ex, song.DownloadPath, targetPath: null);
-                SockseekLog.Jobs.Error(song, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                LogOrganizationFailure(song, organizationException);
                 return OutputFinalizationResult.Failed(
                     organizationException,
                     RetainedStagedPayload(song.DownloadPath, parentJob.Config.Output));
@@ -117,7 +140,7 @@ internal sealed class OutputFinalizer
                     .Select(file => file.DownloadPath)
                     .FirstOrDefault(path => OutputStaging.Contains(path, album.Config.Output));
                 var organizationException = AsOrganizationException(ex, strandedPath, album.DownloadPath);
-                SockseekLog.Jobs.Error(album, $"{organizationException.Message} {SockseekLog.ExceptionSummary(organizationException.InnerException ?? organizationException)}");
+                LogOrganizationFailure(album, organizationException);
                 return OutputFinalizationResult.Failed(
                     organizationException,
                     RetainedStagedPayload(strandedPath, album.Config.Output));
@@ -125,12 +148,26 @@ internal sealed class OutputFinalizer
         });
     }
 
+    private void LogOrganizationFailure(Job job, FileOrganizationException exception)
+    {
+        DownloadLogMessages.ComponentFailed(
+            logger,
+            exception,
+            "output-organization",
+            job.Id);
+        events?.RaiseJobMessage(
+            job,
+            LogLevel.Error,
+            null,
+            "download completed, but organizing the output failed");
+    }
+
     public void PublishDownloadedFileCache(SongJob song)
     {
         if (song.TerminalOutcome != JobTerminalOutcome.Succeeded)
             return;
 
-        PublishDownloadedFileCache(song, JobOutcome.Done(song.DownloadPath, song.ChosenCandidate, song.DownloadSource));
+        PublishDownloadedFileCache(song, JobOutcome.Done(song.DownloadPath, song.ResolvedTarget, song.DownloadSource));
     }
 
     public void PublishDownloadedFileCache(SongJob song, JobOutcome outcome)
@@ -138,13 +175,13 @@ internal sealed class OutputFinalizer
         if (outcome.TerminalOutcome != JobTerminalOutcome.Succeeded)
             return;
 
-        var candidate = song.ChosenCandidate;
-        if (candidate == null || string.IsNullOrEmpty(song.DownloadPath))
+        var target = song.ResolvedPeerTarget;
+        if (target == null || string.IsNullOrEmpty(song.DownloadPath))
             return;
         if (song.Config != null && OutputStaging.Contains(song.DownloadPath, song.Config.Output))
             return;
 
-        downloadedFiles.Publish(song.DownloadPath, candidate);
+        downloadedFiles.Publish(song.DownloadPath, target);
     }
 
     public void PublishDownloadedFileCache(IEnumerable<SongJob>? songs)

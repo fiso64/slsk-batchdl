@@ -3,14 +3,18 @@ using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Sockseek.Core.Diagnostics;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core;
 using SearchResponse = Soulseek.SearchResponse;
 using SlResponse = Soulseek.SearchResponse;
 using SlFile = Soulseek.File;
-using SlDictionary = System.Collections.Concurrent.ConcurrentDictionary<string, (Soulseek.SearchResponse, Soulseek.File)>;
 using Sockseek.Core.Settings;
+using Sockseek.Core.Events;
+using Sockseek.Core.Snapshots;
+using Sockseek.Core.PeerBrowsing;
 
 namespace Sockseek.Core.Services;
 
@@ -23,17 +27,30 @@ public partial class Searcher : IDisposable
     private readonly SearchEvents searchEvents;
     private readonly RateLimitedSemaphore rateSemaphore;
     private readonly SemaphoreSlim concurrencySemaphore;
+    private readonly TimeProvider timeProvider;
+    private readonly IPeerDirectorySource directorySource;
+    private readonly ILoggerFactory loggerFactory;
+    private readonly ILogger<Searcher> logger;
 
     public Searcher(ISoulseekClient client,
                     IUserSuccessStats userStats,
                     DownloadEvents downloadEvents,
                     int searchesPerTime, int searchRenewTime, int concurrentSearches = 2,
-                    SearchEvents? searchEvents = null)
+                    SearchEvents? searchEvents = null,
+                    TimeProvider? timeProvider = null,
+                    IPeerDirectorySource? directorySource = null,
+                    ILoggerFactory? loggerFactory = null)
     {
         this.client = client;
         this.userStats = userStats;
         this.downloadEvents = downloadEvents;
         this.searchEvents = searchEvents ?? new SearchEvents();
+        this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.directorySource = directorySource
+            ?? client as IPeerDirectorySource
+            ?? MissingPeerDirectorySource.Instance;
+        this.loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        logger = this.loggerFactory.CreateLogger<Searcher>();
         rateSemaphore = new RateLimitedSemaphore(searchesPerTime, TimeSpan.FromSeconds(searchRenewTime));
         concurrencySemaphore = new SemaphoreSlim(concurrentSearches);
     }
@@ -66,12 +83,15 @@ public partial class Searcher : IDisposable
 
         job.Discovery.RawResultCount = count;
         job.Discovery.LockedFileCount = locked;
-        // TODO [PERFORMANCE]: This currently publishes one discovery update per raw
-        // search result. Large real searches have shown measurable local CPU cost in
-        // the state-store/update path. Coalesce near this source by time/count, while
-        // still publishing an exact final update when the search completes.
         downloadEvents.RaiseJobDiscoveryChanged(job);
     }
+
+    private void LogSessionObserverFailure(string observerName, Exception exception, Guid jobId)
+        => DownloadLogMessages.SearchObserverFailed(
+            logger,
+            exception,
+            observerName,
+            jobId);
 
     public async Task<JobOutcome> Search(
         SearchJob job,
@@ -83,10 +103,16 @@ public partial class Searcher : IDisposable
         Job? phaseOwner = null)
     {
         var session = job.Session;
+        session.ConfigureTimeProvider(timeProvider);
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(activityJob, session);
-        session.RawResultAdded += OnRawResultAdded;
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(activityJob, session);
+        void OnSearchChange(CoreChange change) => downloadEvents.RaiseSearchChange(ChangeOwner(change, activityJob.Id));
+        session.ResultsAdded += OnResultsAdded;
+        session.ChangePublished += OnSearchChange;
 
         try
         {
@@ -101,15 +127,15 @@ public partial class Searcher : IDisposable
 
             activityJob.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
             await concurrencySemaphore.WaitAsync(ct);
-            try { await RunSearches(job.NetworkQuery, session.Results, getOpts, session.AddResponse, search, ct, onSearch, activityJob); }
+            try { await RunSearches(job.NetworkQuery, session, getOpts, session.AddResponse, search, ct, onSearch, activityJob); }
             finally { concurrencySemaphore.Release(); }
 
             activityJob.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
-            responseData.resultCount = session.Results.Count;
+            responseData.resultCount = session.ResultCount;
             responseData.lockedFilesCount += session.LockedFileCount;
             UpdateDiscoveryProgress(activityJob, session);
             if (!ReferenceEquals(activityJob, job))
-                job.Discovery = new DiscoverySummary { RawResultCount = session.Results.Count, LockedFileCount = session.LockedFileCount };
+                job.Discovery = new DiscoverySummary { RawResultCount = session.ResultCount, LockedFileCount = session.LockedFileCount };
             session.Complete();
             return JobOutcome.Done();
         }
@@ -126,9 +152,19 @@ public partial class Searcher : IDisposable
         }
         finally
         {
-            session.RawResultAdded -= OnRawResultAdded;
+            session.ResultsAdded -= OnResultsAdded;
+            session.ChangePublished -= OnSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
         }
     }
+
+    private static CoreChange ChangeOwner(CoreChange change, Guid ownerJobId)
+        => change switch
+        {
+            SearchResultsAddedChange added when added.JobId != ownerJobId => added with { JobId = ownerJobId },
+            SearchCompletedChange completed when completed.JobId != ownerJobId => completed with { JobId = ownerJobId },
+            _ => change,
+        };
 
 
     // ── song search ─────────────────────────────────────────────────────────
@@ -140,10 +176,14 @@ public partial class Searcher : IDisposable
         CancellationToken ct, Action? onSearch = null,
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
-        var session = new SearchSession();
+        var session = new SearchSession(song.Id, timeProvider, song.Query.ToString(noInfo: true));
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(song);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(song, session);
-        session.RawResultAdded += OnRawResultAdded;
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(song, session);
+        session.ResultsAdded += OnResultsAdded;
+        session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         void responseHandler(SearchResponse r)
         {
@@ -153,7 +193,7 @@ public partial class Searcher : IDisposable
                 && userStats.UserSuccessCounts.GetValueOrDefault(r.Username, 0) > search.DownrankOn)
             {
                 var f = r.Files.First();
-                var candidate = new FileCandidate(r, f);
+                var candidate = SoulseekSearchAdapter.ToFileCandidate(r, f);
                 if (r.HasFreeUploadSlot && r.UploadSpeed / 1024.0 / 1024.0 >= search.FastSearchMinUpSpeed
                     && ResultSorter.CheapBracketCheck(song.Query, f.Filename)
                     && ConditionSatisfactionPolicy.SearchFileSatisfies(search.PreferredCond, r, f, song.Query))
@@ -176,26 +216,24 @@ public partial class Searcher : IDisposable
         await concurrencySemaphore.WaitAsync(ct);
         try
         {
-            await RunSearches(song.Query, session.Results, getOpts, responseHandler, search, ct, onSearch, song);
+            await RunSearches(song.Query, session, getOpts, responseHandler, search, ct, onSearch, song);
         }
         finally
         {
-            session.RawResultAdded -= OnRawResultAdded;
+            session.Complete();
+            session.ResultsAdded -= OnResultsAdded;
+            session.ChangePublished -= downloadEvents.RaiseSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
         }
 
         song.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
         responseData.lockedFilesCount += session.LockedFileCount;
 
-        responseData.resultCount = session.Results.Count;
+        responseData.resultCount = session.ResultCount;
         UpdateDiscoveryProgress(song, session);
 
-        SockseekLog.Soulseek.Debug($"{session.Results.Count} results found: {song}");
-
-        if (!session.Results.IsEmpty && SockseekLog.IsEnabled(LogLevel.Trace))
-        {
-            SockseekLog.Soulseek.Trace(string.Join("\n", session.Results.Select(r => $"  {r.Value.Item1.Username}: {r.Value.Item2.Filename}")));
-        }
+        DownloadLogMessages.SearchCompleted(logger, song.Id, session.ResultCount);
 
         song.Candidates = SearchResultProjector.SortedTrackCandidates(
             session.Snapshot(),
@@ -226,10 +264,14 @@ public partial class Searcher : IDisposable
     // Populates job.Songs: one SongJob per distinct inferred track version found.
     public async Task<JobOutcome?> SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
-        var session = new SearchSession();
+        var session = new SearchSession(job.Id, timeProvider, job.Query.ToString(noInfo: true));
+        void OnObserverFailed(string name, Exception ex)
+            => LogSessionObserverFailure(name, ex, session.JobId);
+        session.ObserverFailed += OnObserverFailed;
         InitializeDiscoveryProgress(job);
-        void OnRawResultAdded(SearchSession _, SearchRawResult __) => UpdateDiscoveryProgress(job, session);
-        session.RawResultAdded += OnRawResultAdded;
+        void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(job, session);
+        session.ResultsAdded += OnResultsAdded;
+        session.ChangePublished += downloadEvents.RaiseSearchChange;
 
         SearchOptions getOpts(int timeout, FileConditions nec, FileConditions prf) =>
             new(
@@ -242,15 +284,18 @@ public partial class Searcher : IDisposable
 
         job.UpdateActivity(JobActivityPhase.WaitingForSearchConcurrency);
         await concurrencySemaphore.WaitAsync(ct);
-        try { await RunSearches(job.Query, session.Results, getOpts, session.AddResponse, search, ct, ownerJob: job); }
+        try { await RunSearches(job.Query, session, getOpts, session.AddResponse, search, ct, ownerJob: job); }
         finally
         {
-            session.RawResultAdded -= OnRawResultAdded;
+            session.Complete();
+            session.ResultsAdded -= OnResultsAdded;
+            session.ChangePublished -= downloadEvents.RaiseSearchChange;
+            session.ObserverFailed -= OnObserverFailed;
             concurrencySemaphore.Release();
         }
 
         responseData.lockedFilesCount += session.LockedFileCount;
-        responseData.resultCount = session.Results.Count;
+        responseData.resultCount = session.ResultCount;
         UpdateDiscoveryProgress(job, session);
         job.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
         job.Songs = SearchResultProjector.AggregateTracks(session.Snapshot(), job.Query, search, userStats.UserSuccessCounts);
@@ -279,18 +324,18 @@ public partial class Searcher : IDisposable
 
     // ── folder browse ────────────────────────────────────────────────────────
 
-    public async Task<List<(string dir, SlFile file)>> GetAllFilesInFolder(string user, string folderPrefix, CancellationToken? ct = null)
+    /// <summary>
+    /// Retrieves one exact peer directory into a Sockseek-owned snapshot. This
+    /// boundary deliberately creates no album query or search response.
+    /// </summary>
+    public Task<PeerDirectorySnapshot> RetrieveDirectory(
+        PeerDirectoryIdentity directory,
+        CancellationToken? ct = null)
     {
-        var res = new List<(string dir, SlFile file)>();
-        folderPrefix = folderPrefix.Replace('/', '\\').TrimEnd('\\') + '\\';
-        var userFileList = await client.BrowseAsync(user, new BrowseOptions(), ct);
-        foreach (var dir in userFileList.Directories)
-        {
-            string dirname = dir.Name.Replace('/', '\\').TrimEnd('\\') + '\\';
-            if (dirname.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
-                res.AddRange(dir.Files.Select(x => (dir.Name, x)));
-        }
-        return res;
+        ArgumentNullException.ThrowIfNull(directory);
+        return directorySource.RetrieveDirectoryAsync(
+            directory,
+            ct ?? CancellationToken.None);
     }
 
     // Appends any new files found in the remote folder to folder.Files.
@@ -300,35 +345,22 @@ public partial class Searcher : IDisposable
         int newFiles = 0;
         try
         {
-            List<(string dir, SlFile file)> allFiles;
+            PeerDirectorySnapshot snapshot;
             try
             {
-                allFiles = await GetAllFilesInFolder(folder.Username, folder.FolderPath, ct);
+                snapshot = await RetrieveDirectory(folder.DirectoryIdentity, ct);
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception e) { SockseekLog.Soulseek.Error($"Error getting all files in '{folder.FolderPath}': {e}"); return 0; }
-
-            var existing = folder.Files
-                .Select(f => f.Filename.Replace('/', '\\'))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var firstInfo = folder.Files.FirstOrDefault(f => !f.IsNotAudio)?.Query ?? new SongQuery();
-            var firstResp = folder.Files.FirstOrDefault()?.Candidate.Response
-                            ?? new SearchResponse(folder.Username, -1, false, -1, -1, null);
-
-            foreach (var (dir, file) in allFiles)
+            catch (Exception e)
             {
-                string filename = GetBrowseFilePath(dir, file.Filename);
-                if (existing.Contains(filename)) continue;
-
-                var slFile = new SlFile(file.Code, filename, file.Size, file.Extension, file.Attributes);
-                var candidate = new FileCandidate(firstResp, slFile);
-                var info = InferSongQuery(filename, new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
-
-                newFiles++;
-                folder.Files.Add(new AlbumFile(info, candidate));
+                DownloadLogMessages.FolderCompletionFailed(
+                    logger,
+                    e,
+                    DirectoryHash(folder));
+                return 0;
             }
 
-            folder.IsFullyRetrieved = true;
+            newFiles = ApplyDirectorySnapshot(folder, snapshot);
         }
         catch (OperationCanceledException)
         {
@@ -336,9 +368,62 @@ public partial class Searcher : IDisposable
         }
         catch (Exception ex)
         {
-            SockseekLog.Soulseek.Error($"Error completing folder: {ex}");
+            DownloadLogMessages.FolderCompletionFailed(
+                logger,
+                ex,
+                DirectoryHash(folder));
         }
         return newFiles;
+    }
+
+    private static string DirectoryHash(AlbumFolder folder)
+        => LogIdentity.Hash(
+            folder.DirectoryIdentity.Username
+            + "\0"
+            + folder.DirectoryIdentity.FolderPath);
+
+    /// <summary>
+    /// Associates a generic retrieval result back with an album candidate. The
+    /// retrieval snapshot itself remains free of album evidence.
+    /// </summary>
+    public static int ApplyDirectorySnapshot(
+        AlbumFolder folder,
+        PeerDirectorySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(folder);
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (folder.DirectoryIdentity != snapshot.Identity)
+            throw new ArgumentException("Retrieved directory identity does not match the album candidate.", nameof(snapshot));
+
+        var existing = folder.Files
+            .Select(file => file.Filename.Replace('/', '\\'))
+            .ToHashSet(StringComparer.Ordinal);
+        var firstInfo = folder.Files.FirstOrDefault(file => !file.IsNotAudio)?.Query ?? new SongQuery();
+        var representative = folder.Files.FirstOrDefault()?.Candidate;
+        var peer = new SearchPeerSnapshot(
+            folder.Username,
+            snapshot.Files.Count,
+            representative?.UploadSpeed,
+            representative?.HasFreeUploadSlot);
+        int added = 0;
+
+        foreach (var target in snapshot.Files)
+        {
+            string filename = target.Filename;
+            if (existing.Contains(filename))
+                continue;
+
+            var candidate = new FileCandidate(target, peer);
+            var info = InferSongQuery(
+                filename,
+                new SongQuery { Artist = firstInfo.Artist, Album = firstInfo.Album });
+            folder.Files.Add(new AlbumFile(info, candidate));
+            existing.Add(filename.Replace('/', '\\'));
+            added++;
+        }
+
+        folder.IsFullyRetrieved = snapshot.IsComplete;
+        return added;
     }
 
     internal static string GetBrowseFilePath(string dir, string filename)
@@ -346,7 +431,7 @@ public partial class Searcher : IDisposable
         string normalizedDir = dir.Replace('/', '\\').TrimEnd('\\');
         string normalizedFilename = filename.Replace('/', '\\');
 
-        if (normalizedDir.Length == 0 || normalizedFilename.StartsWith(normalizedDir + "\\", StringComparison.OrdinalIgnoreCase))
+        if (normalizedDir.Length == 0 || normalizedFilename.StartsWith(normalizedDir + "\\", StringComparison.Ordinal))
             return normalizedFilename;
 
         return normalizedDir + "\\" + normalizedFilename.TrimStart('\\');
@@ -542,7 +627,7 @@ public partial class Searcher : IDisposable
                     int len = grp.FirstOrDefault(y => y.Item2.Length != null).Item2?.Length ?? -1;
                     inferQ = new SongQuery(inferQ) { Length = len };
                 }
-                return (inferQ, grp.Select(y => new FileCandidate(y.Item1, y.Item2)));
+                return (inferQ, grp.Select(y => SoulseekSearchAdapter.ToFileCandidate(y.Item1, y.Item2)));
             });
     }
 
@@ -552,8 +637,8 @@ public partial class Searcher : IDisposable
         var audio2 = f2.Files.Where(f => !f.IsNotAudio).ToList();
         if (audio1.Count != audio2.Count) return false;
 
-        f1SortedLengths ??= audio1.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
-        var s2 = audio2.Select(f => f.Candidate.File.Length ?? -1).OrderBy(x => x).ToArray();
+        f1SortedLengths ??= audio1.Select(f => f.Candidate.Length ?? -1).OrderBy(x => x).ToArray();
+        var s2 = audio2.Select(f => f.Candidate.Length ?? -1).OrderBy(x => x).ToArray();
 
         for (int i = 0; i < f1SortedLengths.Length; i++)
             if (Math.Abs(f1SortedLengths[i] - s2[i]) > tolerance) return false;
@@ -564,7 +649,7 @@ public partial class Searcher : IDisposable
 
     // ── internal search plumbing ──────────────────────────────────────────────
 
-    public async Task RunSearches(SongQuery query, SlDictionary results,
+    private async Task RunSearches(SongQuery query, SearchSession session,
         Func<int, FileConditions, FileConditions, SearchOptions> getSearchOptions,
         Action<SearchResponse> responseHandler, SearchSettings search,
         CancellationToken? ct = null, Action? onSearch = null, Job? ownerJob = null)
@@ -585,7 +670,7 @@ public partial class Searcher : IDisposable
 
         await Task.WhenAll(searchTasks);
 
-        if (results.IsEmpty && query.ArtistMaybeWrong && title)
+        if (session.ResultCount == 0 && query.ArtistMaybeWrong && title)
         {
             var inferred = InferSongQuery(query.Title, new SongQuery());
             var cond = new FileConditions(search.NecessaryCond) { StrictTitle = inferred.Title == query.Title, StrictArtist = false };
@@ -597,7 +682,7 @@ public partial class Searcher : IDisposable
         {
             await Task.WhenAll(searchTasks);
 
-            if (results.IsEmpty && !query.ArtistMaybeWrong)
+            if (session.ResultCount == 0 && !query.ArtistMaybeWrong)
             {
                 if (artist && album && title)
                 {
@@ -617,7 +702,7 @@ public partial class Searcher : IDisposable
 
             await Task.WhenAll(searchTasks);
 
-            if (results.IsEmpty)
+            if (session.ResultCount == 0)
             {
                 var q2 = query.ArtistMaybeWrong ? InferSongQuery(query.Title, new SongQuery()) : query;
 

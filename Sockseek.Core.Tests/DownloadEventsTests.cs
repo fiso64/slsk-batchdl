@@ -1,7 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
+using Sockseek.Core.Events;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
+using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Soulseek;
@@ -14,7 +16,6 @@ namespace Tests.Eventing
         [ClassInitialize]
         public static void ClassSetup(TestContext _)
         {
-            SockseekLog.AddConsole(LogLevel.Critical);
         }
 
         private static async Task CompleteRunWithBlockedDownloads(TestHelpers.DownloadGate downloadGate, Task runTask)
@@ -27,6 +28,111 @@ namespace Tests.Eventing
 
             downloadGate.ReleaseAll();
             await runTask;
+        }
+
+        [TestMethod]
+        public void DownloadEvents_DownloadLifecycleChangesShareLogicalTransferId()
+        {
+            var events = new DownloadEvents();
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+            song.EnsureDisplayId();
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", size: 10_000, length: 180);
+            var response = new SearchResponse("user", 1, true, 100_000, 0, [file]);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
+            var transferId = Guid.NewGuid();
+            var outputPath = "C:/downloads/Track.mp3";
+            var attemptOutputPath = outputPath + ".incomplete";
+
+            DownloadStartedChange? started = null;
+            DownloadProgressedChange? progressed = null;
+            DownloadStateChangedChange? stateChanged = null;
+            DownloadAttemptFailedChange? failed = null;
+            TransferCompletedChange? completed = null;
+            var progressEventCount = 0;
+
+            events.DownloadStarted += change => started = change;
+            events.DownloadProgress += change =>
+            {
+                progressed = change;
+                progressEventCount++;
+            };
+            events.DownloadStateChanged += change => stateChanged = change;
+            events.DownloadAttemptFailed += change => failed = change;
+            events.TransferCompleted += change => completed = change;
+
+            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, outputPath);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, outputPath, 4096L, 10_000L);
+            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate.Target, outputPath, TransferStates.InProgress, 4096L, 10_000L);
+            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate.Target, outputPath, attemptOutputPath, 1, 3, new InvalidOperationException("boom"));
+            Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, outputPath, 10_000L, 2);
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, outputPath, 9_000L, 10_000L);
+
+            Assert.IsNotNull(started);
+            Assert.IsNotNull(progressed);
+            Assert.IsNotNull(stateChanged);
+            Assert.IsNotNull(failed);
+            Assert.IsNotNull(completed);
+            Assert.AreEqual(transferId, started.TransferId);
+            Assert.AreEqual(transferId, progressed.TransferId);
+            Assert.AreEqual(transferId, stateChanged.TransferId);
+            Assert.AreEqual(transferId, failed.TransferId);
+            Assert.AreEqual(outputPath, started.Transfer.LocalPath);
+            Assert.AreEqual(candidate.Filename, started.Transfer.RemotePath);
+            Assert.AreEqual(4096L, progressed.Transfer.BytesTransferred);
+            Assert.AreEqual(10_000L, progressed.Transfer.TotalBytes);
+            Assert.AreEqual(outputPath, failed.Transfer.LocalPath);
+            Assert.AreEqual(attemptOutputPath, failed.OutputPath);
+            Assert.AreEqual(1, failed.Transfer.AttemptCount);
+            Assert.AreEqual(outputPath, completed.FinalLocalPath);
+            Assert.AreEqual(10_000L, completed.Transfer.BytesTransferred);
+            Assert.IsTrue(completed.Transfer.Revision > failed.Transfer.Revision);
+            Assert.AreEqual(1, progressEventCount, "Late progress must be discarded after the terminal barrier.");
+        }
+
+        [TestMethod]
+        public void DownloadEvents_UsesInjectedClock_AndIsolatesObservers()
+        {
+            var now = new DateTimeOffset(2032, 4, 5, 6, 7, 8, TimeSpan.Zero);
+            var events = new DownloadEvents(new FixedTimeProvider(now));
+            var job = new SearchJob("test");
+            var successfulSpecificObservers = 0;
+            CoreChange? published = null;
+
+            events.JobRegistered += _ => throw new InvalidOperationException("observer failed");
+            events.JobRegistered += _ => successfulSpecificObservers++;
+            events.ChangePublished += change => published = change;
+
+            Invoke(events, "RaiseJobRegistered", job, null!, null!);
+
+            Assert.AreEqual(1, successfulSpecificObservers);
+            Assert.IsNotNull(published);
+            Assert.AreEqual(now, published.OccurredAtUtc);
+        }
+
+        [TestMethod]
+        public void DownloadEvents_TransferOnlyChanges_DoNotAdvanceJobRevision()
+        {
+            var events = new DownloadEvents();
+            var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+            var file = TestHelpers.CreateSlFile(@"Music\Artist\Track.mp3", size: 10_000, length: 180);
+            var response = new SearchResponse("user", 1, true, 100_000, 0, [file]);
+            var candidate = SoulseekSearchAdapter.ToFileCandidate(response, file);
+            var transferId = Guid.NewGuid();
+            var observedRevisions = new List<long>();
+
+            events.JobRegistered += change => observedRevisions.Add(change.Job.Revision);
+            events.DownloadStarted += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadProgress += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadStateChanged += change => observedRevisions.Add(change.Song.Revision);
+            events.DownloadAttemptFailed += change => observedRevisions.Add(change.Song.Revision);
+
+            Invoke(events, "RaiseJobRegistered", song, null!, null!);
+            Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+            Invoke(events, "RaiseDownloadProgress", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 10_000L);
+            Invoke(events, "RaiseDownloadStateChanged", transferId, song, candidate.Target, "C:/downloads/Track.mp3", TransferStates.InProgress, 100L, 10_000L);
+            Invoke(events, "RaiseDownloadAttemptFailed", transferId, song, candidate.Target, "C:/downloads/Track.mp3", "C:/downloads/Track.mp3.incomplete", 1, 3, new IOException("failed"));
+
+            CollectionAssert.AreEqual(new long[] { 1, 1, 1, 1, 1 }, observedRevisions);
         }
 
         [TestMethod]
@@ -55,37 +161,37 @@ namespace Tests.Eventing
                 var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
                 var engine = new DownloadEngine(engineSettings, clientManager);
 
-                var registered = new List<(Job Job, Job? Parent)>();
-                var stateChanges = new List<(Job Job, JobLifecycleState LifecycleState, JobActivityPhase ActivityPhase, JobTerminalOutcome TerminalOutcome, JobSkipReason SkipReason)>();
-                var createdResults = new List<(ExtractJob ExtractJob, Job Result)>();
-                var executionCompleted = new List<Job>();
-                JobList? completedQueue = null;
+                var registered = new List<(Guid JobId, Guid? ParentId)>();
+                var stateChanges = new List<(Guid JobId, JobLifecycleState LifecycleState, JobActivityPhase ActivityPhase, JobTerminalOutcome TerminalOutcome, JobSkipReason SkipReason)>();
+                var createdResults = new List<(Guid ExtractJobId, Guid ResultId)>();
+                var executionCompleted = new List<Guid>();
+                Guid? completedQueueId = null;
                 object gate = new();
 
-                engine.Events.JobRegistered += (job, parent) =>
+                engine.Events.JobRegistered += change =>
                 {
-                    lock (gate) registered.Add((job, parent));
+                    lock (gate) registered.Add((change.Job.Id, change.ParentJobId));
                 };
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    lock (gate) stateChanges.Add((job, job.LifecycleState, job.ActivityPhase, job.TerminalOutcome, job.SkipReason));
+                    lock (gate) stateChanges.Add((change.Job.Id, change.LifecycleState, change.ActivityPhase, change.TerminalOutcome, change.SkipReason));
                 };
-                engine.Events.JobResultCreated += (extractJob, result) =>
+                engine.Events.JobResultCreated += change =>
                 {
-                    lock (gate) createdResults.Add((extractJob, result));
+                    lock (gate) createdResults.Add((change.ExtractJob.Id, change.ResultJob.Id));
                 };
-                engine.Events.JobExecutionCompleted += job =>
+                engine.Events.JobExecutionCompleted += change =>
                 {
-                    lock (gate) executionCompleted.Add(job);
+                    lock (gate) executionCompleted.Add(change.Job.Id);
                 };
-                engine.Events.EngineCompleted += queue => completedQueue = queue;
+                engine.Events.EngineCompleted += change => completedQueueId = change.Queue.Id;
 
                 engine.Enqueue(new ExtractJob(downloadSettings.Extraction.Input!, downloadSettings.Extraction.InputType), downloadSettings);
                 engine.CompleteEnqueue();
 
                 await engine.RunAsync(CancellationToken.None);
 
-                Assert.AreSame(engine.Queue, completedQueue, "EngineCompleted should publish the completed root queue.");
+                Assert.AreEqual(engine.Queue.Id, completedQueueId, "EngineCompleted should publish the completed root queue.");
 
                 var rootExtract = engine.Queue.Jobs.OfType<ExtractJob>().Single();
                 Assert.IsInstanceOfType(rootExtract.Result, typeof(JobList));
@@ -93,39 +199,66 @@ namespace Tests.Eventing
                 var childExtracts = rootList.Jobs.OfType<ExtractJob>().ToList();
                 Assert.AreEqual(2, childExtracts.Count, "List extraction should create child extract jobs.");
 
-                Assert.IsTrue(registered.Any(e => ReferenceEquals(e.Job, rootExtract) && e.Parent == null),
+                Assert.IsTrue(registered.Any(e => e.JobId == rootExtract.Id && e.ParentId == null),
                     "Root ExtractJob should be registered without a parent.");
-                Assert.IsTrue(registered.Any(e => ReferenceEquals(e.Job, rootList) && e.Parent == null),
+                Assert.IsTrue(registered.Any(e => e.JobId == rootList.Id && e.ParentId == null),
                     "The extracted root JobList should be registered as a root-level replacement.");
-                Assert.IsTrue(childExtracts.All(child => registered.Any(e => ReferenceEquals(e.Job, child) && ReferenceEquals(e.Parent, rootList))),
+                Assert.IsTrue(childExtracts.All(child => registered.Any(e => e.JobId == child.Id && e.ParentId == rootList.Id)),
                     "Child ExtractJobs should be registered under the extracted JobList.");
 
                 foreach (var child in childExtracts)
                     Assert.IsInstanceOfType(child.Result, typeof(SongJob));
                 var childSongs = childExtracts.Select(e => (SongJob)e.Result!).ToList();
-                Assert.IsTrue(childSongs.All(song => registered.Any(e => ReferenceEquals(e.Job, song) && ReferenceEquals(e.Parent, rootList))),
+                Assert.IsTrue(childSongs.All(song => registered.Any(e => e.JobId == song.Id && e.ParentId == rootList.Id)),
                     "Results of child ExtractJobs should be registered under the JobList, not under the transient ExtractJob.");
 
-                Assert.IsTrue(createdResults.Any(e => ReferenceEquals(e.ExtractJob, rootExtract) && ReferenceEquals(e.Result, rootList)),
+                Assert.IsTrue(createdResults.Any(e => e.ExtractJobId == rootExtract.Id && e.ResultId == rootList.Id),
                     "JobResultCreated should link the root ExtractJob to its extracted JobList.");
-                Assert.IsTrue(childExtracts.All(child => createdResults.Any(e => ReferenceEquals(e.ExtractJob, child) && ReferenceEquals(e.Result, child.Result))),
+                Assert.IsTrue(childExtracts.All(child => createdResults.Any(e => e.ExtractJobId == child.Id && e.ResultId == child.Result!.Id)),
                     "JobResultCreated should link each child ExtractJob to its extracted SongJob.");
 
-                Assert.IsTrue(stateChanges.Any(e => ReferenceEquals(e.Job, rootExtract) && e.ActivityPhase == JobActivityPhase.Extracting),
+                Assert.IsTrue(stateChanges.Any(e => e.JobId == rootExtract.Id && e.ActivityPhase == JobActivityPhase.Extracting),
                     "JobStateChanged should report Extracting for the root ExtractJob.");
-                Assert.IsTrue(stateChanges.Any(e => ReferenceEquals(e.Job, rootExtract) && e.TerminalOutcome == JobTerminalOutcome.Succeeded),
+                Assert.IsTrue(stateChanges.Any(e => e.JobId == rootExtract.Id && e.TerminalOutcome == JobTerminalOutcome.Succeeded),
                     "JobStateChanged should report Done for the root ExtractJob.");
-                Assert.IsTrue(childSongs.All(song => stateChanges.Any(e => ReferenceEquals(e.Job, song) && e.Job.IsUnsuccessfulTerminal)),
+                Assert.IsTrue(childSongs.All(song => stateChanges.Any(e => e.JobId == song.Id && e.LifecycleState == JobLifecycleState.Terminal && e.TerminalOutcome != JobTerminalOutcome.Succeeded)),
                     "JobStateChanged should report the terminal state for child SongJobs.");
-                Assert.IsTrue(executionCompleted.Contains(rootExtract), "Root ExtractJob should raise JobExecutionCompleted.");
-                Assert.IsTrue(executionCompleted.Contains(rootList), "Root JobList should raise JobExecutionCompleted.");
-                Assert.IsTrue(childSongs.All(executionCompleted.Contains), "Leaf song jobs should raise JobExecutionCompleted.");
+                Assert.IsTrue(executionCompleted.Contains(rootExtract.Id), "Root ExtractJob should raise JobExecutionCompleted.");
+                Assert.IsTrue(executionCompleted.Contains(rootList.Id), "Root JobList should raise JobExecutionCompleted.");
+                Assert.IsTrue(childSongs.All(song => executionCompleted.Contains(song.Id)), "Leaf song jobs should raise JobExecutionCompleted.");
             }
             finally
             {
                 if (System.IO.File.Exists(listFile)) System.IO.File.Delete(listFile);
                 if (System.IO.Directory.Exists(outputDir)) System.IO.Directory.Delete(outputDir, true);
             }
+        }
+
+        [TestMethod]
+        public async Task DownloadEvents_RootFollowUpRegistration_PublishesSourceIdentity()
+        {
+            var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+            var downloadSettings = new DownloadSettings();
+            var client = new ClientTests.MockSoulseekClient([]);
+            var engine = new DownloadEngine(
+                engineSettings,
+                TestHelpers.CreateMockClientManager(client, engineSettings));
+            var sourceJobId = Guid.NewGuid();
+            var job = new SearchJob("no results expected");
+            JobRegisteredChange? registration = null;
+            engine.Events.JobRegistered += change =>
+            {
+                if (change.Job.Id == job.Id)
+                    registration = change;
+            };
+
+            engine.Enqueue(job, downloadSettings, sourceJobId);
+            engine.CompleteEnqueue();
+            await engine.RunAsync(CancellationToken.None);
+
+            Assert.IsNotNull(registration);
+            Assert.IsNull(registration.ParentJobId);
+            Assert.AreEqual(sourceJobId, registration.SourceJobId);
         }
 
         [TestMethod]
@@ -147,17 +280,17 @@ namespace Tests.Eventing
             var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
             var engine = new DownloadEngine(engineSettings, clientManager);
 
-            Job? owner = null;
-            IReadOnlyList<SongJob>? pending = null;
-            IReadOnlyList<SongJob>? existing = null;
-            IReadOnlyList<SongJob>? notFound = null;
+            Guid? ownerId = null;
+            IReadOnlyList<Sockseek.Core.Snapshots.JobSnapshot>? pending = null;
+            IReadOnlyList<Sockseek.Core.Snapshots.JobSnapshot>? existing = null;
+            IReadOnlyList<Sockseek.Core.Snapshots.JobSnapshot>? notFound = null;
 
-            engine.Events.TrackBatchResolved += (job, batchPending, batchExisting, batchNotFound) =>
+            engine.Events.TrackBatchResolved += change =>
             {
-                owner = job;
-                pending = batchPending;
-                existing = batchExisting;
-                notFound = batchNotFound;
+                ownerId = change.Owner.Id;
+                pending = change.Pending;
+                existing = change.Existing;
+                notFound = change.NotFound;
             };
 
             engine.Enqueue(list, downloadSettings);
@@ -165,7 +298,7 @@ namespace Tests.Eventing
 
             await engine.RunAsync(CancellationToken.None);
 
-            Assert.AreSame(list, owner, "TrackBatchResolved should identify the owning job.");
+            Assert.AreEqual(list.Id, ownerId, "TrackBatchResolved should identify the owning job.");
             Assert.IsNotNull(pending, "TrackBatchResolved should publish the pending songs.");
             Assert.AreEqual(2, pending!.Count);
             Assert.AreEqual(0, existing!.Count);
@@ -229,21 +362,21 @@ namespace Tests.Eventing
                 int maxActive = 0;
                 object gate = new();
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (job is not SongJob)
+                    if (change.Job.Kind != Sockseek.Core.Snapshots.JobSnapshotKind.Song)
                         return;
 
                     lock (gate)
                     {
-                        if (job.ActivityPhase is JobActivityPhase.Searching or JobActivityPhase.Downloading)
+                        if (change.ActivityPhase is JobActivityPhase.Searching or JobActivityPhase.Downloading)
                         {
-                            activeSongs.Add(job.Id);
+                            activeSongs.Add(change.Job.Id);
                             maxActive = Math.Max(maxActive, activeSongs.Count);
                         }
-                        else if (job.IsTerminal)
+                        else if (change.IsTerminal)
                         {
-                            activeSongs.Remove(job.Id);
+                            activeSongs.Remove(change.Job.Id);
                         }
                     }
                 };
@@ -338,21 +471,21 @@ namespace Tests.Eventing
                 int maxActiveAlbums = 0;
                 object gate = new();
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (job is not AlbumJob)
+                    if (change.Job.Kind != Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         return;
 
                     lock (gate)
                     {
-                        if (job.ActivityPhase == JobActivityPhase.Downloading)
+                        if (change.ActivityPhase == JobActivityPhase.Downloading)
                         {
-                            activeAlbums.Add(job.Id);
+                            activeAlbums.Add(change.Job.Id);
                             maxActiveAlbums = Math.Max(maxActiveAlbums, activeAlbums.Count);
                         }
-                        else if (job.IsTerminal)
+                        else if (change.IsTerminal)
                         {
-                            activeAlbums.Remove(job.Id);
+                            activeAlbums.Remove(change.Job.Id);
                         }
                     }
                 };
@@ -437,21 +570,21 @@ namespace Tests.Eventing
                 int maxActiveSongs = 0;
                 object gate = new();
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (job is not SongJob)
+                    if (change.Job.Kind != Sockseek.Core.Snapshots.JobSnapshotKind.Song)
                         return;
 
                     lock (gate)
                     {
-                        if (job.ActivityPhase == JobActivityPhase.Downloading)
+                        if (change.ActivityPhase == JobActivityPhase.Downloading)
                         {
-                            activeSongs.Add(job.Id);
+                            activeSongs.Add(change.Job.Id);
                             maxActiveSongs = Math.Max(maxActiveSongs, activeSongs.Count);
                         }
-                        else if (job.IsTerminal)
+                        else if (change.IsTerminal)
                         {
-                            activeSongs.Remove(job.Id);
+                            activeSongs.Remove(change.Job.Id);
                         }
                     }
                 };
@@ -538,21 +671,21 @@ namespace Tests.Eventing
                 int maxActiveAlbums = 0;
                 object gate = new();
 
-                engine.Events.JobStateChanged += job =>
+                engine.Events.JobStateChanged += change =>
                 {
-                    if (job is not AlbumJob)
+                    if (change.Job.Kind != Sockseek.Core.Snapshots.JobSnapshotKind.Album)
                         return;
 
                     lock (gate)
                     {
-                        if (job.ActivityPhase == JobActivityPhase.Downloading)
+                        if (change.ActivityPhase == JobActivityPhase.Downloading)
                         {
-                            activeAlbums.Add(job.Id);
+                            activeAlbums.Add(change.Job.Id);
                             maxActiveAlbums = Math.Max(maxActiveAlbums, activeAlbums.Count);
                         }
-                        else if (job.IsTerminal)
+                        else if (change.IsTerminal)
                         {
-                            activeAlbums.Remove(job.Id);
+                            activeAlbums.Remove(change.Job.Id);
                         }
                     }
                 };
@@ -617,7 +750,7 @@ namespace Tests.Eventing
                     var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
                     var engine = new DownloadEngine(engineSettings, clientManager);
                     var downloadsStarted = 0;
-                    engine.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                    engine.Events.DownloadStarted += _ => downloadsStarted++;
 
                     engine.Enqueue(album, downloadSettings);
                     engine.CompleteEnqueue();
@@ -708,7 +841,7 @@ namespace Tests.Eventing
                     var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
                     var engine = new DownloadEngine(engineSettings, clientManager);
                     var downloadsStarted = 0;
-                    engine.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                    engine.Events.DownloadStarted += _ => downloadsStarted++;
 
                     engine.Enqueue(album, downloadSettings);
                     engine.CompleteEnqueue();
@@ -808,7 +941,7 @@ namespace Tests.Eventing
                 var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
                 var engine = new DownloadEngine(engineSettings, clientManager);
                 var downloadsStarted = 0;
-                engine.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                engine.Events.DownloadStarted += _ => downloadsStarted++;
 
                 engine.Enqueue(album, downloadSettings);
                 engine.CompleteEnqueue();
@@ -860,17 +993,19 @@ namespace Tests.Eventing
                 var completedRetrieveJobs = new List<RetrieveFolderJob>();
                 var downloadsStarted = 0;
 
-                engine.Events.JobRegistered += (job, _) =>
+                engine.Events.JobRegistered += change =>
                 {
-                    if (job is RetrieveFolderJob retrieveJob)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.RetrieveFolder
+                        && engine.GetJob(change.Job.Id) is RetrieveFolderJob retrieveJob)
                         retrieveJobs.Add(retrieveJob);
                 };
-                engine.Events.JobExecutionCompleted += job =>
+                engine.Events.JobExecutionCompleted += change =>
                 {
-                    if (job is RetrieveFolderJob retrieveJob)
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.RetrieveFolder
+                        && engine.GetJob(change.Job.Id) is RetrieveFolderJob retrieveJob)
                         completedRetrieveJobs.Add(retrieveJob);
                 };
-                engine.Events.DownloadStarted += (_, _) => downloadsStarted++;
+                engine.Events.DownloadStarted += _ => downloadsStarted++;
                 client.BrowseStarted = () =>
                 {
                     if (client.BrowseCallCount == 1)
@@ -901,11 +1036,67 @@ namespace Tests.Eventing
         }
 
         [TestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public async Task AlbumFolderCompletionFailure_PreservesKnownSelectionAndFailsOnlyTheRetrievalJob(bool throwsCancellation)
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "slsk-album-failed-folder-completion-" + Guid.NewGuid());
+            System.IO.Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var files = AlbumFiles(1, @"Music\Artist\known-selection");
+                var response = new SearchResponse("browse-failure-user", 1, true, 100_000, 0, files);
+                var folder = AlbumFolderFromSearch(response, files);
+                var album = new AlbumJob(new AlbumQuery { Artist = "Artist", Album = "Album" })
+                {
+                    Results = [folder],
+                };
+
+                var engineSettings = new EngineSettings { Username = "test_user", Password = "test_pass" };
+                var client = new ClientTests.MockSoulseekClient([response]);
+                var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
+                Exception retrievalFailure = throwsCancellation
+                    ? new OperationCanceledException("browse transport ended early")
+                    : new IOException("browse transport failed");
+                var directorySource = new ThrowingDirectorySource(retrievalFailure);
+                var engine = new DownloadEngine(
+                    engineSettings,
+                    clientManager,
+                    directorySource: directorySource);
+                RetrieveFolderJob? retrieveJob = null;
+                engine.Events.JobRegistered += change =>
+                {
+                    if (change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.RetrieveFolder)
+                        retrieveJob = (RetrieveFolderJob)engine.GetJob(change.Job.Id)!;
+                };
+
+                engine.Enqueue(album, AlbumDownloadSettings(outputDir));
+                engine.CompleteEnqueue();
+
+                await engine.RunAsync(CancellationToken.None);
+
+                Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome,
+                    "A failed best-effort folder completion must not discard the exact files already found by search.");
+                Assert.AreEqual(1, client.DownloadCallCount);
+                Assert.IsNotNull(retrieveJob);
+                Assert.AreEqual(FolderRetrievalOutcome.Failed, retrieveJob.RetrievalOutcome);
+                Assert.AreEqual(JobTerminalOutcome.Failed, retrieveJob.TerminalOutcome);
+                Assert.AreNotEqual(JobFailureReason.Cancelled, retrieveJob.FailureReason);
+            }
+            finally
+            {
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task AlbumFolderRetrievalBeforeTrackCountDownload_SetsParentAlbumActivityWhileBrowsing()
             => await AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(postDownloadBrowse: false);
 
         [TestMethod]
-        public async Task AlbumFolderRetrievalAfterVisibleTrackDownload_SetsParentAlbumActivityWhileBrowsing()
+        public async Task AlbumFolderCompletionBeforeTransfer_SetsParentAlbumActivityWhileBrowsing()
             => await AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(postDownloadBrowse: true);
 
         private static async Task AssertAlbumFolderRetrievalSetsParentActivityWhileBrowsing(bool postDownloadBrowse)
@@ -937,7 +1128,7 @@ namespace Tests.Eventing
 
                 var client = new ClientTests.MockSoulseekClient([response]);
                 bool parentWasRetrievingAtBrowseStart = false;
-                int expectedDownloadsBeforeBrowse = postDownloadBrowse ? 1 : 0;
+                int expectedDownloadsBeforeBrowse = 0;
                 client.BrowseStarted = () =>
                     parentWasRetrievingAtBrowseStart =
                         client.DownloadCallCount == expectedDownloadsBeforeBrowse
@@ -946,10 +1137,10 @@ namespace Tests.Eventing
                 var clientManager = TestHelpers.CreateMockClientManager(client, engineSettings);
                 var engine = new DownloadEngine(engineSettings, clientManager);
                 var albumActivityPhases = new List<JobActivityPhase>();
-                engine.Events.JobActivityChanged += (job, phase, _) =>
+                engine.Events.JobActivityChanged += change =>
                 {
-                    if (ReferenceEquals(job, album))
-                        albumActivityPhases.Add(phase);
+                    if (change.Job.Id == album.Id)
+                        albumActivityPhases.Add(change.Phase);
                 };
 
                 engine.Enqueue(album, downloadSettings);
@@ -957,8 +1148,7 @@ namespace Tests.Eventing
 
                 await engine.RunAsync(CancellationToken.None);
 
-                var browseTiming = postDownloadBrowse ? "post-download" : "pre-download";
-                Assert.IsTrue(parentWasRetrievingAtBrowseStart, $"Album parent should expose RetrievingFolder while {browseTiming} folder browse is running.");
+                Assert.IsTrue(parentWasRetrievingAtBrowseStart, "Album parent should expose RetrievingFolder while its immutable transfer plan is being completed.");
                 Assert.IsTrue(albumActivityPhases.Contains(JobActivityPhase.RetrievingFolder), "Album parent should publish a RetrievingFolder activity change.");
                 Assert.AreEqual(2, client.DownloadCallCount, "Folder browse should discover and download the hidden track.");
                 Assert.AreEqual(JobTerminalOutcome.Succeeded, album.TerminalOutcome);
@@ -1007,6 +1197,24 @@ namespace Tests.Eventing
             return settings;
         }
 
+        private static void Invoke(DownloadEvents events, string methodName, params object[] args)
+            => typeof(DownloadEvents)
+                .GetMethod(methodName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(events, args);
+
+        private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+        {
+            public override DateTimeOffset GetUtcNow() => utcNow;
+        }
+
+        private sealed class ThrowingDirectorySource(Exception exception) : IPeerDirectorySource
+        {
+            public Task<PeerDirectorySnapshot> RetrieveDirectoryAsync(
+                PeerDirectoryIdentity directory,
+                CancellationToken cancellationToken = default)
+                => Task.FromException<PeerDirectorySnapshot>(exception);
+        }
+
         [TestMethod]
         public async Task DownloadEvents_AlbumJob_ExposesResolvedTarget_OnDownloadingState()
         {
@@ -1030,9 +1238,11 @@ namespace Tests.Eventing
 
             AlbumFolder? capturedFolder = null;
 
-            engine.Events.JobStateChanged += job =>
+            engine.Events.JobStateChanged += change =>
             {
-                if (job.ActivityPhase == JobActivityPhase.Downloading && job is AlbumJob aj)
+                if (change.ActivityPhase == JobActivityPhase.Downloading
+                    && change.Job.Kind == Sockseek.Core.Snapshots.JobSnapshotKind.Album
+                    && engine.GetJob(change.Job.Id) is AlbumJob aj)
                 {
                     capturedFolder = aj.ResolvedTarget;
                 }
@@ -1050,7 +1260,7 @@ namespace Tests.Eventing
         public void Job_PopulatesDiscoveryMetadata_BeforeStateChangedFires()
         {
             var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
-            DiscoverySummary? capturedDiscovery = null;
+            Sockseek.Core.Snapshots.DiscoverySnapshot? capturedDiscovery = null;
             JobActivityPhase capturedActivity = JobActivityPhase.None;
 
             var events = new DownloadEvents();
@@ -1109,13 +1319,13 @@ namespace Tests.Eventing
             string? capturedDetail = null;
             bool failedFired = false;
 
-            engine.Events.JobStateChanged += job =>
+            engine.Events.JobStateChanged += change =>
             {
-                if (ReferenceEquals(job, extractJob) && job.IsUnsuccessfulTerminal)
+                if (change.Job.Id == extractJob.Id && change.IsUnsuccessfulTerminal)
                 {
                     failedFired = true;
-                    capturedReason = job.FailureReason;
-                    capturedDetail = job.FailureDetail;
+                    capturedReason = change.FailureReason;
+                    capturedDetail = change.FailureDetail;
                 }
             };
 
@@ -1144,12 +1354,12 @@ namespace Tests.Eventing
             JobFailureReason capturedReason = JobFailureReason.None;
             bool failedFired = false;
 
-            engine.Events.JobStateChanged += job =>
+            engine.Events.JobStateChanged += change =>
             {
-                if (ReferenceEquals(job, songJob) && job.IsUnsuccessfulTerminal)
+                if (change.Job.Id == songJob.Id && change.IsUnsuccessfulTerminal)
                 {
                     failedFired = true;
-                    capturedReason = job.FailureReason;
+                    capturedReason = change.FailureReason;
                 }
             };
 
@@ -1184,13 +1394,13 @@ namespace Tests.Eventing
             string? capturedDetail = "not-captured";
             bool failedFired = false;
 
-            engine.Events.JobStateChanged += job =>
+            engine.Events.JobStateChanged += change =>
             {
-                if (ReferenceEquals(job, songJob) && job.IsUnsuccessfulTerminal)
+                if (change.Job.Id == songJob.Id && change.IsUnsuccessfulTerminal)
                 {
                     failedFired = true;
-                    capturedReason = job.FailureReason;
-                    capturedDetail = job.FailureDetail;
+                    capturedReason = change.FailureReason;
+                    capturedDetail = change.FailureDetail;
                 }
             };
 

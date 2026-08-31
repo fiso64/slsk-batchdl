@@ -9,6 +9,8 @@ namespace Sockseek.Core.Settings;
 /// --format/--min-bitrate/etc. flags.
 public class SearchSettings
 {
+    internal SearchSettings ShallowClone() => (SearchSettings)MemberwiseClone();
+
     // ── Conditions ────────────────────────────────────────────────────────────
 
     public FileConditions NecessaryCond { get; set; } = new()
@@ -41,7 +43,6 @@ public class SearchSettings
 
     public int SearchTimeout { get; set; } = 5_000;
 
-    public int MaxStaleTime { get; set; } = 30_000;
 
     // ── Ranking ───────────────────────────────────────────────────────────────
 

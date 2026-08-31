@@ -131,6 +131,10 @@ public static class JobPreparer
         var ctx = new JobContext();
 
         job.Config = resolver.Resolve(parentConfig, job);
+        if (job is RemoteFileJob or RemoteDirectoryJob)
+        {
+            RemoteTransferNameFormatPolicy.ApplyInherited(job.Config.Output);
+        }
         var childScope = OutputScope.ForPreparedJob(job, inheritedScope, job.Config.Output);
         ctx.OutputScope = useInheritedScopeForCurrentJob ? inheritedScope : childScope;
 
@@ -179,6 +183,8 @@ public static class JobPreparer
     private static void SetupIndexEditor(Job job, JobContext ctx, JobList ownerList,
         Dictionary<(string, M3uOption), M3uEditor> editors)
     {
+        if (job is RemoteFileJob or RemoteDirectoryJob)
+            return;
         var config = job.Config;
         var indexOption = WillWriteIndex(config, ownerList) ? M3uOption.Index : M3uOption.None;
 
@@ -186,7 +192,6 @@ public static class JobPreparer
             || (config.Skip.SkipExisting && config.Skip.SkipMode == SkipMode.Index)
             || config.Skip.SkipNotFound;
 
-        SockseekLog.Trace($"SetupIndexEditor: Job {job.DisplayId} ({job.GetType().Name}) - WillWriteIndex={indexOption != M3uOption.None}, NeedIndex={needIndex}");
 
         if (!needIndex) return;
 
@@ -216,8 +221,9 @@ public static class JobPreparer
     private static void SetupPlaylistEditor(Job job, JobContext ctx, JobList ownerList,
         Dictionary<(string, M3uOption), M3uEditor> editors)
     {
+        if (job is RemoteFileJob or RemoteDirectoryJob)
+            return;
         var config = job.Config;
-        SockseekLog.Trace($"SetupPlaylistEditor: Job {job.DisplayId} ({job.GetType().Name}) - WritePlaylist={config.Output.WritePlaylist}");
         if (!config.Output.WritePlaylist) return;
 
         string m3uPath;
@@ -247,6 +253,9 @@ public static class JobPreparer
     private static void SetupSkippers(Job job, JobContext ctx,
         Dictionary<(string, SkipMode, bool), TrackSkipper> skippers)
     {
+        if (job is RemoteFileJob or RemoteDirectoryJob)
+            return;
+
         var config = job.Config;
         if (!config.Skip.SkipExisting) return;
 

@@ -1,0 +1,24 @@
+{
+  "name": "sockseek-webui-prototype",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview",
+    "api:generate": "openapi-typescript ../docs/openapi.json -o src/api/generated.ts"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "openapi-typescript": "7.13.0",
+    "svelte": "5.56.8",
+    "svelte-check": "4.7.4",
+    "typescript": "5.9.3",
+    "vite": "8.1.5"
+  }
+}

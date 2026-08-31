@@ -39,10 +39,13 @@ internal readonly struct AlbumFolderProjectionPlan
             ignoreStringSortConditions: ignoreStringSortConditions);
     }
 
-    public bool Includes((SearchResponse Response, SlFile File) result)
+    internal bool Includes((SearchResponse Response, SlFile File) result)
         => projectionFilter.Satisfies(result);
 
-    public List<(SearchResponse Response, SlFile File)> FilterToList(
+    public bool Includes(SearchProjectionInput result)
+        => projectionFilter.Satisfies(result);
+
+    internal List<(SearchResponse Response, SlFile File)> FilterToList(
         IEnumerable<(SearchResponse Response, SlFile File)> results)
     {
         var filtered = new List<(SearchResponse Response, SlFile File)>();
@@ -56,8 +59,22 @@ internal readonly struct AlbumFolderProjectionPlan
         return filtered;
     }
 
-    public List<AlbumFolder> ProjectFilteredResults(
+    public List<SearchProjectionInput> FilterToList(IEnumerable<SearchProjectionInput> results)
+        => results.Where(Includes).ToList();
+
+    internal List<AlbumFolder> ProjectFilteredResults(
         IEnumerable<(SearchResponse Response, SlFile File)> filteredResults,
+        int capacity)
+        => SearchResultProjector.AlbumFoldersFromResults(
+            filteredResults,
+            query,
+            search,
+            capacity,
+            aggregateSortKeyContext: aggregateSortKeyContext,
+            useAlbumFolderQualityRanking: sortMode == FolderSortMode.AlbumRanked);
+
+    public List<AlbumFolder> ProjectFilteredResults(
+        IEnumerable<SearchProjectionInput> filteredResults,
         int capacity)
         => SearchResultProjector.AlbumFoldersFromResults(
             filteredResults,

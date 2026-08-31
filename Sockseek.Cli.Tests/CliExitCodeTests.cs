@@ -8,6 +8,7 @@ using System.Text.Json;
 namespace Tests.Cli;
 
 [TestClass]
+[DoNotParallelize]
 public class CliExitCodeTests
 {
     [TestMethod]
@@ -32,6 +33,143 @@ public class CliExitCodeTests
         var exitCode = await Sockseek.Cli.Program.MainCore(["daemon", "--no-config", "--server-port", "70000"]);
 
         Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.UsageError, exitCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("share", "status")]
+    [DataRow("transfers", null)]
+    [DataRow("transfer", "cancel")]
+    [DataRow("user", "profile")]
+    public async Task DaemonResourceCommands_RequireRemote(
+        string command,
+        string? action)
+    {
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        try
+        {
+            Console.SetError(stderr);
+            string[] args = action is null
+                ? [command, "--no-config"]
+                : [command, action, "--no-config"];
+
+            int exitCode = await Sockseek.Cli.Program.Main(args);
+
+            Assert.AreEqual(
+                (int)Sockseek.Cli.Program.CliExitCode.UsageError,
+                exitCode);
+            StringAssert.Contains(stderr.ToString(), "requires a configured remote URL");
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+    }
+
+    [DataTestMethod]
+    [DataRow("chat", "status", null)]
+    [DataRow("share", "status", null)]
+    [DataRow("user", "profile", "Peer")]
+    public async Task ConfiguredResourceCommands_UseRemoteFromConfig(
+        string command,
+        string action,
+        string? operand)
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), "sockseek-configured-command-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string configPath = Path.Combine(root, "sockseek.conf");
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        Task responder = RespondWithServiceUnavailableAsync(listener);
+        await File.WriteAllTextAsync(
+            configPath, $"remote = http://127.0.0.1:{port}\n");
+
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        try
+        {
+            Console.SetError(stderr);
+
+            string[] args = operand is null
+                ? [command, action, "--config", configPath]
+                : [command, action, operand, "--config", configPath];
+            int exitCode = await Sockseek.Cli.Program.Main(args);
+
+            Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
+            Assert.IsFalse(
+                stderr.ToString().Contains("requires a configured remote URL", StringComparison.Ordinal),
+                "The command ignored the configured remote URL.");
+            await responder.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            listener.Stop();
+            Console.SetError(originalError);
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static async Task RespondWithServiceUnavailableAsync(
+        System.Net.Sockets.TcpListener listener)
+    {
+        using System.Net.Sockets.TcpClient client = await listener.AcceptTcpClientAsync();
+        await using System.Net.Sockets.NetworkStream stream = client.GetStream();
+        var request = new byte[4096];
+        _ = await stream.ReadAsync(request);
+        const string body = "{\"error\":\"test unavailable\"}";
+        byte[] response = System.Text.Encoding.ASCII.GetBytes(
+            "HTTP/1.1 503 Service Unavailable\r\n"
+            + "Content-Type: application/json\r\n"
+            + $"Content-Length: {body.Length}\r\n"
+            + "Connection: close\r\n\r\n"
+            + body);
+        await stream.WriteAsync(response);
+    }
+
+    [TestMethod]
+    public void ConfiguredCommand_CliRemoteOverridesConfigAndGlobalOptionsAreStripped()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(), "sockseek-command-precedence-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string configPath = Path.Combine(root, "sockseek.conf");
+        File.WriteAllText(
+            configPath,
+            "remote = http://127.0.0.1:5001\n"
+            + "[alternate]\n"
+            + "remote = http://127.0.0.1:5003\n");
+
+        try
+        {
+            ConfiguredCommandInvocation invocation = ConfiguredCommandInvocation.Create(
+                [
+                    "chat", "status",
+                    "--config", configPath,
+                    "--remote", "http://127.0.0.1:5002",
+                ],
+                ConfiguredCommandOptions.Remote);
+
+            Assert.AreEqual("http://127.0.0.1:5002", invocation.Remote.ServerUrl);
+            CollectionAssert.AreEqual(
+                new[] { "chat", "status" }, invocation.CommandArguments);
+
+            ConfiguredCommandInvocation profileInvocation = ConfiguredCommandInvocation.Create(
+                ["chat", "status", "--config", configPath, "--profile", "alternate"],
+                ConfiguredCommandOptions.Remote);
+            Assert.AreEqual("http://127.0.0.1:5003", profileInvocation.Remote.ServerUrl);
+            CollectionAssert.AreEqual(
+                new[] { "chat", "status" }, profileInvocation.CommandArguments);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     [TestMethod]
@@ -142,7 +280,7 @@ public class CliExitCodeTests
             Console.SetOut(stdout);
             Console.SetError(stderr);
 
-            var exitCode = await Sockseek.Cli.Program.Main(["--not-a-real-flag"]);
+            var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "--not-a-real-flag"]);
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.UsageError, exitCode);
             Assert.AreEqual("", stdout.ToString());
@@ -153,7 +291,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -173,7 +310,7 @@ public class CliExitCodeTests
             var exitCode = await Sockseek.Cli.Program.Main(["--no-config", "blah"]);
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
-            StringAssert.Contains(stdout.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stdout.ToString(), "[cli] CLI session started in local mode");
             StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
             var combined = stdout.ToString() + stderr.ToString();
             Assert.IsFalse(combined.Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
@@ -183,7 +320,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -204,7 +340,7 @@ public class CliExitCodeTests
 
             Assert.AreEqual((int)Sockseek.Cli.Program.CliExitCode.WorkFailed, exitCode);
             Assert.AreEqual("", stdout.ToString());
-            StringAssert.Contains(stderr.ToString(), "[cli] Starting CLI session in local mode");
+            StringAssert.Contains(stderr.ToString(), "[cli] CLI session started in local mode");
             StringAssert.Contains(stderr.ToString(), "[error] [cli] Soulseek login failed: Missing Soulseek username and password.");
             Assert.IsFalse(stderr.ToString().Contains("0 active", StringComparison.Ordinal), "Missing credentials must not print an empty progress summary.");
         }
@@ -212,7 +348,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
         }
     }
 
@@ -258,7 +393,6 @@ public class CliExitCodeTests
         {
             Console.SetOut(originalOut);
             Console.SetError(originalError);
-            SockseekLog.RemoveNonFileOutputs();
             if (Directory.Exists(musicRoot)) Directory.Delete(musicRoot, true);
             if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
         }

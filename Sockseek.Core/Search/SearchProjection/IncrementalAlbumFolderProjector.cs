@@ -21,9 +21,9 @@ public sealed class IncrementalAlbumFolderProjector
     // feed it while raw results arrive so the terminal snapshot mostly orders
     // and materializes already-built folders.
     private readonly AlbumFolderProjectionPlan projectionPlan;
-    private readonly List<(SearchResponse Response, SlFile File)> rawResults = [];
-    private readonly HashSet<RawResultKey> seen = [];
-    private readonly Dictionary<string, AlbumFolderSignature> previousSignatures = new(StringComparer.Ordinal);
+    private readonly List<SearchProjectionInput> rawResults = [];
+    private readonly HashSet<PeerPathKey> seen = [];
+    private readonly Dictionary<PeerPathKey, AlbumFolderSignature> previousSignatures = [];
     private List<AlbumFolder> previousSnapshot = [];
 
     public IncrementalAlbumFolderProjector(
@@ -43,17 +43,21 @@ public sealed class IncrementalAlbumFolderProjector
 
     public int Count => rawResults.Count;
 
-    public int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
+    internal int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
+        => AddRange(results.Select((result, index) => SearchProjectionInput.FromLive(
+            index + 1L, index + 1, result.Response, result.File, DateTimeOffset.UnixEpoch)));
+
+    public int AddRange(IEnumerable<SearchProjectionInput> results)
     {
         var filtered = results.Where(ProjectionFilter);
         int added = 0;
-        foreach (var (response, file) in filtered)
+        foreach (var input in filtered)
         {
-            var key = new RawResultKey(response.Username, file.Filename);
+            var key = new PeerPathKey(input.Username, input.Filename);
             if (!seen.Add(key))
                 continue;
 
-            rawResults.Add((response, file));
+            rawResults.Add(input);
             added++;
         }
 
@@ -63,10 +67,16 @@ public sealed class IncrementalAlbumFolderProjector
     // TODO: Revisit AlbumQuery.SearchHint semantics. It may be cleaner for the hint
     // to qualify folders that contain a matching track, while still showing all files
     // from matching folders that were present in the search response.
-    private bool ProjectionFilter((SearchResponse Response, SlFile File) result)
+    private bool ProjectionFilter(SearchProjectionInput result)
         => projectionPlan.Includes(result);
 
-    public AlbumFolderProjectionChanges AddRangeAndGetChanges(IEnumerable<(SearchResponse Response, SlFile File)> results)
+    internal AlbumFolderProjectionChanges AddRangeAndGetChanges(IEnumerable<(SearchResponse Response, SlFile File)> results)
+    {
+        AddRange(results);
+        return GetChanges();
+    }
+
+    public AlbumFolderProjectionChanges AddRangeAndGetChanges(IEnumerable<SearchProjectionInput> results)
     {
         AddRange(results);
         return GetChanges();
@@ -86,13 +96,13 @@ public sealed class IncrementalAlbumFolderProjector
     public AlbumFolderProjectionChanges GetChanges()
     {
         var folders = Snapshot();
-        var currentSignatures = new Dictionary<string, AlbumFolderSignature>(StringComparer.Ordinal);
+        var currentSignatures = new Dictionary<PeerPathKey, AlbumFolderSignature>();
         var added = new List<AlbumFolder>();
         var updated = new List<AlbumFolder>();
 
         foreach (var folder in folders)
         {
-            string key = FolderKey(folder);
+            PeerPathKey key = FolderKey(folder);
             var signature = AlbumFolderSignature.Create(folder);
             currentSignatures.Add(key, signature);
 
@@ -114,10 +124,8 @@ public sealed class IncrementalAlbumFolderProjector
         return new AlbumFolderProjectionChanges(folders, added, updated, removed);
     }
 
-    private static string FolderKey(AlbumFolder folder)
-        => folder.Username + '\\' + folder.FolderPath;
-
-    private readonly record struct RawResultKey(string Username, string Filename);
+    private static PeerPathKey FolderKey(AlbumFolder folder)
+        => new(folder.Username, folder.FolderPath);
 
     private readonly record struct AlbumFolderSignature(
         int FileCount,
