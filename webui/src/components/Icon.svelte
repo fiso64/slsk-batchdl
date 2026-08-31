@@ -63,6 +63,8 @@
   {:else if name === 'x'}
     <path d="m7.5 7.5 9 9" />
     <path d="m16.5 7.5-9 9" />
+  {:else if name === 'play'}
+    <path d="M8 5.5 18 12 8 18.5z" fill="currentColor" stroke="none" />
   {:else if name === 'more'}
     <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
     <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />

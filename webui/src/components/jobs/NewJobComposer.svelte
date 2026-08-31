@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Icon from '../Icon.svelte';
   import ExpandableSettingsPanel from '../ExpandableSettingsPanel.svelte';
   import SearchConfigPanel from '../SearchConfigPanel.svelte';
@@ -12,6 +13,7 @@
     type SearchConditionFamily,
   } from '../../prototype/search-config';
   import type { AutomaticJobRecord } from '../../prototype/jobs';
+  import { cloneValue, type WishlistDefaults, type WishlistItemOverrides } from '../../prototype/wishlists';
   import {
     emptyNewJobDraft,
     previewDirectJob,
@@ -38,12 +40,34 @@
 
   interface Props {
     onclose: () => void;
-    onstart: (records: AutomaticJobRecord[], rootId: string) => void;
+    onstart?: (records: AutomaticJobRecord[], rootId: string) => void;
+    mode?: 'start' | 'wishlist-item';
+    wishlistDefaults?: WishlistDefaults;
+    initialDraft?: NewJobDraft;
+    initialOverrides?: WishlistItemOverrides;
+    onadd?: (draft: NewJobDraft, overrides: WishlistItemOverrides) => void;
   }
 
-  let { onclose, onstart }: Props = $props();
+  let { onclose, onstart, mode = 'start', wishlistDefaults, initialDraft, initialOverrides, onadd }: Props = $props();
+  const initialWishlistDefaults = untrack(() => wishlistDefaults);
+  const initialItemDraft = cloneValue(untrack(() => initialDraft) ?? emptyNewJobDraft);
+  const initialItemOverrides = cloneValue(untrack(() => initialOverrides) ?? {});
+  const inheritedImportOptions = cloneValue(initialWishlistDefaults?.importOptions ?? createPrototypeImportOptions());
+  const inheritedDownloadOptions = cloneValue(initialWishlistDefaults?.downloadOptions ?? createPrototypeDownloadOptions());
+  const inheritedConditions = cloneValue(initialWishlistDefaults?.conditions ?? createPrototypeSearchConditions('track'));
 
-  let draft = $state<NewJobDraft>({ ...emptyNewJobDraft });
+  function conditionsWithItemOverrides(): PrototypeSearchConditions {
+    const merged = cloneValue(inheritedConditions);
+    if (initialItemOverrides.filtering) {
+      const { ranking: _ranking, ...filtering } = initialItemOverrides.filtering;
+      Object.assign(merged, cloneValue(filtering));
+    }
+    if (initialItemOverrides.ranking) merged.ranking = cloneValue(initialItemOverrides.ranking.ranking);
+    return merged;
+  }
+  const initialItemConditions = conditionsWithItemOverrides();
+
+  let draft = $state<NewJobDraft>(cloneValue(initialItemDraft));
   let preview = $state<JobPreviewPlan | null>(null);
   let selectedLeaves = $state<Set<string>>(new Set());
   let filteringOpen = $state(false);
@@ -52,24 +76,37 @@
   let uploadActive = $state(false);
   let csvMappingOpen = $state(false);
   let importOptionsOpen = $state(false);
-  let downloadOptions = $state(createPrototypeDownloadOptions());
-  let importOptions = $state(createPrototypeImportOptions());
-  let trackConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('track'));
-  let albumConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('album'));
-  let mixedConditions = $state<PrototypeSearchConditions>(createPrototypeSearchConditions('track'));
+  let downloadOptions = $state(cloneValue(initialItemOverrides.downloadOptions ?? inheritedDownloadOptions));
+  let importOptions = $state(cloneValue(initialItemOverrides.importOptions ?? inheritedImportOptions));
+  let trackConditions = $state<PrototypeSearchConditions>(initialWishlistDefaults ? cloneValue(initialItemConditions) : createPrototypeSearchConditions('track'));
+  let albumConditions = $state<PrototypeSearchConditions>(initialWishlistDefaults ? cloneValue(initialItemConditions) : createPrototypeSearchConditions('album'));
+  let mixedConditions = $state<PrototypeSearchConditions>(initialWishlistDefaults ? cloneValue(initialItemConditions) : createPrototypeSearchConditions('track'));
 
   let selectedCount = $derived(selectedLeaves.size);
   let csvMappingCustomized = $derived(Object.values(draft.csvColumns).some((value) => value.trim().length > 0));
   let hasImportOptions = $derived(['spotify', 'youtube', 'bandcamp', 'musicbrainz', 'csv', 'list'].includes(draft.choice));
-  let importOptionsChanged = $derived(importOptionsCustomized(importOptions));
+  function filteringSignature(value: PrototypeSearchConditions): string {
+    const { ranking: _ranking, ...filtering } = value;
+    return JSON.stringify(filtering);
+  }
+
+  let importOptionsChanged = $derived(mode === 'wishlist-item'
+    ? JSON.stringify(importOptions) !== JSON.stringify(inheritedImportOptions)
+    : importOptionsCustomized(importOptions));
   let downloadCapabilities = $derived<DownloadOptionCapabilities>({
     albumFolderEnrichment: draft.choice === 'album' || (draft.choice !== 'song' && draft.choice !== 'soulseek'),
     playlistOutput: ['spotify', 'youtube', 'bandcamp', 'musicbrainz', 'csv', 'list'].includes(draft.choice),
     nameFormat: true,
   });
-  let downloadOptionsChanged = $derived(downloadOptionsCustomized(downloadOptions, downloadCapabilities));
-  let filteringOptionsChanged = $derived(searchFilteringCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
-  let rankingOptionsChanged = $derived(searchRankingCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
+  let downloadOptionsChanged = $derived(mode === 'wishlist-item'
+    ? JSON.stringify(downloadOptions) !== JSON.stringify(inheritedDownloadOptions)
+    : downloadOptionsCustomized(downloadOptions, downloadCapabilities));
+  let filteringOptionsChanged = $derived(mode === 'wishlist-item'
+    ? filteringSignature(currentConditions()) !== filteringSignature(inheritedConditions)
+    : searchFilteringCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
+  let rankingOptionsChanged = $derived(mode === 'wishlist-item'
+    ? JSON.stringify(currentConditions().ranking) !== JSON.stringify(inheritedConditions.ranking)
+    : searchRankingCustomized(currentConditions(), draft.choice === 'album' ? 'album' : 'track'));
   let valid = $derived(
     draft.choice === 'song' ? Boolean(draft.title.trim())
       : draft.choice === 'album' ? Boolean(draft.album.trim())
@@ -245,7 +282,7 @@
   function commitLocalPlan(plan: JobPreviewPlan, leaves: Set<string>): void {
     const result = commitPreview(plan, leaves);
     if (!result.rootId || !result.records.length) return;
-    onstart(result.records, result.rootId);
+    onstart?.(result.records, result.rootId);
   }
 
   function startNow(): void {
@@ -264,6 +301,16 @@
     commitLocalPlan(preview, selectedLeaves);
   }
 
+  function addToWishlist(): void {
+    if (!valid || !onadd) return;
+    const overrides: WishlistItemOverrides = {};
+    if (hasImportOptions && importOptionsChanged) overrides.importOptions = cloneValue(importOptions);
+    if (filteringOptionsChanged) overrides.filtering = cloneValue(currentConditions());
+    if (rankingOptionsChanged) overrides.ranking = cloneValue(currentConditions());
+    if (downloadOptionsChanged) overrides.downloadOptions = cloneValue(downloadOptions);
+    onadd(cloneValue(draft), overrides);
+  }
+
   function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') onclose();
   }
@@ -271,9 +318,9 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<section class="new-job-composer" aria-label="New job">
+<section class="new-job-composer" aria-label={mode === 'wishlist-item' ? initialDraft ? 'Edit wishlist item' : 'Add wishlist item' : 'New job'}>
   <header class="new-job-heading">
-    <h2>Create new job</h2>
+    <h2>{mode === 'wishlist-item' ? initialDraft ? 'Edit wishlist job' : 'Add job to wishlist' : 'Create new job'}</h2>
     <button type="button" class="new-job-close" aria-label="Close new job" onclick={onclose}><Icon name="x" /></button>
   </header>
 
@@ -376,7 +423,7 @@
 
           {#if hasImportOptions}
             <section class="new-job-import-options">
-              <ExpandableSettingsPanel title="Import options" summary={importOptionsChanged ? 'Custom' : 'Defaults'} customized={importOptionsChanged} bind:open={importOptionsOpen} bodyId="new-job-import-options">
+              <ExpandableSettingsPanel title="Import options" summary={importOptionsChanged ? 'Custom' : mode === 'wishlist-item' ? 'Wishlist default' : 'Defaults'} customized={importOptionsChanged} bind:open={importOptionsOpen} bodyId="new-job-import-options">
                 <div class="new-job-import-options-body">
                   <div class="config-grid">
                     <label><span>Limit items</span><input type="number" min="1" step="1" value={importOptions.maxTracks} placeholder="All" oninput={(event) => setImportNumber('maxTracks', (event.currentTarget as HTMLInputElement).value)} /></label>
@@ -389,7 +436,7 @@
           {/if}
 
           <section class="new-job-job-settings" aria-label="Job settings">
-            <ExpandableSettingsPanel title="Filtering" summary={filteringOptionsChanged ? 'Custom' : 'Defaults'} customized={filteringOptionsChanged} bind:open={filteringOpen} bodyId="new-job-filtering-options">
+            <ExpandableSettingsPanel title="Filtering" summary={filteringOptionsChanged ? 'Custom' : mode === 'wishlist-item' ? 'Wishlist default' : 'Defaults'} customized={filteringOptionsChanged} bind:open={filteringOpen} bodyId="new-job-filtering-options">
               <SearchConfigPanel
                 mode={draft.choice === 'album' ? 'album' : 'track'}
                 configurationFamily={currentFamily()}
@@ -399,7 +446,7 @@
               />
             </ExpandableSettingsPanel>
 
-            <ExpandableSettingsPanel title="Ranking" summary={rankingOptionsChanged ? 'Custom' : 'Defaults'} customized={rankingOptionsChanged} bind:open={rankingOpen} bodyId="new-job-ranking-options">
+            <ExpandableSettingsPanel title="Ranking" summary={rankingOptionsChanged ? 'Custom' : mode === 'wishlist-item' ? 'Wishlist default' : 'Defaults'} customized={rankingOptionsChanged} bind:open={rankingOpen} bodyId="new-job-ranking-options">
               <SearchConfigPanel
                 mode={draft.choice === 'album' ? 'album' : 'track'}
                 configurationFamily={currentFamily()}
@@ -409,7 +456,7 @@
               />
             </ExpandableSettingsPanel>
 
-            <ExpandableSettingsPanel title="Download" summary={downloadOptionsChanged ? 'Custom' : 'Defaults'} customized={downloadOptionsChanged} bind:open={downloadOpen} bodyId="new-job-download-options">
+            <ExpandableSettingsPanel title="Download" summary={downloadOptionsChanged ? 'Custom' : mode === 'wishlist-item' ? 'Wishlist default' : 'Defaults'} customized={downloadOptionsChanged} bind:open={downloadOpen} bodyId="new-job-download-options">
               <SearchConfigPanel
                 mode={draft.choice === 'album' ? 'album' : 'track'}
                 configurationFamily={currentFamily()}
@@ -423,7 +470,7 @@
           </section>
         </div>
 
-          {#if preview}
+          {#if preview && mode === 'start'}
             {@const currentPreview = preview}
             <section class="new-job-preview">
               <header>
@@ -437,7 +484,13 @@
         </div>
 
         <footer class="new-job-footer">
-          {#if preview}
+          {#if mode === 'wishlist-item'}
+            <span class="new-job-footer-status">Only changed sections override wishlist defaults.</span>
+            <div class="new-job-footer-actions">
+              <button type="button" class="new-job-review-button" onclick={onclose}>Cancel</button>
+              <button type="button" class="new-job-start-button" disabled={!valid} onclick={addToWishlist}>{initialDraft ? 'Save changes' : 'Add job'}</button>
+            </div>
+          {:else if preview}
             <span class="new-job-footer-status">{selectedCount} selected</span>
             <div class="new-job-footer-actions">
               <button type="button" class="new-job-start-button" disabled={!selectedCount} onclick={startReviewed}>Start {selectedCount || ''} {selectedCount === 1 ? 'job' : 'jobs'}</button>

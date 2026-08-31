@@ -27,7 +27,7 @@ import {
 
 export type SearchStatus = 'pending' | 'searching' | 'receiving' | 'complete' | 'failed' | 'cancelled' | 'skipped' | 'interrupted';
 export type SearchResultPersistenceState = 'available' | 'incomplete' | 'pruned' | 'not-persisted' | 'interrupted';
-export type SearchView = 'list' | 'results';
+export type SearchView = 'list' | 'results' | 'wishlist';
 export type SearchSort = 'relevance' | 'speed' | 'queue' | 'size' | 'count' | 'name';
 export type SizeSortDirection = 'asc' | 'desc';
 

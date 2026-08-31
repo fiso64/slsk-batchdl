@@ -1,14 +1,25 @@
 <script lang="ts">
   import UsernameLink from '../components/UsernameLink.svelte';
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
+  import WishlistDashboardList from '../components/jobs/WishlistDashboardList.svelte';
   import type { PrototypeScenario } from '../mock/types';
   import type { UserLinkActions } from '../prototype/navigation';
+  import type { AutomaticJobRecord } from '../prototype/jobs';
+  import type { WishlistRecord } from '../prototype/wishlists';
   import { dashboardContractFor, dashboardData, emptyDashboardData, dashboardRangeIds, dashboardRangeLabels, type DashboardPeerRow, type DashboardRangeId } from '../prototype/dashboard';
   import { resourceStateForScenario } from '../prototype/resource-state';
   import { humanizeStateValue, soulseekClientStatusLabel } from '../prototype/status';
 
-  interface Props { scenario: PrototypeScenario; userActions: UserLinkActions; }
-  let { scenario, userActions }: Props = $props();
+  interface Props {
+    scenario: PrototypeScenario;
+    userActions: UserLinkActions;
+    wishlists: WishlistRecord[];
+    automaticJobs: AutomaticJobRecord[];
+    onopenwishlist: (wishlist: WishlistRecord) => void;
+    onrunwishlist: (wishlist: WishlistRecord) => void;
+    oncancelwishlist: (wishlist: WishlistRecord) => void;
+  }
+  let { scenario, userActions, wishlists, automaticJobs, onopenwishlist, onrunwishlist, oncancelwishlist }: Props = $props();
 
   let range = $state<DashboardRangeId>('24h');
   let rankingTab = $state<'downloads' | 'uploads' | 'content' | 'errors'>('downloads');
@@ -171,7 +182,8 @@
   </section>
 
   <div class="dashboard-lower-area">
-    <section class="dashboard-panel ranking-panel">
+    <div class:with-wishlists={wishlists.length > 0} class="dashboard-ranking-row-layout">
+      <section class="dashboard-panel ranking-panel">
       <div class="ranking-tabs" role="tablist" aria-label="Dashboard ranking">
         <button type="button" class:active={rankingTab === 'downloads'} onclick={() => (rankingTab = 'downloads')}>Downloads</button>
         <button type="button" class:active={rankingTab === 'uploads'} onclick={() => (rankingTab = 'uploads')}>Uploads</button>
@@ -203,7 +215,12 @@
           {/each}
         </div>
       {/if}
-    </section>
+      </section>
+
+      {#if wishlists.length}
+        <WishlistDashboardList {wishlists} {automaticJobs} onopen={onopenwishlist} onrun={onrunwishlist} oncancel={oncancelwishlist} />
+      {/if}
+    </div>
 
     <div class="dashboard-bottom-grid">
       <section class="dashboard-panel current-transfer-panel">

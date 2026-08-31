@@ -29,7 +29,7 @@
   let searchLimit = $state(PAGE_SIZE);
   let automaticLimit = $state(PAGE_SIZE);
   let resourceState = $derived(resourceStateForScenario(scenarioId, 'search-list'));
-  let roots = $derived(automaticJobs.filter((job) => isSemanticRoot(job, automaticJobs)));
+  let roots = $derived(automaticJobs.filter((job) => !job.wishlist && isSemanticRoot(job, automaticJobs)));
   let searchEntries = $derived([...searches].sort((a, b) => b.createdAtUtc.localeCompare(a.createdAtUtc)));
   let automaticEntries = $derived(roots
     .map((root) => ({ root, job: presentationTarget(root, automaticJobs) }))

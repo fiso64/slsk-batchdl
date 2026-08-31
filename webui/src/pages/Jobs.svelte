@@ -11,6 +11,9 @@
   import FolderItemCard from '../components/items/FolderItemCard.svelte';
   import PeerItemGroup from '../components/items/PeerItemGroup.svelte';
   import NewJobComposer from '../components/jobs/NewJobComposer.svelte';
+  import NewWishlistModal from '../components/jobs/NewWishlistModal.svelte';
+  import WishlistList from '../components/jobs/WishlistList.svelte';
+  import WishlistDetail from '../components/jobs/WishlistDetail.svelte';
   import JobsHistoryList from '../components/jobs/JobsHistoryList.svelte';
   import AutomaticJobDetail from '../components/jobs/AutomaticJobDetail.svelte';
   import SearchConfigPanel from '../components/SearchConfigPanel.svelte';
@@ -27,14 +30,16 @@
   import type { UserLinkActions } from '../prototype/navigation';
   import {
     isAutomaticJobActive,
-    jobStatusClass as automaticJobStatusClass,
-    jobStatusLabel as automaticJobStatusLabel,
     presentationChildren,
     presentationParent,
     presentationTarget,
+    jobStatusClass as automaticJobStatusClass,
+    jobStatusLabel as automaticJobStatusLabel,
     type AutomaticJobRecord,
   } from '../prototype/jobs';
   import { resourceStateForScenario, type PrototypeResourceState } from '../prototype/resource-state';
+  import { createWishlistItem, type WishlistItem, type WishlistItemOverrides, type WishlistRecord } from '../prototype/wishlists';
+  import type { NewJobDraft } from '../prototype/job-preview';
   import {
     aggregateGroupsForRecord,
     buildAlbumFolderDownloadRequest,
@@ -65,7 +70,9 @@
     searches: SearchRecord[];
     view: SearchView;
     automaticJobs: AutomaticJobRecord[];
+    wishlists: WishlistRecord[];
     activeJobId: string | null;
+    activeWishlistId: string | null;
     selected: Set<string>;
     selectedAggregateGroups: Set<string>;
     selectedAggregateFiles: Set<string>;
@@ -74,6 +81,9 @@
     onshowlist: () => void;
     onsearchagain: (record: SearchRecord) => void;
     onopenjob: (job: AutomaticJobRecord) => void;
+    onopenwishlist: (wishlist: WishlistRecord) => void;
+    onrunwishlist: (wishlist: WishlistRecord) => void;
+    oncancelwishlist: (wishlist: WishlistRecord) => void;
     onstartjobs: (records: AutomaticJobRecord[], rootId: string) => void;
   }
 
@@ -83,7 +93,9 @@
     searches = $bindable(),
     view = $bindable(),
     automaticJobs = $bindable(),
+    wishlists = $bindable(),
     activeJobId = $bindable(),
+    activeWishlistId = $bindable(),
     selected = $bindable(new Set<string>()),
     selectedAggregateGroups = $bindable(new Set<string>()),
     selectedAggregateFiles = $bindable(new Set<string>()),
@@ -92,6 +104,9 @@
     onshowlist,
     onsearchagain,
     onopenjob,
+    onopenwishlist,
+    onrunwishlist,
+    oncancelwishlist,
     onstartjobs,
   }: Props = $props();
 
@@ -109,11 +124,16 @@
   let albumRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: AlbumSearchResult }>>({});
   let genericRetrievalOverrides = $state<Record<string, { state: 'retrieving' | 'retrieved' | 'failed'; result?: GenericDirectoryResult }>>({});
   let newJobOpen = $state(false);
+  let newWishlistOpen = $state(false);
+  let wishlistItemOpen = $state(false);
+  let editingWishlistItemId = $state<string | null>(null);
   let downloadOptionsOpen = $state(false);
   let downloadOptions = $state(createPrototypeDownloadOptions());
 
   let activeRecord = $derived(searches.find((item) => item.id === activeJobId) ?? null);
   let activeAutomaticJob = $derived(automaticJobs.find((item) => item.id === activeJobId) ?? null);
+  let activeWishlist = $derived(wishlists.find((item) => item.id === activeWishlistId) ?? null);
+  let editingWishlistItem = $derived(activeWishlist?.items.find((item) => item.id === editingWishlistItemId) ?? null);
   let activeMode = $derived(activeRecord?.draft.resultMode ?? search.resultMode);
   let aggregateMode = $derived(isAggregateSearchMode(activeMode));
   let genericMode = $derived(activeMode === 'generic');
@@ -236,6 +256,81 @@
   function startPreviewJobs(records: AutomaticJobRecord[], rootId: string): void {
     onstartjobs(records, rootId);
     newJobOpen = false;
+  }
+
+  function createWishlistRecord(wishlist: WishlistRecord): void {
+    wishlists = [...wishlists, wishlist];
+    newWishlistOpen = false;
+    onopenwishlist(wishlist);
+  }
+
+  function openNewWishlistItem(): void {
+    editingWishlistItemId = null;
+    wishlistItemOpen = true;
+  }
+
+  function editWishlistItem(item: WishlistItem): void {
+    editingWishlistItemId = item.id;
+    wishlistItemOpen = true;
+  }
+
+  function closeWishlistItemComposer(): void {
+    wishlistItemOpen = false;
+    editingWishlistItemId = null;
+  }
+
+  function saveWishlistItem(draft: NewJobDraft, overrides: WishlistItemOverrides): void {
+    if (!activeWishlist) return;
+    if (editingWishlistItemId) {
+      wishlists = wishlists.map((wishlist) => wishlist.id === activeWishlist.id
+        ? {
+            ...wishlist,
+            items: wishlist.items.map((item) => item.id === editingWishlistItemId
+              ? { ...item, draft, overrides }
+              : item),
+          }
+        : wishlist);
+    } else {
+      const item = createWishlistItem(draft, overrides);
+      wishlists = wishlists.map((wishlist) => wishlist.id === activeWishlist.id
+        ? { ...wishlist, items: [...wishlist.items, item] }
+        : wishlist);
+    }
+    closeWishlistItemComposer();
+  }
+
+  function removeWishlistItem(item: WishlistItem): void {
+    if (!activeWishlist) return;
+    wishlists = wishlists.map((wishlist) => wishlist.id === activeWishlist.id
+      ? { ...wishlist, items: wishlist.items.filter((candidate) => candidate.id !== item.id) }
+      : wishlist);
+  }
+
+  function runActiveWishlist(): void {
+    if (activeWishlist) onrunwishlist(activeWishlist);
+  }
+
+  function cancelActiveWishlist(): void {
+    if (activeWishlist) oncancelwishlist(activeWishlist);
+  }
+
+  function deleteActiveWishlist(): void {
+    if (!activeWishlist) return;
+    wishlists = wishlists.filter((wishlist) => wishlist.id !== activeWishlist.id);
+    activeWishlistId = null;
+    onshowlist();
+  }
+
+  function backFromAutomaticJob(): void {
+    const wishlistId = activeAutomaticJob?.wishlist?.wishlistId;
+    if (wishlistId) {
+      const source = wishlists.find((wishlist) => wishlist.id === wishlistId);
+      if (source) {
+        onopenwishlist(source);
+        return;
+      }
+    }
+    onshowlist();
   }
 
   function statusLabel(record: SearchRecord): string {
@@ -767,9 +862,17 @@
   {#if view === 'list'}
     <header class="page-heading search-list-heading jobs-list-heading">
       <div><p class="eyebrow">Work</p><h1>Jobs</h1></div>
-      <button type="button" class="new-job-button" onclick={() => (newJobOpen = !newJobOpen)}><span>+</span> New job</button>
+      <div class="jobs-create-actions">
+        <button type="button" class="new-wishlist-button" onclick={() => (newWishlistOpen = true)}><Icon name="clock" /> New wishlist</button>
+        <button type="button" class="new-job-button" onclick={() => (newJobOpen = !newJobOpen)}><span>+</span> New job</button>
+      </div>
     </header>
 
+    {#if wishlists.length}
+      <WishlistList {wishlists} {automaticJobs} onopen={onopenwishlist} oncancel={oncancelwishlist} onrun={onrunwishlist} />
+    {/if}
+
+    <header class="jobs-section-heading jobs-history-heading"><div><h2>Job history</h2></div></header>
     <JobsHistoryList
       {scenarioId}
       {searches}
@@ -779,6 +882,21 @@
       {onopenjob}
       onsearchaction={handleSearchAction}
       onautomaticjobaction={handleAutomaticJobAction}
+    />
+  {:else if view === 'wishlist' && activeWishlist}
+    <WishlistDetail
+      wishlist={activeWishlist}
+      {automaticJobs}
+      {userActions}
+      onback={onshowlist}
+      onadditem={openNewWishlistItem}
+      onedititem={editWishlistItem}
+      onremoveitem={removeWishlistItem}
+      {onopenjob}
+      onjobaction={handleAutomaticJobAction}
+      onrun={runActiveWishlist}
+      oncancel={cancelActiveWishlist}
+      ondelete={deleteActiveWishlist}
     />
   {:else if activeRecord}
     {@const resultState = resultResourceState(activeRecord)}
@@ -962,7 +1080,7 @@
     {/if}
 
   {:else if activeAutomaticJob}
-    <AutomaticJobDetail job={activeAutomaticJob} allJobs={automaticJobs} {userActions} {onopenjob} onjobaction={handleAutomaticJobAction} onback={onshowlist} />
+    <AutomaticJobDetail job={activeAutomaticJob} allJobs={automaticJobs} {userActions} {onopenjob} onjobaction={handleAutomaticJobAction} onback={backFromAutomaticJob} />
   {/if}
 </section>
 
@@ -971,6 +1089,26 @@
     <button type="button" class="new-job-modal-backdrop" aria-label="Close new job" onclick={() => (newJobOpen = false)}></button>
     <div class="new-job-modal-dialog" role="dialog" aria-modal="true" aria-label="New job">
       <NewJobComposer onclose={() => (newJobOpen = false)} onstart={startPreviewJobs} />
+    </div>
+  </div>
+{/if}
+
+{#if newWishlistOpen}
+  <NewWishlistModal onclose={() => (newWishlistOpen = false)} oncreate={createWishlistRecord} />
+{/if}
+
+{#if wishlistItemOpen && activeWishlist}
+  <div class="new-job-modal">
+    <button type="button" class="new-job-modal-backdrop" aria-label="Close wishlist item editor" onclick={closeWishlistItemComposer}></button>
+    <div class="new-job-modal-dialog" role="dialog" aria-modal="true" aria-label={editingWishlistItem ? 'Edit wishlist item' : 'Add wishlist item'}>
+      <NewJobComposer
+        mode="wishlist-item"
+        wishlistDefaults={activeWishlist.defaults}
+        initialDraft={editingWishlistItem?.draft}
+        initialOverrides={editingWishlistItem?.overrides}
+        onclose={closeWishlistItemComposer}
+        onadd={saveWishlistItem}
+      />
     </div>
   </div>
 {/if}

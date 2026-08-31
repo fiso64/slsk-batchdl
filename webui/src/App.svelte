@@ -13,8 +13,9 @@
   import type { PageId, UserLinkActions } from './prototype/navigation';
   import { emptySearchDraft, type SearchDraft } from './prototype/search';
   import type { PrototypeSearchConditions } from './prototype/search-config';
+  import { createInitialWishlistJobs, createInitialWishlists, runWishlistNow, type WishlistRecord } from './prototype/wishlists';
   import { getUserBrowseFixture, type UserBrowseDraft, type UserBrowseView } from './prototype/users';
-  import { createInitialAutomaticJobs, type AutomaticJobRecord } from './prototype/jobs';
+  import { createInitialAutomaticJobs, isAutomaticJobActive, type AutomaticJobRecord } from './prototype/jobs';
   import {
     createInitialSearches,
     createSearchRecord,
@@ -29,9 +30,11 @@
   let scenario = $derived(getScenario(scenarioId));
   let search = $state<SearchDraft>({ ...emptySearchDraft });
   let searches = $state<SearchRecord[]>(createInitialSearches('normal'));
-  let automaticJobs = $state<AutomaticJobRecord[]>(createInitialAutomaticJobs('normal'));
+  let automaticJobs = $state<AutomaticJobRecord[]>([...createInitialAutomaticJobs('normal'), ...createInitialWishlistJobs('normal')]);
+  let wishlists = $state<WishlistRecord[]>(createInitialWishlists('normal'));
   let searchView = $state<SearchView>('list');
   let activeJobId = $state<string | null>(defaultSearchId);
+  let activeWishlistId = $state<string | null>(null);
   let selectedJobResultIds = $state<Set<string>>(new Set());
   let selectedAggregateGroupIds = $state<Set<string>>(new Set());
   let selectedAggregateFileIds = $state<Set<string>>(new Set());
@@ -63,6 +66,10 @@
     return `/jobs/${encodeURIComponent(id)}`;
   }
 
+  function wishlistPath(id: string): string {
+    return `/jobs/wishlists/${encodeURIComponent(id)}`;
+  }
+
   function userPath(username: string, view: UserBrowseView): string {
     const base = username.trim() ? `/users/${encodeURIComponent(username.trim())}` : '/users';
     return view === 'shares' ? `${base}/shares` : base;
@@ -91,6 +98,21 @@
     const segments = path.split('/').filter(Boolean);
     const root = segments[0] ?? '';
 
+    if (root === 'jobs' && segments[1] === 'wishlists' && segments[2]) {
+      const id = decodeSegment(segments[2]);
+      const wishlist = wishlists.find((candidate) => candidate.id === id);
+      if (wishlist) {
+        activePage = 'jobs';
+        searchView = 'wishlist';
+        activeWishlistId = id;
+        return wishlistPath(id);
+      }
+      activePage = 'jobs';
+      searchView = 'list';
+      activeWishlistId = null;
+      return '/jobs';
+    }
+
     if (root === 'jobs' && segments[1]) {
       const id = decodeSegment(segments[1]);
       const record = searches.find((candidate) => candidate.id === id);
@@ -109,6 +131,7 @@
     if (root === 'jobs') {
       activePage = 'jobs';
       searchView = 'list';
+      activeWishlistId = null;
       return '/jobs';
     }
 
@@ -146,8 +169,9 @@
 
   function navigate(page: PageId): void {
     if (page === 'jobs') {
-      if (activePage === 'jobs' && searchView === 'results') {
+      if (activePage === 'jobs' && searchView !== 'list') {
         searchView = 'list';
+        activeWishlistId = null;
         setBrowserPath('/jobs');
         return;
       }
@@ -155,8 +179,11 @@
       activePage = 'jobs';
       if (searchView === 'results' && activeJobId && (searches.some((record) => record.id === activeJobId) || automaticJobs.some((job) => job.id === activeJobId))) {
         setBrowserPath(jobPath(activeJobId));
+      } else if (searchView === 'wishlist' && activeWishlistId && wishlists.some((wishlist) => wishlist.id === activeWishlistId)) {
+        setBrowserPath(wishlistPath(activeWishlistId));
       } else {
         searchView = 'list';
+        activeWishlistId = null;
         setBrowserPath('/jobs');
       }
       return;
@@ -175,10 +202,12 @@
   function changeScenario(nextScenario: ScenarioId): void {
     scenarioId = nextScenario;
     searches = createInitialSearches(nextScenario);
-    automaticJobs = createInitialAutomaticJobs(nextScenario);
+    automaticJobs = [...createInitialAutomaticJobs(nextScenario), ...createInitialWishlistJobs(nextScenario)];
+    wishlists = createInitialWishlists(nextScenario);
+    activeWishlistId = null;
     clearJobSelection();
     activeJobId = searches.find((record) => record.fixture === 'boards')?.id ?? searches[0]?.id ?? automaticJobs[0]?.id ?? null;
-    if (searchView === 'results' && !activeJobId) searchView = 'list';
+    if (searchView !== 'list') searchView = activeJobId ? 'results' : 'list';
     const nextUsername = getUserBrowseFixture(nextScenario).profile.username;
     activeUsername = nextUsername;
     if (activePage === 'users') setBrowserPath(userPath(nextUsername, userView), true);
@@ -247,6 +276,45 @@
     setBrowserPath(jobPath(job.id));
   }
 
+  function openWishlist(wishlist: WishlistRecord): void {
+    activeWishlistId = wishlist.id;
+    searchView = 'wishlist';
+    activePage = 'jobs';
+    setBrowserPath(wishlistPath(wishlist.id));
+  }
+
+  function runWishlist(wishlist: WishlistRecord): void {
+    if (wishlist.lastRun.status === 'running' || !wishlist.items.length) return;
+    const started = runWishlistNow(wishlist);
+    wishlists = wishlists.map((candidate) => candidate.id === wishlist.id ? started.wishlist : candidate);
+    automaticJobs = [...started.jobs, ...automaticJobs];
+  }
+
+  function cancelWishlistRun(wishlist: WishlistRecord): void {
+    const runId = wishlist.lastRun.runId;
+    if (wishlist.lastRun.status !== 'running' || !runId) return;
+    const cancelled = wishlist.lastRun.stats.active + wishlist.lastRun.stats.pending;
+    automaticJobs = automaticJobs.map((job) => job.wishlist?.wishlistId === wishlist.id && job.wishlist.runId === runId && isAutomaticJobActive(job, automaticJobs)
+      ? { ...job, status: 'cancelled' as const, lifetime: 'retained' as const }
+      : job);
+    wishlists = wishlists.map((candidate) => candidate.id === wishlist.id
+      ? {
+          ...candidate,
+          lastRun: {
+            ...candidate.lastRun,
+            status: 'cancelled' as const,
+            when: 'Just now',
+            stats: {
+              ...candidate.lastRun.stats,
+              active: 0,
+              pending: 0,
+              cancelled: candidate.lastRun.stats.cancelled + cancelled,
+            },
+          },
+        }
+      : candidate);
+  }
+
   function startAutomaticJobs(records: AutomaticJobRecord[], rootId: string): void {
     automaticJobs = [...records, ...automaticJobs];
     const root = records.find((job) => job.id === rootId);
@@ -255,6 +323,7 @@
 
   function showSearchList(): void {
     searchView = 'list';
+    activeWishlistId = null;
     activePage = 'jobs';
     setBrowserPath('/jobs');
   }
@@ -292,7 +361,7 @@
   onuserbrowsesubmit={submitUserBrowse}
 >
   {#if activePage === 'dashboard'}
-    <Dashboard {scenario} {userActions} />
+    <Dashboard {scenario} {userActions} {wishlists} {automaticJobs} onopenwishlist={openWishlist} onrunwishlist={runWishlist} oncancelwishlist={cancelWishlistRun} />
   {:else if activePage === 'jobs'}
     <Jobs
       {search}
@@ -300,7 +369,9 @@
       bind:searches
       bind:view={searchView}
       bind:automaticJobs
+      bind:wishlists
       bind:activeJobId
+      bind:activeWishlistId
       bind:selected={selectedJobResultIds}
       bind:selectedAggregateGroups={selectedAggregateGroupIds}
       bind:selectedAggregateFiles={selectedAggregateFileIds}
@@ -309,6 +380,9 @@
       onshowlist={showSearchList}
       onsearchagain={searchAgain}
       onopenjob={openAutomaticJob}
+      onopenwishlist={openWishlist}
+      onrunwishlist={runWishlist}
+      oncancelwishlist={cancelWishlistRun}
       onstartjobs={startAutomaticJobs}
     />
   {:else if activePage === 'users'}

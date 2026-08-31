@@ -20,6 +20,8 @@ interface JobBase {
   when: string;
   lifetime: PrototypeDataLifetime;
   progress?: { completed: number; total: number };
+  /** Saved-automation provenance; execution remains an ordinary workflow/job. */
+  wishlist?: { wishlistId: string; runId: string; itemId?: string };
 }
 
 export interface SongJobRecord extends JobBase {
