@@ -43,7 +43,7 @@ npm run build
 
 ## Current design direction
 
-The prototype currently uses a **Carbon + Blue** palette: nearly neutral black/gray surfaces in dark mode, neutral gray surfaces in light mode, and a restrained blue accent. The accent is reserved mainly for focus, selection, progress, and unread state. Light and dark variants follow the system theme.
+The prototype currently uses a **Carbon + Blue** palette: nearly neutral black/gray surfaces in dark mode, neutral gray surfaces in light mode, and a restrained blue accent. The accent is reserved mainly for focus, selection, progress, and unread state. **Settings → Appearance** exposes **Auto / Light / Dark**; Auto follows the browser/OS color scheme, while an explicit choice overrides it. This preference is frontend-only and persists in browser storage rather than daemon configuration.
 
 The current scale pass favors roughly 14 px primary row text, 12 px secondary metadata and form labels, 32–34 px form controls, and 24–26 px condition pills. The global search remains intentionally larger at 54 px.
 
