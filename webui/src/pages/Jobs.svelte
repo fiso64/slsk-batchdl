@@ -27,6 +27,8 @@
   import type { UserLinkActions } from '../prototype/navigation';
   import {
     isAutomaticJobActive,
+    jobStatusClass as automaticJobStatusClass,
+    jobStatusLabel as automaticJobStatusLabel,
     presentationChildren,
     presentationParent,
     presentationTarget,
@@ -236,18 +238,22 @@
     newJobOpen = false;
   }
 
-  function statusLabel(status: SearchRecord['status']): string {
-    const labels: Record<SearchRecord['status'], string> = {
+  function statusLabel(record: SearchRecord): string {
+    if (record.status === 'skipped') return automaticJobStatusLabel('skipped', record.skipReason);
+    const labels: Record<Exclude<SearchRecord['status'], 'skipped'>, string> = {
       pending: 'Pending',
       searching: 'Searching',
       receiving: 'Receiving',
       complete: 'Complete',
       failed: 'Failed',
       cancelled: 'Cancelled',
-      skipped: 'Skipped',
       interrupted: 'Interrupted',
     };
-    return labels[status];
+    return labels[record.status];
+  }
+
+  function statusClass(record: SearchRecord): string {
+    return record.status === 'skipped' ? automaticJobStatusClass('skipped', record.skipReason) : record.status;
   }
 
   function resultResourceState(record: SearchRecord): PrototypeResourceState {
@@ -789,7 +795,7 @@
         <h1>{activeRecord.displayQuery}</h1>
       </div>
       <div class="search-results-summary">
-        <span class={`search-status-badge ${activeRecord.status}`}><i></i>{statusLabel(activeRecord.status)}</span>
+        <span class={`search-status-badge ${statusClass(activeRecord)}`}><i></i>{statusLabel(activeRecord)}</span>
         {#if genericMode}<span>{projection?.totalCount ?? 0} directories</span>{/if}
         {#if aggregateMode}<span>{aggregateResults.length} groups</span>{/if}
         <span>{activeRecord.foundFiles} files</span>
@@ -801,10 +807,11 @@
           <Icon name="search" />
           <span>Search again</span>
         </button>
-        <button type="button" class:quiet-cancel={searchIsActive(activeRecord)} class="delete-search-button" aria-label={`${searchIsActive(activeRecord) ? 'Cancel' : 'Delete'} ${activeRecord.displayQuery}`} title={searchIsActive(activeRecord) ? 'Cancel job' : 'Delete search'} onclick={() => handleSearchAction(activeRecord)}>
-          <Icon name={searchIsActive(activeRecord) ? 'x' : 'trash'} />
-          <span>{searchIsActive(activeRecord) ? 'Cancel' : 'Delete'}</span>
-        </button>
+        {#if searchIsActive(activeRecord)}
+          <button type="button" class="resource-cancel-button" aria-label={`Cancel ${activeRecord.displayQuery}`} title="Cancel job" onclick={() => handleSearchAction(activeRecord)}><Icon name="x" /> Cancel</button>
+        {:else}
+          <button type="button" class="resource-remove-button" aria-label={`Delete ${activeRecord.displayQuery}`} title="Delete search" onclick={() => handleSearchAction(activeRecord)}><Icon name="trash" /></button>
+        {/if}
       </div>
     </header>
 

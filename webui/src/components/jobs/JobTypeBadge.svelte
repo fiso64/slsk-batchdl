@@ -2,7 +2,7 @@
   import Icon from '../Icon.svelte';
   import type { AppIconName } from '../../prototype/icons';
 
-  export type JobTypeBadgeTone = 'search' | 'import' | 'automatic';
+  export type JobTypeBadgeTone = 'import' | 'automatic';
 
   interface Props {
     icon: AppIconName;

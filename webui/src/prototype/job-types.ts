@@ -12,6 +12,9 @@ export type AutomaticJobKind =
 
 export type AutomaticJobStatus = 'pending' | 'running' | 'complete' | 'failed' | 'cancelled' | 'skipped';
 
+/** Normalized presentation value of the daemon's ServerJobSkipReason. */
+export type AutomaticJobSkipReason = 'None' | 'AlreadyExists' | 'NotFoundLastTime' | 'Manual' | 'Filtered';
+
 export type ExtractSourceType =
   | 'spotify'
   | 'youtube'

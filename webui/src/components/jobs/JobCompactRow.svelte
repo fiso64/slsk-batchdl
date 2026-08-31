@@ -1,9 +1,12 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
+  import UsernameLink from '../UsernameLink.svelte';
   import JobTypeBadge, { type JobTypeBadgeTone } from './JobTypeBadge.svelte';
   import { formatBytes } from '../../prototype/items';
+  import type { UserLinkActions } from '../../prototype/navigation';
   import {
     effectiveJobProgress,
+    effectiveJobSkipReason,
     effectiveJobStatus,
     extractSourceLabel,
     isAutomaticJobActive,
@@ -24,6 +27,7 @@
     contextOverride?: string;
     whenOverride?: string;
     typeToneOverride?: JobTypeBadgeTone;
+    userActions?: UserLinkActions;
   }
 
   let {
@@ -36,9 +40,11 @@
     contextOverride,
     whenOverride,
     typeToneOverride,
+    userActions,
   }: Props = $props();
   let jobSet = $derived(allJobs.length ? allJobs : [job]);
   let displayStatus = $derived(effectiveJobStatus(job, jobSet));
+  let displaySkipReason = $derived(effectiveJobSkipReason(job, jobSet));
   let displayProgress = $derived(effectiveJobProgress(job, jobSet));
   let active = $derived(isAutomaticJobActive(job, jobSet));
   let actionLabel = $derived(active ? 'Cancel' : 'Remove');
@@ -82,6 +88,23 @@
     return values.slice(0, compact ? 1 : 3);
   }
 
+
+  function remoteContext(): { username: string; path: string } | null {
+    if (job.kind === 'song' && job.payload.resolved) {
+      return { username: job.payload.resolved.username, path: job.payload.resolved.filename };
+    }
+    if (job.kind === 'album' && job.payload.resolved) {
+      return { username: job.payload.resolved.username, path: job.payload.resolved.folderPath };
+    }
+    if (job.kind === 'remote-file') {
+      return { username: job.payload.username, path: job.payload.path };
+    }
+    if (job.kind === 'remote-directory') {
+      return { username: job.payload.username, path: job.payload.folderPath };
+    }
+    return null;
+  }
+
   function progressPercent(): number | null {
     if (displayProgress?.total) return Math.max(0, Math.min(100, displayProgress.completed / displayProgress.total * 100));
     if (job.kind === 'song' || job.kind === 'album' || job.kind === 'remote-file' || job.kind === 'remote-directory') {
@@ -94,33 +117,46 @@
 {#if compact}
   {@const percent = progressPercent()}
   {@const rowStats = stats()}
+  {@const remote = remoteContext()}
   <div class:has-progress={percent !== null && active} class="job-child-row">
-    <button type="button" class="job-child-open" {onclick}>
+    <div class="job-child-open">
+      <button type="button" class="job-child-open-target" aria-label={`Open ${titleOverride ?? job.title}`} onclick={onclick}></button>
       <span class="job-child-icon"><Icon name={jobKindIcon(job.kind)} /></span>
       <span class="job-child-copy">
         <strong>{titleOverride ?? job.title}</strong>
-        <small>{contextLabel()} · {whenOverride ?? job.when}</small>
+        <small class="job-child-context-line">
+          <span>{contextLabel()}</span><span class="stat-separator">·</span><span>{whenOverride ?? job.when}</span>
+          {#if remote}
+            <span class="stat-separator">·</span>
+            {#if userActions}
+              <UsernameLink username={remote.username} actions={userActions} />
+            {:else}
+              <span>{remote.username}</span>
+            {/if}
+            <span class="stat-separator">·</span><span class="job-child-remote-path" title={remote.path}>{remote.path}</span>
+          {/if}
+        </small>
       </span>
       <span class="job-child-meta">
         {#if rowStats.length}
           <span class="job-child-stat">{rowStats[0]}</span>
           <span class="stat-separator">·</span>
         {/if}
-        <span class={`search-status-badge ${jobStatusClass(displayStatus)}`}><i></i>{jobStatusLabel(displayStatus)}</span>
+        <span class={`search-status-badge ${jobStatusClass(displayStatus, displaySkipReason)}`}><i></i>{jobStatusLabel(displayStatus, displaySkipReason)}</span>
       </span>
       {#if percent !== null && active}
         <span class="job-child-progress" aria-label={`${Math.round(percent)}% complete`}><i style={`width:${percent}%`}></i></span>
       {/if}
-    </button>
+    </div>
     {#if onaction}
-      <button type="button" class="job-row-action" aria-label={`${actionLabel} ${titleOverride ?? job.title}`} title={actionLabel} onclick={onaction}><Icon name="x" /></button>
+      <button type="button" class="job-row-action" aria-label={`${actionLabel} ${titleOverride ?? job.title}`} title={actionLabel} onclick={onaction}><Icon name={active ? 'x' : 'trash'} /></button>
     {/if}
   </div>
 {:else}
   <div class="search-history-row automatic-history-row">
     <button type="button" class="search-history-open automatic-history-open" {onclick}>
       <span class="search-history-query">{titleOverride ?? job.title}</span>
-      <span class={`search-status-badge ${jobStatusClass(displayStatus)}`}><i></i>{jobStatusLabel(displayStatus)}</span>
+      <span class={`search-status-badge ${jobStatusClass(displayStatus, displaySkipReason)}`}><i></i>{jobStatusLabel(displayStatus, displaySkipReason)}</span>
       <span class="search-history-context">
         <JobTypeBadge icon={jobKindIcon(job.kind)} label={contextLabel()} tone={typeTone()} />
         <span class="stat-separator">·</span>
@@ -137,7 +173,7 @@
     </button>
     {#if onaction}
       <button type="button" class="search-history-remove" aria-label={`${actionLabel} ${titleOverride ?? job.title}`} title={actionLabel} onclick={onaction}>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8" /></svg>
+        <Icon name={active ? 'x' : 'trash'} />
       </button>
     {:else}
       <span class="automatic-history-action-space" aria-hidden="true"></span>

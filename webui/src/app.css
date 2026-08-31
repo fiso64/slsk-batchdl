@@ -1220,7 +1220,6 @@ input[type="checkbox"]:indeterminate {
   white-space: nowrap;
 }
 .job-type-badge .app-icon { --app-icon-size: 12px; flex: 0 0 12px; }
-.job-type-badge.search { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); color: var(--accent-text); }
 .job-type-badge.import { color: color-mix(in srgb, var(--text) 68%, var(--muted)); }
 .job-type-badge.automatic { color: color-mix(in srgb, var(--text) 82%, var(--muted)); }
 .search-history-stats {
@@ -1249,6 +1248,7 @@ input[type="checkbox"]:indeterminate {
   color: var(--muted);
 }
 .search-history-remove:hover { border-color: var(--border); background: var(--surface-raised); color: var(--danger); }
+.search-history-remove .app-icon { --app-icon-size: 17px; }
 .search-history-remove svg, .icon-button svg, .edit-conditions-button svg,
 .primary-selection-action svg, .locked-badge svg, .peer-chevron, .size-direction-button svg {
   width: 17px;
@@ -1303,8 +1303,7 @@ input[type="checkbox"]:indeterminate {
 .search-results-summary > span:not(.search-status-badge) + span:not(.search-status-badge)::before { content: "·"; margin-right: 9px; color: var(--faint); }
 
 .search-results-actions { display: inline-flex; align-items: center; gap: 7px; }
-.search-again-button,
-.delete-search-button {
+.search-again-button {
   height: 36px;
   display: inline-flex;
   align-items: center;
@@ -1316,15 +1315,9 @@ input[type="checkbox"]:indeterminate {
   color: var(--muted);
   font-size: 0.75rem;
 }
-.search-again-button .app-icon,
-.delete-search-button .app-icon { --app-icon-size: 16px; }
+.search-again-button .app-icon { --app-icon-size: 16px; }
 .search-again-button:hover { background: var(--surface-subtle); color: var(--text); }
 
-.delete-search-button:hover {
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
-  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
-  color: var(--danger);
-}
 
 .result-refine-wrap { position: relative; z-index: 6; }
 .result-refine-row {
@@ -1752,8 +1745,8 @@ input[type="checkbox"]:indeterminate {
 
 @media (max-width: 700px) {
   .search-results-actions { gap: 5px; }
-  .search-again-button span, .delete-search-button span { display: none; }
-  .search-again-button, .delete-search-button { width: 36px; justify-content: center; padding: 0; }
+  .search-again-button span { display: none; }
+  .search-again-button { width: 36px; justify-content: center; padding: 0; }
   .search-history-open { grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; }
   .search-history-stats { gap: 5px; font-size: 0.66rem; }
   .stat-separator { display: none; }
@@ -2712,7 +2705,14 @@ input[type="checkbox"]:indeterminate {
 .username-action-menu button:focus-visible { background: var(--surface-subtle); outline: none; }
 .username-action-menu .app-icon { --app-icon-size: 16px; color: var(--muted); }
 
-/* Viewport-aware anchored menus share one clipping contract. */
+/* Viewport-aware anchored surfaces share one clipping + top-layer contract.
+   The Popover API supplies the top layer; these resets neutralize UA popover
+   inset/margin defaults while the shared action owns left/top placement. */
+.anchored-overlay-surface {
+  inset: auto;
+  margin: 0;
+  z-index: 2147483000; /* fallback for browsers without the Popover top layer */
+}
 .chat-options-menu,
 .bulk-cancel-menu,
 .username-action-menu,
@@ -2901,8 +2901,10 @@ input[type="checkbox"]:indeterminate {
 
 .search-status-badge.pending { color: var(--muted); }
 .search-status-badge.failed { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
-.search-status-badge.cancelled,
-.search-status-badge.skipped { background: var(--surface-subtle); color: var(--muted); }
+.search-status-badge.cancelled { background: var(--surface-subtle); color: var(--muted); }
+.search-status-badge.skipped-exists { background: color-mix(in srgb, var(--success) 11%, var(--surface)); color: var(--success); }
+.search-status-badge.skipped-other,
+.search-status-badge.skipped { background: color-mix(in srgb, var(--warning) 12%, var(--surface)); color: var(--warning); }
 .search-status-badge.interrupted { background: color-mix(in srgb, var(--warning) 12%, var(--surface)); color: var(--warning); }
 .search-status-badge.complete { background: color-mix(in srgb, var(--success) 11%, var(--surface)); color: var(--success); }
 
@@ -3554,10 +3556,37 @@ input[type="checkbox"]:indeterminate {
 }
 .new-job-start-button:disabled { opacity: .45; cursor: default; }
 
+/* Jobs history experiment: searches and non-search jobs have independent lanes. */
+.jobs-history-lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.jobs-history-lanes.single-lane { grid-template-columns: minmax(0, 1fr); }
+.jobs-history-lane { min-width: 0; }
+.jobs-history-lane-heading {
+  min-height: 24px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px 6px;
+}
+.jobs-history-lane-heading h3 { margin: 0; color: var(--text); font-size: .74rem; font-weight: 650; }
+.jobs-history-lane-heading span { color: var(--muted); font-size: .62rem; }
+.jobs-history-lane-list { width: 100%; }
+.jobs-history-lane .search-history-open { gap: 5px 10px; padding-left: 12px; }
+.jobs-history-lane .search-history-stats { gap: 5px; }
+.jobs-history-lane .load-more-button { margin-top: 10px; }
+
 .mixed-job-history-list { gap: 0; }
 .automatic-history-row { grid-template-columns: minmax(0, 1fr) 36px; }
 .automatic-history-open { width: 100%; }
 .automatic-history-action-space { width: 36px; }
+
+@media (max-width: 1120px) {
+  .jobs-history-lanes { grid-template-columns: 1fr; gap: 18px; }
+}
 
 .job-child-row {
   width: 100%;
@@ -3569,6 +3598,7 @@ input[type="checkbox"]:indeterminate {
 .job-child-row:last-child { border-bottom: 0; }
 .job-child-row:hover { background: var(--surface-subtle); }
 .job-child-open {
+  position: relative;
   min-width: 0;
   min-height: 52px;
   display: grid;
@@ -3585,8 +3615,23 @@ input[type="checkbox"]:indeterminate {
 .job-child-icon { grid-column: 1; grid-row: 1; display: grid; place-items: center; color: var(--muted); }
 .job-child-icon .app-icon { --app-icon-size: 15px; }
 .job-child-copy { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: 2px; }
+.job-child-open-target {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.job-child-open-target:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: -3px; border-radius: 6px; }
 .job-child-copy strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; font-weight: 620; }
 .job-child-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .61rem; }
+.job-child-context-line { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.job-child-context-line > :not(.job-child-remote-path) { flex: 0 0 auto; }
+.job-child-context-line .username-link-control { position: relative; z-index: 2; pointer-events: auto; }
+.job-child-context-line .username-link { font-weight: inherit; color: inherit; }
+.job-child-remote-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-child-meta { grid-column: 3; grid-row: 1; display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; color: var(--muted); white-space: nowrap; }
 .job-child-meta .stat-separator { color: var(--faint); }
 .job-child-progress { grid-column: 2 / 4; grid-row: 2; width: 100%; height: 3px; overflow: hidden; border-radius: 999px; background: var(--surface-subtle); }
@@ -3614,21 +3659,6 @@ input[type="checkbox"]:indeterminate {
 .job-detail-title > small { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .68rem; }
 .job-detail-heading-summary { display: flex; align-items: center; justify-content: flex-end; gap: 9px; color: var(--muted); font-size: .72rem; white-space: nowrap; }
 .job-detail-heading-summary > span:not(.search-status-badge) + span:not(.search-status-badge)::before { content: "·"; margin-right: 9px; color: var(--faint); }
-.job-detail-lifecycle-action {
-  min-height: 31px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 5px;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--muted);
-  font-size: .66rem;
-}
-.job-detail-lifecycle-action .app-icon { --app-icon-size: 13px; }
-.job-detail-lifecycle-action:hover { border-color: var(--border-strong); color: var(--danger); }
 .job-detail-kicker { min-width: 0; min-height: 14px; display: flex; align-items: center; gap: 5px; margin-bottom: 4px; overflow: hidden; color: var(--faint); font-size: .62rem; font-weight: 560; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 .job-detail-kicker button { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; border: 0; background: transparent; color: var(--muted); font: inherit; text-transform: none; letter-spacing: 0; }
 .job-detail-kicker button:hover { color: var(--text); text-decoration: underline; }
@@ -3789,3 +3819,34 @@ input[type="checkbox"]:indeterminate {
   .floating-options-action { width: 42px; min-height: 42px; }
   .floating-download-options-popover { right: 14px; bottom: 68px; width: calc(100vw - 28px); }
 }
+
+/* Shared job/search detail lifecycle actions. */
+.resource-cancel-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: .71rem;
+  font-weight: 620;
+}
+.resource-cancel-button:hover { background: var(--surface-raised); }
+.resource-cancel-button .app-icon { --app-icon-size: 13px; }
+.resource-remove-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+.resource-remove-button:hover { background: var(--surface-raised); color: var(--danger); }
+.resource-remove-button .app-icon { --app-icon-size: 13px; }

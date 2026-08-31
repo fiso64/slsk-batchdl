@@ -1,5 +1,6 @@
 import type { components } from '../api/generated';
 import type { SearchDraft, SearchResultMode } from './search';
+import type { AutomaticJobSkipReason } from './job-types';
 import { isAggregateSearchMode, searchModeFamily } from './search';
 import type { AudioAttributes, ItemPeerInfo } from './items';
 import { basename } from './items';
@@ -45,6 +46,7 @@ export interface SearchRecord {
   draft: SearchDraft;
   displayQuery: string;
   status: SearchStatus;
+  skipReason?: AutomaticJobSkipReason;
   resultState: SearchResultPersistenceState;
   lifetime: PrototypeDataLifetime;
   createdAtUtc: string;
@@ -1140,7 +1142,7 @@ export function createInitialSearches(scenario: 'normal' | 'busy' | 'loading' | 
     records[1] = { ...records[1]!, resultState: 'incomplete', pagination: { ...records[1]!.pagination, resultHasMore: true } };
     records[2] = { ...records[2]!, status: 'failed' };
     records[3] = { ...records[3]!, status: 'cancelled' };
-    records[4] = { ...records[4]!, status: 'skipped', resultState: 'pruned', lifetime: 'pruned' };
+    records[4] = { ...records[4]!, status: 'skipped', skipReason: 'Filtered', resultState: 'pruned', lifetime: 'pruned' };
     records.push(makeRecord(9, { mode: 'simple', resultMode: 'album', query: 'old unavailable search', artist: '', title: '' }, 'complete', 0, 0, 0, '30 d ago', 'historical', 'not-persisted', 'live-only'));
   }
   return records;

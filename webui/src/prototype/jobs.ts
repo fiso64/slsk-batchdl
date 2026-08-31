@@ -3,8 +3,8 @@ import type { AudioAttributes, FolderItemFile, TransferPresentation } from './it
 import { prototypeUuid } from './ids';
 import type { AppIconName } from './icons';
 
-import type { AutomaticJobKind, AutomaticJobStatus, ExtractSourceType } from './job-types';
-export type { AutomaticJobKind, AutomaticJobStatus, ExtractSourceType } from './job-types';
+import type { AutomaticJobKind, AutomaticJobSkipReason, AutomaticJobStatus, ExtractSourceType } from './job-types';
+export type { AutomaticJobKind, AutomaticJobSkipReason, AutomaticJobStatus, ExtractSourceType } from './job-types';
 
 interface JobBase {
   id: string;
@@ -14,6 +14,8 @@ interface JobBase {
   title: string;
   subtitle?: string;
   status: AutomaticJobStatus;
+  /** Daemon-provided reason when status is skipped. */
+  skipReason?: AutomaticJobSkipReason;
   createdAtUtc: string;
   when: string;
   lifetime: PrototypeDataLifetime;
@@ -344,8 +346,8 @@ export function createInitialAutomaticJobs(scenario: 'normal' | 'busy' | 'loadin
     },
     {
       id: jobId(71), workflowId: workflowId(70), parentJobId: null, kind: 'job-list',
-      title: 'favorites.list', subtitle: 'List import · 2 jobs', status: 'running', createdAtUtc: new Date(baseTime - 52 * 60_000 + 1_000).toISOString(), when: '52 min ago', lifetime: 'live', progress: { completed: 1, total: 2 },
-      payload: { name: 'favorites.list', childCount: 2, succeeded: 1, failed: 0 },
+      title: 'favorites.list', subtitle: 'List import · 3 jobs', status: 'running', createdAtUtc: new Date(baseTime - 52 * 60_000 + 1_000).toISOString(), when: '52 min ago', lifetime: 'live', progress: { completed: 1, total: 3 },
+      payload: { name: 'favorites.list', childCount: 3, succeeded: 1, failed: 0 },
     },
     {
       id: jobId(72), workflowId: workflowId(70), parentJobId: jobId(71), kind: 'song',
@@ -382,6 +384,11 @@ export function createInitialAutomaticJobs(scenario: 'normal' | 'busy' | 'loadin
         ],
         transfer: { state: 'Downloading', tone: 'active', progressPercent: 34, progressText: '3 of 9 files complete', speed: '3.7 MB/s', eta: '38s' },
       },
+    },
+    {
+      id: jobId(74), workflowId: workflowId(70), parentJobId: jobId(71), kind: 'remote-directory',
+      title: 'nightshift — Jazz/Casiopea/Mint Jams', subtitle: 'List item 3', status: 'pending', createdAtUtc: new Date(baseTime - 51 * 60_000 + 2_000).toISOString(), when: '51 min ago', lifetime: 'live',
+      payload: { username: 'nightshift', folderPath: 'Jazz/Casiopea/Mint Jams', files: [] },
     },
   ];
 
@@ -442,19 +449,27 @@ export function jobKindIcon(kind: AutomaticJobKind): AppIconName {
   }
 }
 
-export function jobStatusLabel(status: AutomaticJobStatus): string {
+export function jobStatusLabel(status: AutomaticJobStatus, skipReason: AutomaticJobSkipReason = 'None'): string {
   switch (status) {
     case 'pending': return 'Pending';
     case 'running': return 'Running';
     case 'complete': return 'Complete';
     case 'failed': return 'Failed';
     case 'cancelled': return 'Cancelled';
-    case 'skipped': return 'Skipped';
+    case 'skipped':
+      switch (skipReason) {
+        case 'AlreadyExists': return 'Skipped · Exists';
+        case 'NotFoundLastTime': return 'Skipped · Not found';
+        case 'Manual': return 'Skipped · Manual';
+        case 'Filtered': return 'Skipped · Filtered';
+        default: return 'Skipped';
+      }
   }
 }
 
-export function jobStatusClass(status: AutomaticJobStatus): string {
+export function jobStatusClass(status: AutomaticJobStatus, skipReason: AutomaticJobSkipReason = 'None'): string {
   if (status === 'running') return 'receiving';
+  if (status === 'skipped') return skipReason === 'AlreadyExists' ? 'skipped-exists' : 'skipped-other';
   return status;
 }
 
@@ -468,6 +483,14 @@ export function effectiveJobStatus(job: AutomaticJobRecord, allJobs: AutomaticJo
   if (job.kind !== 'extract' || job.status !== 'complete' || !job.payload.resultJobId) return job.status;
   const result = allJobs.find((candidate) => candidate.id === job.payload.resultJobId);
   return result ? effectiveJobStatus(result, allJobs) : job.status;
+}
+
+export function effectiveJobSkipReason(job: AutomaticJobRecord, allJobs: AutomaticJobRecord[]): AutomaticJobSkipReason {
+  if (job.kind === 'extract' && job.status === 'complete' && job.payload.resultJobId) {
+    const result = allJobs.find((candidate) => candidate.id === job.payload.resultJobId);
+    if (result) return effectiveJobSkipReason(result, allJobs);
+  }
+  return job.skipReason ?? 'None';
 }
 
 export function effectiveJobProgress(job: AutomaticJobRecord, allJobs: AutomaticJobRecord[]): JobBase['progress'] {

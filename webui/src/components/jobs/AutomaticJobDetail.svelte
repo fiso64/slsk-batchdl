@@ -53,6 +53,16 @@
     return total > 0 ? Math.max(0, Math.min(100, completed / total * 100)) : 0;
   }
 
+  function skippedEmptyState(): { title: string; detail: string } {
+    switch (job.skipReason) {
+      case 'AlreadyExists': return { title: 'Already exists', detail: 'The requested content already exists, so this job did not download it again.' };
+      case 'NotFoundLastTime': return { title: 'Skipped', detail: 'This item was skipped because it was not found on the previous attempt.' };
+      case 'Manual': return { title: 'Skipped', detail: 'This job was skipped explicitly.' };
+      case 'Filtered': return { title: 'Skipped', detail: 'This item was excluded by the effective filtering rules.' };
+      default: return { title: 'Skipped', detail: 'This job ended without running.' };
+    }
+  }
+
   function goBack(): void {
     if (parent) onopenjob(parent);
     else onback();
@@ -75,10 +85,14 @@
       {#if job.subtitle}<small>{job.subtitle}</small>{/if}
     </div>
     <div class="job-detail-heading-summary">
-      <span class={`search-status-badge ${jobStatusClass(job.status)}`}><i></i>{jobStatusLabel(job.status)}</span>
+      <span class={`search-status-badge ${jobStatusClass(job.status, job.skipReason)}`}><i></i>{jobStatusLabel(job.status, job.skipReason)}</span>
       {#each headerStats() as stat}<span>{stat}</span>{/each}
       <span>{job.when}</span>
-      <button type="button" class="job-detail-lifecycle-action" title={active ? 'Cancel job' : 'Remove job'} onclick={() => onjobaction(job)}><Icon name="x" /><span>{active ? 'Cancel' : 'Remove'}</span></button>
+      {#if active}
+        <button type="button" class="resource-cancel-button" title="Cancel job" onclick={() => onjobaction(job)}><Icon name="x" /> Cancel</button>
+      {:else}
+        <button type="button" class="resource-remove-button" aria-label={`Remove ${job.title}`} title="Remove job" onclick={() => onjobaction(job)}><Icon name="trash" /></button>
+      {/if}
     </div>
   </header>
 
@@ -99,7 +113,8 @@
         <FileItemCard path={job.payload.resolved.filename} sizeBytes={job.payload.resolved.sizeBytes} audio={job.payload.resolved.audio} transfer={job.payload.transfer} />
       </section>
     {:else}
-      <div class="job-detail-empty"><strong>{job.status === 'failed' ? 'No matching file' : 'Finding a file'}</strong><span>{job.status === 'failed' ? 'No candidate satisfied this job.' : 'The job will select the best matching candidate when discovery completes.'}</span></div>
+      {@const emptyState = job.status === 'skipped' ? skippedEmptyState() : null}
+      <div class="job-detail-empty"><strong>{emptyState?.title ?? (job.status === 'failed' ? 'No matching file' : 'Finding a file')}</strong><span>{emptyState?.detail ?? (job.status === 'failed' ? 'No candidate satisfied this job.' : 'The job will select the best matching candidate when discovery completes.')}</span></div>
     {/if}
 
   {:else if job.kind === 'album'}
@@ -112,7 +127,8 @@
         <FolderItemCard path={job.payload.resolved.folderPath} sizeBytes={job.payload.files.reduce((total, file) => total + file.sizeBytes, 0)} files={job.payload.files} totalFileCount={job.payload.files.length} filesComplete transfer={job.payload.transfer} />
       </section>
     {:else}
-      <div class="job-detail-empty"><strong>Finding an album</strong><span>The job will select the best matching folder after discovery.</span></div>
+      {@const emptyState = job.status === 'skipped' ? skippedEmptyState() : null}
+      <div class="job-detail-empty"><strong>{emptyState?.title ?? 'Finding an album'}</strong><span>{emptyState?.detail ?? 'The job will select the best matching folder after discovery.'}</span></div>
     {/if}
     {#if children.length}{@render childJobs('Related jobs')}{/if}
 
@@ -184,7 +200,7 @@
     </header>
     <div class="job-child-list">
       {#each visibleChildren as child (child.id)}
-        <JobCompactRow job={child} allJobs={allJobs} compact onclick={() => onopenjob(child)} onaction={() => onjobaction(child)} />
+        <JobCompactRow job={child} allJobs={allJobs} {userActions} compact onclick={() => onopenjob(child)} onaction={() => onjobaction(child)} />
       {:else}
         <div class="job-detail-empty"><strong>No child jobs</strong></div>
       {/each}
