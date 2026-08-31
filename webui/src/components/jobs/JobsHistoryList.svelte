@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import Icon from '../Icon.svelte';
   import LoadMoreButton from '../LoadMoreButton.svelte';
   import MutationStatus from '../MutationStatus.svelte';
@@ -11,6 +12,7 @@
   import type { SearchRecord } from '../../prototype/search-results';
   import { extractSourceLabel, isSemanticRoot, jobStatusClass, jobStatusLabel, presentationTarget, type AutomaticJobRecord } from '../../prototype/jobs';
   import { resourceStateForScenario } from '../../prototype/resource-state';
+  import { blockingKeyboardSurfaceOpen, focusKeyboardItem, keyboardShortcutHasModifier, keyboardTargetIsEditing } from '../../lib/keyboard';
 
   interface Props {
     scenarioId: ScenarioId;
@@ -25,6 +27,8 @@
 
   let { scenarioId, searches, automaticJobs, mutation, onopenrecord, onopenjob, onsearchaction, onautomaticjobaction }: Props = $props();
 
+  type HistoryLane = 'search' | 'automatic';
+
   const PAGE_SIZE = 8;
   let searchLimit = $state(PAGE_SIZE);
   let automaticLimit = $state(PAGE_SIZE);
@@ -37,11 +41,17 @@
   let hasSearchEntries = $derived(searchEntries.length > 0);
   let hasAutomaticEntries = $derived(automaticEntries.length > 0);
   let splitHistory = $derived(hasSearchEntries && hasAutomaticEntries);
+  let visibleSearchEntries = $derived(searchEntries.slice(0, searchLimit));
+  let visibleAutomaticEntries = $derived(automaticEntries.slice(0, automaticLimit));
+  let keyboardJobKey = $state<string | null>(null);
+  let keyboardPageAdvanceLane = $state<HistoryLane | null>(null);
 
   $effect(() => {
     scenarioId;
     searchLimit = PAGE_SIZE;
     automaticLimit = PAGE_SIZE;
+    keyboardJobKey = null;
+    keyboardPageAdvanceLane = null;
   });
 
   function statusLabel(record: SearchRecord): string {
@@ -60,7 +70,111 @@
   function isActive(record: SearchRecord): boolean {
     return record.status === 'pending' || record.status === 'searching' || record.status === 'receiving';
   }
+
+
+  function historyKey(lane: HistoryLane, id: string): string {
+    return `${lane}:${id}`;
+  }
+
+  function laneKeys(lane: HistoryLane): string[] {
+    return lane === 'search'
+      ? visibleSearchEntries.map((record) => historyKey('search', record.id))
+      : visibleAutomaticEntries.map((entry) => historyKey('automatic', entry.root.id));
+  }
+
+  function keyboardJobElement(key: string): HTMLElement | null {
+    if (typeof document === 'undefined') return null;
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-keyboard-job-focus-key]'))
+      .find((element) => element.dataset.keyboardJobFocusKey === key) ?? null;
+  }
+
+  function setKeyboardJob(key: string, focus = false, revealViewStart = false): void {
+    keyboardJobKey = key;
+    if (focus) focusKeyboardItem(keyboardJobElement(key), { revealViewStart });
+  }
+
+  function handleWindowFocusIn(event: FocusEvent): void {
+    if (!(event.target instanceof Element)) return;
+    const row = event.target.closest<HTMLElement>('[data-keyboard-job-key]');
+    if (row?.dataset.keyboardJobKey) keyboardJobKey = row.dataset.keyboardJobKey;
+  }
+
+  function currentLane(): HistoryLane | null {
+    if (keyboardJobKey?.startsWith('search:')) return 'search';
+    if (keyboardJobKey?.startsWith('automatic:')) return 'automatic';
+    return null;
+  }
+
+  function allLaneKeys(lane: HistoryLane): string[] {
+    return lane === 'search'
+      ? searchEntries.map((record) => historyKey('search', record.id))
+      : automaticEntries.map((entry) => historyKey('automatic', entry.root.id));
+  }
+
+  async function loadNextHistoryPageAndMove(lane: HistoryLane, previousKey: string): Promise<void> {
+    if (keyboardPageAdvanceLane) return;
+    const allKeys = allLaneKeys(lane);
+    const previousIndex = allKeys.indexOf(previousKey);
+    const next = previousIndex >= 0 ? allKeys[previousIndex + 1] : null;
+    if (!next) return;
+    keyboardPageAdvanceLane = lane;
+    if (lane === 'search') searchLimit = Math.min(searchEntries.length, searchLimit + PAGE_SIZE);
+    else automaticLimit = Math.min(automaticEntries.length, automaticLimit + PAGE_SIZE);
+    await tick();
+    keyboardPageAdvanceLane = null;
+    if (keyboardJobKey !== previousKey) return;
+    setKeyboardJob(next, true);
+  }
+
+  function moveHistoryVertical(direction: -1 | 1): boolean {
+    const lane = currentLane() ?? (visibleSearchEntries.length ? 'search' : visibleAutomaticEntries.length ? 'automatic' : null);
+    if (!lane) return false;
+    const keys = laneKeys(lane);
+    if (!keys.length) return false;
+    const currentIndex = keyboardJobKey ? keys.indexOf(keyboardJobKey) : -1;
+    if (direction > 0 && currentIndex === keys.length - 1 && keyboardJobKey && allLaneKeys(lane).length > keys.length) {
+      void loadNextHistoryPageAndMove(lane, keyboardJobKey);
+      return true;
+    }
+    const nextIndex = currentIndex < 0
+      ? (direction > 0 ? 0 : keys.length - 1)
+      : Math.min(keys.length - 1, Math.max(0, currentIndex + direction));
+    const next = keys[nextIndex];
+    if (!next) return false;
+    setKeyboardJob(next, true, nextIndex === 0);
+    return true;
+  }
+
+  function moveHistoryHorizontal(direction: -1 | 1): boolean {
+    if (!splitHistory) return false;
+    const lane = currentLane();
+    const targetLane: HistoryLane = direction > 0 ? 'automatic' : 'search';
+    if (lane === targetLane) return false;
+    const targetKeys = laneKeys(targetLane);
+    if (!targetKeys.length) return false;
+    const sourceKeys = lane ? laneKeys(lane) : [];
+    const sourceIndex = keyboardJobKey ? sourceKeys.indexOf(keyboardJobKey) : 0;
+    const targetIndex = Math.min(targetKeys.length - 1, Math.max(0, sourceIndex));
+    const next = targetKeys[targetIndex];
+    if (!next) return false;
+    setKeyboardJob(next, true, targetIndex === 0);
+    return true;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (resourceState.blocking || event.defaultPrevented || keyboardShortcutHasModifier(event)) return;
+    if (keyboardTargetIsEditing(event.target) || blockingKeyboardSurfaceOpen()) return;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      if (moveHistoryVertical(event.key === 'ArrowDown' ? 1 : -1)) event.preventDefault();
+      return;
+    }
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      if (moveHistoryHorizontal(event.key === 'ArrowRight' ? 1 : -1)) event.preventDefault();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} onfocusin={handleWindowFocusIn} />
 
 {#if resourceState.blocking}
   <ResourceStateNotice state={resourceState} />
@@ -76,9 +190,17 @@
             <span>{searchEntries.length}</span>
           </header>
           <div class="search-history-list mixed-job-history-list jobs-history-lane-list">
-            {#each searchEntries.slice(0, searchLimit) as record (record.id)}
-              <div class="search-history-row">
-                <button type="button" class="search-history-open" onclick={() => onopenrecord(record)}>
+            {#each visibleSearchEntries as record (record.id)}
+              {@const rowKey = historyKey('search', record.id)}
+              <div class="search-history-row" class:keyboard-current={keyboardJobKey === rowKey} data-keyboard-job-key={rowKey} aria-current={keyboardJobKey === rowKey ? 'true' : undefined}>
+                <button
+                  type="button"
+                  class="search-history-open"
+                  data-keyboard-job-focus-key={rowKey}
+                  tabindex="-1"
+                  onfocus={() => setKeyboardJob(rowKey)}
+                  onclick={() => onopenrecord(record)}
+                >
                   <span class="search-history-query">{record.displayQuery}</span>
                   <span class={`search-status-badge ${statusClass(record)}`}><i></i>{statusLabel(record)}</span>
                   <span class="search-history-context">
@@ -114,7 +236,7 @@
             <span>{automaticEntries.length}</span>
           </header>
           <div class="search-history-list mixed-job-history-list jobs-history-lane-list">
-            {#each automaticEntries.slice(0, automaticLimit) as entry (entry.root.id)}
+            {#each visibleAutomaticEntries as entry (entry.root.id)}
               <JobCompactRow
                 job={entry.job}
                 allJobs={automaticJobs}
@@ -122,6 +244,9 @@
                 contextOverride={entry.root.kind === 'extract' ? `${extractSourceLabel(entry.root.payload.sourceType)} import` : undefined}
                 typeToneOverride={entry.root.kind === 'extract' ? 'import' : undefined}
                 whenOverride={entry.root.when}
+                keyboardKey={historyKey('automatic', entry.root.id)}
+                keyboardCurrent={keyboardJobKey === historyKey('automatic', entry.root.id)}
+                onkeyboardfocus={() => setKeyboardJob(historyKey('automatic', entry.root.id))}
                 onclick={() => onopenjob(entry.job)}
                 onaction={() => onautomaticjobaction(entry.job)}
               />

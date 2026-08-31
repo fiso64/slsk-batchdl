@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import Icon from '../components/Icon.svelte';
   import LinkifiedText from '../components/LinkifiedText.svelte';
   import ResultFilterControl from '../components/ResultFilterControl.svelte';
   import SelectionToolbar from '../components/SelectionToolbar.svelte';
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
   import LoadMoreButton from '../components/LoadMoreButton.svelte';
+  import { blockingKeyboardSurfaceOpen, focusFirstKeyboardItemControl, focusKeyboardItem, keyboardShortcutHasModifier, keyboardTargetIsEditing, keyboardTargetUsesNativeActivation } from '../lib/keyboard';
   import MutationStatus from '../components/MutationStatus.svelte';
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/state';
@@ -39,6 +41,8 @@
   let sharePagesRequested = $state(1);
   let shareRequestKey = '';
   let mutation = $state<PrototypeMutationState>({ phase: 'idle' });
+  let shareKeyboardKey = $state<string | null>(null);
+  let shareKeyboardPageAdvancePending = $state(false);
 
   let fixture = $derived(getUserBrowseFixtureForUsername(scenarioId, username));
   let rows = $derived(flattenShareTree(fixture.shares));
@@ -62,6 +66,8 @@
     selected = new Set();
     sharePagesRequested = 1;
     mutation = { phase: 'idle' };
+    shareKeyboardKey = null;
+    shareKeyboardPageAdvancePending = false;
     expandedFolders = new Set(rows.filter((row) => row.kind === 'folder' && row.depth === 0).map((row) => row.id));
   });
 
@@ -70,6 +76,8 @@
     if (key === shareRequestKey) return;
     shareRequestKey = key;
     sharePagesRequested = 1;
+    shareKeyboardKey = null;
+    shareKeyboardPageAdvancePending = false;
   });
 
   function currentShareProjection() {
@@ -83,8 +91,101 @@
     return { ...page, rows };
   }
 
-  function handleProfilePictureKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && profilePictureOpen) profilePictureOpen = false;
+  function shareKeyboardRowKey(row: ShareTreeRow): string {
+    return `share:${row.kind}:${row.id}`;
+  }
+
+  function shareKeyboardRows(): ShareTreeRow[] {
+    return visibleShareRows(shareProjection.rows);
+  }
+
+  function shareKeyboardElement(key: string): HTMLElement | null {
+    if (typeof document === 'undefined') return null;
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-keyboard-share-key]'))
+      .find((element) => element.dataset.keyboardShareKey === key) ?? null;
+  }
+
+  function handleWindowFocusIn(event: FocusEvent): void {
+    if (view !== 'shares' || !(event.target instanceof Element)) return;
+    const row = event.target.closest<HTMLElement>('[data-keyboard-share-key]');
+    if (row?.dataset.keyboardShareKey) shareKeyboardKey = row.dataset.keyboardShareKey;
+  }
+
+  function currentShareKeyboardRow(): ShareTreeRow | null {
+    if (!shareKeyboardKey) return null;
+    return shareKeyboardRows().find((candidate) => shareKeyboardRowKey(candidate) === shareKeyboardKey) ?? null;
+  }
+
+  async function loadNextShareKeyboardPage(previousKey: string): Promise<void> {
+    if (!shareProjection.nextCursor || shareKeyboardPageAdvancePending) return;
+    shareKeyboardPageAdvancePending = true;
+    sharePagesRequested += 1;
+    await tick();
+    shareKeyboardPageAdvancePending = false;
+    if (shareKeyboardKey !== previousKey) return;
+    const items = shareKeyboardRows();
+    const previousIndex = items.findIndex((row) => shareKeyboardRowKey(row) === previousKey);
+    const next = previousIndex >= 0 ? items[previousIndex + 1] : null;
+    if (!next) return;
+    shareKeyboardKey = shareKeyboardRowKey(next);
+    focusKeyboardItem(shareKeyboardElement(shareKeyboardKey));
+  }
+
+  function moveShareKeyboardRow(direction: -1 | 1): boolean {
+    const items = shareKeyboardRows();
+    if (!items.length) return false;
+    const currentIndex = shareKeyboardKey ? items.findIndex((row) => shareKeyboardRowKey(row) === shareKeyboardKey) : -1;
+    if (direction > 0 && currentIndex === items.length - 1 && shareKeyboardKey && shareProjection.nextCursor) {
+      void loadNextShareKeyboardPage(shareKeyboardKey);
+      return true;
+    }
+    const nextIndex = currentIndex < 0
+      ? (direction > 0 ? 0 : items.length - 1)
+      : Math.min(items.length - 1, Math.max(0, currentIndex + direction));
+    const next = items[nextIndex];
+    if (!next) return false;
+    shareKeyboardKey = shareKeyboardRowKey(next);
+    focusKeyboardItem(shareKeyboardElement(shareKeyboardKey), { revealViewStart: nextIndex === 0 });
+    return true;
+  }
+
+  function toggleCurrentShareKeyboardRow(): boolean {
+    const row = currentShareKeyboardRow();
+    if (!row) return false;
+    const ids = row.kind === 'folder' ? row.fileIds : [row.id];
+    toggleIds(ids, !allSelected(ids));
+    return true;
+  }
+
+  function toggleCurrentShareFolder(): boolean {
+    const row = currentShareKeyboardRow();
+    if (!row || row.kind !== 'folder' || Boolean(filterText.trim())) return false;
+    toggleFolder(row.id);
+    return true;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && profilePictureOpen) {
+      profilePictureOpen = false;
+      return;
+    }
+    if (view !== 'shares' || sharesState.blocking || event.defaultPrevented || keyboardShortcutHasModifier(event)) return;
+    if (keyboardTargetIsEditing(event.target) || blockingKeyboardSurfaceOpen()) return;
+    if (event.key === 'Tab' && !event.shiftKey && shareKeyboardKey) {
+      const currentElement = shareKeyboardElement(shareKeyboardKey);
+      if (event.target === currentElement && focusFirstKeyboardItemControl(currentElement)) event.preventDefault();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (moveShareKeyboardRow(event.key === 'ArrowDown' ? 1 : -1)) event.preventDefault();
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      if (toggleCurrentShareFolder()) event.preventDefault();
+      return;
+    }
+    if (event.repeat) return;
+    if (event.key === ' ' && !keyboardTargetUsesNativeActivation(event.target) && toggleCurrentShareKeyboardRow()) event.preventDefault();
   }
 
   function presenceLabel(presence: UserPresence): string {
@@ -162,7 +263,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleProfilePictureKeydown} />
+<svelte:window onkeydown={handleWindowKeydown} onfocusin={handleWindowFocusIn} />
 
 <section class="page user-browser-page">
   <header class="user-browser-heading">
@@ -291,7 +392,14 @@
         <div class="share-tree" aria-label={`${displayUsername} shared files`}>
           {#each visibleRows as row (row.id)}
             {#if row.kind === 'folder'}
-              <div class="share-tree-row folder" style={`--share-depth:${row.depth}`}>
+              <div
+                class="share-tree-row folder"
+                class:keyboard-current={shareKeyboardKey === shareKeyboardRowKey(row)}
+                data-keyboard-share-key={shareKeyboardRowKey(row)}
+                tabindex="-1"
+                aria-current={shareKeyboardKey === shareKeyboardRowKey(row) ? 'true' : undefined}
+                style={`--share-depth:${row.depth}`}
+              >
                 <input
                   type="checkbox"
                   checked={allSelected(row.fileIds)}
@@ -318,7 +426,14 @@
                 </button>
               </div>
             {:else}
-              <label class="share-tree-row file" style={`--share-depth:${row.depth}`}>
+              <label
+                class="share-tree-row file"
+                class:keyboard-current={shareKeyboardKey === shareKeyboardRowKey(row)}
+                data-keyboard-share-key={shareKeyboardRowKey(row)}
+                tabindex="-1"
+                aria-current={shareKeyboardKey === shareKeyboardRowKey(row) ? 'true' : undefined}
+                style={`--share-depth:${row.depth}`}
+              >
                 <input
                   type="checkbox"
                   checked={selected.has(row.id)}

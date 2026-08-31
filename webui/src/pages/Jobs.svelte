@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import SearchConditionPills from '../components/SearchConditionPills.svelte';
   import UsernameLink from '../components/UsernameLink.svelte';
   import ResourceStateNotice from '../components/ResourceStateNotice.svelte';
@@ -17,6 +18,7 @@
   import { hasAppliedConditions, type PrototypeSearchConditions } from '../prototype/search-config';
   import Icon from '../components/Icon.svelte';
   import { anchoredPopover } from '../lib/anchored-menu';
+  import { blockingKeyboardSurfaceOpen, focusFirstKeyboardItemControl, focusKeyboardItem, keyboardShortcutHasModifier, keyboardTargetIsEditing, keyboardTargetUsesNativeActivation } from '../lib/keyboard';
   import { groupAdjacentBy } from '../prototype/grouping';
   import type { ScenarioId } from '../mock/types';
   import type { PrototypeDownloadSelectionSummary, PrototypeMutationState } from '../prototype/state';
@@ -111,6 +113,8 @@
   let newJobOpen = $state(false);
   let downloadOptionsOpen = $state(false);
   let downloadOptions = $state(createPrototypeDownloadOptions());
+  let keyboardResultKey = $state<string | null>(null);
+  let keyboardResultPageAdvancePending = $state(false);
 
   let activeRecord = $derived(searches.find((item) => item.id === activeJobId) ?? null);
   let activeAutomaticJob = $derived(automaticJobs.find((item) => item.id === activeJobId) ?? null);
@@ -127,6 +131,8 @@
     genericRetrievalOverrides = {};
     downloadOptionsOpen = false;
     downloadOptions = createPrototypeDownloadOptions();
+    keyboardResultKey = null;
+    keyboardResultPageAdvancePending = false;
   });
 
   $effect(() => {
@@ -140,6 +146,8 @@
     if (key === projectionRequestKey) return;
     projectionRequestKey = key;
     resultPagesRequested = 1;
+    keyboardResultKey = null;
+    keyboardResultPageAdvancePending = false;
   });
 
   function openSearch(record: SearchRecord): void {
@@ -155,6 +163,7 @@
     downloadOptionsOpen = false;
     downloadOptions = createPrototypeDownloadOptions();
     resultPagesRequested = 1;
+    keyboardResultKey = null;
   }
 
   function removeSearch(id: string): void {
@@ -268,6 +277,10 @@
     preferred: boolean;
     items: ProjectedSearchResult[];
   }
+
+  type KeyboardSearchResult =
+    | { key: string; kind: 'result'; result: ProjectedSearchResult }
+    | { key: string; kind: 'aggregate'; group: AggregateSearchGroup };
 
   function groupAdjacent(results: ProjectedSearchResult[]): PeerGroup[] {
     return groupAdjacentBy(
@@ -591,11 +604,156 @@
     };
   }
 
+  function resultKeyboardKey(result: ProjectedSearchResult): string {
+    return `result:${result.kind}:${result.id}`;
+  }
+
+  function aggregateKeyboardKey(group: AggregateSearchGroup): string {
+    return `aggregate:${group.id}`;
+  }
+
+  function keyboardSearchResults(): KeyboardSearchResult[] {
+    if (!activeRecord) return [];
+    if (aggregateMode) {
+      return aggregateGroups(activeRecord).map((group) => ({ key: aggregateKeyboardKey(group), kind: 'aggregate' as const, group }));
+    }
+    return currentResultProjection(activeRecord).items.map((result) => ({ key: resultKeyboardKey(result), kind: 'result' as const, result }));
+  }
+
+  function currentKeyboardSearchResult(): KeyboardSearchResult | null {
+    if (!keyboardResultKey) return null;
+    return keyboardSearchResults().find((item) => item.key === keyboardResultKey) ?? null;
+  }
+
+  function keyboardResultElement(key: string): HTMLElement | null {
+    if (typeof document === 'undefined') return null;
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-keyboard-result-key]'))
+      .find((element) => element.dataset.keyboardResultKey === key) ?? null;
+  }
+
+  function handleWindowFocusIn(event: FocusEvent): void {
+    if (view !== 'results' || !(event.target instanceof Element)) return;
+    const row = event.target.closest<HTMLElement>('[data-keyboard-result-key]');
+    if (row?.dataset.keyboardResultKey) keyboardResultKey = row.dataset.keyboardResultKey;
+  }
+
+  async function loadNextKeyboardResultPage(previousKey: string): Promise<void> {
+    if (!activeRecord || aggregateMode || keyboardResultPageAdvancePending) return;
+    if (!currentResultProjection(activeRecord).nextCursor) return;
+    keyboardResultPageAdvancePending = true;
+    resultPagesRequested += 1;
+    await tick();
+    keyboardResultPageAdvancePending = false;
+    if (keyboardResultKey !== previousKey) return;
+    const items = keyboardSearchResults();
+    const previousIndex = items.findIndex((item) => item.key === previousKey);
+    const next = previousIndex >= 0 ? items[previousIndex + 1] : null;
+    if (!next) return;
+    keyboardResultKey = next.key;
+    focusKeyboardItem(keyboardResultElement(next.key));
+  }
+
+  function moveKeyboardResult(direction: -1 | 1): boolean {
+    const items = keyboardSearchResults();
+    if (!items.length) return false;
+    const currentIndex = keyboardResultKey ? items.findIndex((item) => item.key === keyboardResultKey) : -1;
+    if (direction > 0 && currentIndex === items.length - 1 && keyboardResultKey && activeRecord && !aggregateMode && currentResultProjection(activeRecord).nextCursor) {
+      void loadNextKeyboardResultPage(keyboardResultKey);
+      return true;
+    }
+    const nextIndex = currentIndex < 0
+      ? (direction > 0 ? 0 : items.length - 1)
+      : Math.min(items.length - 1, Math.max(0, currentIndex + direction));
+    const next = items[nextIndex];
+    if (!next) return false;
+    keyboardResultKey = next.key;
+    focusKeyboardItem(keyboardResultElement(next.key), { revealViewStart: nextIndex === 0 });
+    return true;
+  }
+
+  function toggleCurrentKeyboardResult(): boolean {
+    const current = currentKeyboardSearchResult();
+    if (!current) return false;
+    if (current.kind === 'aggregate') {
+      toggleAggregateGroup(current.group, !aggregateGroupSelected(current.group));
+      return true;
+    }
+    const result = current.result;
+    if (result.kind === 'track') {
+      const key = selectedKey(result);
+      toggleSelection(key, !selected.has(key));
+    } else if (result.kind === 'generic-directory') {
+      toggleGenericDirectory(result, !isGenericDirectoryFullySelected(result));
+    } else {
+      toggleAlbum(result, !isAlbumFullySelected(result));
+    }
+    return true;
+  }
+
+  function retrieveSelectedFolders(): boolean {
+    if (!activeRecord) return false;
+    let retrievedAny = false;
+    if (activeMode === 'generic') {
+      for (const result of currentResultProjection(activeRecord).items) {
+        if (result.kind !== 'generic-directory' || !isGenericDirectoryFullySelected(result)) continue;
+        const current = genericWithRetrieval(result);
+        if (current.retrievalState === 'retrieving' || current.retrievalState === 'retrieved') continue;
+        loadFullGenericDirectory(current);
+        retrievedAny = true;
+      }
+    } else if (activeMode === 'album') {
+      for (const result of currentResultProjection(activeRecord).items) {
+        if (result.kind !== 'album' || !isAlbumFullySelected(result)) continue;
+        const current = albumWithRetrieval(result);
+        if (current.retrievalState === 'retrieving' || current.retrievalState === 'retrieved') continue;
+        loadFullAlbumFolder(current);
+        retrievedAny = true;
+      }
+    } else if (activeMode === 'album-aggregate') {
+      for (const group of aggregateGroups(activeRecord)) {
+        const representative = aggregateRepresentative(group);
+        if (representative.kind !== 'album' || !aggregateGroupSelected(group)) continue;
+        if (representative.retrievalState === 'retrieving' || representative.retrievalState === 'retrieved') continue;
+        loadFullAlbumFolder(representative, group);
+        retrievedAny = true;
+      }
+    }
+    return retrievedAny;
+  }
+
+  function searchResultShortcutsAvailable(event: KeyboardEvent): boolean {
+    if (view !== 'results' || !activeRecord || resultResourceState(activeRecord).blocking) return false;
+    if (conditionsOpen || downloadOptionsOpen || aggregateOptionsGroupId || newJobOpen || blockingKeyboardSurfaceOpen()) return false;
+    if (keyboardShortcutHasModifier(event) || keyboardTargetIsEditing(event.target)) return false;
+    return true;
+  }
+
   function handleWindowKeydown(event: KeyboardEvent): void {
-    if (event.key !== 'Escape') return;
-    if (aggregateOptionsGroupId) aggregateOptionsGroupId = null;
-    else if (downloadOptionsOpen) downloadOptionsOpen = false;
-    else if (conditionsOpen) conditionsOpen = false;
+    if (event.key === 'Escape') {
+      if (aggregateOptionsGroupId) aggregateOptionsGroupId = null;
+      else if (downloadOptionsOpen) downloadOptionsOpen = false;
+      else if (conditionsOpen) conditionsOpen = false;
+      return;
+    }
+    if (!searchResultShortcutsAvailable(event)) return;
+
+    if (event.key === 'Tab' && !event.shiftKey && keyboardResultKey) {
+      const currentElement = keyboardResultElement(keyboardResultKey);
+      if (event.target === currentElement && focusFirstKeyboardItemControl(currentElement)) event.preventDefault();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (moveKeyboardResult(event.key === 'ArrowDown' ? 1 : -1)) event.preventDefault();
+      return;
+    }
+    if (event.repeat) return;
+    if (event.key === ' ') {
+      if (!keyboardTargetUsesNativeActivation(event.target) && toggleCurrentKeyboardResult()) event.preventDefault();
+      return;
+    }
+    if (event.key.toLowerCase() === 'r') {
+      if (retrieveSelectedFolders()) event.preventDefault();
+    }
   }
 
   function currentResultProjection(record: SearchRecord) {
@@ -761,7 +919,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleWindowKeydown} onpointerdown={handleWindowPointerDown} />
+<svelte:window onkeydown={handleWindowKeydown} onfocusin={handleWindowFocusIn} onpointerdown={handleWindowPointerDown} />
 
 <section class="page page-search redesigned-search-page">
   {#if view === 'list'}
@@ -1032,7 +1190,14 @@
 
 {#snippet aggregateGroupCard(group: AggregateSearchGroup)}
   {@const representative = aggregateRepresentative(group)}
-  <section class="aggregate-result-group" class:selected={aggregateGroupSelected(group)} class:partial={aggregateGroupPartial(group)}>
+  <section
+    class="aggregate-result-group"
+    class:selected={aggregateGroupSelected(group)}
+    class:partial={aggregateGroupPartial(group)}
+    class:keyboard-current={keyboardResultKey === aggregateKeyboardKey(group)}
+    data-keyboard-result-key={aggregateKeyboardKey(group)}
+    tabindex="-1"
+  >
     <header class="aggregate-result-header">
       <button
         type="button"
@@ -1094,6 +1259,8 @@
           locked={result.locked}
           selected={selected.has(selectedKey(result))}
           preferred={group.preferred && sort === 'relevance'}
+          keyboardKey={resultKeyboardKey(result)}
+          keyboardCurrent={keyboardResultKey === resultKeyboardKey(result)}
           selectable
           onselect={(checked) => toggleSelection(selectedKey(result), checked)}
         />
@@ -1109,6 +1276,8 @@
           locked={result.locked}
           selected={isGenericDirectoryFullySelected(result)}
           partial={isGenericDirectoryPartiallySelected(result)}
+          keyboardKey={resultKeyboardKey(result)}
+          keyboardCurrent={keyboardResultKey === resultKeyboardKey(result)}
           selectable
           selectedFileIds={selectedFileIdsForGenericDirectory(result)}
           onselectall={(checked) => toggleGenericDirectory(result, checked)}
@@ -1128,6 +1297,8 @@
           selected={isAlbumFullySelected(result)}
           partial={isAlbumPartiallySelected(result)}
           preferred={group.preferred && sort === 'relevance'}
+          keyboardKey={resultKeyboardKey(result)}
+          keyboardCurrent={keyboardResultKey === resultKeyboardKey(result)}
           selectable
           selectedFileIds={selectedFileIdsForAlbum(result)}
           onselectall={(checked) => toggleAlbum(result, checked)}

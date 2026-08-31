@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
+  import { blockingKeyboardSurfaceOpen, keyboardShortcutHasModifier, keyboardTargetIsEditing, keyboardTargetUsesNativeActivation } from '../lib/keyboard';
   interface Props {
     selectedCount: number;
     floatingLabel?: string;
@@ -24,7 +26,17 @@
     onoptions,
     onaction = () => {},
   }: Props = $props();
+
+  function handleDownloadShortcut(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.repeat || event.key !== 'Enter') return;
+    if (!selectedCount || actionDisabled || keyboardShortcutHasModifier(event)) return;
+    if (keyboardTargetIsEditing(event.target) || keyboardTargetUsesNativeActivation(event.target, event.key) || blockingKeyboardSurfaceOpen()) return;
+    event.preventDefault();
+    onaction();
+  }
 </script>
+
+<svelte:window onkeydown={handleDownloadShortcut} />
 
 {#if selectedCount}
   <div class="floating-selection-actions" aria-label="Selection actions">
@@ -45,9 +57,10 @@
         {#if optionsCustomized}<i aria-hidden="true"></i>{/if}
       </button>
     {/if}
-    <button type="button" class="floating-download-action" aria-label={floatingLabel} disabled={actionDisabled} onclick={onaction}>
+    <button type="button" class="floating-download-action" aria-label={floatingLabel} aria-keyshortcuts="Enter" disabled={actionDisabled} onclick={onaction}>
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9M6.5 8.5L10 12l3.5-3.5M4 15.5h12" /></svg>
       <span>{floatingLabel}</span>
+      <span class="floating-download-shortcut" aria-hidden="true"><Icon name="enter-key" /></span>
     </button>
   </div>
 {/if}

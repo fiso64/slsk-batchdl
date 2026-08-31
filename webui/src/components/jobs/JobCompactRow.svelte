@@ -28,6 +28,9 @@
     whenOverride?: string;
     typeToneOverride?: JobTypeBadgeTone;
     userActions?: UserLinkActions;
+    keyboardKey?: string;
+    keyboardCurrent?: boolean;
+    onkeyboardfocus?: () => void;
   }
 
   let {
@@ -41,6 +44,9 @@
     whenOverride,
     typeToneOverride,
     userActions,
+    keyboardKey,
+    keyboardCurrent = false,
+    onkeyboardfocus,
   }: Props = $props();
   let jobSet = $derived(allJobs.length ? allJobs : [job]);
   let displayStatus = $derived(effectiveJobStatus(job, jobSet));
@@ -153,8 +159,20 @@
     {/if}
   </div>
 {:else}
-  <div class="search-history-row automatic-history-row">
-    <button type="button" class="search-history-open automatic-history-open" {onclick}>
+  <div
+    class="search-history-row automatic-history-row"
+    class:keyboard-current={keyboardCurrent}
+    data-keyboard-job-key={keyboardKey}
+    aria-current={keyboardCurrent ? 'true' : undefined}
+  >
+    <button
+      type="button"
+      class="search-history-open automatic-history-open"
+      data-keyboard-job-focus-key={keyboardKey}
+      tabindex={keyboardKey ? -1 : undefined}
+      onfocus={onkeyboardfocus}
+      {onclick}
+    >
       <span class="search-history-query">{titleOverride ?? job.title}</span>
       <span class={`search-status-badge ${jobStatusClass(displayStatus, displaySkipReason)}`}><i></i>{jobStatusLabel(displayStatus, displaySkipReason)}</span>
       <span class="search-history-context">

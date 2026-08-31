@@ -11,6 +11,8 @@
     selected?: boolean;
     preferred?: boolean;
     selectable?: boolean;
+    keyboardKey?: string;
+    keyboardCurrent?: boolean;
     transfer?: TransferPresentation;
     actions?: Snippet;
     onselect?: (selected: boolean) => void;
@@ -24,6 +26,8 @@
     selected = false,
     preferred = false,
     selectable = false,
+    keyboardKey,
+    keyboardCurrent = false,
     transfer,
     actions,
     onselect,
@@ -42,7 +46,11 @@
   class:selected
   class:preferred
   class:selectable
+  class:keyboard-current={keyboardCurrent}
   class:transfer-card={Boolean(transfer)}
+  data-keyboard-result-key={keyboardKey}
+  tabindex="-1"
+  aria-current={keyboardCurrent ? 'true' : undefined}
   class:has-audio={Boolean(audio)}
 >
   {#if transfer}

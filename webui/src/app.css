@@ -3870,3 +3870,46 @@ input[type="checkbox"]:indeterminate {
 }
 .resource-remove-button:hover { background: var(--surface-raised); color: var(--danger); }
 .resource-remove-button .app-icon { --app-icon-size: 13px; }
+
+/* Keyboard-current items keep one full-height rail and a quiet wash above
+   selection backgrounds, so cursor and selection remain independently legible. */
+.result-card,
+.aggregate-result-group { position: relative; }
+.result-card.keyboard-current,
+.aggregate-result-group.keyboard-current { border-color: color-mix(in srgb, var(--accent) 78%, var(--border)); box-shadow: none; }
+.result-card.keyboard-current::after,
+.aggregate-result-group.keyboard-current::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 92%, transparent);
+}
+.result-card.selected.keyboard-current::after,
+.aggregate-result-group.selected.keyboard-current::after {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+.result-card.keyboard-current:focus,
+.aggregate-result-group.keyboard-current:focus,
+.share-tree-row.keyboard-current:focus { outline: none; }
+
+.share-tree-row.keyboard-current,
+.search-history-row.keyboard-current {
+  background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 88%, transparent);
+}
+.search-history-row.keyboard-current .search-history-open { background: transparent; }
+
+.floating-download-shortcut {
+  width: 22px;
+  height: 22px;
+  margin-left: 2px;
+  display: inline-grid;
+  place-items: center;
+  color: color-mix(in srgb, currentColor 82%, transparent);
+}
+.floating-download-shortcut .app-icon { --app-icon-size: 22px; }

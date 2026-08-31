@@ -20,6 +20,8 @@
     partial?: boolean;
     preferred?: boolean;
     selectable?: boolean;
+    keyboardKey?: string;
+    keyboardCurrent?: boolean;
     transfer?: TransferPresentation;
     selectedFileIds?: Set<string>;
     actions?: Snippet;
@@ -44,6 +46,8 @@
     partial = false,
     preferred = false,
     selectable = false,
+    keyboardKey,
+    keyboardCurrent = false,
     transfer,
     selectedFileIds = new Set<string>(),
     actions,
@@ -247,7 +251,11 @@
   class:partial
   class:preferred
   class:selectable
+  class:keyboard-current={keyboardCurrent}
   class:tree-layout={fileLayout === 'tree'}
+  data-keyboard-result-key={keyboardKey}
+  tabindex="-1"
+  aria-current={keyboardCurrent ? 'true' : undefined}
   class:transfer-card={Boolean(transfer)}
 >
   <div

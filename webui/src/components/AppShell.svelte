@@ -1,12 +1,13 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { PrototypeScenario, ScenarioId } from '../mock/types';
-  import type { PageId } from '../prototype/navigation';
+  import { navigationItems, type PageId } from '../prototype/navigation';
   import type { SearchDraft } from '../prototype/search';
   import type { PrototypeSearchConditions } from '../prototype/search-config';
   import type { UserBrowseDraft } from '../prototype/users';
   import { chatRuntimeForScenario } from '../prototype/chat';
   import { humanizeStateValue, soulseekClientStatusLabel } from '../prototype/status';
+  import { blockingKeyboardSurfaceOpen, keyboardShortcutHasModifier, keyboardTargetIsEditing } from '../lib/keyboard';
   import GlobalSearch from './GlobalSearch.svelte';
   import PrototypeScenarioPicker from './PrototypeScenarioPicker.svelte';
   import Sidebar from './Sidebar.svelte';
@@ -49,7 +50,19 @@
   let daemonReachable = $derived(scenario.connection === 'connected');
   let soulseekStatus = $derived(soulseekClientStatusLabel(scenario.soulseekClient, daemonReachable));
   let daemonStatus = $derived(humanizeStateValue(scenario.connection));
+
+  function handleGlobalNavigationShortcut(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.repeat || keyboardShortcutHasModifier(event)) return;
+    if (keyboardTargetIsEditing(event.target) || blockingKeyboardSurfaceOpen()) return;
+    if (!/^[1-9]$/.test(event.key)) return;
+    const target = navigationItems[Number(event.key) - 1];
+    if (!target) return;
+    event.preventDefault();
+    onnavigate(target.id);
+  }
 </script>
+
+<svelte:window onkeydown={handleGlobalNavigationShortcut} />
 
 <div class="app-shell">
   <aside class="sidebar">
