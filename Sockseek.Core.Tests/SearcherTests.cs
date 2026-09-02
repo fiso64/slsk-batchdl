@@ -85,6 +85,28 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchSong_RetriesEachArtistWhenCombinedArtistSearchHasNoResults()
+        {
+            var response = new SearchResponse("User", 1, true, 1000, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\Knock2\What's the Move.mp3", length: 200),
+            ]);
+            var client = CreateMockClient([response]);
+            var settings = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, settings);
+            var song = new SongJob(new SongQuery
+            {
+                Artist = "Henry Fong;Knock2;General Degree",
+                Title = "What's the Move",
+            });
+
+            await searcher.SearchSong(song, settings.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(2, client.SearchCallCount);
+            Assert.AreEqual(1, song.Candidates?.Count ?? 0);
+        }
+
+        [TestMethod]
         public async Task SearchSong_UpdatesActivityPhaseThroughSearchAndProjection()
         {
             var client = CreateMockClient(TestHelpers.CreateTestIndex());

@@ -585,6 +585,23 @@ public partial class Searcher : IDisposable
 
         await Task.WhenAll(searchTasks);
 
+        if (results.IsEmpty && artist && title)
+        {
+            foreach (string primaryArtist in GetArtists(query.Artist))
+            {
+                if (string.Equals(primaryArtist, query.Artist, StringComparison.Ordinal))
+                    continue;
+
+                searchTasks.Clear();
+                searchTasks.Add(DoSearch($"{primaryArtist} {query.Title}", defaultOpts,
+                    responseHandler, noRemoveSpecialChars, ct, onSearch, ownerJob));
+                await Task.WhenAll(searchTasks);
+
+                if (!results.IsEmpty)
+                    break;
+            }
+        }
+
         if (results.IsEmpty && query.ArtistMaybeWrong && title)
         {
             var inferred = InferSongQuery(query.Title, new SongQuery());
@@ -690,6 +707,9 @@ public partial class Searcher : IDisposable
             return query.Artist.Trim();
         }
     }
+
+    private static IEnumerable<string> GetArtists(string artist)
+        => artist.Split([';', ',', '&'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     private static string CleanSearchString(string str, bool removeSpecialChars)
     {
