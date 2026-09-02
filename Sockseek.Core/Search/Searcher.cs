@@ -587,13 +587,16 @@ public partial class Searcher : IDisposable
 
         if (results.IsEmpty && artist && title)
         {
+            bool sameTitleAlbum = album
+                && string.Equals(query.Album.Trim(), query.Title.Trim(), StringComparison.OrdinalIgnoreCase);
+            var fallbackNecessaryCond = sameTitleAlbum
+                ? new FileConditions(search.NecessaryCond) { LengthTolerance = -1 }
+                : search.NecessaryCond;
+            var fallbackOpts = getSearchOptions(search.SearchTimeout, fallbackNecessaryCond, search.PreferredCond);
             foreach (string primaryArtist in GetArtists(query.Artist))
             {
-                if (string.Equals(primaryArtist, query.Artist, StringComparison.Ordinal))
-                    continue;
-
                 searchTasks.Clear();
-                searchTasks.Add(DoSearch($"{primaryArtist} {query.Title}", defaultOpts,
+                searchTasks.Add(DoSearch($"{primaryArtist} {query.Title}", fallbackOpts,
                     responseHandler, noRemoveSpecialChars, ct, onSearch, ownerJob));
                 await Task.WhenAll(searchTasks);
 

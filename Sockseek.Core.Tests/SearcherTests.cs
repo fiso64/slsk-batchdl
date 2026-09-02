@@ -107,6 +107,30 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchSong_RetriesSingleArtistWithoutRequiredLengthTolerance()
+        {
+            var response = new SearchResponse("User", 1, true, 1000, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\Knock2\No Limit\No Limit.mp3", length: 200),
+            ]);
+            var client = CreateMockClient([response]);
+            var settings = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, settings);
+            var song = new SongJob(new SongQuery
+            {
+                Artist = "Knock2",
+                Album = "No Limit",
+                Title = "No Limit",
+                Length = 240,
+            });
+
+            await searcher.SearchSong(song, settings.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(2, client.SearchCallCount);
+            Assert.AreEqual(1, song.Candidates?.Count ?? 0);
+        }
+
+        [TestMethod]
         public async Task SearchSong_UpdatesActivityPhaseThroughSearchAndProjection()
         {
             var client = CreateMockClient(TestHelpers.CreateTestIndex());
