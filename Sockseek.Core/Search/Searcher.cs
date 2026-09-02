@@ -595,10 +595,16 @@ public partial class Searcher : IDisposable
             var fallbackOpts = getSearchOptions(search.SearchTimeout, fallbackNecessaryCond, search.PreferredCond);
             foreach (string primaryArtist in GetArtists(query.Artist))
             {
-                searchTasks.Clear();
-                searchTasks.Add(DoSearch($"{primaryArtist} {query.Title}", fallbackOpts,
-                    responseHandler, noRemoveSpecialChars, ct, onSearch, ownerJob));
-                await Task.WhenAll(searchTasks);
+                foreach (string fallbackTitle in GetSearchTitles(query.Title))
+                {
+                    searchTasks.Clear();
+                    searchTasks.Add(DoSearch($"{primaryArtist} {fallbackTitle}", fallbackOpts,
+                        responseHandler, noRemoveSpecialChars, ct, onSearch, ownerJob));
+                    await Task.WhenAll(searchTasks);
+
+                    if (!results.IsEmpty)
+                        break;
+                }
 
                 if (!results.IsEmpty)
                     break;
@@ -713,6 +719,15 @@ public partial class Searcher : IDisposable
 
     private static IEnumerable<string> GetArtists(string artist)
         => artist.Split([';', ',', '&'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static IEnumerable<string> GetSearchTitles(string title)
+    {
+        yield return title;
+
+        string titleWithoutFeaturedArtist = title.RemoveFt();
+        if (!string.Equals(titleWithoutFeaturedArtist, title, StringComparison.Ordinal))
+            yield return titleWithoutFeaturedArtist;
+    }
 
     private static string CleanSearchString(string str, bool removeSpecialChars)
     {

@@ -131,6 +131,30 @@ namespace Tests.Unit
         }
 
         [TestMethod]
+        public async Task SearchSong_RetriesWithoutFeaturedArtistInTitle()
+        {
+            var response = new SearchResponse("User", 1, true, 1000, 0,
+            [
+                TestHelpers.CreateSlFile(@"Music\Knock2\Shyne 4 Me\Shyne 4 Me.mp3", length: 200),
+            ]);
+            var client = CreateMockClient([response]);
+            var settings = TestHelpers.CreateDefaultSettings().Download;
+            var searcher = CreateSearcher(client, settings);
+            var song = new SongJob(new SongQuery
+            {
+                Artist = "Knock2;Warren Hue;Holly;PIAO",
+                Album = "Shyne 4 Me",
+                Title = "Shyne 4 Me (feat. PIAO)",
+                Length = 200,
+            });
+
+            await searcher.SearchSong(song, settings.Search, new ResponseData(), CancellationToken.None);
+
+            Assert.AreEqual(3, client.SearchCallCount);
+            Assert.AreEqual(1, song.Candidates?.Count ?? 0);
+        }
+
+        [TestMethod]
         public async Task SearchSong_UpdatesActivityPhaseThroughSearchAndProjection()
         {
             var client = CreateMockClient(TestHelpers.CreateTestIndex());
