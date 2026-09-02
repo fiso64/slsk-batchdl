@@ -102,7 +102,7 @@ namespace Tests.Unit
 
             await searcher.SearchSong(song, settings.Search, new ResponseData(), CancellationToken.None);
 
-            Assert.AreEqual(2, client.SearchCallCount);
+            Assert.AreEqual(3, client.SearchCallCount);
             Assert.AreEqual(1, song.Candidates?.Count ?? 0);
         }
 
