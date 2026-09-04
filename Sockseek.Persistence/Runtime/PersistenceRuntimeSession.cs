@@ -86,8 +86,7 @@ public sealed class PersistenceRuntimeSession(
             interruptedSearches = await context.SearchJobs
                 .Where(search => !search.IsComplete && context.Jobs.Any(job =>
                     job.Id == search.JobId
-                    && unfinishedIds.Contains(job.LastRuntimeId)
-                    && job.LifecycleState != "Terminal"))
+                    && unfinishedIds.Contains(job.LastRuntimeId)))
                 .ExecuteUpdateAsync(
                     setters => setters
                         .SetProperty(search => search.IsComplete, true)

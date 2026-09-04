@@ -63,7 +63,7 @@ internal sealed class IncompleteAlbumActionExecutor
             {
                 if (action.Kind == IncompleteAlbumActionKind.Delete)
                 {
-                    File.Delete(downloadPath);
+                    context.OutputFinalizer.DeleteOutputFile(downloadPath);
                 }
                 else if (action.Kind == IncompleteAlbumActionKind.Move)
                 {
@@ -73,7 +73,10 @@ internal sealed class IncompleteAlbumActionExecutor
                         ?? throw new InvalidOperationException("Cannot move incomplete album files because incomplete album action path is not set.");
                     var newPath = Path.Join(targetBase, Path.GetRelativePath(relativeBase, downloadPath));
                     Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
-                    Utils.Move(downloadPath, newPath);
+                    context.OutputFinalizer.MoveOutputFile(
+                        downloadPath,
+                        newPath,
+                        allowOverwrite: !config.Skip.SkipExisting);
                 }
 
                 var downloadParent = Path.GetDirectoryName(downloadPath);

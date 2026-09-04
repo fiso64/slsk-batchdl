@@ -17,6 +17,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     private readonly Dictionary<string, PersistenceMutation> degraded = [];
     private readonly object progressGate = new();
     private readonly object degradedGate = new();
+    private readonly object lifecycleGate = new();
     private readonly SemaphoreSlim signal = new(0, 1);
     private readonly PersistenceHealth health;
     private readonly IPersistenceMutationObserver? mutationObserver;
@@ -25,6 +26,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     private int searchDepth;
     private int bufferedSearchResultCount;
     private int completed;
+    private int activeAdmissions;
 
     public PersistenceInbox(
         PersistenceWriterOptions options,
@@ -58,39 +60,45 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     public int IncompleteSearchTrackingCount => 0;
     public bool IncompleteSearchTrackingOverflowed => false;
     internal bool IsCompleted => Volatile.Read(ref completed) != 0;
+    internal int ActiveAdmissionCount => Volatile.Read(ref activeAdmissions);
 
     public bool TryEnqueue(PersistenceMutation mutation)
     {
         ArgumentNullException.ThrowIfNull(mutation);
-        if (IsCompleted)
+        if (!TryBeginAdmission())
         {
             mutationObserver?.PermanentlyFailed(
                 [mutation],
                 new InvalidOperationException("Persistence stopped before the mutation could be accepted."));
             return false;
         }
-        if (mutation is SearchResultsPersistenceMutation or SearchCompletionPersistenceMutation)
-            return EnqueueSearchWithBackpressure(mutation);
-        if (mutation is TransferTerminalPersistenceMutation terminalTransfer)
+        try
         {
-            return TryEnqueueCritical(AbsorbBufferedTransfer(terminalTransfer));
+            if (mutation is SearchResultsPersistenceMutation or SearchCompletionPersistenceMutation)
+                return EnqueueSearchWithBackpressure(mutation);
+            if (mutation is TransferTerminalPersistenceMutation terminalTransfer)
+                return TryEnqueueCritical(AbsorbBufferedTransfer(terminalTransfer));
+            if (mutation is TransferPersistenceMutation { Priority: PersistenceMutationPriority.Progress } transferProgress)
+                return TrySetProgress(transferProgress);
+
+            if (mutation.Priority >= PersistenceMutationPriority.Structural)
+                return TryEnqueueCritical(mutation);
+
+            if (ordinary.Writer.TryWrite(mutation))
+            {
+                Interlocked.Increment(ref ordinaryDepth);
+                Signal();
+                return true;
+            }
+
+            health.RecordDroppedOrdinary();
+
+            return false;
         }
-        if (mutation is TransferPersistenceMutation { Priority: PersistenceMutationPriority.Progress } transferProgress)
-            return TrySetProgress(transferProgress);
-
-        if (mutation.Priority >= PersistenceMutationPriority.Structural)
-            return TryEnqueueCritical(mutation);
-
-        if (ordinary.Writer.TryWrite(mutation))
+        finally
         {
-            Interlocked.Increment(ref ordinaryDepth);
-            Signal();
-            return true;
+            EndAdmission();
         }
-
-        health.RecordDroppedOrdinary();
-
-        return false;
     }
 
     internal async Task EnqueueCommandAsync(
@@ -137,8 +145,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         lock (degradedGate)
         {
             foreach (var item in degraded.Values
-                .OrderByDescending(item => item.Priority)
-                .ThenBy(item => item.Sequence)
+                .OrderBy(item => item.Sequence)
                 .Take(Options.MaximumBatchSize - batch.Count)
                 .ToList())
             {
@@ -192,11 +199,15 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 
     public void Complete()
     {
-        Interlocked.Exchange(ref completed, 1);
-        commands.Writer.TryComplete();
-        critical.Writer.TryComplete();
-        ordinary.Writer.TryComplete();
-        search.Writer.TryComplete();
+        lock (lifecycleGate)
+        {
+            if (Interlocked.Exchange(ref completed, 1) != 0)
+                return;
+            commands.Writer.TryComplete();
+            critical.Writer.TryComplete();
+            ordinary.Writer.TryComplete();
+            search.Writer.TryComplete();
+        }
         Signal();
     }
 
@@ -217,9 +228,9 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             return true;
         }
 
-        StoreDegraded(mutation);
+        bool retained = StoreDegraded(mutation);
         Signal();
-        return false;
+        return retained;
     }
 
     private bool TrySetProgress(TransferPersistenceMutation mutation)
@@ -353,7 +364,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         }
     }
 
-    private void StoreDegraded(PersistenceMutation mutation)
+    private bool StoreDegraded(PersistenceMutation mutation)
     {
         lock (degradedGate)
         {
@@ -362,12 +373,12 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
                 if (HasAccounting(current) || HasAccounting(mutation))
                 {
                     degraded[mutation.CoalescingKey] = MergeAccountingMutation(current, mutation);
-                    return;
+                    return true;
                 }
                 if (mutation.Revision > current.Revision
                     || mutation.Priority > current.Priority)
                     degraded[mutation.CoalescingKey] = mutation;
-                return;
+                return true;
             }
 
             if (degraded.Count >= Options.DegradedProjectionCapacity)
@@ -382,13 +393,13 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
                     if (HasAccounting(mutation))
                     {
                         degraded.Add(mutation.CoalescingKey, mutation);
-                        return;
+                        return true;
                     }
                     mutationObserver?.PermanentlyFailed(
                         [mutation],
                         new InvalidOperationException(
                             "Persistence retained exact transfer accounting ahead of a lower-priority degraded projection."));
-                    return;
+                    return false;
                 }
                 degraded.Remove(victim.CoalescingKey);
                 if (victim.Priority == PersistenceMutationPriority.Terminal)
@@ -399,7 +410,25 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
                         "Persistence evicted a retained mutation while reconciling a degraded writer."));
             }
             degraded.Add(mutation.CoalescingKey, mutation);
+            return true;
         }
+    }
+
+    private bool TryBeginAdmission()
+    {
+        lock (lifecycleGate)
+        {
+            if (completed != 0)
+                return false;
+            Interlocked.Increment(ref activeAdmissions);
+            return true;
+        }
+    }
+
+    private void EndAdmission()
+    {
+        Interlocked.Decrement(ref activeAdmissions);
+        Signal();
     }
 
     private static bool HasAccounting(PersistenceMutation mutation)

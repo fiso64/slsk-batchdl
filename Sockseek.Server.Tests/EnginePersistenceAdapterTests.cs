@@ -226,6 +226,34 @@ public sealed class EnginePersistenceAdapterTests
     }
 
     [TestMethod]
+    public async Task DownloadTerminalMutation_OwnsExactHandoffUntilItsRevisionCommits()
+    {
+        var events = new DownloadEvents();
+        var sink = new CapturingSink();
+        var handoffs = new PersistenceHandoffTracker();
+        new EnginePersistenceAdapter(Guid.NewGuid(), sink, handoffs).Attach(events);
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        var file = new Soulseek.File(1, @"Music\Artist\Track.mp3", 100, ".mp3");
+        var candidate = SoulseekSearchAdapter.ToFileCandidate(
+            new SearchResponse("user", 1, true, 1_000, 0, [file]),
+            file);
+        Guid transferId = Guid.NewGuid();
+
+        Invoke(events, "RaiseDownloadStarted", transferId, song, candidate.Target, "C:/downloads/Track.mp3");
+        Invoke(events, "RaiseTransferCompleted", transferId, song, candidate.Target, "C:/downloads/Track.mp3", 100L, 1);
+        var terminal = sink.Mutations.OfType<TransferTerminalPersistenceMutation>().Single();
+
+        Task handoff = handoffs.WaitForTransferAsync(
+            transferId,
+            terminal.Transfer.Revision,
+            CancellationToken.None);
+        Assert.IsFalse(handoff.IsCompleted);
+
+        handoffs.Committed([terminal]);
+        await handoff;
+    }
+
+    [TestMethod]
     public void BlockedWriter_DoesNotBlockProgressCallbacks_AndProgressMemoryStaysBounded()
     {
         var options = new PersistenceWriterOptions

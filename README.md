@@ -545,6 +545,8 @@ When passing an on-complete action on the command line, quote the whole value so
 
 If `when=` is omitted, it behaves like `when=completed`. This preserves the usual "run when work completed" behavior while avoiding commands for already-existing or not-found-last-time skips.
 
+Chained actions evaluate `when=` and outcome/path variables against the result of the preceding action. For example, if an `update-index` action changes a failure to success, the next `when=success` action runs and sees the updated path.
+
 ### Command-output variables
 
 See the shared [Variables](#variables) reference, also available with

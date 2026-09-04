@@ -17,6 +17,20 @@ namespace Sockseek.Server.Tests;
 public sealed class PersistenceDaemonTests
 {
     [TestMethod]
+    public void RetentionBatchCeiling_RequestsBoundedCatchUpWork()
+    {
+        Assert.IsTrue(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(500, 0, 0, 1),
+            batchSize: 500));
+        Assert.IsTrue(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(0, 0, 0, 1, PrunedTransfers: 500),
+            batchSize: 500));
+        Assert.IsFalse(PersistenceMaintenanceHostedService.MayHaveMore(
+            new PersistenceRetentionResultDto(499, 499, 499, 1, 499, 500, 499),
+            batchSize: 500));
+    }
+
+    [TestMethod]
     public async Task CorruptDatabase_AbortsStartupWithoutReplacement_AndReleasesOwnership()
     {
         string directory = Path.Combine(Path.GetTempPath(), "sockseek-corrupt-persistence", Guid.NewGuid().ToString("N"));

@@ -54,7 +54,8 @@ public sealed record JobPersistenceMutation(
     string? SubmissionSpecificationJson = null,
     Guid? RerunOfSubmissionId = null,
     Guid? PreviewId = null,
-    string? ArtifactId = null)
+    string? ArtifactId = null,
+    DateTimeOffset? StartedAtUtc = null)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, JobId, Revision, Priority);
 
 public sealed record TransferPersistenceMutation(
@@ -119,7 +120,8 @@ public sealed record TransferAttemptPersistenceMutation(
     string Direction = "Download",
     string? GroupRef = null,
     string? GroupDisplayPath = null,
-    IReadOnlyList<TransferAccountingObservation>? AccountingObservations = null)
+    IReadOnlyList<TransferAccountingObservation>? AccountingObservations = null,
+    DateTimeOffset? StartedAtUtc = null)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, AttemptId, Revision, Priority);
 
 public sealed record SearchResultPersistenceRecord(
@@ -175,17 +177,6 @@ public sealed record SearchIncompletePersistenceMutation(
     long Revision,
     string Reason)
     : PersistenceMutation(RuntimeId, Sequence, OccurredAtUtc, SearchJobId, Revision, PersistenceMutationPriority.Terminal);
-
-public sealed record SearchTerminalPersistenceMutation(
-    SearchCompletionPersistenceMutation Completion,
-    IReadOnlyList<SearchResultsPersistenceMutation> PendingResultBatches)
-    : PersistenceMutation(
-        Completion.RuntimeId,
-        Completion.Sequence,
-        Completion.OccurredAtUtc,
-        Completion.SearchJobId,
-        Completion.Revision,
-        PersistenceMutationPriority.Terminal);
 
 public sealed record TransferTerminalPersistenceMutation(
     TransferPersistenceMutation Transfer,

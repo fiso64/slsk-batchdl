@@ -39,7 +39,10 @@ internal sealed class AlbumDownloadExecutor
             config.Output,
             config.Extraction,
             context.LoggerFactory.CreateLogger<FileManager>(),
-            ctx.OutputScope);
+            ctx.OutputScope,
+            context.OutputFinalizer.CreateReplacementGuard(
+                allowOverwrite: !config.Skip.SkipExisting,
+                allowUnownedReplacement: config.Skip.SkipExisting));
         var audioResult = await TryDownloadAlbumAudio(job, ctx, organizer);
         var completion = PrepareAlbumAudioOutcome(job, audioResult, ctx);
         var chosenFiles = completion.ChosenFiles;

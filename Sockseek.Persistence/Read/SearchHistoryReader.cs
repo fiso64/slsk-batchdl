@@ -87,6 +87,7 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
             throw new ArgumentOutOfRangeException(nameof(limit), $"Search result page size must be between 1 and {MaximumPageSize}.");
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var metadata = await context.SearchJobs.AsNoTracking()
             .SingleOrDefaultAsync(search => search.JobId == searchJobId, cancellationToken)
             .ConfigureAwait(false);
@@ -102,10 +103,12 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
         bool hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
 
-        return new PersistedSearchResultPage(
+        var page = new PersistedSearchResultPage(
             MapMetadata(metadata),
             rows.Select(MapResult).ToArray(),
             hasMore && rows.Count > 0 ? rows[^1].Sequence : null);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return page;
     }
 
     public async Task<PersistedSearchResultLookup?> GetResultAsync(
@@ -118,6 +121,7 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
         ArgumentException.ThrowIfNullOrWhiteSpace(remoteFilename);
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var metadata = await context.SearchJobs.AsNoTracking()
             .SingleOrDefaultAsync(search => search.JobId == searchJobId, cancellationToken)
             .ConfigureAwait(false);
@@ -131,7 +135,9 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
                 && row.Visibility == SearchResultVisibility.Public.ToString(), cancellationToken)
             .ConfigureAwait(false);
 
-        return new PersistedSearchResultLookup(MapMetadata(metadata), result == null ? null : MapResult(result));
+        var lookup = new PersistedSearchResultLookup(MapMetadata(metadata), result == null ? null : MapResult(result));
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return lookup;
     }
 
     public async Task<PersistedSearchMetadata?> GetMetadataAsync(Guid searchJobId, CancellationToken cancellationToken = default)

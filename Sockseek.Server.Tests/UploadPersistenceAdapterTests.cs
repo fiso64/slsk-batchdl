@@ -87,6 +87,30 @@ public sealed class UploadPersistenceAdapterTests
         adapter.Detach(coordinator);
     }
 
+    [TestMethod]
+    public async Task RejectedAttemptAdmission_IsRetriedByTheNextTransferUpdate()
+    {
+        var catalog = new FakeCatalog();
+        var protocol = new BlockingProtocol();
+        await using var coordinator = new UploadCoordinator(
+            catalog,
+            protocol,
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
+            new UploadScheduler(new UploadSettings { Slots = 1 }));
+        var sink = new RejectFirstAttemptSink();
+        var adapter = new UploadPersistenceAdapter(Guid.NewGuid(), sink);
+        adapter.Attach(coordinator);
+
+        await coordinator.AdmitAsync("alice", null, @"Public\One.bin");
+        await protocol.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.AreEqual(2, sink.AttemptAdmissions);
+        Assert.AreEqual(1, sink.AcceptedAttempts);
+
+        adapter.Detach(coordinator);
+        protocol.Release.TrySetResult();
+    }
+
     private sealed class RecordingSink : IPersistenceMutationSink
     {
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource<TransferTerminalPersistenceMutation>> terminals = [];
@@ -113,6 +137,27 @@ public sealed class UploadPersistenceAdapterTests
                     static _ => new(TaskCreationOptions.RunContinuationsAsynchronously))
                 .Task
                 .WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private sealed class RejectFirstAttemptSink : IPersistenceMutationSink
+    {
+        private int attemptAdmissions;
+        private int acceptedAttempts;
+
+        public int AttemptAdmissions => Volatile.Read(ref attemptAdmissions);
+        public int AcceptedAttempts => Volatile.Read(ref acceptedAttempts);
+
+        public bool TryEnqueue(PersistenceMutation mutation)
+        {
+            if (mutation is not TransferAttemptPersistenceMutation)
+                return true;
+
+            if (Interlocked.Increment(ref attemptAdmissions) == 1)
+                return false;
+
+            Interlocked.Increment(ref acceptedAttempts);
+            return true;
+        }
     }
 
     private sealed class BlockingProtocol : IUploadProtocolInvoker

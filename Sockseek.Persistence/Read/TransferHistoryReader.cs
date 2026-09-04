@@ -139,6 +139,7 @@ public sealed class TransferHistoryReader(
     public async Task<PersistedTransferDetail?> GetTransferAsync(Guid transferId, CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var transfer = await context.Transfers.AsNoTracking()
             .SingleOrDefaultAsync(row => row.Id == transferId, cancellationToken)
             .ConfigureAwait(false);
@@ -150,9 +151,11 @@ public sealed class TransferHistoryReader(
             .FirstOrDefaultAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        return new PersistedTransferDetail(
+        var detail = new PersistedTransferDetail(
             MapTransfer(transfer),
             latestAttempt == null ? null : MapAttempt(latestAttempt));
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return detail;
     }
 
     public async Task<PersistedTransferAttemptPage?> GetAttemptsAsync(
@@ -164,6 +167,7 @@ public sealed class TransferHistoryReader(
         if (afterAttemptNumber < 0) throw new ArgumentOutOfRangeException(nameof(afterAttemptNumber));
         if (limit is < 1 or > MaximumPageSize) throw new ArgumentOutOfRangeException(nameof(limit));
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         if (!await context.Transfers.AsNoTracking().AnyAsync(row => row.Id == transferId, cancellationToken).ConfigureAwait(false))
             return null;
         var rows = await context.TransferAttempts.AsNoTracking()
@@ -172,9 +176,11 @@ public sealed class TransferHistoryReader(
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         bool hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
-        return new PersistedTransferAttemptPage(
+        var page = new PersistedTransferAttemptPage(
             rows.Select(MapAttempt).ToArray(),
             hasMore && rows.Count > 0 ? rows[^1].AttemptNumber : null);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return page;
     }
 
     public async Task<TransferArchiveResult> SetArchivedAsync(

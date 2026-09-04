@@ -586,7 +586,10 @@ internal sealed class JobOrchestrator
                     config.Output,
                     config.Extraction,
                     context.LoggerFactory.CreateLogger<FileManager>(),
-                    ctx.OutputScope);
+                    ctx.OutputScope,
+                    context.OutputFinalizer.CreateReplacementGuard(
+                        allowOverwrite: !config.Skip.SkipExisting,
+                        allowUnownedReplacement: config.Skip.SkipExisting));
                 await download.CommitAndFinalizeSong(
                     existingSong,
                     existingSong,

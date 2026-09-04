@@ -223,14 +223,6 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
                         SetMaximum(generation.CommittedJobRevisions, job.JobId, job.Revision);
                         touched.Add(generation);
                         break;
-                    case SearchTerminalPersistenceMutation search
-                        when generationByJob.TryGetValue(search.Completion.SearchJobId, out var generation):
-                        SetMaximum(
-                            generation.CommittedSearchRevisions,
-                            search.Completion.SearchJobId,
-                            search.Completion.Revision);
-                        touched.Add(generation);
-                        break;
                     case SearchCompletionPersistenceMutation search
                         when generationByJob.TryGetValue(search.SearchJobId, out var generation):
                         SetMaximum(
@@ -276,14 +268,6 @@ internal sealed class PersistenceHandoffTracker : IPersistenceMutationObserver
                             generation.FailedJobMutations,
                             job.JobId,
                             new FailedMutation(job.Revision, Describe(job), exception));
-                        affected.Add(generation);
-                        break;
-                    case SearchTerminalPersistenceMutation search
-                        when generationByJob.TryGetValue(search.Completion.SearchJobId, out var generation):
-                        SetLatestFailure(
-                            generation.FailedSearchMutations,
-                            search.Completion.SearchJobId,
-                            new FailedMutation(search.Completion.Revision, Describe(search), exception));
                         affected.Add(generation);
                         break;
                     case SearchCompletionPersistenceMutation search

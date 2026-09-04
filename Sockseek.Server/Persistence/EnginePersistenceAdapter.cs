@@ -21,6 +21,7 @@ public sealed class EnginePersistenceAdapter
     private readonly ConcurrentDictionary<Guid, TransferAttemptPersistenceMutation> pendingTerminalAttempts = new();
     private readonly ConcurrentDictionary<Guid, Guid> transferWorkflowIds = new();
     private readonly ConcurrentDictionary<Guid, AttemptAccountingState> activeAttempts = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> jobStartedAtUtc = new();
 
     public EnginePersistenceAdapter(Guid runtimeId, IPersistenceMutationSink sink)
         : this(runtimeId, sink, handoffs: null)
@@ -150,7 +151,8 @@ public sealed class EnginePersistenceAdapter
                 FlushPendingAttempt(attempt.Transfer.Id);
                 activeAttempts[attempt.Transfer.Id] = new AttemptAccountingState(
                     attempt.AttemptId,
-                    attempt.Transfer.BytesTransferred);
+                    attempt.Transfer.BytesTransferred,
+                    attempt.OccurredAtUtc);
                 sink.TryEnqueue(AttemptMutation(attempt, "Started", "None", null));
                 break;
 
@@ -262,7 +264,13 @@ public sealed class EnginePersistenceAdapter
             failureReason,
             failureMessage,
             cancellationSource);
-        sink.TryEnqueue(new TransferTerminalPersistenceMutation(transferMutation, finalAttempt, OwningJob: null));
+        handoffs?.BeginTransferTerminal(transfer.Id, transfer.Revision);
+        bool accepted = sink.TryEnqueue(new TransferTerminalPersistenceMutation(
+            transferMutation,
+            finalAttempt,
+            OwningJob: null));
+        if (!accepted)
+            handoffs?.FailTransferTerminalAdmission(transfer.Id, transfer.Revision);
     }
 
     private void FlushPendingAttempt(Guid transferId)
@@ -310,7 +318,8 @@ public sealed class EnginePersistenceAdapter
             job.SubmissionSpecificationJson,
             job.RerunOfSubmissionId,
             job.PreviewId,
-            job.ArtifactId);
+            job.ArtifactId,
+            jobStartedAtUtc.GetValueOrDefault(job.Id));
     }
 
     private void EnqueueJobMutation(
@@ -319,6 +328,8 @@ public sealed class EnginePersistenceAdapter
         PersistenceMutationPriority priority)
     {
         handoffs?.RegisterJob(job.WorkflowId, job.Id);
+        if (job.LifecycleState != JobLifecycleState.Pending)
+            jobStartedAtUtc.TryAdd(job.Id, change.OccurredAtUtc);
         var mutation = JobMutation(job, change, priority);
         if (priority == PersistenceMutationPriority.Terminal)
             terminalJobRevisions[job.Id] = new TrackedRevision(job.WorkflowId, job.Revision);
@@ -494,7 +505,8 @@ public sealed class EnginePersistenceAdapter
             transfer.Direction.ToString(),
             GroupRef: null,
             GroupDisplayPath: null,
-            AccountingObservations: AccountingObservations(transfer, change));
+            AccountingObservations: AccountingObservations(transfer, change),
+            StartedAtUtc: activeAttempts.GetValueOrDefault(transfer.Id)?.StartedAtUtc);
     }
 
     private IReadOnlyList<TransferAccountingObservation>? AccountingObservations(
@@ -595,7 +607,10 @@ public sealed class EnginePersistenceAdapter
             relationships.TryRemove(pair.Key, out _);
 
         foreach (Guid jobId in jobs.Keys)
+        {
             terminalJobRevisions.TryRemove(jobId, out _);
+            jobStartedAtUtc.TryRemove(jobId, out _);
+        }
         foreach (Guid jobId in searches.Keys)
             searchCompletionRevisions.TryRemove(jobId, out _);
 
@@ -626,5 +641,8 @@ public sealed class EnginePersistenceAdapter
 
     private sealed record TrackedRevision(Guid WorkflowId, long Revision);
 
-    private sealed record AttemptAccountingState(Guid AttemptId, long BaselineBytes);
+    private sealed record AttemptAccountingState(
+        Guid AttemptId,
+        long BaselineBytes,
+        DateTimeOffset StartedAtUtc);
 }

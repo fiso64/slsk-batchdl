@@ -31,7 +31,8 @@ internal sealed class RemoteFileDownloadExecutor
             config.Output.ParentDir,
             config.Transfer.MaxStaleTime,
             ct: job.Cts!.Token,
-            parentJob: parentJob);
+            parentJob: parentJob,
+            allowOverwrite: !config.Skip.SkipExisting);
 
         return outcome.Status switch
         {
@@ -39,6 +40,8 @@ internal sealed class RemoteFileDownloadExecutor
                 => JobOutcome.Done(outcome.Result.OutputPath),
             ExactFileTransferStatus.ManuallySkipped
                 => JobOutcome.Skipped(JobSkipReason.Manual),
+            ExactFileTransferStatus.AlreadyExists
+                => JobOutcome.AlreadyExists(outcome.Result?.OutputPath),
             _ => JobOutcome.Failed(JobFailureReason.Other, "The exact file transfer did not produce a result."),
         };
     }

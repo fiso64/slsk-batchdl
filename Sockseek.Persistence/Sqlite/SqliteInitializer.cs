@@ -39,6 +39,20 @@ public sealed class SqliteInitializer(
         PersistenceFilePrivacy.RestrictDirectory(databaseDirectory);
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var knownMigrations = context.Database.GetMigrations()
+            .ToHashSet(StringComparer.Ordinal);
+        var appliedMigrations = await context.Database.GetAppliedMigrationsAsync(cancellationToken).ConfigureAwait(false);
+        var unknownApplied = appliedMigrations
+            .Where(migration => !knownMigrations.Contains(migration))
+            .ToArray();
+        if (unknownApplied.Length > 0)
+        {
+            throw new PersistenceSchemaCompatibilityException(
+                "This database was migrated by a newer or incompatible Sockseek release. " +
+                "The current binary does not recognize applied migrations: " +
+                string.Join(", ", unknownApplied) +
+                ". Use a release that supports this database schema.");
+        }
         var pendingMigrations = await context.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false);
         var unapproved = pendingMigrations.Where(migration => !SafeAutomaticMigrations.Contains(migration)).ToArray();
         if (unapproved.Length > 0)

@@ -296,8 +296,35 @@ public class EngineStateStoreTests
         Assert.AreEqual(afterFirstUpdate, batches.Count, "An identical hydration must not emit a duplicate delta.");
         Assert.AreEqual(transferId, store.GetDaemonSnapshot().Transfers.Single().TransferId);
 
-        store.RemoveUploadTransfer(transferId);
+        store.RemoveTerminalTransfer(transferId);
         Assert.AreEqual(0, store.GetDaemonSnapshot().Transfers.Count);
+        Assert.IsTrue(batches.Last().State.RemovedTransferIds.Contains(transferId));
+    }
+
+    [TestMethod]
+    public void TerminalDownload_RemainsLiveUntilPersistenceOwnerExplicitlyRetiresIt()
+    {
+        var store = new EngineStateStore();
+        var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Track" });
+        Guid transferId = Guid.NewGuid();
+        var terminal = Transfer(song, (TransferStates)0) with
+        {
+            Id = transferId,
+            State = "Completed",
+            TerminalOutcome = TransferSnapshotTerminalOutcome.Succeeded,
+        };
+        var batches = new List<StateUpdateBatchDto>();
+        store.StateBatchPublished += batches.Add;
+
+        typeof(EngineStateStore)
+            .GetMethod("OnTerminalTransfer", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(store, [terminal, DateTimeOffset.UtcNow]);
+
+        Assert.IsNotNull(store.GetLiveTransfer(transferId));
+        Assert.IsFalse(batches.Last().State.RemovedTransferIds.Contains(transferId));
+
+        store.RemoveTerminalTransfer(transferId);
+        Assert.IsNull(store.GetLiveTransfer(transferId));
         Assert.IsTrue(batches.Last().State.RemovedTransferIds.Contains(transferId));
     }
 

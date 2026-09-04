@@ -99,6 +99,7 @@ public sealed class PersistenceWriter(
 
     private bool IsDrained()
         => inbox.IsCompleted
+            && inbox.ActiveAdmissionCount == 0
             && inbox.CriticalDepth == 0
             && inbox.OrdinaryDepth == 0
             && inbox.ProgressCount == 0
@@ -228,7 +229,6 @@ public sealed class PersistenceWriter(
             SearchResultsPersistenceMutation results => await ApplySearchResultsAsync(context, results, cancellationToken).ConfigureAwait(false),
             SearchCompletionPersistenceMutation completion => await ApplySearchCompletionAsync(context, completion, cancellationToken).ConfigureAwait(false),
             SearchIncompletePersistenceMutation incomplete => await ApplySearchIncompleteAsync(context, incomplete, cancellationToken).ConfigureAwait(false),
-            SearchTerminalPersistenceMutation terminalSearch => await ApplySearchTerminalAsync(context, terminalSearch, cancellationToken).ConfigureAwait(false),
             TransferTerminalPersistenceMutation terminal => await ApplyTransferTerminalAsync(context, terminal, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unsupported persistence mutation type {mutation.GetType().FullName}."),
         };
@@ -270,7 +270,8 @@ public sealed class PersistenceWriter(
                 Id = mutation.JobId,
                 CreatedAtUtc = (mutation.RegisteredAtUtc ?? mutation.OccurredAtUtc)
                     .ToUniversalTime().ToUnixTimeMilliseconds(),
-                StartedAtUtc = mutation.LifecycleState == "Pending" ? null : occurredAt,
+                StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                    ?? (mutation.LifecycleState == "Pending" ? null : occurredAt),
             };
             context.Jobs.Add(entity);
         }
@@ -298,7 +299,8 @@ public sealed class PersistenceWriter(
         entity.QueryText = mutation.QueryText;
         entity.UpdatedAtUtc = Math.Max(entity.UpdatedAtUtc, occurredAt);
         if (entity.StartedAtUtc == null && mutation.LifecycleState != "Pending")
-            entity.StartedAtUtc = occurredAt;
+            entity.StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                ?? occurredAt;
         if (mutation.LifecycleState == "Terminal" && entity.CompletedAtUtc == null)
             entity.CompletedAtUtc = occurredAt;
         entity.Revision = mutation.Revision;
@@ -428,7 +430,8 @@ public sealed class PersistenceWriter(
             {
                 Id = mutation.AttemptId,
                 TransferId = mutation.TransferId,
-                StartedAtUtc = occurredAt,
+                StartedAtUtc = mutation.StartedAtUtc?.ToUniversalTime().ToUnixTimeMilliseconds()
+                    ?? occurredAt,
             };
             context.TransferAttempts.Add(entity);
         }
@@ -659,26 +662,6 @@ public sealed class PersistenceWriter(
         return rows;
     }
 
-    private async Task<int> ApplySearchTerminalAsync(SockseekDbContext context, SearchTerminalPersistenceMutation mutation, CancellationToken cancellationToken)
-    {
-        int rows = 0;
-        if (mutation.PendingResultBatches.Count > 0)
-        {
-            SearchResultsPersistenceMutation[] ordered = mutation.PendingResultBatches
-                .OrderBy(batch => batch.Sequence)
-                .ToArray();
-            SearchResultsPersistenceMutation last = ordered[^1];
-            var combined = last with
-            {
-                Revision = ordered.Max(batch => batch.Revision),
-                Results = ordered.SelectMany(batch => batch.Results).ToArray(),
-            };
-            rows += await ApplySearchResultsAsync(context, combined, cancellationToken).ConfigureAwait(false);
-        }
-        rows += await ApplySearchCompletionAsync(context, mutation.Completion, cancellationToken).ConfigureAwait(false);
-        return rows;
-    }
-
     private static async Task<SearchJobEntity> GetOrCreateSearchAsync(
         SockseekDbContext context,
         Guid jobId,
@@ -814,7 +797,6 @@ public sealed class PersistenceWriter(
             TransferAttemptPersistenceMutation => 2,
             SearchResultsPersistenceMutation => 3,
             SearchIncompletePersistenceMutation => 4,
-            SearchTerminalPersistenceMutation => 5,
             SearchCompletionPersistenceMutation => 5,
             _ => 6,
         };

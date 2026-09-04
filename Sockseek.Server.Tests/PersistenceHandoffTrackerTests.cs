@@ -23,10 +23,10 @@ public sealed class PersistenceHandoffTrackerTests
         tracker.Committed([JobMutation(workflowId, jobId, revision: 5)]);
         Assert.IsFalse(handoff.IsCompleted, "The job row alone must not expose incomplete search history.");
 
-        tracker.Committed([SearchTerminal(jobId, revision: 2)]);
+        tracker.Committed([SearchCompletion(jobId, revision: 2)]);
         Assert.IsFalse(handoff.IsCompleted, "An older search completion must not satisfy the handoff.");
 
-        tracker.Committed([SearchTerminal(jobId, revision: 3)]);
+        tracker.Committed([SearchCompletion(jobId, revision: 3)]);
         await handoff;
     }
 
@@ -226,19 +226,17 @@ public sealed class PersistenceHandoffTrackerTests
             PayloadSchemaVersion: 1,
             PayloadJson: null);
 
-    private static SearchTerminalPersistenceMutation SearchTerminal(Guid jobId, long revision)
+    private static SearchCompletionPersistenceMutation SearchCompletion(Guid jobId, long revision)
         => new(
-            new SearchCompletionPersistenceMutation(
-                Guid.NewGuid(),
-                Sequence: revision,
-                DateTimeOffset.UtcNow,
-                jobId,
-                revision,
-                Query: "query",
-                ResultCount: 1,
-                LockedFileCount: 0,
-                ResultPersistenceState: "Complete"),
-            PendingResultBatches: []);
+            Guid.NewGuid(),
+            Sequence: revision,
+            DateTimeOffset.UtcNow,
+            jobId,
+            revision,
+            Query: "query",
+            ResultCount: 1,
+            LockedFileCount: 0,
+            ResultPersistenceState: "Complete");
 
     private static TransferTerminalPersistenceMutation TransferTerminal(
         Guid transferId,

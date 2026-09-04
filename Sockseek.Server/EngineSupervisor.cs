@@ -20,6 +20,7 @@ using Sockseek.Core.Transfers.Uploads;
 using Sockseek.Core.Chat;
 using Sockseek.Core.PeerBrowsing;
 using Sockseek.Core.Diagnostics;
+using Sockseek.Core.Events;
 using Sockseek.Persistence.PeerBrowsing;
 using Sockseek.Server.PeerBrowsing;
 using Sockseek.Core.UserProfiles;
@@ -306,6 +307,15 @@ public sealed class EngineSupervisor
             while (!ct.IsCancellationRequested)
             {
                 var engine = CreateEngine(sharing.ClientManager);
+                void OnDownloadCompleted(TransferCompletedChange change)
+                    => _ = RetireTerminalDownloadAsync(change.Transfer);
+                void OnDownloadFailed(TransferFailedChange change)
+                    => _ = RetireTerminalDownloadAsync(change.Transfer);
+                void OnDownloadCancelled(TransferCancelledChange change)
+                    => _ = RetireTerminalDownloadAsync(change.Transfer);
+                engine.Events.TransferCompleted += OnDownloadCompleted;
+                engine.Events.TransferFailed += OnDownloadFailed;
+                engine.Events.TransferCancelled += OnDownloadCancelled;
                 var runTask = engine.RunAsync(ct);
 
                 try
@@ -352,6 +362,9 @@ public sealed class EngineSupervisor
                 }
                 finally
                 {
+                    engine.Events.TransferCompleted -= OnDownloadCompleted;
+                    engine.Events.TransferFailed -= OnDownloadFailed;
+                    engine.Events.TransferCancelled -= OnDownloadCancelled;
                     StateStore.DetachEngine(engine);
                     persistence?.DetachEngine(engine);
                     lock (engineGate)
@@ -440,8 +453,36 @@ public sealed class EngineSupervisor
             }
             finally
             {
-                StateStore.RemoveUploadTransfer(transfer.TransferId);
+                StateStore.RemoveTerminalTransfer(transfer.TransferId);
                 sharing.Uploads.Forget(transfer.TransferId);
+            }
+        }
+
+        async Task RetireTerminalDownloadAsync(TransferSnapshot transfer)
+        {
+            try
+            {
+                if (persistence?.IsStarted == true)
+                {
+                    await persistence.WaitForTransferHandoffAsync(
+                        transfer.Id,
+                        transfer.Revision,
+                        ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                ServerLogMessages.TerminalDownloadHandoffFailed(
+                    logger,
+                    ex,
+                    transfer.Id);
+            }
+            finally
+            {
+                StateStore.RemoveTerminalTransfer(transfer.Id);
             }
         }
     }

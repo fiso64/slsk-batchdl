@@ -89,6 +89,50 @@ namespace Tests.FastSearch
                 "Background search should have been cancelled once the fast download succeeded");
         }
 
+        [TestMethod]
+        public async Task SongDownload_FastSearch_ObservesCandidateThatArrivesAfterCallerStartsWaiting()
+        {
+            var enterSearch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseSearchStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var keepSearchOpen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var client = new ClientTests.MockSoulseekClient(
+                new[] { FastUser() }.ToList())
+            {
+                BeforeSearchAsync = (_, ct) =>
+                {
+                    enterSearch.TrySetResult();
+                    return releaseSearchStart.Task.WaitAsync(ct);
+                },
+                AfterFirstSearchResponseAsync = ct => keepSearchOpen.Task.WaitAsync(ct),
+            };
+
+            var (app, outputDir) = CreateApp(client,
+                "testartist - testsong",
+                new[] { "--fast-search", "--fast-search-min-up-speed", "1" });
+
+            Task? runTask = null;
+            try
+            {
+                runTask = app.RunAsync(CancellationToken.None);
+                await enterSearch.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                releaseSearchStart.TrySetResult();
+                await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                releaseSearchStart.TrySetResult();
+                keepSearchOpen.TrySetResult();
+                if (runTask != null)
+                    await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+                if (System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.Delete(outputDir, true);
+            }
+
+            Assert.AreEqual(JobTerminalOutcome.Succeeded, app.Queue.AllSongs().Single().TerminalOutcome);
+            Assert.AreEqual(1, client.SearchesCancelledAfterFirstResponse);
+            Assert.AreEqual(1, client.DownloadCallCount);
+        }
+
         // ── Test 2: fast-search fallback when provisional download fails ─────
 
         [TestMethod]

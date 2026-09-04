@@ -263,58 +263,71 @@ internal sealed class SongDownloadExecutor
                 // searchCts causes SearchSong to return and release it naturally.
                 using var searchCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
 
-                Task<ExactFileTransferOutcome?>? fastDownloadTask = null;
-                FileCandidate? fastCandidate = null;
+                int fastCandidateClaimed = 0;
+                var fastDownloadStarted = new TaskCompletionSource<(
+                    FileCandidate Candidate,
+                    Task<ExactFileTransferOutcome?> Download)>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
 
                 searched = true;
                 var searchTask = context.Runtime.Searcher.SearchSong(song, config.Search, responseData, searchCts.Token,
                     onFastSearchCandidate: fc =>
                     {
-                        if (fastDownloadTask == null)
-                        {
-                            fastCandidate = fc;
-                            DownloadLogMessages.JobDecision(
-                                logger,
-                                song.Id,
-                                "fast-search-provisional-download-started",
-                                null);
-                            var target = context.OutputFinalizer.GetInitialDownloadTarget(config, song, organizer, fc);
+                        if (Interlocked.CompareExchange(ref fastCandidateClaimed, 1, 0) != 0)
+                            return;
 
-                            // Use the main job CTS for the download so cancelling the search doesn't kill the download.
-                            fastDownloadTask = context.Runtime.ExactFileTransfers
-                                .DownloadFile(
-                                    fc.Target,
-                                    target.Path,
-                                    song,
-                                    config.Transfer,
-                                    config.Output.ParentDir,
-                                    config.Transfer.MaxStaleTime,
-                                    ct: cts.Token,
-                                    publishToDuplicateCache: target.PublishToDuplicateCache,
-                                    parentJob: DownloadParentFor(song, job),
-                                    deferTerminalCompletion: true)
-                                .ContinueWith(t =>
-                                {
-                                    if (t.IsCompletedSuccessfully)
-                                        return (ExactFileTransferOutcome?)t.Result;
-                                    return null;
-                                }, TaskScheduler.Default);
-                        }
+                        DownloadLogMessages.JobDecision(
+                            logger,
+                            song.Id,
+                            "fast-search-provisional-download-started",
+                            null);
+                        var target = context.OutputFinalizer.GetInitialDownloadTarget(config, song, organizer, fc);
+
+                        // Use the main job CTS for the download so cancelling the search doesn't kill the download.
+                        Task<ExactFileTransferOutcome?> download = context.Runtime.ExactFileTransfers
+                            .DownloadFile(
+                                fc.Target,
+                                target.Path,
+                                song,
+                                config.Transfer,
+                                config.Output.ParentDir,
+                                config.Transfer.MaxStaleTime,
+                                ct: cts.Token,
+                                publishToDuplicateCache: target.PublishToDuplicateCache,
+                                parentJob: DownloadParentFor(song, job),
+                                deferTerminalCompletion: true,
+                                // Reaching transfer means the centralized skip
+                                // evaluation did not accept the existing file
+                                // under its configured length semantics.
+                                allowOverwrite: true,
+                                protectPublishedOutput: config.Skip.SkipExisting)
+                            .ContinueWith(t =>
+                            {
+                                if (t.IsCompletedSuccessfully)
+                                    return (ExactFileTransferOutcome?)t.Result;
+                                return null;
+                            }, TaskScheduler.Default);
+                        fastDownloadStarted.TrySetResult((fc, download));
                     });
 
-                while (!searchTask.IsCompleted)
+                Task first = await Task.WhenAny(searchTask, fastDownloadStarted.Task);
+                (FileCandidate Candidate, Task<ExactFileTransferOutcome?> Download)? provisional = null;
+                if (first == fastDownloadStarted.Task)
                 {
-                    if (fastDownloadTask != null && fastDownloadTask.IsCompleted)
-                        break;
-                    await Task.WhenAny(fastDownloadTask ?? searchTask, searchTask);
+                    provisional = await fastDownloadStarted.Task;
+                }
+                else
+                {
+                    await searchTask;
+                    if (fastDownloadStarted.Task.IsCompletedSuccessfully)
+                        provisional = fastDownloadStarted.Task.Result;
                 }
 
-                if (fastDownloadTask != null)
+                if (provisional is { } started)
                 {
-                    var fastDownload = await fastDownloadTask;
+                    var fastDownload = await started.Download;
                     if (fastDownload?.Status == ExactFileTransferStatus.Completed
-                        && fastDownload.Result != null
-                        && fastCandidate != null)
+                        && fastDownload.Result != null)
                     {
                         // Fast download won - cancel the search.
                         await searchCts.CancelAsync();
@@ -336,7 +349,7 @@ internal sealed class SongDownloadExecutor
                             song.Id,
                             "fast-search-provisional-download-succeeded",
                             null);
-                        return JobOutcome.Done(result.OutputPath, fastCandidate);
+                        return JobOutcome.Done(result.OutputPath, started.Candidate);
                     }
 
                     if (fastDownload?.Status == ExactFileTransferStatus.ManuallySkipped)
@@ -346,6 +359,12 @@ internal sealed class SongDownloadExecutor
                             song.Id,
                             "fast-search-provisional-download-skipped",
                             null);
+                    }
+                    else if (fastDownload?.Status == ExactFileTransferStatus.AlreadyExists)
+                    {
+                        await searchCts.CancelAsync();
+                        try { await searchTask; } catch (OperationCanceledException) { }
+                        return JobOutcome.AlreadyExists(fastDownload.Result?.OutputPath);
                     }
                     else
                     {
@@ -403,7 +422,11 @@ internal sealed class SongDownloadExecutor
                     ct: cts.Token,
                     publishToDuplicateCache: target.PublishToDuplicateCache,
                     parentJob: DownloadParentFor(song, job),
-                    deferTerminalCompletion: true);
+                    deferTerminalCompletion: true,
+                    // The job-level skip evaluator has already decided that
+                    // any existing output is not an acceptable match.
+                    allowOverwrite: true,
+                    protectPublishedOutput: config.Skip.SkipExisting);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -437,6 +460,9 @@ internal sealed class SongDownloadExecutor
                 tried--;
                 continue;
             }
+
+            if (download.Status == ExactFileTransferStatus.AlreadyExists)
+                return JobOutcome.AlreadyExists(download.Result?.OutputPath);
 
             var result = download.Result
                 ?? throw new InvalidOperationException($"Completed download outcome missing result for '{candidate.Username}\\{candidate.Filename}'.");
@@ -487,10 +513,16 @@ internal sealed class SongDownloadExecutor
             ct: cts.Token,
             publishToDuplicateCache: destination.PublishToDuplicateCache,
             parentJob: DownloadParentFor(song, parentJob),
-            deferTerminalCompletion: true);
+            deferTerminalCompletion: true,
+            // The job-level skip evaluator has already decided that any
+            // existing output is not an acceptable match.
+            allowOverwrite: true,
+            protectPublishedOutput: config.Skip.SkipExisting);
 
         if (download.Status == ExactFileTransferStatus.ManuallySkipped)
             return JobOutcome.Skipped(JobSkipReason.Manual);
+        if (download.Status == ExactFileTransferStatus.AlreadyExists)
+            return JobOutcome.AlreadyExists(download.Result?.OutputPath);
 
         var result = download.Result
             ?? throw new InvalidOperationException(

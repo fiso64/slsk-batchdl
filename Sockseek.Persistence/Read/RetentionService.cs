@@ -52,40 +52,9 @@ public sealed class RetentionService(
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-        var agedJobs = context.Jobs.AsNoTracking().Where(job => job.LifecycleState == "Terminal");
-        if (completedJobCutoff.HasValue || unsuccessfulJobCutoff.HasValue)
-            agedJobs = agedJobs.Where(job =>
-                completedJobCutoff.HasValue && job.TerminalOutcome == "Succeeded" && job.CompletedAtUtc < completedJobCutoff
-                || unsuccessfulJobCutoff.HasValue && job.TerminalOutcome != "Succeeded" && job.CompletedAtUtc < unsuccessfulJobCutoff);
-        else
-            agedJobs = agedJobs.Where(_ => false);
-        var agedJobIds = await agedJobs
-            .OrderBy(job => job.CompletedAtUtc)
-            .Select(job => job.Id)
-            .Take(options.BatchSize)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        int retainedCount = await context.Jobs.CountAsync(cancellationToken).ConfigureAwait(false);
-        int excess = options.MaximumRetainedJobs.HasValue
-            ? Math.Max(0, retainedCount - options.MaximumRetainedJobs.Value)
-            : 0;
-        if (agedJobIds.Count < options.BatchSize && excess > 0)
-        {
-            var countIds = await context.Jobs.AsNoTracking()
-                .Where(job => job.LifecycleState == "Terminal" && !agedJobIds.Contains(job.Id))
-                .OrderBy(job => job.CompletedAtUtc)
-                .Select(job => job.Id)
-                .Take(Math.Min(options.BatchSize - agedJobIds.Count, excess))
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-            agedJobIds.AddRange(countIds);
-        }
-
-        int prunedJobs = 0;
-        if (agedJobIds.Count > 0)
-            prunedJobs = await context.Jobs.Where(job => agedJobIds.Contains(job.Id)).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
-
+        // Raw search-result retention is independent of job-history retention.
+        // Prune eligible raw rows first, then protect every job that still owns
+        // raw rows from both the age policy and the maximum job count.
         var searchesQuery = context.SearchJobs
             .Where(search => search.ResultPersistenceState != "Pruned");
         searchesQuery = searchCutoff.HasValue
@@ -115,6 +84,45 @@ public sealed class RetentionService(
                     cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        var agedJobs = context.Jobs.AsNoTracking().Where(job =>
+            job.LifecycleState == "Terminal"
+            && !context.SearchResults.Any(result => result.SearchJobId == job.Id));
+        if (completedJobCutoff.HasValue || unsuccessfulJobCutoff.HasValue)
+            agedJobs = agedJobs.Where(job =>
+                completedJobCutoff.HasValue && job.TerminalOutcome == "Succeeded" && job.CompletedAtUtc < completedJobCutoff
+                || unsuccessfulJobCutoff.HasValue && job.TerminalOutcome != "Succeeded" && job.CompletedAtUtc < unsuccessfulJobCutoff);
+        else
+            agedJobs = agedJobs.Where(_ => false);
+        var agedJobIds = await agedJobs
+            .OrderBy(job => job.CompletedAtUtc)
+            .Select(job => job.Id)
+            .Take(options.BatchSize)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        int retainedCount = await context.Jobs.CountAsync(cancellationToken).ConfigureAwait(false);
+        int excess = options.MaximumRetainedJobs.HasValue
+            ? Math.Max(0, retainedCount - options.MaximumRetainedJobs.Value)
+            : 0;
+        int remainingExcess = Math.Max(0, excess - agedJobIds.Count);
+        if (agedJobIds.Count < options.BatchSize && remainingExcess > 0)
+        {
+            var countIds = await context.Jobs.AsNoTracking()
+                .Where(job => job.LifecycleState == "Terminal"
+                    && !agedJobIds.Contains(job.Id)
+                    && !context.SearchResults.Any(result => result.SearchJobId == job.Id))
+                .OrderBy(job => job.CompletedAtUtc)
+                .Select(job => job.Id)
+                .Take(Math.Min(options.BatchSize - agedJobIds.Count, remainingExcess))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            agedJobIds.AddRange(countIds);
+        }
+
+        int prunedJobs = 0;
+        if (agedJobIds.Count > 0)
+            prunedJobs = await context.Jobs.Where(job => agedJobIds.Contains(job.Id)).ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
 
         int prunedAttempts = 0;
         int prunedTransfers = 0;

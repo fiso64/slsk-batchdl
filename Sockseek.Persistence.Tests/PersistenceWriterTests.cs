@@ -84,6 +84,142 @@ public sealed class PersistenceWriterTests
     }
 
     [TestMethod]
+    public void RetryDrain_PreservesSearchResultBeforeCompletionSequenceAcrossBatchBoundaries()
+    {
+        var options = new PersistenceWriterOptions
+        {
+            MaximumBatchSize = 1,
+            DegradedProjectionCapacity = 4,
+        };
+        var inbox = new PersistenceInbox(options, new PersistenceHealth());
+        Guid runtimeId = Guid.NewGuid();
+        Guid searchId = Guid.NewGuid();
+        var results = new SearchResultsPersistenceMutation(
+            runtimeId,
+            Sequence: 2,
+            DateTimeOffset.UtcNow,
+            searchId,
+            Revision: 2,
+            [Result(1)]);
+        var completion = new SearchCompletionPersistenceMutation(
+            runtimeId,
+            Sequence: 3,
+            DateTimeOffset.UtcNow,
+            searchId,
+            Revision: 3,
+            "query",
+            ResultCount: 1,
+            LockedFileCount: 0,
+            "Complete");
+
+        inbox.RequeueAfterFailure([completion, results]);
+
+        Assert.IsInstanceOfType<SearchResultsPersistenceMutation>(inbox.DrainBatch().Single());
+        Assert.IsInstanceOfType<SearchCompletionPersistenceMutation>(inbox.DrainBatch().Single());
+    }
+
+    [TestMethod]
+    public void CriticalOverflow_ReturnsAcceptedWhenTheDegradedStoreRetainsIt()
+    {
+        var options = new PersistenceWriterOptions
+        {
+            CriticalQueueCapacity = 1,
+            DegradedProjectionCapacity = 1,
+        };
+        var inbox = new PersistenceInbox(options, new PersistenceHealth());
+        Guid runtimeId = Guid.NewGuid();
+
+        Assert.IsTrue(inbox.TryEnqueue(Job(
+            runtimeId,
+            Guid.NewGuid(),
+            revision: 1,
+            PersistenceMutationPriority.Structural)));
+        Assert.IsTrue(inbox.TryEnqueue(Job(
+            runtimeId,
+            Guid.NewGuid(),
+            revision: 1,
+            PersistenceMutationPriority.Terminal,
+            terminal: true)));
+        Assert.AreEqual(1, inbox.DegradedCount);
+
+        inbox.Complete();
+        Assert.IsFalse(inbox.TryEnqueue(Job(
+            runtimeId,
+            Guid.NewGuid(),
+            revision: 1,
+            PersistenceMutationPriority.Terminal,
+            terminal: true)));
+        Assert.AreEqual(0, inbox.ActiveAdmissionCount);
+    }
+
+    [TestMethod]
+    public async Task TerminalMutations_PreserveActualJobAndAttemptStartTimesWhenRowsAreMissing()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var runtimeSession = new PersistenceRuntimeSession(database.Factory);
+        var runtime = (await runtimeSession.StartAsync("timestamp-test")).Runtime;
+        Guid jobId = Guid.NewGuid();
+        Guid transferId = Guid.NewGuid();
+        Guid attemptId = Guid.NewGuid();
+        DateTimeOffset registered = DateTimeOffset.UnixEpoch.AddHours(1);
+        DateTimeOffset jobStarted = registered.AddSeconds(2);
+        DateTimeOffset attemptStarted = jobStarted.AddSeconds(2);
+        DateTimeOffset completed = attemptStarted.AddSeconds(10);
+        JobPersistenceMutation job = Job(
+            runtime.RuntimeId,
+            jobId,
+            revision: 2,
+            PersistenceMutationPriority.Terminal,
+            terminal: true) with
+        {
+            OccurredAtUtc = completed,
+            RegisteredAtUtc = registered,
+            StartedAtUtc = jobStarted,
+        };
+        TransferPersistenceMutation transfer = Transfer(runtime.RuntimeId, transferId, revision: 2) with
+        {
+            Priority = PersistenceMutationPriority.Terminal,
+            OccurredAtUtc = completed,
+            JobId = jobId,
+            State = "Completed",
+            TerminalOutcome = "Succeeded",
+        };
+        var attempt = new TransferAttemptPersistenceMutation(
+            runtime.RuntimeId,
+            Sequence: 3,
+            completed,
+            attemptId,
+            Revision: 2,
+            PersistenceMutationPriority.Terminal,
+            transferId,
+            AttemptNumber: 1,
+            Source: "SoulseekPeer",
+            State: "Completed",
+            SourceUsername: "peer",
+            SourcePath: "remote",
+            OutputPath: "local",
+            FailureReason: "None",
+            FailureMessage: null,
+            StartedAtUtc: attemptStarted);
+
+        await RunCompletedWriterAsync(database,
+        [
+            job,
+            new TransferTerminalPersistenceMutation(transfer, attempt, OwningJob: null),
+        ]);
+
+        await using var verify = await database.Factory.CreateDbContextAsync();
+        Assert.AreEqual(
+            jobStarted.ToUnixTimeMilliseconds(),
+            (await verify.Jobs.SingleAsync(row => row.Id == jobId)).StartedAtUtc);
+        Assert.AreEqual(
+            attemptStarted.ToUnixTimeMilliseconds(),
+            (await verify.TransferAttempts.SingleAsync(row => row.Id == attemptId)).StartedAtUtc);
+        await runtimeSession.StopAsync();
+    }
+
+    [TestMethod]
     public void AccountingProgress_UsesActiveTransferConcurrencyBeyondLegacyProjectionCapacity()
     {
         var options = new PersistenceWriterOptions { ProgressEntityCapacity = 1 };
@@ -497,12 +633,11 @@ public sealed class PersistenceWriterTests
         await RunCompletedWriterAsync(database,
         [
             Job(runtime.RuntimeId, searchId, 1, PersistenceMutationPriority.Structural, kind: "Search"),
-            new SearchTerminalPersistenceMutation(
-                new SearchCompletionPersistenceMutation(
-                    runtime.RuntimeId, 4, DateTimeOffset.UtcNow, searchId, 3, "duplicates", 1, 0, "Complete"),
-                [new SearchResultsPersistenceMutation(
-                    runtime.RuntimeId, 2, DateTimeOffset.UtcNow, searchId, 2,
-                    [first, duplicatePeerPath, duplicateSequence])]),
+            new SearchResultsPersistenceMutation(
+                runtime.RuntimeId, 2, DateTimeOffset.UtcNow, searchId, 2,
+                [first, duplicatePeerPath, duplicateSequence]),
+            new SearchCompletionPersistenceMutation(
+                runtime.RuntimeId, 4, DateTimeOffset.UtcNow, searchId, 3, "duplicates", 1, 0, "Complete"),
         ]);
 
         await using var verify = await database.Factory.CreateDbContextAsync();
@@ -781,7 +916,41 @@ public sealed class PersistenceWriterTests
             Cursor: first.NextCursor + new string(' ', 128), Limit: 2)));
         await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(() => reader.GetJobsAsync(new JobHistoryQuery(Limit: JobHistoryReader.MaximumPageSize + 1)));
 
+        // Give the last workflow a second job. Deleting its former first job
+        // between pages must not move the workflow behind an already-issued
+        // cursor.
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.Jobs.Add(new JobEntity
+            {
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000004"),
+                WorkflowId = workflowIds[2],
+                LastRuntimeId = runtime.RuntimeId,
+                LastSequence = 4,
+                DisplayId = 4,
+                Kind = "Song",
+                LifecycleState = "Terminal",
+                ActivityPhase = "None",
+                TerminalOutcome = "Succeeded",
+                SkipReason = "None",
+                CancellationSource = "None",
+                FailureReason = "None",
+                CreatedAtUtc = 100,
+                UpdatedAtUtc = 200,
+                CompletedAtUtc = 200,
+                Revision = 2,
+                PayloadSchemaVersion = 1,
+            });
+            await context.SaveChangesAsync();
+        }
+
         var workflowPage1 = await reader.GetWorkflowsAsync(limit: 2);
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            await context.Jobs
+                .Where(job => job.Id == ids[2])
+                .ExecuteDeleteAsync();
+        }
         var workflowPage2 = await reader.GetWorkflowsAsync(workflowPage1.NextCursor, limit: 2);
         CollectionAssert.AreEqual(workflowIds.Take(2).ToArray(), workflowPage1.Items.Select(item => item.WorkflowId).ToArray());
         CollectionAssert.AreEqual(workflowIds.Skip(2).ToArray(), workflowPage2.Items.Select(item => item.WorkflowId).ToArray());

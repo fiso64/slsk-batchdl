@@ -234,11 +234,9 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             foreach (TransferStateDto transfer in live.GetCancellableTransferSnapshot()
                          .Where(transfer =>
                              transfer.Status.IsTerminal
-                             && transfer.Identity.Direction.Equals(
-                                 "Upload", StringComparison.OrdinalIgnoreCase)
                              && MatchesArchiveFilter(transfer, filter)))
             {
-                live.RemoveUploadTransfer(transfer.TransferId);
+                live.RemoveTerminalTransfer(transfer.TransferId);
             }
         }
 
@@ -353,8 +351,7 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             merged[workflow.Summary.WorkflowId] = (workflow.FirstDisplayId, workflow.Summary);
 
         var ordered = merged.Values
-            .OrderBy(workflow => workflow.FirstDisplayId)
-            .ThenBy(workflow => workflow.Summary.WorkflowId)
+            .OrderBy(workflow => workflow.Summary.WorkflowId)
             .ToList();
         bool hasMore = ordered.Count > limit
             || liveRows.Count > limit
@@ -363,7 +360,7 @@ public sealed class HistoricalQueryFacade(EngineStateStore live, EngineSuperviso
             ordered.RemoveRange(limit, ordered.Count - limit);
         string? next = hasMore && ordered.Count > 0
             ? JobHistoryReader.EncodeCursor(
-                ordered[^1].FirstDisplayId,
+                0,
                 ordered[^1].Summary.WorkflowId)
             : null;
         return new CombinedWorkflowPage(ordered.Select(item => item.Summary).ToArray(), next);

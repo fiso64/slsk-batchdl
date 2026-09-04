@@ -91,8 +91,11 @@ public sealed class UploadPersistenceAdapter
         bool first;
         lock (gate)
             first = persistedAttempts.Add(snapshot.TransferId);
-        if (first)
-            sink.TryEnqueue(ToAttempt(snapshot, snapshot.Attempt, next, terminal: false));
+        if (first && !sink.TryEnqueue(ToAttempt(snapshot, snapshot.Attempt, next, terminal: false)))
+        {
+            lock (gate)
+                persistedAttempts.Remove(snapshot.TransferId);
+        }
     }
 
     private TransferPersistenceMutation ToTransfer(

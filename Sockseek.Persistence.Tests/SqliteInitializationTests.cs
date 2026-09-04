@@ -118,6 +118,27 @@ public sealed class SqliteInitializationTests
     }
 
     [TestMethod]
+    public async Task DatabaseWithUnknownAppliedMigration_IsRejectedBeforeStartup()
+    {
+        await using var database = new TemporaryDatabase();
+        await database.Initializer.InitializeAsync();
+        const string unknownMigration = "20990101000000_FutureSchema";
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO __EFMigrationsHistory (MigrationId, ProductVersion)
+                VALUES ({unknownMigration}, '99.0.0');
+                """);
+        }
+
+        var exception = await Assert.ThrowsExceptionAsync<PersistenceSchemaCompatibilityException>(
+            () => database.Initializer.InitializeAsync());
+
+        StringAssert.Contains(exception.Message, unknownMigration);
+        StringAssert.Contains(exception.Message, "newer or incompatible");
+    }
+
+    [TestMethod]
     public async Task NewlyOpenedContext_EnforcesForeignKeys()
     {
         await using var database = new TemporaryDatabase();
@@ -310,6 +331,53 @@ public sealed class SqliteInitializationTests
                 (await context.TransferAccountingStates.SingleAsync(x => x.Id == 1)).CompleteFromUtc);
         }
         await thirdRuntime.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task Restart_MarksIncompleteSearchInterruptedEvenWhenItsJobWasAlreadyTerminal()
+    {
+        await using var database = new TemporaryDatabase();
+        await database.Initializer.InitializeAsync();
+        var clock = new MutableTimeProvider(new DateTimeOffset(2035, 2, 1, 0, 0, 0, TimeSpan.Zero));
+        var firstRuntime = new PersistenceRuntimeSession(database.Factory, clock);
+        var first = await firstRuntime.StartAsync("test-1");
+        Guid searchId = Guid.NewGuid();
+
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.Jobs.Add(JobRow(
+                searchId,
+                first.Runtime.RuntimeId,
+                1,
+                "Terminal",
+                clock.GetUtcNow(),
+                clock.GetUtcNow(),
+                "Search"));
+            context.SearchJobs.Add(new SearchJobEntity
+            {
+                JobId = searchId,
+                Query = "partially persisted",
+                Revision = 2,
+                ResultCount = 1,
+                IsComplete = false,
+                ResultPersistenceState = "Incomplete",
+            });
+            await context.SaveChangesAsync();
+        }
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var secondRuntime = new PersistenceRuntimeSession(database.Factory, clock);
+        StartupReconciliationResult result = await secondRuntime.StartAsync("test-2");
+
+        Assert.AreEqual(0, result.InterruptedJobCount);
+        Assert.AreEqual(1, result.InterruptedSearchCount);
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            var search = await context.SearchJobs.SingleAsync(row => row.JobId == searchId);
+            Assert.IsTrue(search.IsComplete);
+            Assert.AreEqual("Interrupted", search.ResultPersistenceState);
+        }
+        await secondRuntime.StopAsync();
     }
 
     [TestMethod]
@@ -669,6 +737,126 @@ public sealed class SqliteInitializationTests
         Assert.IsFalse(await verify.Jobs.AnyAsync(job => job.Id == terminalIds[0]));
         Assert.IsFalse(await verify.Jobs.AnyAsync(job => job.Id == terminalIds[1]));
         Assert.AreEqual(4, await verify.Jobs.CountAsync());
+    }
+
+    [TestMethod]
+    public async Task Retention_AgeSelectionReducesTheRemainingMaximumCountDeficit()
+    {
+        await using var database = new TemporaryDatabase();
+        await database.Initializer.InitializeAsync();
+        var now = new DateTimeOffset(2035, 7, 1, 0, 0, 0, TimeSpan.Zero);
+        Guid runtimeId = Guid.NewGuid();
+        var ids = Enumerable.Range(0, 110).Select(_ => Guid.NewGuid()).ToArray();
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.RuntimeSessions.Add(new RuntimeSessionEntity
+            {
+                Id = runtimeId,
+                StartedAtUtc = now.AddDays(-100).ToUnixTimeMilliseconds(),
+                Version = "test",
+            });
+            for (int index = 0; index < ids.Length; index++)
+            {
+                DateTimeOffset completed = index < 10
+                    ? now.AddDays(-100 + index)
+                    : now.AddDays(-10).AddMinutes(index);
+                context.Jobs.Add(JobRow(
+                    ids[index], runtimeId, index + 1, "Terminal", completed, completed));
+            }
+            await context.SaveChangesAsync();
+        }
+
+        var retention = new RetentionService(database.Factory, new PersistenceRetentionOptions
+        {
+            CompletedJobHistoryAge = TimeSpan.FromDays(30),
+            UnsuccessfulJobHistoryAge = TimeSpan.FromDays(30),
+            MaximumRetainedJobs = 100,
+            SearchResultAge = null,
+            TransferHistoryAge = null,
+            BatchSize = 100,
+        }, new FixedTimeProvider(now));
+
+        RetentionResult result = await retention.RunBatchAsync();
+
+        Assert.AreEqual(10, result.PrunedJobs);
+        await using var verify = await database.Factory.CreateDbContextAsync();
+        Assert.AreEqual(100, await verify.Jobs.CountAsync());
+        foreach (Guid id in ids.Take(10))
+            Assert.IsFalse(await verify.Jobs.AnyAsync(job => job.Id == id));
+    }
+
+    [TestMethod]
+    public async Task Retention_PreservesRawSearchResultsUntilTheirIndependentAgeExpires()
+    {
+        await using var database = new TemporaryDatabase();
+        await database.Initializer.InitializeAsync();
+        var now = new DateTimeOffset(2035, 7, 1, 0, 0, 0, TimeSpan.Zero);
+        Guid runtimeId = Guid.NewGuid();
+        Guid searchId = Guid.NewGuid();
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.RuntimeSessions.Add(new RuntimeSessionEntity
+            {
+                Id = runtimeId,
+                StartedAtUtc = now.AddDays(-100).ToUnixTimeMilliseconds(),
+                Version = "test",
+            });
+            DateTimeOffset completed = now.AddDays(-40);
+            context.Jobs.Add(JobRow(searchId, runtimeId, 1, "Terminal", completed, completed, "Search"));
+            context.SearchJobs.Add(new SearchJobEntity
+            {
+                JobId = searchId,
+                Query = "query",
+                Revision = 2,
+                ResultCount = 1,
+                IsComplete = true,
+                CompletedAtUtc = completed.ToUnixTimeMilliseconds(),
+                ResultPersistenceState = "Complete",
+            });
+            context.SearchResults.Add(new SearchResultEntity
+            {
+                Id = Guid.NewGuid(),
+                SearchJobId = searchId,
+                Sequence = 1,
+                Revision = 1,
+                Username = "peer",
+                RemoteFilename = "file.mp3",
+                SizeBytes = 1,
+                Extension = ".mp3",
+                ObservedAtUtc = completed.ToUnixTimeMilliseconds(),
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var options = new PersistenceRetentionOptions
+        {
+            CompletedJobHistoryAge = TimeSpan.FromDays(30),
+            UnsuccessfulJobHistoryAge = TimeSpan.FromDays(30),
+            MaximumRetainedJobs = null,
+            SearchResultAge = TimeSpan.FromDays(90),
+            TransferHistoryAge = null,
+            BatchSize = 10,
+        };
+        RetentionResult first = await new RetentionService(
+            database.Factory,
+            options,
+            new FixedTimeProvider(now)).RunBatchAsync();
+
+        Assert.AreEqual(0, first.PrunedJobs);
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            Assert.IsTrue(await context.Jobs.AnyAsync(row => row.Id == searchId));
+            Assert.AreEqual(1, await context.SearchResults.CountAsync(row => row.SearchJobId == searchId));
+        }
+
+        RetentionResult second = await new RetentionService(
+            database.Factory,
+            options,
+            new FixedTimeProvider(now.AddDays(60))).RunBatchAsync();
+        Assert.AreEqual(1, second.PrunedJobs);
+        Assert.AreEqual(1, second.PrunedSearchResults);
+        await using var verify = await database.Factory.CreateDbContextAsync();
+        Assert.IsFalse(await verify.Jobs.AnyAsync(row => row.Id == searchId));
     }
 
     [TestMethod]

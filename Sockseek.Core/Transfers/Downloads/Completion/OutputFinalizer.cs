@@ -96,6 +96,28 @@ internal sealed class OutputFinalizer
             catch (Exception ex)
             {
                 var organizationException = AsOrganizationException(ex, song.DownloadPath, targetPath: null);
+                if (FindExistingOutput(ex) is { } existing)
+                {
+                    try
+                    {
+                        if (OutputStaging.Contains(song.DownloadPath, parentJob.Config.Output))
+                        {
+                            Utils.DeleteFileAndParentsIfEmpty(
+                                song.DownloadPath!,
+                                OutputStaging.Root(parentJob.Config.Output));
+                        }
+                        song.DownloadPath = existing.OutputPath;
+                        return OutputFinalizationResult.Completed(
+                            JobOutcome.AlreadyExists(existing.OutputPath));
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        organizationException = AsOrganizationException(
+                            cleanupException,
+                            song.DownloadPath,
+                            existing.OutputPath);
+                    }
+                }
                 LogOrganizationFailure(song, organizationException);
                 return OutputFinalizationResult.Failed(
                     organizationException,
@@ -193,6 +215,42 @@ internal sealed class OutputFinalizer
             PublishDownloadedFileCache(song);
     }
 
+    public Action<string> CreateReplacementGuard(
+        bool allowOverwrite,
+        bool allowUnownedReplacement = false)
+        => outputPath =>
+        {
+            if (!allowOverwrite
+                && File.Exists(outputPath)
+                && (!allowUnownedReplacement
+                    || downloadedFiles.HasPublishedPathOwner(outputPath)))
+            {
+                throw new OutputPathAlreadyExistsException(outputPath);
+            }
+            downloadedFiles.InvalidatePath(outputPath);
+        };
+
+    public void DeleteOutputFile(string path)
+    {
+        downloadedFiles.WithExclusiveAccess(() =>
+        {
+            downloadedFiles.InvalidatePath(path);
+            File.Delete(path);
+            return true;
+        });
+    }
+
+    public void MoveOutputFile(string sourcePath, string outputPath, bool allowOverwrite)
+    {
+        downloadedFiles.WithExclusiveAccess(() =>
+        {
+            CreateReplacementGuard(allowOverwrite)(outputPath);
+            downloadedFiles.InvalidatePath(sourcePath);
+            Utils.Move(sourcePath, outputPath);
+            return true;
+        });
+    }
+
     private static void EnsureFileLeftStaging(SongJob song, OutputSettings output)
     {
         if (!OutputStaging.Contains(song.DownloadPath, output))
@@ -262,6 +320,16 @@ internal sealed class OutputFinalizer
                 sourcePath ?? "",
                 targetPath ?? "",
                 exception);
+
+    private static OutputPathAlreadyExistsException? FindExistingOutput(Exception exception)
+    {
+        for (Exception? current = exception; current != null; current = current.InnerException)
+        {
+            if (current is OutputPathAlreadyExistsException existing)
+                return existing;
+        }
+        return null;
+    }
 
     private static string? RetainedStagedPayload(string? path, OutputSettings output)
         => OutputStaging.Contains(path, output) && File.Exists(path)

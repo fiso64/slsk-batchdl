@@ -38,6 +38,7 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, TransferStateDto> liveUploadTransfers = [];
     private readonly Dictionary<Guid, TransferAttemptHistoryDto> latestTransferAttempts = [];
     private readonly Dictionary<Guid, Guid> transferWorkflowIds = [];
+    private readonly HashSet<Guid> terminalTransfersAwaitingRemoval = [];
     private readonly Dictionary<Guid, SearchStateDto> searchStates = [];
     private readonly Dictionary<Guid, JobStateDto> projectedJobs = [];
     private readonly Dictionary<Guid, WorkflowStateDto> projectedWorkflows = [];
@@ -238,12 +239,14 @@ public sealed class EngineStateStore
         PublishStateBatches(batches);
     }
 
-    public void RemoveUploadTransfer(Guid transferId)
+    public void RemoveTerminalTransfer(Guid transferId)
     {
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
             liveUploadTransfers.Remove(transferId);
+            terminalTransfersAwaitingRemoval.Remove(transferId);
+            transferWorkflowIds.Remove(transferId);
             latestTransferAttempts.Remove(transferId);
             if (!activeTransfers.Remove(transferId))
                 return;
@@ -368,7 +371,7 @@ public sealed class EngineStateStore
         lock (gate)
         {
             return workflows.Values
-                .OrderBy(workflow => workflow.FirstDisplayId)
+                .OrderBy(workflow => workflow.WorkflowId)
                 .Select(workflow => workflow.ToSummary(records))
                 .ToList();
         }
@@ -385,17 +388,11 @@ public sealed class EngineStateStore
         lock (gate)
         {
             IEnumerable<WorkflowStateRecord> filtered = workflows.Values;
-            if (afterFirstDisplayId is long displayId && afterWorkflowId is Guid workflowId)
-            {
-                filtered = filtered.Where(workflow =>
-                    workflow.FirstDisplayId > displayId
-                    || workflow.FirstDisplayId == displayId
-                        && workflow.WorkflowId.CompareTo(workflowId) > 0);
-            }
+            if (afterWorkflowId is Guid workflowId)
+                filtered = filtered.Where(workflow => workflow.WorkflowId.CompareTo(workflowId) > 0);
 
             return filtered
-                .OrderBy(workflow => workflow.FirstDisplayId)
-                .ThenBy(workflow => workflow.WorkflowId)
+                .OrderBy(workflow => workflow.WorkflowId)
                 .Take(take)
                 .Select(workflow => new LiveWorkflowPageItem(
                     workflow.FirstDisplayId,
@@ -1059,7 +1056,8 @@ public sealed class EngineStateStore
                 .Select(search => search.JobId)
                 .ToHashSet();
             var transferIds = transferWorkflowIds
-                .Where(pair => pair.Value == workflowId)
+                .Where(pair => pair.Value == workflowId
+                    && !terminalTransfersAwaitingRemoval.Contains(pair.Key))
                 .Select(pair => pair.Key)
                 .ToHashSet();
 
@@ -1355,15 +1353,14 @@ public sealed class EngineStateStore
         IReadOnlyList<StateUpdateBatchDto> batches;
         lock (gate)
         {
+            terminalTransfersAwaitingRemoval.Add(transfer.Id);
             var transferDelta = UpsertTransfer(transfer, isTerminal: true);
-            activeTransfers.Remove(transfer.Id);
-            latestTransferAttempts.Remove(transfer.Id);
             batches = ProjectStateChanges(
                 [],
                 [],
                 [],
                 [transferDelta],
-                [transfer.Id],
+                [],
                 occurredAtUtc);
         }
 
@@ -1570,8 +1567,7 @@ public sealed class EngineStateStore
         var current = ToTransferState(transfer, isTerminal);
         if (!activeTransfers.TryGetValue(transfer.Id, out var previous))
         {
-            if (!isTerminal)
-                activeTransfers[transfer.Id] = current;
+            activeTransfers[transfer.Id] = current;
             return new TransferDeltaDto(transfer.Id, current.Revision, Added: current);
         }
 
@@ -1582,8 +1578,7 @@ public sealed class EngineStateStore
         var scheduling = previous.Scheduling == current.Scheduling
             ? null
             : current.Scheduling;
-        if (!isTerminal)
-            activeTransfers[transfer.Id] = current;
+        activeTransfers[transfer.Id] = current;
         return new TransferDeltaDto(
             transfer.Id,
             Math.Max(current.Revision, previous.Revision + 1),

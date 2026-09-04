@@ -153,4 +153,7 @@ internal static partial class ServerLogMessages
 
     [LoggerMessage(4563, LogLevel.Warning, "Submission {SubmissionId} retained an unnecessary input-artifact pin after planning")]
     internal static partial void SubmissionArtifactPinReleaseFailed(ILogger logger, Exception exception, Guid submissionId);
+
+    [LoggerMessage(4564, LogLevel.Error, "Terminal download persistence handoff failed for transfer {TransferId}")]
+    internal static partial void TerminalDownloadHandoffFailed(ILogger logger, Exception exception, Guid transferId);
 }

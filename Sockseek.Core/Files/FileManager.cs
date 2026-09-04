@@ -19,6 +19,12 @@ public sealed class FileOrganizationException : IOException
     public string TargetPath { get; }
 }
 
+internal sealed class OutputPathAlreadyExistsException(string outputPath)
+    : IOException($"Output path already exists: '{outputPath}'.")
+{
+    public string OutputPath { get; } = outputPath;
+}
+
 
 // Context object passed to music-variable extractors and name-format helpers.
 // Constructed from a SongJob so name format works uniformly across single songs and album files.
@@ -144,6 +150,7 @@ public class FileManager
     private readonly ExtractionSettings extraction;
     private readonly OutputScope outputScope;
     private readonly ILogger<FileManager> logger;
+    private readonly Action<string>? beforeReplace;
     private int metadataReadFailureLogged;
 
     private string OutputParentDir => OutputScope.OutputParentDir(output);
@@ -154,13 +161,15 @@ public class FileManager
         OutputSettings output,
         ExtractionSettings extraction,
         ILogger<FileManager> logger,
-        OutputScope? outputScope = null)
+        OutputScope? outputScope = null,
+        Action<string>? beforeReplace = null)
     {
         this.job = job;
         this.output = output;
         this.extraction = extraction;
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.outputScope = outputScope ?? OutputScope.ForLegacyOwner(job, output);
+        this.beforeReplace = beforeReplace;
     }
 
     public string GetSavePath(string sourceFname)
@@ -275,6 +284,7 @@ public class FileManager
                 var oldFilePath = song.DownloadPath;
                 try
                 {
+                    beforeReplace?.Invoke(newFilePath);
                     Utils.MoveAndDeleteParent(oldFilePath, newFilePath, CleanupRootForSourcePath(oldFilePath));
                 }
                 catch (Exception ex)
@@ -322,6 +332,7 @@ public class FileManager
             var oldFilePath = file.DownloadPath;
             try
             {
+                beforeReplace?.Invoke(newFilePath);
                 Utils.MoveAndDeleteParent(oldFilePath, newFilePath, CleanupRootForSourcePath(oldFilePath));
             }
             catch (Exception ex)

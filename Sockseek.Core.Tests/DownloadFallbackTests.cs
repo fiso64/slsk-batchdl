@@ -1002,6 +1002,63 @@ namespace Tests.Core
         }
 
         [TestMethod]
+        public void OutputFinalizer_DoesNotReplaceAPathCreatedAfterSkipEvaluation()
+        {
+            var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-name-format-collision-" + Guid.NewGuid());
+            Directory.CreateDirectory(outputDir);
+
+            try
+            {
+                var dl = new DownloadSettings();
+                dl.Output.ParentDir = outputDir;
+                dl.Output.NameFormat = "{stitle}";
+                dl.Skip.SkipExisting = true;
+                var candidate = SoulseekSearchAdapter.ToFileCandidate(
+                    new SearchResponse("user1", 1, true, 100, 0, []),
+                    TestHelpers.CreateSlFile(@"Music\Artist - Payload.xyz", size: 10_000));
+                string stagingPath = Path.Combine(
+                    outputDir,
+                    ".sockseek-staging",
+                    Guid.NewGuid().ToString("N"),
+                    "Artist - Payload.xyz");
+                string finalPath = Path.Combine(outputDir, "Payload.xyz");
+                Directory.CreateDirectory(Path.GetDirectoryName(stagingPath)!);
+                System.IO.File.WriteAllText(stagingPath, "new payload");
+                System.IO.File.WriteAllText(finalPath, "existing payload");
+                var song = new SongJob(new SongQuery { Artist = "Artist", Title = "Payload" })
+                {
+                    Config = dl,
+                    ResolvedTarget = candidate,
+                    DownloadPath = stagingPath,
+                };
+                var finalizer = new OutputFinalizer(new DownloadedFileCache());
+                var organizer = new FileManager(
+                    song,
+                    dl.Output,
+                    dl.Extraction,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<FileManager>.Instance,
+                    beforeReplace: finalizer.CreateReplacementGuard(allowOverwrite: false));
+
+                var result = finalizer.FinalizeSongPlacement(
+                    song,
+                    song,
+                    JobOutcome.Done(stagingPath, candidate),
+                    organizer,
+                    finalizePlacement: true);
+
+                Assert.AreEqual(JobTerminalOutcome.Skipped, result.Outcome.TerminalOutcome);
+                Assert.AreEqual(JobSkipReason.AlreadyExists, result.Outcome.SkipReason);
+                Assert.AreEqual(finalPath, result.Outcome.DownloadPath);
+                Assert.AreEqual("existing payload", System.IO.File.ReadAllText(finalPath));
+                Assert.IsFalse(System.IO.File.Exists(stagingPath));
+            }
+            finally
+            {
+                if (Directory.Exists(outputDir)) Directory.Delete(outputDir, true);
+            }
+        }
+
+        [TestMethod]
         public async Task AlbumAudioTrack_IsNameFormattedBeforeWholeAlbumCompletes()
         {
             var outputDir = Path.Combine(Path.GetTempPath(), "Sockseek-album-progressive-organization-" + Guid.NewGuid());
