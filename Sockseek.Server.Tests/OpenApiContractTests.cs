@@ -4,6 +4,8 @@ using System.Reflection;
 using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Sockseek.Core;
+using Sockseek.Core.Models;
+using Sockseek.Core.Services;
 using Sockseek.Core.Settings;
 using Sockseek.Core.Snapshots;
 using Sockseek.Api;
@@ -40,7 +42,8 @@ public class OpenApiContractTests
         StringAssert.Contains(json, nameof(RemoteDirectoryJobPayloadDto));
         StringAssert.Contains(json, nameof(PeerFileTargetDto));
         StringAssert.Contains(json, nameof(DirectoryTransferPlanDto));
-        StringAssert.Contains(json, nameof(FileCandidateDto));
+        Assert.IsFalse(json.Contains("FileCandidateDto", StringComparison.Ordinal));
+        StringAssert.Contains(json, nameof(SearchViewFileDto));
         StringAssert.Contains(json, nameof(FileMetadataDto));
         StringAssert.Contains(json, nameof(WorkflowDetailDto));
         StringAssert.Contains(json, nameof(JobDetailDto));
@@ -51,15 +54,29 @@ public class OpenApiContractTests
         StringAssert.Contains(json, nameof(UploadRuntimeStateDto));
         StringAssert.Contains(json, nameof(LiveTransferPageDto));
         StringAssert.Contains(json, nameof(TransferDetailDto));
+        StringAssert.Contains(json, nameof(DashboardAnalyticsDto));
         StringAssert.Contains(json, nameof(ChatMessageDto));
         StringAssert.Contains(json, nameof(ConversationPageDto));
         StringAssert.Contains(json, nameof(ChatRoomDetailDto));
         StringAssert.Contains(json, nameof(NotificationPageDto));
         StringAssert.Contains(json, nameof(UserProfileDto));
+        StringAssert.Contains(json, nameof(UserRestrictionsDto));
+        StringAssert.Contains(json, nameof(SetUserRestrictionOverrideRequestDto));
         StringAssert.Contains(json, nameof(UserBrowseDto));
         StringAssert.Contains(json, nameof(BrowseDirectoryEntryDto));
         StringAssert.Contains(json, nameof(BrowseFileEntryDto));
+        StringAssert.Contains(json, nameof(BrowseSearchPageDto));
+        StringAssert.Contains(json, nameof(BrowseSearchEntryDto));
         StringAssert.Contains(json, nameof(StartUserShareDownloadsRequestDto));
+        StringAssert.Contains(json, nameof(ResolveEffectiveSettingsRequestDto));
+        StringAssert.Contains(json, nameof(ResolveEffectiveSettingsResponseDto));
+        StringAssert.Contains(json, nameof(InputArtifactDto));
+        StringAssert.Contains(json, nameof(JobPreviewSummaryDto));
+        StringAssert.Contains(json, nameof(JobPreviewNodeDto));
+        StringAssert.Contains(json, nameof(CommitJobPreviewResponseDto));
+        StringAssert.Contains(json, nameof(SearchViewSummaryDto));
+        StringAssert.Contains(json, nameof(SearchViewDirectoryPageDto));
+        StringAssert.Contains(json, nameof(SearchViewDirectoryFilePageDto));
         StringAssert.Contains(json, "lifecycleState");
         StringAssert.Contains(json, "activityPhase");
         StringAssert.Contains(json, "terminalOutcome");
@@ -73,6 +90,24 @@ public class OpenApiContractTests
         JsonElement schemas = document.RootElement
             .GetProperty("components")
             .GetProperty("schemas");
+        foreach (string enumSchema in new[]
+        {
+            nameof(SearchViewProjectionKind),
+            nameof(SearchViewRetentionState),
+            nameof(SearchViewDirectoryVisibility),
+            nameof(SearchViewDirectoryRetrievalState),
+            nameof(SearchResultVisibility),
+            nameof(SearchPreferenceTier),
+            nameof(SearchPreferenceCondition),
+        })
+        {
+            JsonElement values = schemas.GetProperty(enumSchema).GetProperty("enum");
+            Assert.IsTrue(values.GetArrayLength() > 0);
+            Assert.IsTrue(
+                values.EnumerateArray().All(value =>
+                    value.ValueKind is JsonValueKind.String or JsonValueKind.Null),
+                $"{enumSchema} must remain a readable public string enum.");
+        }
         JsonElement workflowProperties = schemas
             .GetProperty(nameof(WorkflowSummaryDto))
             .GetProperty("properties");
@@ -118,6 +153,9 @@ public class OpenApiContractTests
         Assert.IsTrue(transferDetailProperties.TryGetProperty("latestAttempt", out _));
         Assert.IsFalse(transferDetailProperties.TryGetProperty("attempts", out _));
         Assert.IsFalse(json.Contains("attemptLimit", StringComparison.Ordinal));
+        Assert.IsFalse(json.Contains("includeFiles", StringComparison.Ordinal));
+        Assert.IsFalse(json.Contains("includeCandidates", StringComparison.Ordinal));
+        Assert.IsFalse(json.Contains("includeFolders", StringComparison.Ordinal));
 
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
@@ -130,6 +168,54 @@ public class OpenApiContractTests
             .TryGetProperty("/api/jobs/cancel-all", out _));
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
+            .TryGetProperty("/api/jobs/effective-settings", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/input-artifacts", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/job-previews", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/job-previews/{previewId}/nodes", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/job-previews/{previewId}/commit", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/jobs/{jobId}/search-views", out _));
+        Assert.IsFalse(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/jobs/{jobId}/search-views/files", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/search-views/{viewId}/directories", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/search-views/{viewId}/directories/retrieve", out _));
+        foreach (string supersededPath in new[]
+        {
+            "/api/jobs/{jobId}/results/files",
+            "/api/jobs/{jobId}/results/files/project",
+            "/api/jobs/{jobId}/results/folders",
+            "/api/jobs/{jobId}/results/folders/project",
+            "/api/jobs/{jobId}/results/aggregate-tracks",
+            "/api/jobs/{jobId}/results/aggregate-tracks/project",
+            "/api/jobs/{jobId}/results/aggregate-albums",
+            "/api/jobs/{jobId}/results/aggregate-albums/project",
+        })
+        {
+            Assert.IsFalse(document.RootElement
+                .GetProperty("paths")
+                .TryGetProperty(supersededPath, out _), supersededPath);
+        }
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty(
+                "/api/search-views/{viewId}/directories/{directoryRef}/files",
+                out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
             .TryGetProperty("/api/sharing", out _));
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
@@ -140,6 +226,18 @@ public class OpenApiContractTests
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
             .TryGetProperty("/api/transfers/{transferId}/cancel", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/transfers/cancel", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/transfers/{transferId}/archive", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/transfers/archive", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/dashboard/analytics", out _));
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
             .TryGetProperty("/api/chat/conversations", out _));
@@ -155,6 +253,24 @@ public class OpenApiContractTests
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
             .TryGetProperty("/api/users/{username}/profile", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/users/{username}/restrictions", out _));
+        Assert.IsFalse(document.RootElement
+            .GetProperty("paths")
+            .TryGetProperty("/api/users/{username}/access", out _));
+        Assert.IsTrue(schemas
+            .GetProperty(nameof(UserProfileDto))
+            .GetProperty("properties")
+            .TryGetProperty("uploadAccessBlocked", out _));
+        Assert.IsTrue(schemas
+            .GetProperty(nameof(UserProfileDto))
+            .GetProperty("properties")
+            .TryGetProperty("privateMessagesBlocked", out _));
+        Assert.IsTrue(schemas
+            .GetProperty(nameof(ConversationSummaryDto))
+            .GetProperty("properties")
+            .TryGetProperty("privateMessagesBlocked", out _));
         JsonElement refreshParameter = document.RootElement
             .GetProperty("paths")
             .GetProperty("/api/users/{username}/profile")
@@ -193,6 +309,9 @@ public class OpenApiContractTests
             .TryGetProperty("/api/user-browses/{browseId}/directories", out _));
         Assert.IsTrue(document.RootElement
             .GetProperty("paths")
+            .TryGetProperty("/api/user-browses/{browseId}/search", out _));
+        Assert.IsTrue(document.RootElement
+            .GetProperty("paths")
             .TryGetProperty("/api/user-browses/{browseId}/downloads", out _));
         foreach (JsonProperty path in document.RootElement.GetProperty("paths").EnumerateObject()
                      .Where(item => item.Name.StartsWith("/api/chat", StringComparison.Ordinal)
@@ -225,29 +344,6 @@ public class OpenApiContractTests
         Assert.IsFalse(jobListParameterNames.Contains("state"), "/api/jobs should not expose the old flattened state filter.");
     }
 
-    [TestMethod]
-    public void SearchCandidate_ComposesSharedFileMetadataWithoutFlatCompatibilityFields()
-    {
-        var candidate = new FileCandidateSnapshot(
-            "Peer",
-            @"Share\Folder\Track.flac",
-            new PeerSnapshot("Peer", true, 1000),
-            123,
-            900,
-            24,
-            96_000,
-            180,
-            ".flac",
-            []);
-
-        FileCandidateDto dto = ServerSnapshotMapper.ToFileCandidateDto(candidate);
-
-        Assert.AreEqual("Track.flac", dto.File.Name);
-        Assert.AreEqual(24, dto.File.BitDepth);
-        Assert.IsNull(typeof(FileCandidateDto).GetProperty("Size"));
-        Assert.IsNull(typeof(FileCandidateDto).GetProperty("Extension"));
-    }
-
     private static string ExpectedOpenApiVersion()
     {
         var assemblyVersion = typeof(ServerHost).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -273,10 +369,6 @@ public class OpenApiContractTests
 
         var closedGenericDtoTypes = new[]
         {
-            typeof(SearchResultSnapshotDto<FileCandidateDto>),
-            typeof(SearchResultSnapshotDto<AlbumFolderDto>),
-            typeof(SearchResultSnapshotDto<AggregateTrackCandidateDto>),
-            typeof(SearchResultSnapshotDto<AggregateAlbumCandidateDto>),
             typeof(CollectionPatchDto<string>),
             typeof(CollectionPatchDto<RegexRuleDto>),
         };

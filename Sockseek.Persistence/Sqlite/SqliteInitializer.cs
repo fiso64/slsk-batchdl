@@ -18,6 +18,14 @@ public sealed class SqliteInitializer(
         "20260806204353_AddChatsAndNotifications",
         "20260806213317_AddChatSequenceAllocator",
         "20260828100858_AddJobNavigationIndexes",
+        "20260829230000_AddSubmissions",
+        "20260830010000_AddSearchObservations",
+        "20260831090000_AddSubmissionCommitReceipts",
+        "20260831100000_AddTransferTimelineProjection",
+        "20260831110000_AddTransferAccounting",
+        "20260831120000_AddPeerRestrictions",
+        "20260901010000_AddInputArtifacts",
+        "20260901020000_AddSearchViews",
     };
 
     public async Task<SqliteInitializationResult> InitializeAsync(CancellationToken cancellationToken = default)

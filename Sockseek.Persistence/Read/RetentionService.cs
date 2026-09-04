@@ -120,6 +120,19 @@ public sealed class RetentionService(
         int prunedTransfers = 0;
         if (transferCutoff.HasValue)
         {
+            long accountingCutoff = RoundUp(
+                transferCutoff.Value,
+                Persistence.Write.PersistenceWriter.AccountingBucketMilliseconds);
+            await context.TransferByteBuckets
+                .Where(bucket => bucket.BucketStartUtc < accountingCutoff)
+                .ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+            await context.TransferAccountingStates
+                .Where(state => state.Id == 1 && state.CompleteFromUtc < accountingCutoff)
+                .ExecuteUpdateAsync(
+                    setters => setters
+                        .SetProperty(state => state.CompleteFromUtc, accountingCutoff)
+                        .SetProperty(state => state.UpdatedAtUtc, now),
+                    cancellationToken).ConfigureAwait(false);
             var transferIds = await context.Transfers.AsNoTracking()
                 .Where(transfer => transfer.TerminalOutcome != "None" && transfer.CompletedAtUtc < transferCutoff)
                 .OrderBy(transfer => transfer.CompletedAtUtc)
@@ -149,4 +162,10 @@ public sealed class RetentionService(
 
     private static long? Cutoff(long now, TimeSpan? age)
         => age.HasValue ? now - (long)age.Value.TotalMilliseconds : null;
+
+    private static long RoundUp(long value, long interval)
+    {
+        Math.DivRem(value, interval, out long remainder);
+        return remainder == 0 ? value : checked(value + interval - remainder);
+    }
 }

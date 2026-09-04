@@ -12,20 +12,34 @@ public sealed class UploadPersistenceAdapter
 {
     private readonly Guid runtimeId;
     private readonly IPersistenceMutationSink sink;
+    private readonly PersistenceHandoffTracker? handoffs;
     private readonly object gate = new();
     private readonly HashSet<Guid> persistedAttempts = [];
     private long sequence;
 
     public UploadPersistenceAdapter(Guid runtimeId, IPersistenceMutationSink sink)
+        : this(runtimeId, sink, handoffs: null)
+    {
+    }
+
+    internal UploadPersistenceAdapter(
+        Guid runtimeId,
+        IPersistenceMutationSink sink,
+        PersistenceHandoffTracker? handoffs)
     {
         if (runtimeId == Guid.Empty)
             throw new ArgumentException("A non-empty runtime ID is required.", nameof(runtimeId));
         this.runtimeId = runtimeId;
         this.sink = sink ?? throw new ArgumentNullException(nameof(sink));
+        this.handoffs = handoffs;
     }
 
     public void Attach(UploadCoordinator uploads)
-        => uploads.TransferChanged += OnTransferChanged;
+    {
+        uploads.TransferChanged += OnTransferChanged;
+        foreach (UploadTransferSnapshot snapshot in uploads.Snapshot())
+            OnTransferChanged(snapshot);
+    }
 
     public void Detach(UploadCoordinator uploads)
         => uploads.TransferChanged -= OnTransferChanged;
@@ -58,10 +72,13 @@ public sealed class UploadPersistenceAdapter
             TransferAttemptPersistenceMutation? attempt = snapshot.Attempt is null
                 ? null
                 : ToAttempt(snapshot, snapshot.Attempt, next, terminal: true);
-            sink.TryEnqueue(new TransferTerminalPersistenceMutation(
+            handoffs?.BeginTransferTerminal(snapshot.TransferId, snapshot.Revision);
+            bool accepted = sink.TryEnqueue(new TransferTerminalPersistenceMutation(
                 transfer,
                 attempt,
                 OwningJob: null));
+            if (!accepted)
+                handoffs?.FailTransferTerminalAdmission(snapshot.TransferId, snapshot.Revision);
             lock (gate)
                 persistedAttempts.Remove(snapshot.TransferId);
             return;
@@ -104,7 +121,15 @@ public sealed class UploadPersistenceAdapter
             snapshot.Attempt?.Number ?? 0,
             snapshot.FailureReason.ToString(),
             FailureMessage: null,
-            CancellationSource: snapshot.CancellationSource.ToString());
+            CancellationSource: snapshot.CancellationSource.ToString(),
+            RequestedAtUtc: snapshot.RequestedAtUtc,
+            StartedAtUtc: snapshot.Attempt?.StartedAtUtc,
+            LastProgressAtUtc: snapshot.LastProgressAtUtc,
+            BytesPerSecond: checked((long)Math.Max(0, snapshot.BytesPerSecond)),
+            File: snapshot.File,
+            GroupRef: snapshot.GroupRef,
+            GroupDisplayPath: snapshot.GroupDisplayPath,
+            AccountingObservations: AccountingObservations(snapshot, occurredAt));
 
     private TransferAttemptPersistenceMutation ToAttempt(
         UploadTransferSnapshot transfer,
@@ -130,7 +155,29 @@ public sealed class UploadPersistenceAdapter
             transfer.RemotePath,
             OutputPath: null,
             transfer.FailureReason.ToString(),
-            FailureMessage: null);
+            FailureMessage: null,
+            Direction: "Upload",
+            GroupRef: transfer.GroupRef,
+            GroupDisplayPath: transfer.GroupDisplayPath,
+            AccountingObservations: AccountingObservations(
+                transfer,
+                terminal
+                    ? attempt.FinishedAtUtc ?? transfer.FinishedAtUtc ?? DateTimeOffset.UtcNow
+                    : attempt.StartedAtUtc));
+
+    private static IReadOnlyList<TransferAccountingObservation>? AccountingObservations(
+        UploadTransferSnapshot transfer,
+        DateTimeOffset occurredAt)
+        => transfer.Attempt is null
+            ? null
+            :
+            [
+                new TransferAccountingObservation(
+                    transfer.Attempt.AttemptId,
+                    transfer.Revision,
+                    occurredAt,
+                    Math.Max(0, transfer.Attempt.BytesTransferred)),
+            ];
 
     private static string TerminalOutcome(UploadTransferState state)
         => state switch

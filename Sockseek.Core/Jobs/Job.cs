@@ -1,6 +1,7 @@
 using Sockseek.Core;
 using Sockseek.Core.Models;
 using Sockseek.Core.Services;
+using Sockseek.Core.Planning;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -11,6 +12,7 @@ namespace Sockseek.Core.Jobs;
         // Raw search/browse items discovered before result projection, filtering, grouping, or bucketing.
         public int RawResultCount { get; set; }
         public int LockedFileCount { get; set; }
+        public int ObservedPeerCount { get; set; }
     }
 
     public readonly record struct JobStateSnapshot(
@@ -134,6 +136,13 @@ namespace Sockseek.Core.Jobs;
             set { if (_config != value) { _config = value; OnPropertyChanged(); } }
         }
 
+        // A planner may bind the complete effective settings before runtime
+        // preparation. This is transient execution input, not mutable config:
+        // preview commit and direct Start use it to avoid resolving defaults or
+        // auto profiles a second time.
+        public Settings.DownloadSettings? PlannedEffectiveSettings { get; set; }
+        public SubmissionSourceRevision? PlannedSourceRevision { get; set; }
+
         private JobLifecycleState _lifecycleState = JobLifecycleState.Pending;
         public JobLifecycleState LifecycleState
         {
@@ -190,9 +199,31 @@ namespace Sockseek.Core.Jobs;
         public FolderConditionPatch?    ExtractorFolderCond   { get; set; }
         public FolderConditionPatch?    ExtractorPrefFolderCond { get; set; }
         public bool                     EnablesIndexByDefault { get; set; }
+        // Resolved source identity inherited by jobs produced by an extractor.
+        // Auto-profile matching reads this instead of depending on a materialized
+        // parent settings object being reused for every descendant.
+        public InputType?               SourceInputType { get; set; }
 
         // Display / identity
         public string? ItemName { get; set; }
+
+        // Durable submission ownership is distinct from workflow grouping. A
+        // workflow may contain several independently accepted follow-up
+        // submissions, while every generated node belongs to exactly one of them.
+        public Guid? SubmissionId { get; set; }
+        public JobSemanticRole SemanticRole { get; set; } = JobSemanticRole.Legacy;
+        public DateTimeOffset? CreatedAtUtc { get; set; }
+        public string? SubmissionSpecificationJson { get; set; }
+        public Guid? RerunOfSubmissionId { get; set; }
+        public Guid? PreviewId { get; set; }
+        public string? ArtifactId { get; set; }
+
+        // The immutable effective definition used when this job itself performs
+        // a search. This is derived during preparation. It is especially needed
+        // for search-capable children created after their root submission was
+        // accepted, so retained results never fall back to current defaults.
+        public SearchDefinition? ExecutedSearchDefinition { get; internal set; }
+        public SearchSession? SearchObservationSession { get; internal set; }
 
         public DownloadBehaviorPolicy DownloadBehaviorPolicy { get; set; } = new();
         public DownloadBehavior DownloadBehavior => DownloadBehaviorPolicy.For(this);
@@ -437,11 +468,18 @@ namespace Sockseek.Core.Jobs;
             ExtractorPrefFolderCond   = src.ExtractorPrefFolderCond;
             ItemName                  = src.ItemName;
             EnablesIndexByDefault = src.EnablesIndexByDefault;
+            SourceInputType        = src.SourceInputType;
             ItemNumber            = src.ItemNumber;
             LineNumber            = src.LineNumber;
             SourceMutation        = src.SourceMutation;
             CanBeSkippedOverride  = src.CanBeSkippedOverride;
             WorkflowId            = src.WorkflowId;
+            SubmissionId          = src.SubmissionId;
+            SemanticRole          = src.SemanticRole;
+            CreatedAtUtc          = src.CreatedAtUtc;
+            RerunOfSubmissionId   = src.RerunOfSubmissionId;
+            PreviewId             = src.PreviewId;
+            ArtifactId            = src.ArtifactId;
             DownloadBehaviorPolicy = src.DownloadBehaviorPolicy;
         }
     }

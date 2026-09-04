@@ -143,9 +143,9 @@ public sealed class SoulseekSharingAdapterTests
         using var adapter = new SoulseekSharingAdapter(
             new FakeProvider(reader),
             uploads,
-            new PeerAccessPolicy(new PeerAccessSettings
+            new PeerRestrictionPolicy(new PeerRestrictionSettings
             {
-                BlockedUsernames = ["blocked"],
+                UploadAccess = new UploadAccessSettings { BlockedUsernames = ["blocked"] },
             }),
             new UploadSettings { Slots = 1 },
             () => null,
@@ -186,7 +186,7 @@ public sealed class SoulseekSharingAdapterTests
         => new(
             new FakeProvider(reader),
             uploads,
-            new PeerAccessPolicy(new PeerAccessSettings()),
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
             new UploadSettings { Slots = 1 },
             () => null,
             uploadServingEnabled: uploadServingEnabled);
@@ -195,7 +195,7 @@ public sealed class SoulseekSharingAdapterTests
         => new(
             new FakeProvider(reader),
             new UnexpectedProtocolInvoker(),
-            new PeerAccessPolicy(new PeerAccessSettings()),
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
             new UploadScheduler(new UploadSettings { Slots = 1 }));
 
     private static ShareCatalogFile File(string remotePath)

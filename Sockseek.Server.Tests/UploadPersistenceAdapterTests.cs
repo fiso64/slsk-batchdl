@@ -12,6 +12,42 @@ namespace Sockseek.Server.Tests;
 public sealed class UploadPersistenceAdapterTests
 {
     [TestMethod]
+    public async Task Attach_HydratesAnUploadThatWasAlreadyActive()
+    {
+        var catalog = new FakeCatalog();
+        var protocol = new BlockingProtocol();
+        await using var coordinator = new UploadCoordinator(
+            catalog,
+            protocol,
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
+            new UploadScheduler(new UploadSettings { Slots = 1 }));
+
+        UploadCoordinatorAdmission active = await coordinator.AdmitAsync(
+            "alice",
+            null,
+            @"Public\One.bin");
+        await protocol.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var sink = new RecordingSink();
+        var adapter = new UploadPersistenceAdapter(Guid.NewGuid(), sink);
+        adapter.Attach(coordinator);
+
+        TransferPersistenceMutation hydrated = sink.Items
+            .OfType<TransferPersistenceMutation>()
+            .Single(mutation => mutation.TransferId == active.TransferId);
+        Assert.AreEqual("InProgress", hydrated.State);
+        Assert.AreEqual("One.bin", hydrated.File?.Name);
+        Assert.AreEqual(@"Public", hydrated.GroupRef);
+        Assert.AreEqual(@"Public", hydrated.GroupDisplayPath);
+        Assert.IsNotNull(hydrated.StartedAtUtc);
+        Assert.IsNotNull(hydrated.AccountingObservations);
+        Assert.AreEqual(0L, hydrated.AccountingObservations.Single().CumulativeBytes);
+
+        adapter.Detach(coordinator);
+        protocol.Release.TrySetResult();
+    }
+
+    [TestMethod]
     public async Task QueuedCancellationPersistsZeroAttemptsAndDispatchPersistsExactlyOne()
     {
         var catalog = new FakeCatalog();
@@ -19,7 +55,7 @@ public sealed class UploadPersistenceAdapterTests
         await using var coordinator = new UploadCoordinator(
             catalog,
             protocol,
-            new PeerAccessPolicy(new PeerAccessSettings()),
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
             new UploadScheduler(new UploadSettings { Slots = 1 }));
         var sink = new RecordingSink();
         var adapter = new UploadPersistenceAdapter(Guid.NewGuid(), sink);
@@ -54,9 +90,13 @@ public sealed class UploadPersistenceAdapterTests
     private sealed class RecordingSink : IPersistenceMutationSink
     {
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource<TransferTerminalPersistenceMutation>> terminals = [];
+        private readonly ConcurrentQueue<PersistenceMutation> items = [];
+
+        public IReadOnlyList<PersistenceMutation> Items => items.ToArray();
 
         public bool TryEnqueue(PersistenceMutation mutation)
         {
+            items.Enqueue(mutation);
             if (mutation is TransferTerminalPersistenceMutation terminal)
             {
                 terminals.GetOrAdd(

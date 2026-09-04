@@ -43,6 +43,22 @@ public enum ServerJobKind
     Generic,
 }
 
+/// <summary>Stable semantic role within one accepted submission.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ServerJobRole>))]
+public enum ServerJobRole
+{
+    [JsonStringEnumMemberName("legacy")]
+    Legacy,
+    [JsonStringEnumMemberName("user-root")]
+    UserRoot,
+    [JsonStringEnumMemberName("semantic-result")]
+    SemanticResult,
+    [JsonStringEnumMemberName("orchestration")]
+    Orchestration,
+    [JsonStringEnumMemberName("execution-child")]
+    ExecutionChild,
+}
+
 /// <summary>High-level runtime lifecycle returned by job, workflow, and live-state DTOs.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<ServerJobLifecycleState>))]
 public enum ServerJobLifecycleState

@@ -1,0 +1,442 @@
+using Sockseek.Api;
+
+namespace Sockseek.Server.Planning;
+
+internal static class SearchViewEndpoints
+{
+    public static void Map(WebApplication app)
+    {
+        app.MapPost("/api/jobs/{jobId:guid}/search-views", CreateViewAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Creates a revisioned projection over a live or retained search.")
+            .WithDescription("Returns revision zero immediately. Poll the latest summary revision while the search is running, then page its typed collections from one immutable revision.")
+            .Produces<SearchViewSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}", GetAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Gets fixed-size counters and the latest immutable revision.")
+            .Produces<SearchViewSummaryDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}/files", GetFilesAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages file rows from one immutable search-view revision.")
+            .WithDescription("The opaque cursor is authenticated and bound to the view and revision. Counters in the response describe the same revision as the rows.")
+            .Produces<SearchViewFilePageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}/directories", GetDirectoriesAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages exact peer-directory summaries from one immutable revision.")
+            .Produces<SearchViewDirectoryPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet(
+                "/api/search-views/{viewId:guid}/directories/{directoryRef}/files",
+                GetDirectoryFilesAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages exact relative child paths under a directory in one immutable revision.")
+            .Produces<SearchViewDirectoryFilePageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost(
+                "/api/search-views/{viewId:guid}/directories/retrieve",
+                RetrieveDirectoryAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Retrieves an exact peer directory issued by a Search View revision.")
+            .WithDescription("Runs the generic folder-retrieval job. Completion publishes retrieved totals and child refs as a new immutable Search View revision; the issuing revision remains unchanged.")
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}/aggregate-tracks", GetAggregateTracksAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages aggregate-track group summaries from one immutable revision.")
+            .Produces<SearchViewAggregateTrackPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet(
+                "/api/search-views/{viewId:guid}/aggregate-tracks/{groupRef}/alternatives",
+                GetAggregateTrackOptionsAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages one aggregate-track group's ordered alternatives.")
+            .Produces<SearchViewAggregateTrackOptionPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}/aggregate-albums", GetAggregateAlbumsAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages aggregate-album group summaries from one immutable revision.")
+            .Produces<SearchViewAggregateAlbumPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet(
+                "/api/search-views/{viewId:guid}/aggregate-albums/{groupRef}/alternatives",
+                GetAggregateAlbumOptionsAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Pages one aggregate-album group's directory alternatives.")
+            .Produces<SearchViewAggregateAlbumOptionPageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/search-views/{viewId:guid}/updates", GetUpdatesAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Gets the latest fixed-size summary for inexpensive live refresh.")
+            .WithDescription("When HasNewRevision is true, refetch only visible pages and expanded groups at Summary.Revision.")
+            .Produces<SearchViewUpdateDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/search-views/{viewId:guid}/commit", CommitSelectionAsync)
+            .RequireOperator()
+            .WithTags("Search Views")
+            .WithSummary("Commits a client-owned revision-bound selection as one submission.")
+            .WithDescription("The fixed-size receipt reports independent resolution outcomes; runtime jobs are traversed through the jobs API.")
+            .Produces<CommitSearchViewSelectionResponseDto>(StatusCodes.Status202Accepted)
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
+            .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
+            .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static async Task<IResult> CreateViewAsync(
+        Guid jobId,
+        CreateSearchViewRequestDto request,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            SearchViewSummaryDto? created = await coordinator.CreateAsync(
+                jobId,
+                request,
+                cancellationToken).ConfigureAwait(false);
+            return created == null
+                ? NotFound("The search job was not found.")
+                : Results.Accepted($"/api/search-views/{created.ViewId}", created);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> CommitSelectionAsync(
+        Guid viewId,
+        CommitSearchViewSelectionRequestDto request,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            CommitSearchViewSelectionResponseDto? receipt = await coordinator
+                .CommitSelectionAsync(viewId, request, cancellationToken)
+                .ConfigureAwait(false);
+            return receipt == null
+                ? NotFound()
+                : Results.Accepted($"/api/submissions/{receipt.SubmissionId}", receipt);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetDirectoriesAsync(
+        Guid viewId,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewDirectoryPageDto? page = await coordinator.GetDirectoriesAsync(
+                viewId,
+                revision,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The search view directory revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetDirectoryFilesAsync(
+        Guid viewId,
+        string directoryRef,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewDirectoryFilePageDto? page = await coordinator.GetDirectoryFilesAsync(
+                viewId,
+                directoryRef,
+                revision,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The search view directory revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> RetrieveDirectoryAsync(
+        Guid viewId,
+        RetrieveSearchViewDirectoryRequestDto request,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            JobSummaryDto? job = await coordinator.StartDirectoryRetrievalAsync(
+                viewId,
+                request,
+                cancellationToken).ConfigureAwait(false);
+            return job == null
+                ? NotFound("The Search View or source workflow was not found.")
+                : Results.Accepted($"/api/jobs/{job.JobId}", job);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetAggregateTracksAsync(
+        Guid viewId,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewAggregateTrackPageDto? page = await coordinator.GetAggregateTracksAsync(
+                viewId,
+                revision,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The aggregate-track revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetAggregateTrackOptionsAsync(
+        Guid viewId,
+        string groupRef,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewAggregateTrackOptionPageDto? page = await coordinator
+                .GetAggregateTrackOptionsAsync(
+                    viewId,
+                    groupRef,
+                    revision,
+                    cursor,
+                    limit,
+                    cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The aggregate-track group revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetAggregateAlbumsAsync(
+        Guid viewId,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewAggregateAlbumPageDto? page = await coordinator.GetAggregateAlbumsAsync(
+                viewId,
+                revision,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The aggregate-album revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetAggregateAlbumOptionsAsync(
+        Guid viewId,
+        string groupRef,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewAggregateAlbumOptionPageDto? page = await coordinator
+                .GetAggregateAlbumOptionsAsync(
+                    viewId,
+                    groupRef,
+                    revision,
+                    cursor,
+                    limit,
+                    cancellationToken).ConfigureAwait(false);
+            return page == null
+                ? NotFound("The aggregate-album group revision was not found.")
+                : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetAsync(
+        Guid viewId,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            SearchViewSummaryDto? view = await coordinator.GetAsync(
+                viewId,
+                cancellationToken).ConfigureAwait(false);
+            return view == null ? NotFound() : Results.Ok(view);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetFilesAsync(
+        Guid viewId,
+        long revision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken,
+        string? cursor = null,
+        int limit = 100)
+    {
+        try
+        {
+            SearchViewFilePageDto? page = await coordinator.GetFilesAsync(
+                viewId,
+                revision,
+                cursor,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+            return page == null ? NotFound("The search view revision was not found.") : Results.Ok(page);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static async Task<IResult> GetUpdatesAsync(
+        Guid viewId,
+        long afterRevision,
+        SearchViewCoordinator coordinator,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            SearchViewUpdateDto? update = await coordinator.GetUpdatesAsync(
+                viewId,
+                afterRevision,
+                cancellationToken).ConfigureAwait(false);
+            return update == null ? NotFound() : Results.Ok(update);
+        }
+        catch (Exception exception)
+        {
+            return Failure(exception);
+        }
+    }
+
+    private static IResult Failure(Exception exception)
+        => exception switch
+        {
+            SearchViewUnavailableException => Results.Json(
+                new ApiErrorDto(exception.Message, "search-view-unavailable"),
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+            KeyNotFoundException => NotFound(),
+            ArgumentException or ArgumentOutOfRangeException or InvalidDataException
+                => Results.BadRequest(new ApiErrorDto(
+                    exception.Message,
+                    "invalid-search-view-request")),
+            InvalidOperationException => Results.Json(
+                new ApiErrorDto(exception.Message, "search-view-conflict"),
+                statusCode: StatusCodes.Status409Conflict),
+            _ => Results.Json(
+                new ApiErrorDto("Search View failed.", "search-view-unavailable"),
+                statusCode: StatusCodes.Status503ServiceUnavailable),
+        };
+
+    private static IResult NotFound(string message = "The search view was not found.")
+        => Results.NotFound(new ApiErrorDto(message, "search-view-not-found"));
+}

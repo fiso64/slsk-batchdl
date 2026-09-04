@@ -8,8 +8,9 @@ public interface IUserSuccessStats
 }
 
 // TODO [V4]: Define the ownership, lifetime, persistence/decay, and ranking
-// reproducibility semantics of per-user success counts. They currently live only
-// for one engine process even though search ranking consumes them.
+// reproducibility semantics of per-user success counts in a long-running daemon.
+// Preserve their existing within-workflow ranking effect for now; do not promote
+// them to a shared or durable reputation resource until those semantics exist.
 public sealed class UserSuccessTracker : IUserSuccessStats
 {
     public ConcurrentDictionary<string, int> UserSuccessCounts { get; } = new();

@@ -73,6 +73,47 @@ public sealed record PeerBrowseFileEntry(
     int? Length,
     IReadOnlyList<PeerBrowseFileAttribute>? Attributes);
 
+public enum PeerBrowseSearchEntryKind
+{
+    Directory,
+    File,
+}
+
+/// <summary>
+/// One fixed-size row in the flat search projection of an immutable peer-browse
+/// artifact. Directory rows summarize matching descendant files; file rows
+/// summarize themselves. Exact wire identities remain owned by the artifact and
+/// are addressed through the stable numeric refs.
+/// </summary>
+public sealed record PeerBrowseSearchEntry(
+    PeerBrowseSearchEntryKind Kind,
+    long EntryId,
+    long DirectoryId,
+    long? ParentDirectoryId,
+    string Name,
+    string DisplayPath,
+    PeerBrowseEntryVisibility Visibility,
+    long PublicMatchingFileCount,
+    long PublicMatchingBytes,
+    long LockedMatchingFileCount,
+    long LockedMatchingBytes,
+    long? FileSize,
+    string? Extension,
+    int? BitRate,
+    int? BitDepth,
+    int? SampleRate,
+    int? Length);
+
+public sealed record PeerBrowseSearchPage(
+    IReadOnlyList<PeerBrowseSearchEntry> Items,
+    long PublicMatchingFileCount,
+    long PublicMatchingBytes,
+    long LockedMatchingFileCount,
+    long LockedMatchingBytes,
+    string? NextSortKey,
+    PeerBrowseSearchEntryKind? NextKind,
+    long? NextId);
+
 public sealed record PeerBrowsePage<T>(
     IReadOnlyList<T> Items,
     string? NextSortKey,
@@ -85,6 +126,14 @@ public sealed record PeerBrowseResourcePage(
 
 public sealed class PeerBrowseSelectionException(string message)
     : ArgumentException(message);
+
+/// <summary>
+/// Raised when a retained artifact predates the indexed mixed-search
+/// representation. Ordinary browsing remains available and a refreshed browse
+/// produces a current artifact.
+/// </summary>
+public sealed class PeerBrowseSearchUnavailableException(string message)
+    : InvalidOperationException(message);
 
 /// <summary>
 /// Immutable ordinary-transfer plans resolved entirely from one browse artifact.

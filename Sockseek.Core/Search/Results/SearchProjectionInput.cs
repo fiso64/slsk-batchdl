@@ -1,7 +1,16 @@
 using Sockseek.Core.Snapshots;
 using Soulseek;
 
+using System.Text.Json.Serialization;
+
 namespace Sockseek.Core.Models;
+
+[JsonConverter(typeof(JsonStringEnumConverter<SearchResultVisibility>))]
+public enum SearchResultVisibility
+{
+    Public,
+    Locked,
+}
 
 /// <summary>
 /// Storage- and provider-neutral search input used at projection boundaries.
@@ -21,7 +30,9 @@ public sealed record SearchProjectionInput(
     int? UploadSpeed,
     bool? HasFreeUploadSlot,
     IReadOnlyList<FileAttributeSnapshot>? Attributes,
-    DateTimeOffset ObservedAtUtc)
+    DateTimeOffset ObservedAtUtc,
+    int? QueueLength = null,
+    SearchResultVisibility Visibility = SearchResultVisibility.Public)
 {
     public FileCandidate ToFileCandidate()
         => new(
@@ -34,17 +45,29 @@ public sealed record SearchProjectionInput(
                 SampleRate,
                 Length,
                 Attributes),
-            new SearchPeerSnapshot(Username, ResponseFileCount, UploadSpeed, HasFreeUploadSlot),
-            new FileSearchEvidence(Sequence, Revision, ObservedAtUtc));
+            new SearchPeerSnapshot(
+                Username,
+                ResponseFileCount,
+                UploadSpeed,
+                HasFreeUploadSlot,
+                QueueLength,
+                ObservedAtUtc),
+            new FileSearchEvidence(Sequence, Revision, ObservedAtUtc, Visibility));
 
     internal static SearchProjectionInput FromLive(
         long sequence,
         int revision,
         SearchResponse response,
         Soulseek.File file,
-        DateTimeOffset observedAtUtc)
+        DateTimeOffset observedAtUtc,
+        SearchResultVisibility visibility = SearchResultVisibility.Public)
         => new(
-            sequence, revision, response.Username, response.Files.Count,
+            sequence,
+            revision,
+            response.Username,
+            visibility == SearchResultVisibility.Public
+                ? response.Files.Count
+                : response.LockedFiles.Count,
             file.Filename, file.Size, file.BitRate, file.BitDepth,
             file.SampleRate, file.Length, file.Extension,
             response.UploadSpeed, response.HasFreeUploadSlot,
@@ -52,5 +75,7 @@ public sealed record SearchProjectionInput(
                 ? null
                 : Array.AsReadOnly(file.Attributes.Select(attribute => new FileAttributeSnapshot(
                     attribute.Type.ToString(), attribute.Value, (int)attribute.Type)).ToArray()),
-            observedAtUtc);
+            observedAtUtc,
+            response.QueueLength,
+            visibility);
 }

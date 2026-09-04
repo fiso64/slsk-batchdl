@@ -163,6 +163,14 @@ public sealed record BandcampSettingsPatchDto(
 
 public static class DownloadSettingsPatchDtoMapper
 {
+    public static IReadOnlySet<string> ExplicitFields(DownloadSettingsPatchDto? patch)
+    {
+        var fields = new HashSet<string>(StringComparer.Ordinal);
+        if (patch != null)
+            CollectExplicitFields(patch, "", fields);
+        return fields;
+    }
+
     public static void ApplyTo(DownloadSettings settings, DownloadSettingsPatchDto? patch)
     {
         if (patch == null)
@@ -619,6 +627,30 @@ public static class DownloadSettingsPatchDtoMapper
 
     private static T? NullIfEmpty<T>(T value, T empty) where T : class
         => EqualityComparer<T>.Default.Equals(value, empty) ? null : value;
+
+    private static void CollectExplicitFields(object value, string prefix, HashSet<string> fields)
+    {
+        Type type = value.GetType();
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(CollectionPatchDto<>))
+        {
+            if (prefix.Length > 0)
+                fields.Add(prefix);
+            return;
+        }
+
+        foreach (var property in type.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public))
+        {
+            object? child = property.GetValue(value);
+            if (child == null)
+                continue;
+            string path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
+            Type childType = child.GetType();
+            if (childType.IsPrimitive || childType.IsEnum || child is string || child is decimal)
+                fields.Add(path);
+            else
+                CollectExplicitFields(child, path, fields);
+        }
+    }
 
     private static void ApplyOutput(OutputSettings target, OutputSettingsPatchDto? patch)
     {

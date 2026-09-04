@@ -499,8 +499,7 @@ public class LocalCliBackendTests
                 searchJob.Id,
                 new StartFolderDownloadRequestDto(
                     retrievedFolder.Ref,
-                    AlbumQuery: new AlbumQueryDto("Artist", "Album", "Track One", null, false),
-                    SelectedFolder: retrievedFolder),
+                    AlbumQuery: new AlbumQueryDto("Artist", "Album", "Track One", null, false)),
                 cts.Token);
 
             Assert.IsNotNull(downloadSummary);

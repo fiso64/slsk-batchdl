@@ -10,7 +10,9 @@ models for the same concepts.
 I would organize the work around three larger owners:
 
 1. A definition-stable, revisioned, server-owned **search view** resource owns
-   projection, filtering, ordering, paging, nested alternatives, and selection.
+   projection, filtering, ordering, paging, nested alternatives, and
+   revision-bound selection resolution at commit. Interactive selection state
+   remains entirely client-owned.
    It replaces the current family of whole-result projection responses rather
    than sitting beside them indefinitely.
 2. A durable **submission** model records user intent, submission time, the
@@ -21,6 +23,12 @@ I would organize the work around three larger owners:
    state on retained rows and records byte activity explicitly. Transfer list
    pages and Dashboard analytics then do not invent separate meanings for the
    same events.
+
+These are logical owners, not a requirement for separate databases or
+availability platforms. Prefer the existing coarse persistence lifecycle and
+shared migration/health/retention machinery. Introduce an independent store or
+durable resource only when its consistency, durability, retention, or failure
+boundary is genuinely independent.
 
 One cross-runtime rule applies to all three owners: semantic work belongs in
 Core and is shared by the local CLI and daemon. Settings composition, planning,
@@ -55,7 +63,7 @@ of `ExtractJob`.
 There is one important extension: extract the recursive planning semantics into
 a storage-agnostic Core service. Direct submission, Review, and local
 `--print jobs`/`--print jobs-full` all consume that service; they do not all
-consume the persisted preview resource. The current `PrintOption.Jobs` path is
+consume the daemon's active preview spool. The current `PrintOption.Jobs` path is
 evidence that the semantics exist, but it is not itself the right reusable
 service boundary.
 
@@ -68,25 +76,31 @@ service boundary.
 `EngineSupervisor` use `defaultDownloadSettings.Search`. `JobEntity.PayloadJson`
 retains the default query/projection but not the effective search settings.
 
-Persist a versioned, normalized `SearchDefinition` when the submission is
-accepted. It should contain the settings baseline, typed query/default projection
-kind, network query, default projection query, and only the effective settings
-that affect result admission, grouping, and ranking. Persisting the entire
+Use one normalized Core `SearchDefinition` value for the settings baseline,
+typed query/default projection kind, network query, default projection query,
+and effective settings that affect result admission, grouping, and ranking.
+Embed it in the versioned `SubmissionSpecification` for searches known when the
+submission is accepted. A direct extract can create a search-capable child only
+after acceptance, so that child's definition is not always derivable from the
+immutable root specification; retain the derived value on that search job's
+execution record. This is the same model and codec, not a second public resource
+or independently configurable definition. A view may carry an internal copy
+for indexing or immutable reprojection. Persisting the entire
 `DownloadSettings` object would retain unrelated output settings and make the
 historical contract depend on a large internal configuration graph.
 
 An edited Filtering/Ranking form should create a new search-view definition; it
 should not mutate the retained definition of the original search. The default
-historical view uses the retained definition.
+historical view uses the accepted command definition when one exists, otherwise
+the immutable derived definition retained by the search execution record.
 
 The audit misses one other mutable ranking input: `ResultSorter` also reads the
-engine's in-memory user-success counts. Exact reproducibility therefore requires
-either snapshotting the relevant peer reputation values into the view or
-explicitly declaring that a newly created view is ranked using current
-reputation. A view cursor must never silently change ordering because those
-counts changed between pages. The broader ownership, persistence, and decay of
-these legacy counts is V4 work; this audit only requires a view to bind the
-ranking context it actually used.
+workflow's in-memory user-success counts. Preserve their existing effect within
+that workflow, but do not turn them into a shared or durable reputation resource
+in this audit. Projection evaluates the applicable workflow-local counts once
+and persists the resulting revision-bound sort keys/facts, so paging does not
+change underneath a cursor. Ownership beyond one workflow, daemon lifetime,
+persistence/decay, and historical reprojection semantics remain `TODO [V4]`.
 
 ### Generic File Search has neutral defaults
 
@@ -105,12 +119,12 @@ responsibilities.
 After choosing the baseline, apply operator configuration, profiles, and the
 request patch in the normal order. The complete typed submission shape, not only
 the baseline, must still reach the real resolver. Baseline selection and patch
-composition belong in Core; the local CLI resolver and
-`ServerJobSettingsResolver` should supply their inputs to that same composer
-rather than encode the order independently.
+composition belong in Core; local CLI and daemon submissions should supply
+their inputs through the same `SubmissionOptionsJobSettingsResolver` rather
+than encode the order independently.
 
 This cannot be implemented reliably by clearing selected properties after
-`ServerJobSettingsResolver` has produced a fully materialized
+the shared submission resolver has produced a fully materialized
 `DownloadSettings`: at that point the daemon cannot distinguish built-in values
 from explicit operator overrides. The settings composition boundary must retain
 the distinction between a settings baseline and configured patches. Do not add a
@@ -143,16 +157,17 @@ Create a search-view resource with an immutable definition bound to:
 - the source search job and consumed raw-result sequence;
 - the normalized projection/search definition;
 - filter and order semantics; and
-- any mutable ranking context used to build the view.
+- the resulting sort facts from any workflow-local mutable ranking input, not
+  that input as a new shared resource.
 
 The daemon maintains or externally sorts the view using bounded memory and
 disk-backed state, then pages it by opaque cursor. Each atomic publication
 creates an immutable view revision. Responses include source revision, view
 revision, exact projected totals, completeness, and raw-result retention state.
 The live head advances as results arrive, while every cursor remains bound to
-the immutable revision from which it was issued. Publishing a revision records
-versioned row/group changes; it must not copy the complete view for every result
-batch.
+the immutable revision from which it was issued. Publishing a revision updates
+the stored rows/groups and summary atomically; it must not copy the complete
+view for every result batch.
 
 This should replace the current whole-array `/results/*` contract in one
 breaking change. Keeping both as long-lived public abstractions would preserve
@@ -177,13 +192,15 @@ rows calls the same incremental kernel from sequence zero rather than a separate
 historical algorithm.
 
 Over the network, a client should observe a cheap revision notification or poll
-with `afterRevision`, receive the new fixed-size summary and a bounded page of
-changed item/group refs, and refetch only affected or visible pages at the new
-revision. It must not download the whole projected array every second. Updates
-may be coalesced, but no published revision may combine new rows with stale
-counts or ordering. Tests should compare every incrementally published prefix
-with a from-scratch projection and then verify the final incremental revision is
-identical to the completed view.
+with `afterRevision`, receive the new fixed-size summary, and refetch only its
+currently visible pages and expanded groups at the new revision. A changed-ref
+feed is not useful enough to justify storing versioned changes: one changed row
+can reorder otherwise unchanged pages, so the visible page must be refetched
+anyway. The client must not download the whole projected array every second.
+Updates may be coalesced, but no published revision may combine new rows with
+stale counts or ordering. Tests should compare every incrementally published
+prefix with a from-scratch projection and then verify the final incremental
+revision is identical to the completed view.
 
 Local `--print results`, `--print results-full`, JSON, and link modes may wait for
 the one-shot search to finish, but they must consume this same Core projection
@@ -210,14 +227,16 @@ when the new contract lands.
 **Narrow.** The server must expose the tier boundary because it owns the
 lexicographic comparator. A frontend-generated scalar score would be incorrect.
 
-Expose a stable `preferenceTier` and, if the UI actually renders explanations,
-a small documented enum/set of public condition matches. Do not expose the
-packed sort flags, an invented numeric score, or internal comparer key names.
+Expose a stable `preferenceTier` and a small documented enum/set of public
+condition matches. The WebUI does not render explanations yet, but local and
+remote `--print results-full` already do; both must format the same projection
+facts rather than reevaluating conditions. Do not expose the packed sort flags,
+an invented numeric score, or internal comparer key names.
 A result is `preferred` exactly when all configured preferred conditions are
 satisfied; otherwise it is `other`. With no preferred conditions configured,
 all admitted results are `preferred`. Compute that public-condition evaluation
 once while constructing the projected sort entry, carry it with the view row,
-and reuse it for sorting, tier, and optional explanations. DTO projection must
+and reuse it for sorting, tier, and explanations. DTO projection must
 not evaluate the conditions a second time.
 
 ### File Search projects generic directory units
@@ -305,20 +324,26 @@ switches.
 
 ### Selection over server-paged results stays bounded and reports resolution outcome
 
-**Deepen.** `all-except` is compact for Select All, but an `only` array is still
-unbounded when a user selects many rows. The current response is also unbounded
-because it returns one `JobSummaryDto` per submitted file.
+**Deepen.** Keep interactive selection entirely in the client. The common
+`only` case contains one or a few selected file/folder refs, while `all-except`
+keeps Select All compact. There is no daemon selection resource, CRUD API,
+lease, or persisted checkbox state.
 
-Make selection a short-lived server-owned set under a search view. Its mode is
-`only` or `all-except`; item toggles can be applied incrementally and stored on
-disk. Commit carries only the selection ref. A directory selection is one
-directory ref, never an enumeration of its children.
+Commit carries the immutable view revision, `only`/`all-except` mode, selected
+or excluded refs, and a submission idempotency key directly. Selecting a whole
+directory/group uses its single ref; selecting individual files uses their
+stable child refs. Use an ordinary request DTO without an arbitrary item limit;
+the common `only` request is tiny and `all-except` keeps the common large case
+compact. Add incremental parsing or request spooling only if real payloads later
+justify it, and never turn transient request handling into a separately
+addressable selection resource.
 
 Commit returns a fixed-size receipt containing the new submission/workflow ref,
 requested/resolved/submitted/skipped/rejected counts, and bounded stable reason
-buckets. Jobs are then traversed through `/api/jobs`; they are not embedded in
-the mutation response. Resolve each entry independently so one stale or locked
-row does not fail unrelated valid selections.
+buckets. A retry with the same idempotency key returns the same durable
+submission receipt. Jobs are then traversed through `/api/jobs`; they are not
+embedded in the mutation response. Resolve each entry independently so one
+stale or locked row does not fail unrelated valid selections.
 
 ## Jobs and planning
 
@@ -383,8 +408,9 @@ returns a small opaque artifact ref, digest, metadata, and expiry.
 “Bounded” should describe concurrency and response representation, not an
 arbitrary file-size rejection. Any size/quota limit must come from an explicit
 operator policy or real representation boundary. Expiry and cleanup are owned
-by the artifact service and must not invalidate a committed preview/submission
-that still references the content.
+by the artifact service and must not invalidate an active preview spool or a
+committed submission that still references the content. The submission becomes
+the durable pin/copy owner at commit.
 
 Uploaded artifacts should be immutable. Current CSV/List jobs attach source
 mutations that clear successful rows in the source file; those mutations make
@@ -401,24 +427,32 @@ and emits a stream of planned-node records. Direct Start, Review, and local
 `--print jobs` call this same service, so settings, auto-profiles, extraction
 overrides, and source interpretation cannot drift. Direct Start consumes the
 records as runtime submissions, the local CLI renders them without a database,
-and only the daemon Review adapter persists them as a disk-backed preview.
+and only the daemon Review adapter writes them to a pageable, non-durable
+disk-backed temporary spool.
 
-Preview creation captures the source revision/artifact, normalized effective
-settings for every planned node, and stable preview refs. Root/direct-child
-queries are paged; repeated children are not placed in summary/detail. Each
-independent source entry carries its own state/failure so one bad CSV row or
-nested URL does not erase valid siblings. The overall preview may therefore be
-partially ready rather than only `ready` or `failed`.
+Preview creation captures the source revision/artifact, stable preview refs,
+and normalized effective settings referenced through deduplicated immutable
+records rather than repeated in every node. Root/direct-child queries are
+paged; repeated children are not placed in summary/detail. Each independent
+source entry carries its own state/failure so one bad CSV row or nested URL does
+not erase valid siblings. The overall preview may therefore be partially ready
+rather than only `ready` or `failed`.
 
-Commit accepts only a server-owned selection ref and creates runtime jobs from
-the stored plan. It does not rerun extraction, re-resolve defaults, or reread a
-mutable source. Preview lifecycle logs should use the preview ID and report
-coarse outcome, duration, and safe counts.
+Commit accepts the immutable preview revision, a client-owned
+`only`/`all-except` expression over stable planner refs, and a submission
+idempotency key. It creates runtime jobs from the stored plan without rerunning
+extraction, re-resolving defaults, or rereading a mutable source. Preview
+lifecycle logs should use the preview ID and report coarse outcome, duration,
+and safe counts.
 
-Preview persistence is an optional feature boundary. If its store is unavailable,
-Review fails clearly while direct Start and local `--print jobs` continue through
-the Core planner. A remote CLI may use the daemon preview resource and page its
-records; that does not make the local CLI depend on server storage.
+The active spool prevents extraction or settings resolution from running again
+between Review and Commit, preserving “commit exactly what I reviewed.” It is
+not durable history: daemon restart invalidates uncommitted previews, and Commit
+copies the accepted plan and required provenance into the durable submission
+before releasing the spool. If temporary spool creation is unavailable, Review
+fails clearly while direct Start and local `--print jobs` continue through the
+Core planner. Remote `--print jobs` pages the daemon preview as its Review
+operation; that does not make the local CLI depend on server storage.
 
 ### Semantic job navigation survives refresh/paging
 
@@ -493,8 +527,11 @@ rows and clearly reports that retained coverage is unavailable.
 Current transfer persistence receives start/progress mutations, so retained
 storage can supply much of this projection, but it cannot be the sole live
 source: persistence is optional and may lag or degrade. A cursor should bind a
-snapshot/revision when exact paging is promised; otherwise the contract must
-state its live-list consistency behavior.
+stable `(CreatedAtUtc, TransferId)` boundary and use documented moving-list
+semantics. Newer transfers may appear above an existing traversal and mutable
+status updates do not reorder it. This avoids materializing an immutable
+snapshot across live, queued, and retained sources; an explicit export can add
+snapshot semantics later if it genuinely needs them.
 
 Folder grouping remains presentation, but timeline rows need an authoritative
 operation/job/group ref if the UI is expected to avoid grouping unrelated
@@ -534,24 +571,29 @@ The audit correctly rejects reconstructing analytics from transfer creation
 times. Adding a SQL aggregate endpoint over today's `Transfers` and
 `TransferAttempts` tables would still produce wrong bandwidth and range totals.
 
-Introduce one transfer-accounting owner that consumes cumulative per-attempt
-progress, computes non-negative byte deltas idempotently by transfer/attempt
-revision, and persists compact time buckets plus peer/content dimensions. It
-must account terminal snapshots, survive retries where byte counters reset, and
-retain a checkpoint so restart/replay does not double count. Use batching,
-backpressure, and disk-backed state rather than dropping work because a buffer
-is full.
+Introduce one logical transfer-accounting owner within the existing transfer
+persistence lifecycle. It consumes cumulative per-attempt progress, computes
+non-negative byte deltas idempotently by transfer/attempt revision, and persists
+checkpoints, compact time buckets, and peer/content dimensions through the
+shared durable transfer write/outbox path. It must account terminal snapshots
+and survive retries where byte counters reset without double counting. Extend
+that shared path with batching and backpressure as needed; do not create a
+separate accounting handoff, database, migration pipeline, or health platform.
 
 The current progress path is coalescible and persistence may drop progress
-mutations. Therefore an “exact” analytics contract must also return retention
-and coverage intervals/gaps. Optional analytics degradation must not stop core
-transfers, but it may not silently return a complete-looking zero or partial
-range.
+mutations, so it cannot be reused unchanged. An “exact” analytics contract must
+also return a simple availability/coverage boundary such as `completeFromUtc`.
+Optional analytics degradation must not stop core transfers, but it may not
+silently return a complete-looking zero or partial range. Add arbitrary gap
+intervals only if actual failure modes can leave non-contiguous missing periods.
 
-The content ranking needs a stable daemon-owned content key captured at transfer
-creation; remote path alone is peer-specific and cannot reliably identify the
-same logical content across users. Error ranking should group stable terminal
-failure reason codes, not raw exception messages with unbounded cardinality.
+The prototype's Content tab follows the slskd product meaning: it ranks shared
+directories successfully downloaded by remote peers, which are Upload transfers
+from the daemon's perspective. Capture a stable share-catalog directory key and
+presentation path at upload creation; do not group on a mutable local path or
+make this a ranking of downloads from unrelated source peers. Error ranking
+should group stable terminal failure reason codes, not raw exception messages
+with unbounded cardinality.
 
 The response itself should remain one bounded range document: a fixed bucket
 count, fixed-size summary, and bounded top-N rankings. “All” means all retained
@@ -573,7 +615,9 @@ For the current labels, I recommend:
 - `downloadedFiles`/`uploadedFiles` count successful logical transfers completed
   in the range, because the UI labels them as downloaded/uploaded files;
 - distinct peers use peers with transport byte activity in the range;
-- content ranking uses successful logical downloads completed in the range; and
+- content ranking uses successful logical uploads completed in the range,
+  grouped by shared-directory identity with file count and distinct requesting
+  peers (the UI may label these as downloads by peers); and
 - errors use terminal failed attempts completed in the range.
 
 If product intent instead wants “transfers with any byte activity” for the file
@@ -601,34 +645,44 @@ duplication ambiguous. The client can render a tree from refs and breadcrumbs.
 Return public and locked matching counts/bytes separately so “exact” has one
 meaning.
 
-The current `ordinal_contains` queries scan candidates. A global search over a
-large homeserver browse artifact should use an indexed auxiliary normalized
-search representation (for example an appropriate SQLite FTS/trigram index)
-while returning the exact stored spelling. The cursor is bound to the immutable
-browse artifact/revision, so later refreshes cannot reorder an existing page.
+The current `ordinal_contains` queries scan candidates. For the expected maximum
+of roughly 100,000 shared files and an instant/very-quick target below about
+300 ms, keep an indexed auxiliary normalized search representation such as an
+appropriate SQLite FTS/trigram index, with exact post-filtering and exact stored
+spelling. Keep the index inside the existing browse-artifact persistence
+boundary rather than creating another service/store. The cursor is bound to the
+immutable browse artifact/revision, so later refreshes cannot reorder an
+existing page.
 
-### Chat/User actions know and mutate per-user block state
+### Chat/User actions know and mutate independent per-user restrictions
 
-**Deepen substantially.** `PeerAccessPolicy` is currently an immutable snapshot
-constructed from static settings and shared by chat, uploads, browsing, and
-profiles. Adding GET/POST endpoints without changing that ownership would either
-have no runtime effect or create competing policy sources.
+**Deepen substantially.** “Blocked user” conflates two different inbound
+policies: whether a peer may search, browse, and download this daemon's shares,
+and whether incoming private messages from that peer are accepted. These must be
+independently configurable and mutable. Neither policy blocks this daemon from
+viewing the peer's profile/shares, downloading from them, sending them a private
+message, or receiving their room messages.
 
-Refactor it into one daemon-owned peer-access service that publishes immutable
-policy snapshots to all consumers and persists exact ordinal usernames. The API
-reads and mutates that service; Chat and Users use the same resource. A mutation
-must survive restart and update every admission path consistently.
+Refactor the immutable startup policy into one daemon-owned
+`PeerRestrictionPolicy` that publishes one atomic snapshot containing both
+dimensions. The API reads and mutates that owner; Chat's Block action selects the
+private-message dimension, while Users may expose both. A mutation must survive
+restart and update the relevant future inbound decisions immediately.
 
-Project `isBlocked` from that owner into the user/profile and direct-conversation
-summaries that already name a peer, and offer a direct per-user lookup for detail
-views. Do not make a chat list issue one peer-access request per conversation.
+Project `uploadAccessBlocked` and `privateMessagesBlocked` into user/profile
+summaries and only `privateMessagesBlocked` into direct-conversation summaries.
+Also offer one direct per-user restrictions lookup. Do not make a chat list issue
+one request per conversation, and do not hide profile or browse data because an
+inbound restriction is active.
 
-The migration rule for usernames already present in configuration must be
-explicit: configuration cannot remain an unremovable second deny list if the UI
-offers Unblock. Prefer one authoritative persisted operator policy, with config
-used only for an explicit import/bootstrap rule. Mutations should affect future
-admissions; do not silently cancel existing transfers or delete chat history
-unless a separate product action says so.
+Each dimension merges its reloadable configured exact-username baseline with
+persisted exact-username `blocked`/`allowed` overrides. An `allowed` override
+supersedes only that dimension's configured username block; removing it resets
+only that dimension to configuration. Exact configured IP denial exists only for
+upload access and remains independently authoritative when an endpoint is known.
+The override table belongs to the main persistence lifecycle rather than an
+independently initialized feature database. Mutations affect future admissions
+or incoming DMs; they do not cancel existing transfers or delete history/chat.
 
 ## Re-audit dispositions deliberately removed from the gap list
 
@@ -688,17 +742,19 @@ bulk-cancel endpoints.
 ### Job Preview
 
 **Agree with the source section, subject to the planning-service and failure
-isolation changes above.** The preview repository is a daemon adapter over the
-Core planner, not the planner itself. Effective settings belong to preview
-creation and are stored per planned node. Commit carries a server selection ref
-only. The stored plan, not an extracted draft sent through the browser, is
-authoritative.
+isolation changes above.** The preview spool is a daemon adapter over the Core
+planner, not the planner itself. Effective settings are resolved at preview
+creation and referenced from deduplicated immutable records. Interactive
+selection stays in the client; commit carries the preview revision,
+`only`/`all-except` planner refs, and submission idempotency key directly. The
+spooled plan, not an extracted draft sent through the browser, is authoritative.
 
-Preview storage should be disk-backed and expiring, with a small persisted
-summary and paged node records. Expiry is a lifecycle rule, not a reason to cap
-the number of valid planned entries. A preview that has been committed must
-remain referenced long enough for submission provenance/diagnostics even if its
-interactive browsing lease expires.
+Preview storage should be an expiring, non-durable disk-backed temporary spool
+with a small summary and paged node records. Expiry is a lifecycle rule, not a
+reason to cap the number of valid planned entries. Daemon restart may discard
+uncommitted previews. Commit first copies the exact accepted plan and necessary
+provenance into the durable submission, then releases the preview; the preview
+itself is not retained for diagnostics.
 
 Local `--print jobs` does not create this resource, receive a preview ID, or need
 a configured database. It streams the same planner records to its formatter; if
@@ -718,10 +774,15 @@ anticipation.
 1. Replace whole-array result projection with one definition-stable, revisioned,
    disk-backed search-view resource that updates incrementally while a search is
    live. It owns filtering, ordering, paging, nested children/options, exact
-   counters, preference metadata, and server-side selection.
-2. Persist a normalized `SearchDefinition`, including its generic/music settings
-   baseline, typed query/projection kind, and effective projection settings. Use
-   the real resolver for UI-safe settings introspection.
+   counters, preference metadata, and revision-bound resolution of client-owned
+   selections at commit. Notify only the latest revision/summary and refetch
+   visible pages; do not retain a changed-ref feed.
+2. Use one normalized `SearchDefinition` model, including its generic/music
+   baseline, typed query/projection kind, and effective projection settings.
+   Embed searches known at acceptance in the retained submission command and
+   retain the same derived value on search-capable execution children created
+   later. Do not add a second public/configurable definition resource. Use the
+   real resolver for UI-safe settings introspection.
 3. Retain queue depth and locked rows at search admission. Use one canonical
    peer-directory ref for album and generic directory views, retrieval, and
    whole-directory download.
@@ -730,21 +791,26 @@ anticipation.
    and `/api/jobs` traversal unchanged; use the submission boundary for semantic
    history, archive, preview commit, and rerun.
 5. Build one storage-agnostic Core Job Planner shared by direct Start, Review,
-   and local `--print jobs`; expose Review as a separate disk-backed daemon Job
-   Preview resource. Stream remote CSV/List inputs into immutable expiring
-   artifacts and never reread/re-resolve them on preview commit.
+   and local `--print jobs`; expose Review through a pageable, expiring,
+   non-durable disk-backed preview spool. Stream remote CSV/List inputs into
+   immutable expiring artifacts and never reread/re-resolve them on preview
+   commit. Commit copies the exact reviewed plan into the durable submission.
 6. Include active uploads in daemon snapshots, enrich Core transfer snapshots so
    downloads and uploads map identically, retain `FileMetadataDto`, and make
-   `/api/transfers` the combined newest-first live/retained timeline.
+   `/api/transfers` the combined newest-first live/retained timeline using a
+   documented moving keyset rather than pinned combined snapshots.
 7. Implement filtered bulk cancellation with per-transfer failure isolation and
    archive terminal job/transfer history reversibly; keep physical deletion in
    retention/purge owners.
-8. Add a real transfer-accounting owner before Dashboard analytics. Record
-   per-attempt byte activity and explicit coverage, use stable content/failure
+8. Add a logical transfer-accounting owner inside the existing transfer
+   persistence lifecycle before Dashboard analytics. Record per-attempt byte
+   activity and a simple coverage boundary, use stable content/failure
    identities, and define bandwidth, file-count, peer, content, and error
    populations separately.
 9. Add a flat mixed browse-search projection over the existing immutable browse
    artifact, backed by an indexed auxiliary search representation.
-10. Replace immutable startup-only peer access with one persisted, mutable
-    daemon service shared by chat, uploads, browsing, and profiles before adding
-    Block/Unblock endpoints.
+10. Replace immutable startup-only peer blocking with one mutable daemon policy
+    containing independent upload-access and incoming-private-message dimensions.
+    Merge each configured baseline with persisted exact-username overrides in the
+    main persistence lifecycle; expose one per-user API while keeping outbound
+    profile, browse, download, room-chat, and private-message actions unaffected.

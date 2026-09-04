@@ -67,7 +67,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
 
     private readonly IShareCatalogProvider catalogs;
     private readonly UploadCoordinator uploads;
-    private readonly PeerAccessPolicy accessPolicy;
+    private readonly PeerRestrictionPolicy restrictions;
     private readonly UploadSettings uploadSettings;
     private readonly Func<ISoulseekClient?> clientProvider;
     private readonly string userDescription;
@@ -87,7 +87,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     public SoulseekSharingAdapter(
         IShareCatalogProvider catalogs,
         UploadCoordinator uploads,
-        PeerAccessPolicy accessPolicy,
+        PeerRestrictionPolicy restrictions,
         UploadSettings uploadSettings,
         Func<ISoulseekClient?> clientProvider,
         string? userDescription = null,
@@ -96,7 +96,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         this.catalogs = catalogs ?? throw new ArgumentNullException(nameof(catalogs));
         this.uploads = uploads ?? throw new ArgumentNullException(nameof(uploads));
-        this.accessPolicy = accessPolicy ?? throw new ArgumentNullException(nameof(accessPolicy));
+        this.restrictions = restrictions ?? throw new ArgumentNullException(nameof(restrictions));
         this.uploadSettings = uploadSettings ?? throw new ArgumentNullException(nameof(uploadSettings));
         this.clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
         this.userDescription = userDescription ?? "";
@@ -149,7 +149,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             || !uploadServingEnabled
             || !IsValidUsername(username)
             || !IsValidSearch(query)
-            || accessPolicy.IsUsernameBlocked(username))
+            || restrictions.IsUploadUsernameBlocked(username))
         {
             return null;
         }
@@ -192,7 +192,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                 if (files.Length == 0)
                     return null;
 
-                if (accessPolicy.HasBlockedIpAddresses)
+                if (restrictions.Snapshot.HasUploadBlockedIpAddresses)
                 {
                     ISoulseekClient? client = clientProvider();
                     if (client is null)
@@ -200,7 +200,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
                     IPEndPoint endpoint = await client
                         .GetUserEndPointAsync(username, cancellationToken: timeout.Token)
                         .ConfigureAwait(false);
-                    if (accessPolicy.IsIpAddressBlocked(endpoint.Address))
+                    if (restrictions.IsUploadIpAddressBlocked(endpoint.Address))
                         return null;
                 }
 
@@ -232,7 +232,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         if (disposed
             || !IsValidUsername(username)
-            || accessPolicy.IsBlocked(username, endpoint))
+            || restrictions.IsUploadAccessBlocked(username, endpoint))
         {
             return Task.FromResult<BrowseResponse>(new BrowseResponse());
         }
@@ -274,7 +274,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         if (disposed
             || !IsValidUsername(username)
-            || accessPolicy.IsBlocked(username, endpoint)
+            || restrictions.IsUploadAccessBlocked(username, endpoint)
             || !IsValidRemotePath(remotePath))
         {
             return [];
@@ -319,7 +319,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
     {
         if (disposed
             || !IsValidUsername(username)
-            || accessPolicy.IsBlocked(username, endpoint))
+            || restrictions.IsUploadAccessBlocked(username, endpoint))
         {
             return Task.FromResult(new UserInfo("", 0, 0, false));
         }
@@ -345,7 +345,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
             || !uploadServingEnabled
             || !IsValidUsername(username)
             || !IsValidRemotePath(remotePath)
-            || accessPolicy.IsBlocked(username, endpoint))
+            || restrictions.IsUploadAccessBlocked(username, endpoint))
         {
             throw new DownloadEnqueueException("File not shared");
         }
@@ -397,7 +397,7 @@ public sealed class SoulseekSharingAdapter : ISoulseekInboundRequestRouter, IDis
         if (disposed
             || !uploadServingEnabled
             || !IsValidUsername(username)
-            || accessPolicy.IsBlocked(username, endpoint))
+            || restrictions.IsUploadAccessBlocked(username, endpoint))
             return Task.FromResult<int?>(null);
 
         try

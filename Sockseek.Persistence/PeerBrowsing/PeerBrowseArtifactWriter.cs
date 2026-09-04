@@ -145,6 +145,18 @@ public sealed class PeerBrowseArtifactWriter : IPeerBrowseRowSink
                     ON directories(parent_id, name, directory_id);
                 CREATE INDEX idx_directories_display_path
                     ON directories(display_path, directory_id);
+
+                -- Trigram FTS preserves interactive substring semantics while
+                -- keeping the index in the immutable artifact it projects.
+                -- entry_kind/ref columns point back to authoritative rows;
+                -- display_path is a normalized search/display representation,
+                -- never the download identity.
+                CREATE VIRTUAL TABLE browse_search USING fts5(
+                    display_path,
+                    entry_kind UNINDEXED,
+                    entry_id UNINDEXED,
+                    tokenize='trigram'
+                );
                 """,
                 cancellationToken).ConfigureAwait(false);
             return new PeerBrowseArtifactWriter(store, resource, stagingPath, connection);
@@ -384,6 +396,16 @@ public sealed class PeerBrowseArtifactWriter : IPeerBrowseRowSink
                     THEN 1
                 ELSE 0
             END;
+
+
+            INSERT INTO browse_search(display_path, entry_kind, entry_id)
+            SELECT display_path, 0, directory_id
+            FROM directories;
+
+            INSERT INTO browse_search(display_path, entry_kind, entry_id)
+            SELECT d.display_path || '\\' || f.name, 1, f.file_id
+            FROM files f
+            JOIN directories d ON d.directory_id = f.directory_id;
             """,
             cancellationToken).ConfigureAwait(false);
 
@@ -396,7 +418,7 @@ public sealed class PeerBrowseArtifactWriter : IPeerBrowseRowSink
                     schema_version, browse_id, local_account, username,
                     completed_at_utc, wire_directory_count, file_count,
                     total_file_bytes, completion_marker)
-                VALUES(1, $id, $account, $username, $completed,
+                VALUES(2, $id, $account, $username, $completed,
                        $directories, $files, $bytes, 0);
                 """;
             PeerBrowseArtifactStore.Add(metadata, "$id", resource.BrowseId.ToString("D"));

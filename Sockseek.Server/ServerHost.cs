@@ -12,6 +12,8 @@ using Sockseek.Core.Settings;
 using Sockseek.Server.Persistence;
 using Sockseek.Server.PeerBrowsing;
 using Sockseek.Server.UserProfiles;
+using Sockseek.Server.Planning;
+using Sockseek.Server.PeerRestrictions;
 
 namespace Sockseek.Server;
 
@@ -102,17 +104,29 @@ public static class ServerHost
         builder.Services.AddSingleton<PersistenceCoordinator>();
         builder.Services.AddHostedService<PersistenceRuntimeHostedService>();
         builder.Services.AddHostedService<PersistenceMaintenanceHostedService>();
+        builder.Services.AddSingleton<InputArtifactCoordinator>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<InputArtifactCoordinator>());
+        builder.Services.AddSingleton<PeerRestrictionCoordinator>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<PeerRestrictionCoordinator>());
         builder.Services.AddSingleton<EngineSupervisor>();
         builder.Services.AddSingleton(sp => sp.GetRequiredService<EngineSupervisor>().StateStore);
         builder.Services.AddSingleton<HistoricalQueryFacade>();
+        builder.Services.AddSingleton<DashboardAnalyticsFacade>();
         builder.Services.AddSingleton<LiveTransferCursorCodec>();
         builder.Services.AddSingleton<PeerBrowseCursorCodec>();
         builder.Services.AddSingleton<UserShareSubmissionStore>();
+        builder.Services.AddSingleton<JobPreviewCursorCodec>();
+        builder.Services.AddSingleton<SubmissionCommitCoordinator>();
+        builder.Services.AddSingleton<JobPreviewCoordinator>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<JobPreviewCoordinator>());
+        builder.Services.AddSingleton<SearchViewCursorCodec>();
+        builder.Services.AddSingleton<SearchViewCoordinator>();
         builder.Services.AddSingleton<IOperatorMutationAuthorizer,
             CurrentTrustDomainOperatorAuthorizer>();
         builder.Services.AddSingleton<ServerEventBroadcaster>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerEventBroadcaster>());
         builder.Services.AddHostedService<EngineRuntimeHostedService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SearchViewCoordinator>());
 
         var app = builder.Build();
 
@@ -150,7 +164,11 @@ public static class ServerHost
     private static void MapEndpoints(WebApplication app)
     {
         UserProfileEndpoints.Map(app);
+        PeerRestrictionEndpoints.Map(app);
         UserBrowseEndpoints.Map(app);
+        InputArtifactEndpoints.Map(app);
+        JobPreviewEndpoints.Map(app);
+        SearchViewEndpoints.Map(app);
         app.MapGet("/", () => Results.Redirect("/api/server/info"))
             .ExcludeFromDescription();
 
@@ -289,7 +307,7 @@ public static class ServerHost
                 var page = await chat.GetConversationsAsync(
                     unread, archived, cursor, limit ?? ChatLimits.DefaultPageSize, cancellationToken);
                 return Results.Ok(new ConversationPageDto(
-                    page.Items.Select(ChatDtoMapper.ToDto).ToArray(), page.NextCursor));
+                    page.Items.Select(chat.MapConversation).ToArray(), page.NextCursor));
             });
         })
             .RequireOperator()
@@ -325,7 +343,7 @@ public static class ServerHost
                 var conversation = await chat.GetConversationAsync(conversationId, cancellationToken);
                 return conversation is null
                     ? ChatNotFound("The conversation was not found.")
-                    : Results.Ok(ChatDtoMapper.ToDto(conversation));
+                    : Results.Ok(chat.MapConversation(conversation));
             });
         })
             .RequireOperator()
@@ -385,7 +403,7 @@ public static class ServerHost
             {
                 await chat.MarkConversationReadAsync(
                     conversationId, request.ThroughMessageId, cancellationToken);
-                return Results.Ok(ChatDtoMapper.ToDto(
+                return Results.Ok(chat.MapConversation(
                     await chat.GetConversationAsync(conversationId, cancellationToken)
                     ?? throw new KeyNotFoundException("The conversation was not found.")));
             });
@@ -405,7 +423,7 @@ public static class ServerHost
             return await WithChatAsync(supervisor, async chat =>
             {
                 await chat.ArchiveConversationAsync(conversationId, request.Archived, cancellationToken);
-                return Results.Ok(ChatDtoMapper.ToDto(
+                return Results.Ok(chat.MapConversation(
                     await chat.GetConversationAsync(conversationId, cancellationToken)
                     ?? throw new KeyNotFoundException("The conversation was not found.")));
             });
@@ -721,6 +739,120 @@ public static class ServerHost
             .WithTags("Profiles")
             .WithSummary("Lists configured download profiles.")
             .Produces<IReadOnlyList<ProfileSummaryDto>>();
+
+        app.MapGet("/api/submissions", async (
+            HistoricalQueryFacade queryFacade,
+            HttpContext httpContext,
+            bool archived,
+            string? cursor,
+            int? limit,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var page = await queryFacade.GetSubmissionsAsync(
+                    cursor,
+                    limit ?? 100,
+                    archived,
+                    cancellationToken);
+                if (page.NextCursor != null)
+                    httpContext.Response.Headers["X-Next-Cursor"] = page.NextCursor;
+                return Results.Ok(page);
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .RequireOperator()
+            .WithTags("Submissions")
+            .WithSummary("Lists durable accepted submissions newest first.")
+            .WithDescription("Archived submissions are excluded by default. Traverse runtime jobs with /api/jobs?submissionId= rather than embedding them here.")
+            .Produces<IReadOnlyList<SubmissionSummaryDto>>()
+            .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/api/submissions/{submissionId:guid}", async (
+            Guid submissionId,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var detail = await queryFacade.GetSubmissionAsync(submissionId, cancellationToken);
+                return detail == null ? Results.NotFound() : Results.Ok(detail);
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        })
+            .RequireOperator()
+            .WithTags("Submissions")
+            .WithSummary("Gets safe durable submission metadata.")
+            .Produces<SubmissionDetailDto>()
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/submissions/{submissionId:guid}/archive", async (
+            Guid submissionId,
+            SetSubmissionArchivedRequestDto request,
+            EngineSupervisor supervisor,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await supervisor.SetSubmissionArchivedAsync(
+                    submissionId,
+                    request.Archived,
+                    cancellationToken));
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        })
+            .RequireOperator()
+            .WithTags("Submissions")
+            .WithSummary("Archives or restores one terminal submission.")
+            .WithDescription("Archive is reversible. A nonterminal submission is rejected without affecting unrelated submissions.")
+            .Produces<SubmissionArchiveResponseDto>()
+            .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/submissions/{submissionId:guid}/rerun", async (
+            Guid submissionId,
+            EngineSupervisor supervisor,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var submitted = await supervisor.RerunSubmissionAsync(
+                    submissionId,
+                    cancellationToken);
+                return submitted == null
+                    ? Results.NotFound()
+                    : Results.Accepted($"/api/submissions/{submitted.SubmissionId}", submitted);
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .RequireOperator()
+            .WithTags("Submissions")
+            .WithSummary("Reruns a submission from its retained normalized command and effective settings.")
+            .WithDescription("Current credentials are rebound only for retained credential slots. Current defaults and profiles do not replace the retained root settings.")
+            .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapGet("/api/jobs", async (
             HistoricalQueryFacade queryFacade,
             HttpContext httpContext,
@@ -730,6 +862,9 @@ public static class ServerHost
             ServerJobKind? kind,
             Guid? workflowId,
             Guid? parentJobId,
+            Guid? submissionId,
+            ServerJobRole? role,
+            bool archived,
             bool includeAll,
             string? cursor,
             int? limit,
@@ -738,7 +873,17 @@ public static class ServerHost
             try
             {
                 var page = await queryFacade.GetJobsAsync(
-                    new JobQuery(lifecycleState, terminalOutcome, kind, workflowId, includeAll, skipReason, parentJobId),
+                    new JobQuery(
+                        lifecycleState,
+                        terminalOutcome,
+                        kind,
+                        workflowId,
+                        includeAll,
+                        skipReason,
+                        parentJobId,
+                        submissionId,
+                        role,
+                        archived),
                     cursor,
                     limit ?? 100,
                     cancellationToken);
@@ -753,7 +898,7 @@ public static class ServerHost
         })
             .WithTags("Jobs")
             .WithSummary("Lists known jobs.")
-            .WithDescription("Default results contain execution roots. Set parentJobId for direct children or includeAll=true for a flat workflow list.")
+            .WithDescription("Default results contain execution roots. Set parentJobId for direct children, submissionId or role for submission semantics, or includeAll=true for a flat workflow list.")
             .Produces<IReadOnlyList<JobSummaryDto>>();
 
         app.MapGet("/api/jobs/{jobId:guid}", async (Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
@@ -819,6 +964,7 @@ public static class ServerHost
             string? username,
             DateTimeOffset? fromUtc,
             DateTimeOffset? toUtc,
+            bool? archived,
             string? cursor,
             int? limit,
             CancellationToken cancellationToken) =>
@@ -828,10 +974,11 @@ public static class ServerHost
                 var page = await queryFacade.GetTransfersAsync(
                     cursor, limit ?? 100, jobId, workflowId,
                     direction, source, state, terminalOutcome, username, fromUtc, toUtc,
+                    archived ?? false,
                     cancellationToken);
                 if (page.NextCursor != null)
                     httpContext.Response.Headers["X-Next-Cursor"] = page.NextCursor;
-                return Results.Ok(page.Items);
+                return Results.Ok(page);
             }
             catch (Exception ex) when (TryCreateBadRequest(ex, out _))
             {
@@ -839,8 +986,29 @@ public static class ServerHost
             }
         })
             .WithTags("Transfers")
-            .WithSummary("Lists durable transfer history.")
-            .Produces<IReadOnlyList<TransferHistoryDto>>()
+            .WithSummary("Pages the combined newest-first live and retained transfer timeline.")
+            .WithDescription("The cursor is a moving keyset over stable creation time and transfer ID. New transfers may appear above an existing traversal; status changes do not reorder rows.")
+            .Produces<TransferTimelinePageDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+
+        app.MapGet("/api/dashboard/analytics", async (
+            string? range,
+            DashboardAnalyticsFacade analytics,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await analytics.GetAsync(range, cancellationToken));
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Dashboard")
+            .WithSummary("Gets bounded transfer analytics for a dashboard range.")
+            .WithDescription("Ranges are 24h, 7d, 30d, 90d, 1y, or all. Coverage explicitly reports retention and persistence degradation; byte activity is cumulative-attempt accounting, not transfer creation size.")
+            .Produces<DashboardAnalyticsDto>()
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
         app.MapGet("/api/sharing", (EngineSupervisor supervisor) =>
@@ -1037,11 +1205,23 @@ public static class ServerHost
             HistoricalQueryFacade queryFacade,
             CancellationToken cancellationToken) =>
         {
+            TransferStateDto? live = supervisor.StateStore.GetLiveTransfer(transferId);
+            if (live?.Identity.Direction.Equals("Download", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                if (!supervisor.TryCancelDownloadTransfer(transferId))
+                {
+                    return Results.Conflict(new ApiErrorDto(
+                        "The download transfer is no longer cancellable.",
+                        "TransferNotCancellable"));
+                }
+                return Results.Ok(supervisor.StateStore.GetLiveTransfer(transferId) ?? live);
+            }
+
             SharingRuntime? sharing = supervisor.Sharing;
             if (sharing is null)
             {
                 return Results.Json(
-                    new ApiErrorDto("Upload runtime is unavailable.", "UploadsUnavailable"),
+                    new ApiErrorDto("Transfer runtime is unavailable.", "TransfersUnavailable"),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
             var current = sharing.Uploads.GetTransfer(transferId);
@@ -1067,11 +1247,75 @@ public static class ServerHost
         })
             .RequireOperatorMutation()
             .WithTags("Transfers")
-            .WithSummary("Cancels a queued or active upload transfer.")
+            .WithSummary("Cancels a queued or active download or upload transfer.")
             .Produces<TransferStateDto>()
             .Produces<ApiErrorDto>(StatusCodes.Status404NotFound)
             .Produces<ApiErrorDto>(StatusCodes.Status409Conflict)
             .Produces<ApiErrorDto>(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/transfers/cancel", (
+            BulkCancelTransfersRequestDto request,
+            EngineSupervisor supervisor) =>
+            Results.Ok(supervisor.CancelTransfers(request)))
+            .RequireOperatorMutation()
+            .WithTags("Transfers")
+            .WithSummary("Cancels a snapshot of transfers by direction and queue state.")
+            .WithDescription("Targets are resolved once, then cancelled independently. Races and per-transfer failures are reported in a fixed-size receipt.")
+            .Produces<TransferCommandReceiptDto>();
+
+        app.MapPost("/api/transfers/{transferId:guid}/archive", async (
+            Guid transferId,
+            SetTransferArchivedRequestDto request,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await queryFacade.SetTransfersArchivedAsync(
+                    new Sockseek.Persistence.Read.TransferArchiveFilter(TransferId: transferId),
+                    request.Archived,
+                    cancellationToken));
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        })
+            .RequireOperatorMutation()
+            .WithTags("Transfers")
+            .WithSummary("Archives or restores one terminal retained transfer.")
+            .WithDescription("Archive is reversible and separate from cancellation; a nonterminal transfer is rejected.")
+            .Produces<TransferCommandReceiptDto>()
+            .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/api/transfers/archive", async (
+            ArchiveTransfersRequestDto request,
+            HistoricalQueryFacade queryFacade,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await queryFacade.SetTransfersArchivedAsync(
+                    new Sockseek.Persistence.Read.TransferArchiveFilter(
+                        Direction: request.Direction,
+                        TerminalOutcome: request.TerminalOutcome,
+                        Username: request.Username,
+                        FromUtc: request.FromUtc,
+                        ToUtc: request.ToUtc),
+                    request.Archived,
+                    cancellationToken));
+            }
+            catch (NotSupportedException ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        })
+            .RequireOperatorMutation()
+            .WithTags("Transfers")
+            .WithSummary("Archives or restores filtered terminal transfer history.")
+            .WithDescription("The command is reversible, excludes active transfers, and returns bounded outcome counts.")
+            .Produces<TransferCommandReceiptDto>()
+            .Produces(StatusCodes.Status503ServiceUnavailable);
 
         app.MapGet("/api/transfers/{transferId:guid}/attempts", async (
             Guid transferId,
@@ -1097,93 +1341,6 @@ public static class ServerHost
             .WithTags("Transfers")
             .WithSummary("Lists durable attempts for one transfer.")
             .Produces<IReadOnlyList<TransferAttemptHistoryDto>>()
-            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapGet("/api/jobs/{jobId:guid}/results/files", async (
-            Guid jobId,
-            HistoricalQueryFacade queryFacade,
-            CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetFileResultsAsync(jobId, null, cancellationToken)))
-            .WithTags("Search Results")
-            .WithSummary("Gets file candidates for a search-like job.")
-            .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapPost("/api/jobs/{jobId:guid}/results/files/project", async (
-            Guid jobId,
-            FileSearchProjectionRequestDto request,
-            HistoricalQueryFacade queryFacade,
-            CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetFileResultsAsync(jobId, request, cancellationToken)))
-            .WithTags("Search Results")
-            .WithSummary("Projects search results as file candidates.")
-            .Produces<SearchResultSnapshotDto<FileCandidateDto>>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapGet("/api/jobs/{jobId:guid}/results/folders", async (
-            Guid jobId, bool includeFiles, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetFolderResultsAsync(jobId, null, includeFiles, cancellationToken),
-                translateBadRequest: true))
-            .WithTags("Search Results")
-            .WithSummary("Gets folder candidates for an album search-like job.")
-            .WithDescription("Set includeFiles=true only when the client needs selectable files. Folder file counts can come from search results and may not represent a full browse of the remote folder.")
-            .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
-            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapPost("/api/jobs/{jobId:guid}/results/folders/project", async (
-            Guid jobId, FolderSearchProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetFolderResultsAsync(
-                    jobId, request, request.IncludeFiles, cancellationToken),
-                translateBadRequest: true))
-            .WithTags("Search Results")
-            .WithSummary("Projects search results as album folders.")
-            .Produces<SearchResultSnapshotDto<AlbumFolderDto>>()
-            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-tracks", async (
-            Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetAggregateTrackResultsAsync(jobId, null, cancellationToken)))
-            .WithTags("Search Results")
-            .WithSummary("Gets aggregate track candidates.")
-            .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-tracks/project", async (
-            Guid jobId, AggregateTrackProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetAggregateTrackResultsAsync(jobId, request, cancellationToken)))
-            .WithTags("Search Results")
-            .WithSummary("Projects search results as aggregate track candidates.")
-            .Produces<SearchResultSnapshotDto<AggregateTrackCandidateDto>>()
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapGet("/api/jobs/{jobId:guid}/results/aggregate-albums", async (
-            Guid jobId, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetAggregateAlbumResultsAsync(jobId, null, cancellationToken),
-                translateBadRequest: true))
-            .WithTags("Search Results")
-            .WithSummary("Gets aggregate album candidates.")
-            .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
-            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound);
-
-        app.MapPost("/api/jobs/{jobId:guid}/results/aggregate-albums/project", async (
-            Guid jobId, AggregateAlbumProjectionRequestDto request, HistoricalQueryFacade queryFacade, CancellationToken cancellationToken) =>
-            await OptionalQueryAsync(
-                () => queryFacade.GetAggregateAlbumResultsAsync(jobId, request, cancellationToken),
-                translateBadRequest: true))
-            .WithTags("Search Results")
-            .WithSummary("Projects search results as aggregate album candidates.")
-            .Produces<SearchResultSnapshotDto<AggregateAlbumCandidateDto>>()
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound);
 
@@ -1350,6 +1507,25 @@ public static class ServerHost
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 
+        app.MapPost("/api/jobs/effective-settings", (
+            ResolveEffectiveSettingsRequestDto request,
+            EngineSupervisor supervisor) =>
+        {
+            try
+            {
+                return Results.Ok(supervisor.ResolveEffectiveSettings(request));
+            }
+            catch (Exception ex) when (TryCreateBadRequest(ex, out _))
+            {
+                return BadRequest(ex);
+            }
+        })
+            .WithTags("Job Submission")
+            .WithSummary("Resolves the effective settings for a job draft without submitting it.")
+            .WithDescription("Uses the same typed settings composer and validation rules as direct Start. Secret and command values are redacted; matched profiles and safe per-field provenance are returned for Review and diagnostics.")
+            .Produces<ResolveEffectiveSettingsResponseDto>()
+            .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
+
         app.MapPost("/api/jobs/search", async (SubmitSearchJobRequestDto request, EngineSupervisor supervisor, CancellationToken ct) =>
             await SubmitJobAsync(() => supervisor.SubmitSearchJobAsync(request, ct)))
             .WithTags("Job Submission")
@@ -1370,7 +1546,7 @@ public static class ServerHost
             await SubmitJobAsync(() => supervisor.SubmitAlbumSearchJobAsync(request, ct)))
             .WithTags("Job Submission")
             .WithSummary("Submits an album search job.")
-            .WithDescription("Album search jobs are suitable for exploratory pick-then-download UIs: inspect projected folder candidates from the result endpoints, then start a follow-up folder download from the selected ref.")
+            .WithDescription("Album search jobs are suitable for exploratory pick-then-download clients: create an immutable Search View, page its directory projection, then commit revision-bound refs.")
             .Produces<JobSummaryDto>(StatusCodes.Status202Accepted)
             .Produces<ApiErrorDto>(StatusCodes.Status400BadRequest);
 

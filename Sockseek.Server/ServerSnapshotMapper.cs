@@ -3,6 +3,8 @@ using Sockseek.Core;
 using Sockseek.Core.Jobs;
 using Sockseek.Core.Models;
 using Sockseek.Core.Snapshots;
+using Sockseek.Core.Planning;
+using Sockseek.Core.Services;
 
 namespace Sockseek.Server;
 
@@ -45,7 +47,12 @@ public static class ServerSnapshotMapper
             BuildActions(job),
             job.FailureDetail,
             ToServerJobCancellationSource(job.CancellationSource),
-            job.PrintOption);
+            job.PrintOption,
+            job.SubmissionId,
+            ToServerJobRole(job.SemanticRole),
+            job.CreatedAtUtc,
+            DiscoveryPublicFileCount: job.Discovery?.RawResultCount,
+            DiscoveryObservedPeerCount: job.Discovery?.ObservedPeerCount);
     }
 
     public static JobSummaryDto ToSubmittedJobSummary(Job job, Guid? sourceJobId = null)
@@ -63,16 +70,18 @@ public static class ServerSnapshotMapper
                 extract.ResultJobId),
             SearchJobSnapshotPayload search => new SearchJobPayloadDto(
                 search.QueryText,
+                search.DefaultFolderProjection != null
+                    ? SearchDefaultProjectionKind.Album
+                    : search.DefaultFileProjection != null
+                        ? SearchDefaultProjectionKind.Track
+                        : SearchDefaultProjectionKind.GenericFile,
                 search.DefaultFileProjection == null
                     ? null
-                    : new FileSearchProjectionRequestDto(
-                        ToSongQueryDto(search.DefaultFileProjection.Query),
-                        search.DefaultFileProjection.IncludeFullResults),
+                    : ToSongQueryDto(search.DefaultFileProjection.Query),
                 search.DefaultFolderProjection == null
                     ? null
-                    : new FolderSearchProjectionRequestDto(
-                        ToAlbumQueryDto(search.DefaultFolderProjection.Query),
-                        search.DefaultFolderProjection.IncludeFiles),
+                    : ToAlbumQueryDto(search.DefaultFolderProjection.Query),
+                search.DefaultFileProjection?.IncludeFullResults ?? false,
                 search.ResultCount,
                 search.Revision,
                 search.IsComplete),
@@ -170,43 +179,45 @@ public static class ServerSnapshotMapper
             song.ExactTarget == null ? null : ToPeerFileTargetDto(song.ExactTarget));
     }
 
-    public static FileCandidateDto ToFileCandidateDto(FileCandidateSnapshot candidate)
-        => new(
-            new FileCandidateRefDto(candidate.Username, candidate.Filename),
-            candidate.Username,
-            candidate.Filename,
-            new PeerInfoDto(candidate.Peer.Username, candidate.Peer.HasFreeUploadSlot, candidate.Peer.UploadSpeed),
-            new FileMetadataDto(
-                Utils.GetFileNameSlsk(candidate.Filename),
-                candidate.Size,
-                candidate.Extension,
-                candidate.BitRate,
-                candidate.BitDepth,
-                candidate.SampleRate,
-                candidate.Length,
-                candidate.Attributes?.Select(ToFileAttributeDto).ToList()));
-
-    public static AlbumFolderDto ToAlbumFolderDto(AlbumFolderSnapshot folder, bool includeFiles)
-        => new(
-            new AlbumFolderRefDto(folder.Username, folder.FolderPath),
-            folder.Username,
-            folder.FolderPath,
-            new PeerInfoDto(
-                folder.Peer.Username,
-                folder.Peer.HasFreeUploadSlot,
-                folder.Peer.UploadSpeed),
-            folder.SearchFileCount,
-            folder.SearchAudioFileCount,
-            includeFiles
-                ? folder.Files.Select(file => ToFileCandidateDto(file.Candidate)).ToList()
-                : null,
-            folder.IsFullyRetrieved);
-
     public static SongQueryDto ToSongQueryDto(SongQuerySnapshot query)
         => new(query.Artist, query.Title, query.Album, query.URI, query.Length, query.ArtistMaybeWrong);
 
+    public static SongQueryDto ToSongQueryDto(SongQuery query)
+        => new(
+            Optional(query.Artist),
+            Optional(query.Title),
+            Optional(query.Album),
+            Optional(query.URI),
+            Optional(query.Length),
+            query.ArtistMaybeWrong);
+
+    public static SongQueryDto ToSongQueryDto(SongQueryDefinition query)
+        => new(
+            Optional(query.Artist),
+            Optional(query.Title),
+            Optional(query.Album),
+            Optional(query.Uri),
+            Optional(query.Length),
+            query.ArtistMaybeWrong);
+
     public static AlbumQueryDto ToAlbumQueryDto(AlbumQuerySnapshot query)
         => new(query.Artist, query.Album, query.SearchHint, query.URI, query.ArtistMaybeWrong);
+
+    public static AlbumQueryDto ToAlbumQueryDto(AlbumQuery query)
+        => new(
+            Optional(query.Artist),
+            Optional(query.Album),
+            Optional(query.SearchHint),
+            Optional(query.URI),
+            query.ArtistMaybeWrong);
+
+    public static AlbumQueryDto ToAlbumQueryDto(AlbumQueryDefinition query)
+        => new(
+            Optional(query.Artist),
+            Optional(query.Album),
+            Optional(query.SearchHint),
+            Optional(query.Uri),
+            query.ArtistMaybeWrong);
 
     public static ServerJobKind ToServerJobKind(JobSnapshotKind kind)
         => kind switch
@@ -224,6 +235,12 @@ public static class ServerSnapshotMapper
             _ => ServerJobKind.Generic,
         };
 
+    private static string? Optional(string value)
+        => value.Length == 0 ? null : value;
+
+    private static int? Optional(int value)
+        => value < 0 ? null : value;
+
     public static ServerJobKind ToServerJobKind(Job job) => job switch
     {
         ExtractJob => ServerJobKind.Extract,
@@ -238,6 +255,9 @@ public static class ServerSnapshotMapper
         AlbumAggregateJob => ServerJobKind.AlbumAggregate,
         _ => ServerJobKind.Generic,
     };
+
+    public static ServerJobRole ToServerJobRole(JobSemanticRole role)
+        => Enum.Parse<ServerJobRole>(role.ToString());
 
     public static ServerJobLifecycleState ToServerJobLifecycleState(JobLifecycleState state)
         => Enum.Parse<ServerJobLifecycleState>(state.ToString());

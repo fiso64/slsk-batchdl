@@ -57,6 +57,26 @@ internal static class UserBrowseDtoMapper
                 entry.Attributes?.Select(static attribute => new FileAttributeDto(
                     AttributeType(attribute.Type), attribute.Value)).ToArray()));
 
+    public static BrowseSearchEntryDto ToDto(PeerBrowseSearchEntry entry)
+        => new(
+            (BrowseSearchEntryKind)entry.Kind,
+            entry.EntryId,
+            entry.DirectoryId,
+            entry.ParentDirectoryId,
+            PeerIdentityValidator.ToDisplayText(entry.Name),
+            PeerIdentityValidator.ToDisplayText(entry.DisplayPath),
+            (ShareVisibility)entry.Visibility,
+            entry.PublicMatchingFileCount,
+            entry.PublicMatchingBytes,
+            entry.LockedMatchingFileCount,
+            entry.LockedMatchingBytes,
+            entry.FileSize,
+            entry.Extension is null ? null : PeerIdentityValidator.ToDisplayText(entry.Extension),
+            entry.BitRate,
+            entry.BitDepth,
+            entry.SampleRate,
+            entry.Length);
+
     private static string AttributeType(int type)
         => type switch
         {

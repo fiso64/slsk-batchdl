@@ -123,26 +123,28 @@ public sealed class ExactPeerFileTransferRunner
             stateChanged: (state) =>
             {
                 staleActivity?.ReportState(state.Transfer);
-                events.RaiseDownloadStateChanged(
+                events.RaiseDownloadStateChangedWithSpeed(
                     transferId,
                     owner,
                     target,
                     outputPath,
                     state.Transfer.State,
                     state.Transfer.BytesTransferred,
-                    target.Size ?? 0);
+                    target.Size ?? 0,
+                    state.Transfer.AverageSpeed);
             },
             progressUpdated: (progress) =>
             {
                 staleActivity?.ReportProgress(progress.Transfer);
                 owner.BytesTransferred = progress.PreviousBytesTransferred;
-                events.RaiseDownloadProgress(
+                events.RaiseDownloadProgressWithSpeed(
                     transferId,
                     owner,
                     target,
                     outputPath,
                     progress.PreviousBytesTransferred,
-                    target.Size ?? 0);
+                    target.Size ?? 0,
+                    progress.Transfer.AverageSpeed);
             }
         );
 

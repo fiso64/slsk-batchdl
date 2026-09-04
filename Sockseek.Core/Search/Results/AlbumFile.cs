@@ -19,6 +19,17 @@ public sealed class AlbumFile
     public static AlbumFile WithLazyQuery(Func<SongQuery> queryFactory, FileCandidate candidate)
         => new(AlbumFileMatch.WithLazyQuery(queryFactory, candidate));
 
+    internal static AlbumFile WithProjectionEvidence(
+        Func<SongQuery> queryFactory,
+        FileCandidate candidate,
+        Services.SearchConditionFacts conditionFacts,
+        Services.SearchProjectionSortKey sortKey)
+        => new(AlbumFileMatch.WithProjectionEvidence(
+            queryFactory,
+            candidate,
+            conditionFacts,
+            sortKey));
+
     internal AlbumFile(AlbumFileMatch match)
     {
         ArgumentNullException.ThrowIfNull(match);

@@ -31,6 +31,7 @@ public sealed class EngineStateStore
     private readonly Dictionary<Guid, HashSet<Guid>> childJobIdsByParent = [];
     private readonly Dictionary<Guid, Guid> resultJobIds = [];
     private readonly Dictionary<Guid, Guid> sourceJobIds = [];
+    private readonly HashSet<Guid> archivedSubmissionIds = [];
     private readonly HashSet<Guid> executionCompletedJobs = [];
     private readonly Dictionary<Guid, string> songTransferStates = [];
     private readonly Dictionary<Guid, TransferStateDto> activeTransfers = [];
@@ -95,6 +96,17 @@ public sealed class EngineStateStore
     public event Action<SearchStateDto>? SearchUpdated;
     public event Action<StateUpdateBatchDto>? StateBatchPublished;
 
+    public void SetSubmissionArchived(Guid submissionId, bool archived)
+    {
+        lock (gate)
+        {
+            if (archived)
+                archivedSubmissionIds.Add(submissionId);
+            else
+                archivedSubmissionIds.Remove(submissionId);
+        }
+    }
+
     internal EngineStateStoreRetainedWorkflowCounts RetainedWorkflowStateCounts
     {
         get
@@ -132,6 +144,27 @@ public sealed class EngineStateStore
         lock (gate)
             return activeTransfers.GetValueOrDefault(transferId)
                    ?? liveUploadTransfers.GetValueOrDefault(transferId);
+    }
+
+    public IReadOnlyList<TransferStateDto> GetActiveTransferSnapshot()
+    {
+        lock (gate)
+            return activeTransfers.Values.ToArray();
+    }
+
+    /// <summary>
+    /// Captures one command-resolution population, including queued uploads
+    /// which are intentionally absent from the compact active-state snapshot.
+    /// </summary>
+    public IReadOnlyList<TransferStateDto> GetCancellableTransferSnapshot()
+    {
+        lock (gate)
+        {
+            var snapshot = activeTransfers.ToDictionary(pair => pair.Key, pair => pair.Value);
+            foreach (var pair in liveUploadTransfers)
+                snapshot[pair.Key] = pair.Value;
+            return snapshot.Values.ToArray();
+        }
     }
 
     public LiveTransferDetail? GetLiveTransferDetail(Guid transferId)
@@ -175,12 +208,16 @@ public sealed class EngineStateStore
             }
             else
             {
-                var status = previous.Status == current.Status ? null : current.Status;
+                var status = TransferStatusEquals(previous.Status, current.Status)
+                    ? null
+                    : current.Status;
                 var progress = previous.Progress == current.Progress ? null : current.Progress;
                 var scheduling = previous.Scheduling == current.Scheduling
                     ? null
                     : current.Scheduling;
                 activeTransfers[upload.TransferId] = current;
+                if (status == null && progress == null && scheduling == null)
+                    return;
                 delta = new TransferDeltaDto(
                     upload.TransferId,
                     Math.Max(current.Revision, previous.Revision + 1),
@@ -416,8 +453,8 @@ public sealed class EngineStateStore
                     .ToList(),
                 activeTransfers.Values
                     .Where(transfer =>
-                        transfer.Identity.WorkflowId is { } workflowId
-                        && workflowIds.Contains(workflowId))
+                        transfer.Identity.WorkflowId is null
+                        || workflowIds.Contains(transfer.Identity.WorkflowId.Value))
                     .OrderBy(transfer => transfer.TransferId)
                     .ToList());
         }
@@ -1538,15 +1575,21 @@ public sealed class EngineStateStore
             return new TransferDeltaDto(transfer.Id, current.Revision, Added: current);
         }
 
-        var status = previous.Status == current.Status ? null : current.Status;
+        var status = TransferStatusEquals(previous.Status, current.Status)
+            ? null
+            : current.Status;
         var progress = previous.Progress == current.Progress ? null : current.Progress;
+        var scheduling = previous.Scheduling == current.Scheduling
+            ? null
+            : current.Scheduling;
         if (!isTerminal)
             activeTransfers[transfer.Id] = current;
         return new TransferDeltaDto(
             transfer.Id,
             Math.Max(current.Revision, previous.Revision + 1),
             Status: status,
-            Progress: progress);
+            Progress: progress,
+            Scheduling: scheduling);
     }
 
     private IReadOnlyList<StateUpdateBatchDto> CreateStateBatches(
@@ -1756,7 +1799,10 @@ public sealed class EngineStateStore
             ?? transferWorkflowIds.GetValueOrDefault(delta.TransferId);
 
     private static TransferStateDto ToTransferState(TransferSnapshot transfer, bool isTerminal)
-        => new(
+    {
+        bool terminal = isTerminal
+            || transfer.TerminalOutcome != TransferSnapshotTerminalOutcome.None;
+        return new(
             transfer.Id,
             transfer.Revision,
             new TransferIdentityFieldsDto(
@@ -1771,10 +1817,48 @@ public sealed class EngineStateStore
                 transfer.State ?? "",
                 transfer.LocalPath,
                 transfer.AttemptCount,
-                isTerminal),
+                terminal,
+                transfer.TerminalOutcome switch
+                {
+                    TransferSnapshotTerminalOutcome.Succeeded => TransferTerminalOutcome.Succeeded,
+                    TransferSnapshotTerminalOutcome.Cancelled => TransferTerminalOutcome.Cancelled,
+                    TransferSnapshotTerminalOutcome.Failed => TransferTerminalOutcome.Failed,
+                    TransferSnapshotTerminalOutcome.Interrupted => TransferTerminalOutcome.Interrupted,
+                    _ => TransferTerminalOutcome.None,
+                },
+                transfer.FailureReason switch
+                {
+                    Sockseek.Core.Events.TransferFailureReason.PeerFailure => Sockseek.Api.TransferFailureReason.ConnectionFailed,
+                    Sockseek.Core.Events.TransferFailureReason.Stale => Sockseek.Api.TransferFailureReason.TransferTimedOut,
+                    Sockseek.Core.Events.TransferFailureReason.Finalization => Sockseek.Api.TransferFailureReason.Unknown,
+                    Sockseek.Core.Events.TransferFailureReason.Unknown => Sockseek.Api.TransferFailureReason.Unknown,
+                    _ => Sockseek.Api.TransferFailureReason.None,
+                },
+                transfer.CancellationReason switch
+                {
+                    Sockseek.Core.Events.TransferCancellationReason.Requested => TransferCancellationSource.User,
+                    Sockseek.Core.Events.TransferCancellationReason.ManualSkip => TransferCancellationSource.User,
+                    _ => TransferCancellationSource.None,
+                },
+                terminal
+                    ? []
+                    :
+                    [
+                        new ResourceActionDto(
+                            ServerResourceActionKind.Cancel,
+                            "POST",
+                            $"/api/transfers/{transfer.Id:D}/cancel"),
+                    ]),
             new TransferProgressFieldsDto(
                 transfer.BytesTransferred,
-                transfer.TotalBytes));
+                transfer.TotalBytes,
+                transfer.BytesPerSecond,
+                transfer.LastProgressAtUtc),
+            transfer.RequestedAtUtc is { } requested
+                ? new TransferSchedulingFieldsDto(requested, transfer.StartedAtUtc)
+                : null,
+            ToFileMetadata(transfer.File));
+    }
 
     private static TransferStateDto ToUploadTransferState(
         UploadTransferSnapshot transfer)
@@ -1801,7 +1885,9 @@ public sealed class EngineStateStore
                 "SoulseekPeer",
                 transfer.Username,
                 transfer.RemotePath,
-                null),
+                null,
+                transfer.GroupRef,
+                transfer.GroupDisplayPath),
             new TransferStatusFieldsDto(
                 transfer.State.ToString(),
                 null,
@@ -1841,8 +1927,25 @@ public sealed class EngineStateStore
                 transfer.LastProgressAtUtc),
             new TransferSchedulingFieldsDto(
                 transfer.RequestedAtUtc,
-                transfer.Attempt?.StartedAtUtc));
+                transfer.Attempt?.StartedAtUtc),
+            ToFileMetadata(transfer.File));
     }
+
+    private static FileMetadataDto? ToFileMetadata(
+        TransferFileMetadataSnapshot? file)
+        => file is null
+            ? null
+            : new FileMetadataDto(
+                file.Name,
+                file.Size,
+                file.Extension,
+                file.BitRate,
+                file.BitDepth,
+                file.SampleRate,
+                file.Length,
+                file.Attributes?.Select(attribute => new FileAttributeDto(
+                    attribute.Type,
+                    attribute.Value)).ToArray());
 
     private static TransferAttemptHistoryDto? ToUploadAttempt(UploadTransferSnapshot transfer)
     {
@@ -1901,6 +2004,18 @@ public sealed class EngineStateStore
             && left.CancellationSource == right.CancellationSource
             && left.AvailableActions.SequenceEqual(right.AvailableActions);
 
+    private static bool TransferStatusEquals(
+        TransferStatusFieldsDto left,
+        TransferStatusFieldsDto right)
+        => left.State == right.State
+            && left.LocalPath == right.LocalPath
+            && left.AttemptCount == right.AttemptCount
+            && left.IsTerminal == right.IsTerminal
+            && left.TerminalOutcome == right.TerminalOutcome
+            && left.FailureReason == right.FailureReason
+            && left.CancellationSource == right.CancellationSource
+            && left.AvailableActions.SequenceEqual(right.AvailableActions);
+
     private static bool WorkflowSummaryEquals(WorkflowSummaryDto left, WorkflowSummaryDto right)
         => left.WorkflowId == right.WorkflowId
             && left.Title == right.Title
@@ -1948,6 +2063,15 @@ public sealed class EngineStateStore
             filtered = filtered.Where(record => record.Summary.TerminalOutcome == query.TerminalOutcome.Value);
         if (query.SkipReason.HasValue)
             filtered = filtered.Where(record => record.Summary.SkipReason == query.SkipReason.Value);
+        if (query.SubmissionId.HasValue)
+            filtered = filtered.Where(record => record.Summary.SubmissionId == query.SubmissionId.Value);
+        if (query.Role.HasValue)
+            filtered = filtered.Where(record => record.Summary.Role == query.Role.Value);
+        filtered = query.Archived
+            ? filtered.Where(record => record.Summary.SubmissionId is Guid id
+                && archivedSubmissionIds.Contains(id))
+            : filtered.Where(record => record.Summary.SubmissionId is not Guid id
+                || !archivedSubmissionIds.Contains(id));
         return filtered.Where(record => query.ParentJobId.HasValue || query.IncludeAll || IsDefaultRoot(record));
     }
 

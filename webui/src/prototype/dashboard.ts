@@ -362,17 +362,23 @@ export const emptyDashboardData = {
 } satisfies Record<DashboardRangeId, DashboardRangeData>;
 
 
-// Contract semantics for the future single dashboard aggregate endpoint. These
-// values are intentionally explicit even though the current visual fixtures are mocked.
-import type { ProposedDashboardAnalyticsDto } from './contracts/dashboard';
+import type { DashboardAnalyticsDto, DashboardAnalyticsCoverageDto } from './contracts/dashboard';
 
-const dashboardRangeContracts: Record<DashboardRangeId, ProposedDashboardAnalyticsDto['range']> = {
-  '24h': { startUtc: '2026-08-06T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 7_200, comparisonStartUtc: '2026-08-05T08:15:00.000Z', comparisonEndUtc: '2026-08-06T08:15:00.000Z', partialRetention: false },
-  '7d': { startUtc: '2026-07-31T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 43_200, comparisonStartUtc: '2026-07-24T08:15:00.000Z', comparisonEndUtc: '2026-07-31T08:15:00.000Z', partialRetention: false },
-  '30d': { startUtc: '2026-07-08T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 172_800, comparisonStartUtc: '2026-06-08T08:15:00.000Z', comparisonEndUtc: '2026-07-08T08:15:00.000Z', partialRetention: false },
-  '90d': { startUtc: '2026-05-09T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 518_400, comparisonStartUtc: '2026-02-08T08:15:00.000Z', comparisonEndUtc: '2026-05-09T08:15:00.000Z', partialRetention: false },
-  '1y': { startUtc: '2025-08-07T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 2_102_400, comparisonStartUtc: '2024-08-07T08:15:00.000Z', comparisonEndUtc: '2025-08-07T08:15:00.000Z', partialRetention: false },
-  all: { startUtc: '2024-01-01T00:00:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 5_184_000, comparisonStartUtc: null, comparisonEndUtc: null, partialRetention: false },
+interface DashboardFixtureRange {
+  startUtc: string;
+  endUtc: string;
+  bucketSeconds: number;
+  comparisonStartUtc: string | null;
+  comparisonEndUtc: string | null;
+}
+
+const dashboardRangeContracts: Record<DashboardRangeId, DashboardFixtureRange> = {
+  '24h': { startUtc: '2026-08-06T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 7_200, comparisonStartUtc: '2026-08-05T08:15:00.000Z', comparisonEndUtc: '2026-08-06T08:15:00.000Z' },
+  '7d': { startUtc: '2026-07-31T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 43_200, comparisonStartUtc: '2026-07-24T08:15:00.000Z', comparisonEndUtc: '2026-07-31T08:15:00.000Z' },
+  '30d': { startUtc: '2026-07-08T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 172_800, comparisonStartUtc: '2026-06-08T08:15:00.000Z', comparisonEndUtc: '2026-07-08T08:15:00.000Z' },
+  '90d': { startUtc: '2026-05-09T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 518_400, comparisonStartUtc: '2026-02-08T08:15:00.000Z', comparisonEndUtc: '2026-05-09T08:15:00.000Z' },
+  '1y': { startUtc: '2025-08-07T08:15:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 2_102_400, comparisonStartUtc: '2024-08-07T08:15:00.000Z', comparisonEndUtc: '2025-08-07T08:15:00.000Z' },
+  all: { startUtc: '2024-01-01T00:00:00.000Z', endUtc: '2026-08-07T08:15:00.000Z', bucketSeconds: 5_184_000, comparisonStartUtc: null, comparisonEndUtc: null },
 };
 
 function decimalBytes(label: string): number {
@@ -384,37 +390,61 @@ function decimalBytes(label: string): number {
 export function dashboardContractFor(
   range: DashboardRangeId,
   options: { data?: DashboardRangeData; partialRetention?: boolean } = {},
-): ProposedDashboardAnalyticsDto {
+): DashboardAnalyticsDto {
   const data = options.data ?? dashboardData[range];
   const partialRetention = options.partialRetention ?? false;
+  const fixtureRange = dashboardRangeContracts[range];
   const shareRatio = Number(data.summary.shareRatio);
   const ratioDelta = Number(data.summary.ratioDelta);
+  const coverage: DashboardAnalyticsCoverageDto = {
+    state: partialRetention ? 'Degraded' : 'Available',
+    completeFromUtc: fixtureRange.startUtc,
+    isComplete: !partialRetention,
+    reason: partialRetention ? 'The selected range begins before retained accounting coverage.' : null,
+  };
+  const start = Date.parse(fixtureRange.startUtc);
+  const bucketMilliseconds = fixtureRange.bucketSeconds * 1_000;
+  const bandwidth = data.downloadMbps.map((download, index) => ({
+    startUtc: new Date(start + index * bucketMilliseconds).toISOString(),
+    endUtc: new Date(start + (index + 1) * bucketMilliseconds).toISOString(),
+    downloadBytes: Math.round(download * 1_000_000 / 8 * fixtureRange.bucketSeconds),
+    uploadBytes: Math.round((data.uploadMbps[index] ?? 0) * 1_000_000 / 8 * fixtureRange.bucketSeconds),
+  }));
+  const summary = {
+    downloadedBytes: decimalBytes(data.summary.downloaded),
+    downloadedFiles: data.summary.downloadFiles,
+    uploadedBytes: decimalBytes(data.summary.uploaded),
+    uploadedFiles: data.summary.uploadFiles,
+    distinctPeers: data.summary.distinctPeers,
+    shareRatio: Number.isFinite(shareRatio) ? shareRatio : null,
+  };
   return {
-    contract: 'proposed-dashboard-analytics-v3',
-    range: { ...dashboardRangeContracts[range], partialRetention },
-    semantics: {
-      byteAccounting: 'bytes-transferred-during-range-by-direction',
-      peerBytes: 'bytes-transferred-during-range-by-direction-and-remote-username',
-      peerFiles: 'distinct-transfers-with-byte-activity-in-range-by-direction',
-      contentIdentity: 'logical-download-source-path',
-      errorPopulation: 'terminal-transfer-attempt-failures-completed-in-range',
-      shareRatio: 'uploaded-bytes/divided-by-downloaded-bytes',
-      distinctPeers: 'unique-remote-usernames-with-byte-activity-across-both-directions-in-range',
+    accountingVersion: 1,
+    range: {
+      range,
+      startUtc: fixtureRange.startUtc,
+      endUtc: fixtureRange.endUtc,
+      bucketSeconds: fixtureRange.bucketSeconds,
+      coverage,
     },
-    downloadMbps: data.downloadMbps,
-    uploadMbps: data.uploadMbps,
-    downloadPeers: data.downloadUsers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
-    uploadPeers: data.uploadUsers.map((peer) => ({ username: peer.peer, bytes: decimalBytes(peer.transferred), fileCount: peer.files })),
+    bandwidth,
+    downloadPeers: data.downloadUsers.map((peer) => ({ username: peer.peer, transferredBytes: decimalBytes(peer.transferred), successfulFileCount: peer.files })),
+    uploadPeers: data.uploadUsers.map((peer) => ({ username: peer.peer, transferredBytes: decimalBytes(peer.transferred), successfulFileCount: peer.files })),
     content: data.content.map((item) => ({ identity: item.folder, displayPath: item.folder, downloadCount: item.downloads, distinctPeerCount: item.peers })),
-    errors: data.errors.map((error, index) => ({ key: `error-${index}`, message: error.error, count: error.count, lastSeenUtc: '2026-08-07T07:44:00.000Z' })),
-    summary: {
-      downloadedBytes: decimalBytes(data.summary.downloaded), downloadedFiles: data.summary.downloadFiles,
-      uploadedBytes: decimalBytes(data.summary.uploaded), uploadedFiles: data.summary.uploadFiles,
-      distinctPeers: data.summary.distinctPeers,
-      shareRatio: Number.isFinite(shareRatio) ? shareRatio : null,
-      comparisonShareRatio: dashboardRangeContracts[range].comparisonStartUtc && Number.isFinite(shareRatio) && Number.isFinite(ratioDelta)
-        ? Math.max(0, shareRatio - ratioDelta)
-        : null,
-    },
+    errors: data.errors.map((error) => ({ reason: error.error, count: error.count, lastSeenUtc: '2026-08-07T07:44:00.000Z' })),
+    summary,
+    comparison: fixtureRange.comparisonStartUtc && fixtureRange.comparisonEndUtc
+      ? {
+          startUtc: fixtureRange.comparisonStartUtc,
+          endUtc: fixtureRange.comparisonEndUtc,
+          coverage,
+          summary: {
+            ...summary,
+            shareRatio: Number.isFinite(shareRatio) && Number.isFinite(ratioDelta)
+              ? Math.max(0, shareRatio - ratioDelta)
+              : null,
+          },
+        }
+      : null,
   };
 }

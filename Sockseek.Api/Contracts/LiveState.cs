@@ -124,8 +124,8 @@ public sealed record SharingStateDto(
     DaemonFeatureState State,
     string? Reason,
     IReadOnlyList<string> Aliases,
-    int BlockedUsernameCount,
-    int BlockedIpAddressCount,
+    int UploadBlockedUsernameCount,
+    int UploadBlockedIpAddressCount,
     ShareCatalogStateDto Catalog,
     ShareScanStateDto? ActiveScan,
     ShareScanStateDto? LastScan);
@@ -183,7 +183,9 @@ public sealed record JobLifecycleFieldsDto(
 /// <summary>A cohesive replacement for current discovery counters.</summary>
 public sealed record JobDiscoveryFieldsDto(
     int? RawResultCount,
-    int? LockedFileCount);
+    int? LockedFileCount,
+    int? PublicFileCount = null,
+    int? ObservedPeerCount = null);
 
 /// <summary>A cohesive replacement for job graph and provenance relationships.</summary>
 public sealed record JobRelationshipFieldsDto(
@@ -225,7 +227,9 @@ public sealed record JobStateDto(
                 summary.AvailableActions),
             new JobDiscoveryFieldsDto(
                 summary.DiscoveryRawResultCount,
-                summary.DiscoveryLockedFileCount),
+                summary.DiscoveryLockedFileCount,
+                summary.DiscoveryPublicFileCount,
+                summary.DiscoveryObservedPeerCount),
             new JobRelationshipFieldsDto(
                 summary.ParentJobId,
                 summary.ResultJobId,
@@ -255,7 +259,10 @@ public sealed record JobStateDto(
             Lifecycle.AvailableActions,
             Lifecycle.FailureDetail,
             Lifecycle.CancellationSource,
-            Display.PrintOption);
+            Display.PrintOption,
+            DiscoveryPublicFileCount: Discovery.PublicFileCount,
+            DiscoveryObservedPeerCount: Discovery.ObservedPeerCount);
+
 }
 
 /// <summary>
@@ -292,7 +299,9 @@ public sealed record TransferIdentityFieldsDto(
     string Source,
     string? Username,
     string? RemotePath,
-    string? CandidateKey);
+    string? CandidateKey,
+    string? GroupRef = null,
+    string? GroupDisplayPath = null);
 
 [JsonConverter(typeof(JsonStringEnumConverter<TransferTerminalOutcome>))]
 public enum TransferTerminalOutcome
@@ -362,7 +371,8 @@ public sealed record TransferStateDto(
     TransferIdentityFieldsDto Identity,
     TransferStatusFieldsDto Status,
     TransferProgressFieldsDto Progress,
-    TransferSchedulingFieldsDto? Scheduling = null);
+    TransferSchedulingFieldsDto? Scheduling = null,
+    FileMetadataDto? File = null);
 
 /// <summary>
 /// A new transfer uses Added. Existing transfers replace only the supplied state and

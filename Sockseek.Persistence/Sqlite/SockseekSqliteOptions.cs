@@ -21,7 +21,16 @@ public static class SockseekDbContextOptions
         if (options.BusyTimeoutMilliseconds <= 0)
             throw new ArgumentOutOfRangeException(nameof(options), "Busy timeout must be positive.");
 
-        var connectionString = new SqliteConnectionStringBuilder
+        string connectionString = CreateConnectionString(options);
+
+        return new DbContextOptionsBuilder<SockseekDbContext>()
+            .UseSqlite(connectionString, sqlite => sqlite.MigrationsAssembly(typeof(SockseekDbContext).Assembly.FullName))
+            .AddInterceptors(new SqliteConnectionInterceptor(options.BusyTimeoutMilliseconds))
+            .Options;
+    }
+
+    internal static string CreateConnectionString(SockseekSqliteOptions options)
+        => new SqliteConnectionStringBuilder
         {
             DataSource = options.GetFullDatabasePath(),
             Mode = SqliteOpenMode.ReadWriteCreate,
@@ -30,10 +39,13 @@ public static class SockseekDbContextOptions
             DefaultTimeout = options.DefaultTimeoutSeconds,
             Pooling = true,
         }.ToString();
+}
 
-        return new DbContextOptionsBuilder<SockseekDbContext>()
-            .UseSqlite(connectionString, sqlite => sqlite.MigrationsAssembly(typeof(SockseekDbContext).Assembly.FullName))
-            .AddInterceptors(new SqliteConnectionInterceptor(options.BusyTimeoutMilliseconds))
-            .Options;
+internal static class SqliteConnectionPool
+{
+    public static void Clear(string connectionString)
+    {
+        using var connection = new SqliteConnection(connectionString);
+        SqliteConnection.ClearPool(connection);
     }
 }

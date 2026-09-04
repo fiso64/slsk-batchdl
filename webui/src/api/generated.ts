@@ -43,15 +43,6 @@ export interface paths {
                         "application/json": components["schemas"]["ApiErrorDto"];
                     };
                 };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiErrorDto"];
-                    };
-                };
                 /** @description Service Unavailable */
                 503: {
                     headers: {
@@ -139,6 +130,100 @@ export interface paths {
             };
         };
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{username}/restrictions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets independent upload-access and private-message restrictions for one exact username. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserRestrictionsDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        /**
+         * Sets or removes one durable exact-username restriction override.
+         * @description Upload-access blocking denies future search, browse, directory, and upload admissions from the peer. Private-message blocking discards future incoming DMs only. Allowed supersedes that kind's configured username block. Null removes only that override. Configured upload IP denial remains independent.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetUserRestrictionOverrideRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UserRestrictionsDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
         post?: never;
         delete?: never;
         options?: never;
@@ -766,6 +851,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user-browses/{browseId}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Searches one immutable share artifact as flat directory/file rows. */
+        get: {
+            parameters: {
+                query: {
+                    query: string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    browseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BrowseSearchPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Gone */
+                410: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Internal Server Error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user-browses/{browseId}/downloads": {
         parameters: {
             query?: never;
@@ -838,6 +1019,1213 @@ export interface paths {
                 };
                 /** @description Bad Gateway */
                 502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/input-artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Streams an immutable browser input into daemon-owned expiring storage.
+         * @description The browser filename is retained only as safe presentation metadata and is never used as a daemon path. No internal file-size cap is imposed.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    fileName?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/octet-stream": string;
+                    "text/csv": string;
+                    "text/plain": string;
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InputArtifactDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/input-artifacts/{artifactId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets immutable artifact metadata. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    artifactId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InputArtifactDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/job-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Creates an asynchronous preview from the shared Core planner.
+         * @description Returns the Planning resource immediately. Poll its summary revision and page nodes while planning continues.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateJobPreviewRequestDto"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CreateJobPreviewResponseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/job-previews/{previewId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets the fixed-size preview summary and current revision. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    previewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobPreviewSummaryDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/job-previews/{previewId}/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages preview roots or the direct children of one stable planner ref. */
+        get: {
+            parameters: {
+                query?: {
+                    parentRef?: string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    previewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobPreviewNodeDto"][];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/job-previews/{previewId}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commits a client-owned revision-bound selection without replanning or rereading its source. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    previewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CommitJobPreviewRequestDto"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommitJobPreviewResponseDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/{jobId}/search-views": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Creates a revisioned projection over a live or retained search.
+         * @description Returns revision zero immediately. Poll the latest summary revision while the search is running, then page its typed collections from one immutable revision.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    jobId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateSearchViewRequestDto"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewSummaryDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets fixed-size counters and the latest immutable revision. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewSummaryDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pages file rows from one immutable search-view revision.
+         * @description The opaque cursor is authenticated and bound to the view and revision. Counters in the response describe the same revision as the rows.
+         */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewFilePageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages exact peer-directory summaries from one immutable revision. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewDirectoryPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/directories/{directoryRef}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages exact relative child paths under a directory in one immutable revision. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                    directoryRef: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewDirectoryFilePageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/directories/retrieve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retrieves an exact peer directory issued by a Search View revision.
+         * @description Runs the generic folder-retrieval job. Completion publishes retrieved totals and child refs as a new immutable Search View revision; the issuing revision remains unchanged.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RetrieveSearchViewDirectoryRequestDto"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobSummaryDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/aggregate-tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages aggregate-track group summaries from one immutable revision. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewAggregateTrackPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/aggregate-tracks/{groupRef}/alternatives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages one aggregate-track group's ordered alternatives. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                    groupRef: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewAggregateTrackOptionPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/aggregate-albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages aggregate-album group summaries from one immutable revision. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewAggregateAlbumPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/aggregate-albums/{groupRef}/alternatives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pages one aggregate-album group's directory alternatives. */
+        get: {
+            parameters: {
+                query: {
+                    revision: number | string;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                    groupRef: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewAggregateAlbumOptionPageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Gets the latest fixed-size summary for inexpensive live refresh.
+         * @description When HasNewRevision is true, refetch only visible pages and expanded groups at Summary.Revision.
+         */
+        get: {
+            parameters: {
+                query: {
+                    afterRevision: number | string;
+                };
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchViewUpdateDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/search-views/{viewId}/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commits a client-owned revision-bound selection as one submission.
+         * @description The fixed-size receipt reports independent resolution outcomes; runtime jobs are traversed through the jobs API.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    viewId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CommitSearchViewSelectionRequestDto"];
+                };
+            };
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CommitSearchViewSelectionResponseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3588,6 +4976,215 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lists durable accepted submissions newest first.
+         * @description Archived submissions are excluded by default. Traverse runtime jobs with /api/jobs?submissionId= rather than embedding them here.
+         */
+        get: {
+            parameters: {
+                query: {
+                    archived: boolean;
+                    cursor?: string;
+                    limit?: number | string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SubmissionSummaryDto"][];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/submissions/{submissionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gets safe durable submission metadata. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    submissionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SubmissionDetailDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/submissions/{submissionId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archives or restores one terminal submission.
+         * @description Archive is reversible. A nonterminal submission is rejected without affecting unrelated submissions.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    submissionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetSubmissionArchivedRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SubmissionArchiveResponseDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/submissions/{submissionId}/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reruns a submission from its retained normalized command and effective settings.
+         * @description Current credentials are rebound only for retained credential slots. Current defaults and profiles do not replace the retained root settings.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    submissionId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accepted */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobSummaryDto"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs": {
         parameters: {
             query?: never;
@@ -3597,7 +5194,7 @@ export interface paths {
         };
         /**
          * Lists known jobs.
-         * @description Default results contain execution roots. Set parentJobId for direct children or includeAll=true for a flat workflow list.
+         * @description Default results contain execution roots. Set parentJobId for direct children, submissionId or role for submission semantics, or includeAll=true for a flat workflow list.
          */
         get: {
             parameters: {
@@ -3608,6 +5205,9 @@ export interface paths {
                     kind?: components["schemas"]["ServerJobKind"];
                     workflowId?: string;
                     parentJobId?: string;
+                    submissionId?: string;
+                    role?: components["schemas"]["ServerJobRole"];
+                    archived: boolean;
                     includeAll: boolean;
                     cursor?: string;
                     limit?: number | string;
@@ -3788,7 +5388,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Lists durable transfer history. */
+        /**
+         * Pages the combined newest-first live and retained transfer timeline.
+         * @description The cursor is a moving keyset over stable creation time and transfer ID. New transfers may appear above an existing traversal; status changes do not reorder rows.
+         */
         get: {
             parameters: {
                 query?: {
@@ -3801,6 +5404,7 @@ export interface paths {
                     username?: string;
                     fromUtc?: string;
                     toUtc?: string;
+                    archived?: boolean;
                     cursor?: string;
                     limit?: number | string;
                 };
@@ -3816,7 +5420,57 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["TransferHistoryDto"][];
+                        "application/json": components["schemas"]["TransferTimelinePageDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dashboard/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Gets bounded transfer analytics for a dashboard range.
+         * @description Ranges are 24h, 7d, 30d, 90d, 1y, or all. Coverage explicitly reports retention and persistence degradation; byte activity is cumulative-attempt accounting, not transfer creation size.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    range?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardAnalyticsDto"];
                     };
                 };
                 /** @description Bad Request */
@@ -4174,7 +5828,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancels a queued or active upload transfer. */
+        /** Cancels a queued or active download or upload transfer. */
         post: {
             parameters: {
                 query?: never;
@@ -4221,6 +5875,151 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ApiErrorDto"];
                     };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transfers/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancels a snapshot of transfers by direction and queue state.
+         * @description Targets are resolved once, then cancelled independently. Races and per-transfer failures are reported in a fixed-size receipt.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BulkCancelTransfersRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TransferCommandReceiptDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transfers/{transferId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archives or restores one terminal retained transfer.
+         * @description Archive is reversible and separate from cancellation; a nonterminal transfer is rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    transferId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetTransferArchivedRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TransferCommandReceiptDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/transfers/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archives or restores filtered terminal transfer history.
+         * @description The command is reversible, excludes active transfers, and returns bounded outcome counts.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ArchiveTransfersRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TransferCommandReceiptDto"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -4281,423 +6080,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Gets file candidates for a search-like job. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfFileCandidateDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/files/project": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Projects search results as file candidates. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FileSearchProjectionRequestDto"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfFileCandidateDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/folders": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Gets folder candidates for an album search-like job.
-         * @description Set includeFiles=true only when the client needs selectable files. Folder file counts can come from search results and may not represent a full browse of the remote folder.
-         */
-        get: {
-            parameters: {
-                query: {
-                    includeFiles: boolean;
-                };
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAlbumFolderDto"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiErrorDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/folders/project": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Projects search results as album folders. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["FolderSearchProjectionRequestDto"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAlbumFolderDto"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiErrorDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/aggregate-tracks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Gets aggregate track candidates. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAggregateTrackCandidateDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/aggregate-tracks/project": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Projects search results as aggregate track candidates. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["AggregateTrackProjectionRequestDto"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAggregateTrackCandidateDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/aggregate-albums": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Gets aggregate album candidates. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAggregateAlbumCandidateDto"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiErrorDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/jobs/{jobId}/results/aggregate-albums/project": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Projects search results as aggregate album candidates. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    jobId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["AggregateAlbumProjectionRequestDto"];
-                };
-            };
-            responses: {
-                /** @description OK */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SearchResultSnapshotDtoOfAggregateAlbumCandidateDto"];
-                    };
-                };
-                /** @description Bad Request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ApiErrorDto"];
-                    };
-                };
-                /** @description Not Found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -5244,6 +6626,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jobs/effective-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolves the effective settings for a job draft without submitting it.
+         * @description Uses the same typed settings composer and validation rules as direct Start. Secret and command values are redacted; matched profiles and safe per-field provenance are returned for Review and diagnostics.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ResolveEffectiveSettingsRequestDto"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResolveEffectiveSettingsResponseDto"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiErrorDto"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/search": {
         parameters: {
             query?: never;
@@ -5359,7 +6793,7 @@ export interface paths {
         put?: never;
         /**
          * Submits an album search job.
-         * @description Album search jobs are suitable for exploratory pick-then-download UIs: inspect projected folder candidates from the result endpoints, then start a follow-up folder download from the selected ref.
+         * @description Album search jobs are suitable for exploratory pick-then-download clients: create an immutable Search View, page its directory projection, then commit revision-bound refs.
          */
         post: {
             parameters: {
@@ -5799,26 +7233,6 @@ export interface components {
         AddRoomMemberRequestDto: {
             username: string;
         };
-        AggregateAlbumCandidateDto: {
-            query: components["schemas"]["AlbumQueryDto"];
-            itemName: null | string;
-            folders?: null | components["schemas"]["AlbumFolderDto"][];
-        };
-        AggregateAlbumProjectionRequestDto: {
-            albumQuery?: null | components["schemas"]["AlbumQueryDto"];
-            /** @default false */
-            includeFolders: boolean;
-        };
-        AggregateTrackCandidateDto: {
-            query: components["schemas"]["SongQueryDto"];
-            itemName: null | string;
-            candidates?: null | components["schemas"]["FileCandidateDto"][];
-        };
-        AggregateTrackProjectionRequestDto: {
-            songQuery?: null | components["schemas"]["SongQueryDto"];
-            /** @default false */
-            includeCandidates: boolean;
-        };
         AlbumArtOption: number;
         AlbumFolderDownloadSelectionDto: {
             files?: null | components["schemas"]["FileCandidateRefDto"][];
@@ -5826,19 +7240,6 @@ export interface components {
             exactFiles: boolean;
             /** @default false */
             skipTrackCountVerification: boolean;
-        };
-        AlbumFolderDto: {
-            ref: components["schemas"]["AlbumFolderRefDto"];
-            username: string;
-            folderPath: string;
-            peer: components["schemas"]["PeerInfoDto"];
-            /** Format: int32 */
-            fileCount: number | string;
-            /** Format: int32 */
-            audioFileCount: number | string;
-            files?: null | components["schemas"]["FileCandidateDto"][];
-            /** @default false */
-            isFullyRetrieved: boolean;
         };
         AlbumFolderRefDto: {
             username: string;
@@ -5859,6 +7260,17 @@ export interface components {
         ArchiveConversationRequestDto: {
             /** @default true */
             archived: boolean;
+        };
+        ArchiveTransfersRequestDto: {
+            /** @default true */
+            archived: boolean;
+            direction?: null | string;
+            terminalOutcome?: null | string;
+            username?: null | string;
+            /** Format: date-time */
+            fromUtc?: null | string;
+            /** Format: date-time */
+            toUtc?: null | string;
         };
         AvailableRoomDto: {
             name: string;
@@ -5906,6 +7318,64 @@ export interface components {
             directoryId: number | string;
             visibility: components["schemas"]["ShareVisibility"];
             file: components["schemas"]["FileMetadataDto"];
+        };
+        BrowseSearchEntryDto: {
+            kind: components["schemas"]["BrowseSearchEntryKind"];
+            /** Format: int64 */
+            entryId: number | string;
+            /** Format: int64 */
+            directoryId: number | string;
+            /** Format: int64 */
+            parentDirectoryId: null | number | string;
+            name: string;
+            displayPath: string;
+            visibility: components["schemas"]["ShareVisibility"];
+            /** Format: int64 */
+            publicMatchingFileCount: number | string;
+            /** Format: int64 */
+            publicMatchingBytes: number | string;
+            /** Format: int64 */
+            lockedMatchingFileCount: number | string;
+            /** Format: int64 */
+            lockedMatchingBytes: number | string;
+            /** Format: int64 */
+            fileSize: null | number | string;
+            extension: null | string;
+            /** Format: int32 */
+            bitRate: null | number | string;
+            /** Format: int32 */
+            bitDepth: null | number | string;
+            /** Format: int32 */
+            sampleRate: null | number | string;
+            /** Format: int32 */
+            length: null | number | string;
+        };
+        /** @enum {unknown} */
+        BrowseSearchEntryKind: "directory" | "file";
+        BrowseSearchPageDto: {
+            /** Format: uuid */
+            browseId: string;
+            /** Format: int64 */
+            browseRevision: number | string;
+            query: string;
+            items: components["schemas"]["BrowseSearchEntryDto"][];
+            /** Format: int64 */
+            publicMatchingFileCount: number | string;
+            /** Format: int64 */
+            publicMatchingBytes: number | string;
+            /** Format: int64 */
+            lockedMatchingFileCount: number | string;
+            /** Format: int64 */
+            lockedMatchingBytes: number | string;
+            nextCursor: null | string;
+            /** Format: int64 */
+            matchingFileCount?: number | string;
+            /** Format: int64 */
+            matchingBytes?: number | string;
+        };
+        BulkCancelTransfersRequestDto: {
+            direction: components["schemas"]["TransferCommandDirection"];
+            scope?: components["schemas"]["TransferCancellationScope"];
         };
         CancelJobsResponseDto: {
             /** Format: int32 */
@@ -6012,6 +7482,60 @@ export interface components {
             replace?: null | string[];
             append?: null | string[];
         };
+        CommitJobPreviewRequestDto: {
+            /** Format: int64 */
+            revision: number | string;
+            selection: components["schemas"]["RefSelectionExpressionDto"];
+            /** Format: uuid */
+            idempotencyKey: string;
+        };
+        CommitJobPreviewResponseDto: {
+            /** Format: uuid */
+            previewId: string;
+            /** Format: uuid */
+            submissionId: null | string;
+            /** Format: uuid */
+            workflowId: null | string;
+            /** Format: int32 */
+            requestedCount: number | string;
+            /** Format: int32 */
+            resolvedCount: number | string;
+            /** Format: int32 */
+            submittedCount: number | string;
+            /** Format: int32 */
+            skippedCount: number | string;
+            /** Format: int32 */
+            rejectedCount: number | string;
+            rejectionReasons: components["schemas"]["SubmissionReasonCountDto"][];
+        };
+        CommitSearchViewSelectionRequestDto: {
+            /** Format: int64 */
+            revision: number | string;
+            selection: components["schemas"]["RefSelectionExpressionDto"];
+            /** Format: uuid */
+            idempotencyKey: string;
+        };
+        CommitSearchViewSelectionResponseDto: {
+            /** Format: uuid */
+            viewId: string;
+            /** Format: int64 */
+            viewRevision: number | string;
+            /** Format: uuid */
+            submissionId: null | string;
+            /** Format: uuid */
+            workflowId: null | string;
+            /** Format: int64 */
+            requestedCount: number | string;
+            /** Format: int64 */
+            resolvedCount: number | string;
+            /** Format: int64 */
+            submittedCount: number | string;
+            /** Format: int64 */
+            skippedCount: number | string;
+            /** Format: int64 */
+            rejectedCount: number | string;
+            rejectionReasons: components["schemas"]["SubmissionReasonCountDto"][];
+        };
         ConversationPageDto: {
             items: components["schemas"]["ConversationSummaryDto"][];
             nextCursor: null | string;
@@ -6020,6 +7544,7 @@ export interface components {
             /** Format: uuid */
             conversationId: string;
             username: string;
+            privateMessagesBlocked: boolean;
             archived: boolean;
             /** Format: int32 */
             unreadCount: number | string;
@@ -6028,6 +7553,20 @@ export interface components {
             /** Format: int64 */
             revision: number | string;
             lastMessage: null | components["schemas"]["ChatMessageDto"];
+        };
+        CreateJobPreviewRequestDto: {
+            job: components["schemas"]["JobDraftDto"];
+            options?: null | components["schemas"]["SubmissionOptionsDto"];
+        };
+        CreateJobPreviewResponseDto: {
+            preview: components["schemas"]["JobPreviewSummaryDto"];
+        };
+        CreateSearchViewRequestDto: {
+            kind?: null | components["schemas"]["SearchViewProjectionKind"];
+            songQuery?: null | components["schemas"]["SongQueryDto"];
+            albumQuery?: null | components["schemas"]["AlbumQueryDto"];
+            /** @default false */
+            includeFullResults: boolean;
         };
         CsvSettingsPatchDto: {
             artistCol?: null | string;
@@ -6055,6 +7594,91 @@ export interface components {
             chat: components["schemas"]["ChatRuntimeStateDto"];
             notifications: components["schemas"]["NotificationSummaryDto"];
         };
+        DashboardAnalyticsComparisonDto: {
+            /** Format: date-time */
+            startUtc: string;
+            /** Format: date-time */
+            endUtc: string;
+            coverage: components["schemas"]["DashboardAnalyticsCoverageDto"];
+            summary: components["schemas"]["DashboardAnalyticsSummaryDto"];
+        };
+        DashboardAnalyticsCoverageDto: {
+            state: components["schemas"]["DashboardAnalyticsCoverageState"];
+            /** Format: date-time */
+            completeFromUtc: null | string;
+            isComplete: boolean;
+            reason?: null | string;
+        };
+        /** @enum {unknown} */
+        DashboardAnalyticsCoverageState: "Available" | "Degraded" | "Unavailable";
+        DashboardAnalyticsDto: {
+            /** Format: int32 */
+            accountingVersion: number | string;
+            range: components["schemas"]["DashboardAnalyticsRangeDto"];
+            bandwidth: components["schemas"]["DashboardBandwidthBucketDto"][];
+            summary: components["schemas"]["DashboardAnalyticsSummaryDto"];
+            downloadPeers: components["schemas"]["DashboardPeerAggregateDto"][];
+            uploadPeers: components["schemas"]["DashboardPeerAggregateDto"][];
+            content: components["schemas"]["DashboardContentAggregateDto"][];
+            errors: components["schemas"]["DashboardErrorAggregateDto"][];
+            comparison: null | components["schemas"]["DashboardAnalyticsComparisonDto"];
+        };
+        DashboardAnalyticsRangeDto: {
+            range: string;
+            /** Format: date-time */
+            startUtc: string;
+            /** Format: date-time */
+            endUtc: string;
+            /** Format: int32 */
+            bucketSeconds: number | string;
+            coverage: components["schemas"]["DashboardAnalyticsCoverageDto"];
+        };
+        DashboardAnalyticsSummaryDto: {
+            /** Format: int64 */
+            downloadedBytes: number | string;
+            /** Format: int32 */
+            downloadedFiles: number | string;
+            /** Format: int64 */
+            uploadedBytes: number | string;
+            /** Format: int32 */
+            uploadedFiles: number | string;
+            /** Format: int32 */
+            distinctPeers: number | string;
+            /** Format: double */
+            shareRatio: null | number | string;
+        };
+        DashboardBandwidthBucketDto: {
+            /** Format: date-time */
+            startUtc: string;
+            /** Format: date-time */
+            endUtc: string;
+            /** Format: int64 */
+            downloadBytes: number | string;
+            /** Format: int64 */
+            uploadBytes: number | string;
+        };
+        DashboardContentAggregateDto: {
+            identity: string;
+            displayPath: string;
+            /** Format: int32 */
+            downloadCount: number | string;
+            /** Format: int32 */
+            distinctPeerCount: number | string;
+        };
+        DashboardErrorAggregateDto: {
+            reason: string;
+            /** Format: int32 */
+            count: number | string;
+            /** Format: date-time */
+            lastSeenUtc: string;
+        };
+        DashboardPeerAggregateDto: {
+            username: string;
+            /** Format: int64 */
+            transferredBytes: number | string;
+            /** Format: int32 */
+            successfulFileCount: number | string;
+        };
         DirectoryDownloadStateDto: {
             phase: string;
             /** Format: int32 */
@@ -6075,16 +7699,7 @@ export interface components {
             /** Format: double */
             progressPercent: null | number | string;
         };
-        DirectoryTransferEntryDto: {
-            target: components["schemas"]["PeerFileTargetDto"];
-            relativeDirectoryComponents: string[];
-        };
-        DirectoryTransferPlanDto: {
-            displayRoot: string;
-            entries: components["schemas"]["DirectoryTransferEntryDto"][];
-            /** Format: int64 */
-            totalKnownBytes: number | string;
-        };
+        DirectoryTransferPlanDto: unknown;
         /**
          * @default Automatic
          * @enum {unknown}
@@ -6111,6 +7726,20 @@ export interface components {
             bandcamp?: null | components["schemas"]["BandcampSettingsPatchDto"];
             printOption?: null | components["schemas"]["PrintOption"];
         };
+        EffectiveDownloadSettingsDto: {
+            values: components["schemas"]["DownloadSettingsPatchDto"];
+            /** Format: int32 */
+            onCompleteCommandCount: number | string;
+            /** Format: int32 */
+            regexRuleCount: number | string;
+            spotifyClientIdConfigured: boolean;
+            spotifyClientSecretConfigured: boolean;
+            spotifyTokenConfigured: boolean;
+            spotifyRefreshConfigured: boolean;
+            youTubeApiKeyConfigured: boolean;
+            ytDlpArgumentConfigured: boolean;
+            bandcampHtmlFileConfigured: boolean;
+        };
         ExtractionMode: number;
         ExtractionSettingsPatchDto: {
             input?: null | string;
@@ -6130,13 +7759,6 @@ export interface components {
             type: string;
             /** Format: int32 */
             value: number | string;
-        };
-        FileCandidateDto: {
-            ref: components["schemas"]["FileCandidateRefDto"];
-            username: string;
-            filename: string;
-            peer: components["schemas"]["PeerInfoDto"];
-            file: components["schemas"]["FileMetadataDto"];
         };
         FileCandidateRefDto: {
             username: string;
@@ -6190,11 +7812,6 @@ export interface components {
             length: null | number | string;
             attributes?: null | components["schemas"]["FileAttributeDto"][];
         };
-        FileSearchProjectionRequestDto: {
-            songQuery?: null | components["schemas"]["SongQueryDto"];
-            /** @default false */
-            includeFullResults: boolean;
-        };
         FolderConditionsPatchDto: {
             /** Format: int32 */
             minTrackCount?: null | number | string;
@@ -6202,16 +7819,22 @@ export interface components {
             maxTrackCount?: null | number | string;
             requiredTrackTitles?: null | components["schemas"]["CollectionPatchDtoOfstring"];
         };
-        FolderSearchProjectionRequestDto: {
-            albumQuery: components["schemas"]["AlbumQueryDto"];
-            /** @default false */
-            includeFiles: boolean;
-        };
         /** @enum {unknown} */
         IncompleteAlbumActionKind: "Move" | "Delete" | "Keep" | null;
         IncompleteAlbumActionSettingsPatchDto: {
             kind?: null | components["schemas"]["IncompleteAlbumActionKind"];
             path?: null | string;
+        };
+        InputArtifactDto: {
+            artifactId: string;
+            sha256: string;
+            /** Format: int64 */
+            length: number | string;
+            /** Format: date-time */
+            createdAtUtc: string;
+            /** Format: date-time */
+            expiresAtUtc: string;
+            originalName?: null | string;
         };
         InputType: number;
         JobDetailDto: {
@@ -6225,6 +7848,10 @@ export interface components {
             rawResultCount: null | number | string;
             /** Format: int32 */
             lockedFileCount: null | number | string;
+            /** Format: int32 */
+            publicFileCount?: null | number | string;
+            /** Format: int32 */
+            observedPeerCount?: null | number | string;
         };
         JobDisplayFieldsDto: {
             /** Format: int32 */
@@ -6277,6 +7904,7 @@ export interface components {
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
             resultDownloadBehavior?: null | components["schemas"]["DownloadBehaviorPolicyDto"];
             provenance?: null | components["schemas"]["JobProvenanceDto"];
+            artifactId?: null | string;
         };
         JobDraftDtoJobListJobDraftDto: {
             /** @enum {string} */
@@ -6299,7 +7927,7 @@ export interface components {
             /** @enum {string} */
             kind?: "remote-file";
             target: components["schemas"]["PeerFileTargetDto"];
-            outputPathComponents?: null | string[];
+            outputPathComponents?: unknown;
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
             provenance?: null | components["schemas"]["JobProvenanceDto"];
         };
@@ -6420,8 +8048,10 @@ export interface components {
             /** @enum {string} */
             kind?: "search";
             queryText: string;
-            defaultFileProjection: null | components["schemas"]["FileSearchProjectionRequestDto"];
-            defaultFolderProjection: null | components["schemas"]["FolderSearchProjectionRequestDto"];
+            defaultProjection: components["schemas"]["SearchDefaultProjectionKind"];
+            songQuery: null | components["schemas"]["SongQueryDto"];
+            albumQuery: null | components["schemas"]["AlbumQueryDto"];
+            includeFullResults: boolean;
             /** Format: int32 */
             resultCount: number | string;
             /** Format: int32 */
@@ -6463,6 +8093,46 @@ export interface components {
             cancellationSource?: components["schemas"]["ServerJobCancellationSource"];
             downloadSource?: components["schemas"]["ServerSongDownloadSource"];
             exactTarget?: null | components["schemas"]["PeerFileTargetDto"];
+        };
+        JobPreviewNodeDto: {
+            ref: string;
+            parentRef: null | string;
+            role: components["schemas"]["ServerJobRole"];
+            isReady: boolean;
+            isSelectable: boolean;
+            kind: components["schemas"]["ServerJobKind"];
+            itemName: null | string;
+            queryText: null | string;
+            /** Format: int32 */
+            directChildCount: number | string;
+            appliedAutoProfiles: string[];
+            songQuery?: null | components["schemas"]["SongQueryDto"];
+            albumQuery?: null | components["schemas"]["AlbumQueryDto"];
+            failureCode?: null | string;
+            failureMessage?: null | string;
+        };
+        /** @enum {unknown} */
+        JobPreviewState: "Planning" | "Ready" | "PartiallyReady" | "Failed" | "Committing" | "Committed" | "Expired";
+        JobPreviewSummaryDto: {
+            /** Format: uuid */
+            previewId: string;
+            /** Format: date-time */
+            createdAtUtc: string;
+            /** Format: date-time */
+            expiresAtUtc: string;
+            state: components["schemas"]["JobPreviewState"];
+            /** Format: int64 */
+            revision: number | string;
+            /** Format: int32 */
+            nodeCount: number | string;
+            /** Format: int32 */
+            readyNodeCount: number | string;
+            /** Format: int32 */
+            failedNodeCount: number | string;
+            /** Format: int32 */
+            selectableNodeCount: number | string;
+            /** Format: uuid */
+            committedSubmissionId?: null | string;
         };
         JobProvenanceDto: {
             /**
@@ -6528,6 +8198,15 @@ export interface components {
             failureDetail?: null | string;
             cancellationSource?: components["schemas"]["ServerJobCancellationSource"];
             printOption?: components["schemas"]["PrintOption"];
+            /** Format: uuid */
+            submissionId?: null | string;
+            role?: components["schemas"]["ServerJobRole"];
+            /** Format: date-time */
+            createdAtUtc?: null | string;
+            /** Format: int32 */
+            discoveryPublicFileCount?: null | number | string;
+            /** Format: int32 */
+            discoveryObservedPeerCount?: null | number | string;
         };
         JoinRoomRequestDto: {
             roomName: string;
@@ -6586,27 +8265,21 @@ export interface components {
             items: components["schemas"]["UserBrowseDto"][];
             nextCursor: null | string;
         };
-        PeerFileTargetDto: {
+        PeerDirectoryRefDto: {
+            ref: string;
             username: string;
-            filename: string;
-            /** Format: int64 */
-            size: null | number | string;
-            extension: null | string;
-            /** Format: int32 */
-            bitRate?: null | number | string;
-            /** Format: int32 */
-            bitDepth?: null | number | string;
-            /** Format: int32 */
-            sampleRate?: null | number | string;
-            /** Format: int32 */
-            length?: null | number | string;
-            attributes?: null | components["schemas"]["FileAttributeDto"][];
+            folderPath: string;
         };
+        PeerFileTargetDto: unknown;
         PeerInfoDto: {
             username: string;
             hasFreeUploadSlot?: null | boolean;
             /** Format: int32 */
             uploadSpeed?: null | number | string;
+            /** Format: int32 */
+            queueLength?: null | number | string;
+            /** Format: date-time */
+            observedAtUtc?: null | string;
         };
         PersistenceBackupRequestDto: {
             backupPath?: null | string;
@@ -6795,6 +8468,12 @@ export interface components {
             hasEngineSettings: boolean;
             hasDownloadSettings: boolean;
         };
+        RefSelectionExpressionDto: {
+            mode: components["schemas"]["RefSelectionMode"];
+            refs: string[];
+        };
+        /** @enum {unknown} */
+        RefSelectionMode: "Only" | "AllExcept";
         RegexFieldsDto: {
             title: string;
             artist: string;
@@ -6806,6 +8485,19 @@ export interface components {
         };
         /** @enum {unknown} */
         RemoteDirectorySourceKindDto: "PeerDirectory" | "Resolved";
+        ResolveEffectiveSettingsRequestDto: {
+            job: components["schemas"]["JobDraftDto"];
+            options?: null | components["schemas"]["SubmissionOptionsDto"];
+        };
+        ResolveEffectiveSettingsResponseDto: {
+            baseline: components["schemas"]["SearchSettingsBaselineKind"];
+            settings: components["schemas"]["EffectiveDownloadSettingsDto"];
+            appliedAutoProfiles: string[];
+            namedProfiles: string[];
+            provenance: {
+                [key: string]: string;
+            };
+        };
         ResourceActionDto: {
             kind: components["schemas"]["ServerResourceActionKind"];
             method: string;
@@ -6816,6 +8508,11 @@ export interface components {
         RetrieveFolderRequestDto: {
             folder: components["schemas"]["AlbumFolderRefDto"];
             albumQuery?: null | components["schemas"]["AlbumQueryDto"];
+        };
+        RetrieveSearchViewDirectoryRequestDto: {
+            /** Format: int64 */
+            revision: number | string;
+            directory: components["schemas"]["PeerDirectoryRefDto"];
         };
         RoomMemberDto: {
             username: string;
@@ -6831,6 +8528,12 @@ export interface components {
             revision: number | string;
             complete: boolean;
         };
+        /** @enum {unknown} */
+        SearchDefaultProjectionKind: "GenericFile" | "Track" | "Album";
+        /** @enum {unknown} */
+        SearchPreferenceCondition: "Format" | "Length" | "Bitrate" | "SampleRate" | "BitDepth" | "Title" | "Artist" | "Album" | "Username";
+        /** @enum {unknown} */
+        SearchPreferenceTier: "Preferred" | "Other";
         SearchRawResultDto: {
             /** Format: int64 */
             sequence: number | string;
@@ -6846,43 +8549,15 @@ export interface components {
             sampleRate: null | number | string;
             /** Format: int32 */
             length: null | number | string;
-        };
-        SearchResultSnapshotDtoOfAggregateAlbumCandidateDto: {
+            visibility?: components["schemas"]["SearchResultVisibility"];
             /** Format: int32 */
-            revision: number | string;
-            isComplete: boolean;
-            items: components["schemas"]["AggregateAlbumCandidateDto"][];
-            persistenceState?: null | string;
+            queueLength?: null | number | string;
             /** Format: date-time */
-            resultsPrunedAtUtc?: null | string;
+            observedAtUtc?: null | string;
         };
-        SearchResultSnapshotDtoOfAggregateTrackCandidateDto: {
-            /** Format: int32 */
-            revision: number | string;
-            isComplete: boolean;
-            items: components["schemas"]["AggregateTrackCandidateDto"][];
-            persistenceState?: null | string;
-            /** Format: date-time */
-            resultsPrunedAtUtc?: null | string;
-        };
-        SearchResultSnapshotDtoOfAlbumFolderDto: {
-            /** Format: int32 */
-            revision: number | string;
-            isComplete: boolean;
-            items: components["schemas"]["AlbumFolderDto"][];
-            persistenceState?: null | string;
-            /** Format: date-time */
-            resultsPrunedAtUtc?: null | string;
-        };
-        SearchResultSnapshotDtoOfFileCandidateDto: {
-            /** Format: int32 */
-            revision: number | string;
-            isComplete: boolean;
-            items: components["schemas"]["FileCandidateDto"][];
-            persistenceState?: null | string;
-            /** Format: date-time */
-            resultsPrunedAtUtc?: null | string;
-        };
+        /** @enum {unknown} */
+        SearchResultVisibility: "Public" | "Locked";
+        SearchSettingsBaselineKind: number;
         SearchSettingsPatchDto: {
             necessaryCond?: null | components["schemas"]["FileConditionsPatchDto"];
             preferredCond?: null | components["schemas"]["FileConditionsPatchDto"];
@@ -6923,6 +8598,169 @@ export interface components {
             resultCount: number | string;
             isComplete: boolean;
         };
+        SearchViewAggregateAlbumGroupDto: {
+            ref: string;
+            query: components["schemas"]["AlbumQueryDto"];
+            /** Format: int32 */
+            shareCount: number | string;
+            /** Format: int64 */
+            selectableOptionCount: number | string;
+            representative: components["schemas"]["SearchViewDirectoryDto"];
+        };
+        SearchViewAggregateAlbumOptionPageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            groupRef: string;
+            items: components["schemas"]["SearchViewDirectoryDto"][];
+            nextCursor: null | string;
+        };
+        SearchViewAggregateAlbumPageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            items: components["schemas"]["SearchViewAggregateAlbumGroupDto"][];
+            nextCursor: null | string;
+        };
+        SearchViewAggregateTrackGroupDto: {
+            ref: string;
+            query: components["schemas"]["SongQueryDto"];
+            /** Format: int32 */
+            shareCount: number | string;
+            /** Format: int64 */
+            selectableOptionCount: number | string;
+            representative: components["schemas"]["SearchViewFileDto"];
+        };
+        SearchViewAggregateTrackOptionPageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            groupRef: string;
+            items: components["schemas"]["SearchViewFileDto"][];
+            nextCursor: null | string;
+        };
+        SearchViewAggregateTrackPageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            items: components["schemas"]["SearchViewAggregateTrackGroupDto"][];
+            nextCursor: null | string;
+        };
+        SearchViewCountersDto: {
+            /** Format: int64 */
+            publicFileCount: number | string;
+            /** Format: int64 */
+            lockedFileCount: number | string;
+            /** Format: int64 */
+            publicBytes: number | string;
+            /** Format: int64 */
+            lockedBytes: number | string;
+            /** Format: int32 */
+            observedPeerCount: number | string;
+            /** Format: int64 */
+            projectedFileCount: number | string;
+            /** Format: int64 */
+            projectedPublicFileCount: number | string;
+            /** Format: int64 */
+            projectedLockedFileCount: number | string;
+            /** Format: int64 */
+            preferredFileCount: number | string;
+            /** Format: int64 */
+            otherFileCount: number | string;
+            /** Format: int64 */
+            topLevelItemCount: number | string;
+            /** Format: int64 */
+            selectableOptionCount: number | string;
+        };
+        SearchViewDirectoryDto: {
+            ref: components["schemas"]["PeerDirectoryRefDto"];
+            visibility: components["schemas"]["SearchViewDirectoryVisibility"];
+            preferenceTier: components["schemas"]["SearchPreferenceTier"];
+            satisfiedPreferredConditions: components["schemas"]["SearchPreferenceCondition"][];
+            /** Format: int64 */
+            publicMatchingFileCount: number | string;
+            /** Format: int64 */
+            lockedMatchingFileCount: number | string;
+            /** Format: int64 */
+            publicMatchingBytes: number | string;
+            /** Format: int64 */
+            lockedMatchingBytes: number | string;
+            /** Format: int64 */
+            retrievedFileCount: null | number | string;
+            /** Format: int64 */
+            retrievedBytes: null | number | string;
+            retrievalState: components["schemas"]["SearchViewDirectoryRetrievalState"];
+            peer: components["schemas"]["PeerInfoDto"];
+            bestChild: components["schemas"]["SearchViewFileDto"];
+        };
+        SearchViewDirectoryFileDto: {
+            ref: string;
+            relativePath: string;
+            file: components["schemas"]["SearchViewFileDto"];
+        };
+        SearchViewDirectoryFilePageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            directory: components["schemas"]["PeerDirectoryRefDto"];
+            items: components["schemas"]["SearchViewDirectoryFileDto"][];
+            nextCursor: null | string;
+        };
+        SearchViewDirectoryPageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            items: components["schemas"]["SearchViewDirectoryDto"][];
+            nextCursor: null | string;
+        };
+        /** @enum {unknown} */
+        SearchViewDirectoryRetrievalState: "SearchResultsOnly" | "Complete" | "Incomplete";
+        /** @enum {unknown} */
+        SearchViewDirectoryVisibility: "Public" | "Locked" | "Mixed";
+        SearchViewFileDto: {
+            ref: string;
+            visibility: components["schemas"]["SearchResultVisibility"];
+            preferenceTier: components["schemas"]["SearchPreferenceTier"];
+            necessaryConditionsSatisfied: boolean;
+            satisfiedPreferredConditions: components["schemas"]["SearchPreferenceCondition"][];
+            unsatisfiedPreferredConditions: components["schemas"]["SearchPreferenceCondition"][];
+            remoteFilename: string;
+            peer: components["schemas"]["PeerInfoDto"];
+            file: components["schemas"]["FileMetadataDto"];
+        };
+        SearchViewFilePageDto: {
+            revision: components["schemas"]["SearchViewRevisionDto"];
+            items: components["schemas"]["SearchViewFileDto"][];
+            nextCursor: null | string;
+        };
+        /** @enum {unknown} */
+        SearchViewProjectionKind: "Files" | "GenericDirectories" | "AlbumDirectories" | "AggregateTracks" | "AggregateAlbums" | null;
+        /** @enum {unknown} */
+        SearchViewRetentionState: "Live" | "Complete" | "Incomplete" | "Interrupted" | "Pruned";
+        SearchViewRevisionDto: {
+            /** Format: uuid */
+            viewId: string;
+            /** Format: int64 */
+            revision: number | string;
+            /** Format: int32 */
+            sourceRevision: number | string;
+            /** Format: int64 */
+            consumedSequence: number | string;
+            isComplete: boolean;
+            retentionState: components["schemas"]["SearchViewRetentionState"];
+            counters: components["schemas"]["SearchViewCountersDto"];
+        };
+        SearchViewSummaryDto: {
+            /** Format: uuid */
+            viewId: string;
+            /** Format: uuid */
+            sourceJobId: string;
+            /** Format: date-time */
+            createdAtUtc: string;
+            /** Format: date-time */
+            expiresAtUtc: string;
+            /** Format: int64 */
+            revision: number | string;
+            /** Format: int32 */
+            sourceRevision: number | string;
+            /** Format: int64 */
+            consumedSequence: number | string;
+            isComplete: boolean;
+            retentionState: components["schemas"]["SearchViewRetentionState"];
+            counters: components["schemas"]["SearchViewCountersDto"];
+        };
+        SearchViewUpdateDto: {
+            summary: components["schemas"]["SearchViewSummaryDto"];
+            hasNewRevision: boolean;
+        };
         SendChatMessageRequestDto: {
             /** Format: uuid */
             messageId: string;
@@ -6955,6 +8793,8 @@ export interface components {
         /** @enum {unknown} */
         ServerJobLifecycleState: "Pending" | "Running" | "AwaitingSelection" | "Terminal";
         /** @enum {unknown} */
+        ServerJobRole: "legacy" | "user-root" | "semantic-result" | "orchestration" | "execution-child";
+        /** @enum {unknown} */
         ServerJobSkipReason: "None" | "AlreadyExists" | "NotFoundLastTime" | "Manual" | "Filtered";
         /** @enum {unknown} */
         ServerJobTerminalOutcome: "None" | "Succeeded" | "Failed" | "Skipped" | "Cancelled" | "PartialSuccess";
@@ -6981,6 +8821,18 @@ export interface components {
         };
         /** @enum {unknown} */
         ServerWorkflowState: "active" | "failed" | "completed";
+        SetSubmissionArchivedRequestDto: {
+            /** @default true */
+            archived: boolean;
+        };
+        SetTransferArchivedRequestDto: {
+            /** @default true */
+            archived: boolean;
+        };
+        SetUserRestrictionOverrideRequestDto: {
+            kind: components["schemas"]["UserRestrictionKind"];
+            override: null | components["schemas"]["UserRestrictionOverrideState"];
+        };
         ShareCatalogStateDto: {
             /** Format: uuid */
             generationId: null | string;
@@ -7031,9 +8883,9 @@ export interface components {
             reason: null | string;
             aliases: string[];
             /** Format: int32 */
-            blockedUsernameCount: number | string;
+            uploadBlockedUsernameCount: number | string;
             /** Format: int32 */
-            blockedIpAddressCount: number | string;
+            uploadBlockedIpAddressCount: number | string;
             catalog: components["schemas"]["ShareCatalogStateDto"];
             activeScan: null | components["schemas"]["ShareScanStateDto"];
             lastScan: null | components["schemas"]["ShareScanStateDto"];
@@ -7099,7 +8951,6 @@ export interface components {
             options?: null | components["schemas"]["SubmissionOptionsDto"];
             albumQuery?: null | components["schemas"]["AlbumQueryDto"];
             selection?: null | components["schemas"]["AlbumFolderDownloadSelectionDto"];
-            selectedFolder?: null | components["schemas"]["AlbumFolderDto"];
             requestedMode?: null | components["schemas"]["ExtractionMode"];
         };
         StartShareScanResponseDto: {
@@ -7152,6 +9003,23 @@ export interface components {
         };
         /** @enum {unknown} */
         StateStreamScopeKind: "daemon" | "workflow" | "chatConversation" | "chatRoom" | "userBrowse";
+        SubmissionArchiveResponseDto: {
+            /** Format: uuid */
+            submissionId: string;
+            archived: boolean;
+            /** Format: int32 */
+            affectedSubmissionCount: number | string;
+            /** Format: int32 */
+            affectedJobCount: number | string;
+            /** Format: int32 */
+            rejectedSubmissionCount: number | string;
+            rejectionReasons: components["schemas"]["SubmissionReasonCountDto"][];
+        };
+        SubmissionDetailDto: {
+            summary: components["schemas"]["SubmissionSummaryDto"];
+            commandKind: null | components["schemas"]["ServerJobKind"];
+            credentialBindings: string[];
+        };
         SubmissionOptionsDto: {
             /** Format: uuid */
             workflowId?: null | string;
@@ -7161,6 +9029,34 @@ export interface components {
                 [key: string]: boolean;
             };
             downloadSettings?: null | components["schemas"]["DownloadSettingsPatchDto"];
+        };
+        SubmissionReasonCountDto: {
+            reason: string;
+            /** Format: int64 */
+            count: number | string;
+        };
+        SubmissionSummaryDto: {
+            /** Format: uuid */
+            submissionId: string;
+            /** Format: date-time */
+            submittedAtUtc: string;
+            /** Format: uuid */
+            rerunOfSubmissionId: null | string;
+            /** Format: uuid */
+            previewId: null | string;
+            artifactId: null | string;
+            /** Format: int64 */
+            revision: number | string;
+            /** Format: date-time */
+            archivedAtUtc: null | string;
+            /** Format: int32 */
+            totalJobCount: number | string;
+            /** Format: int32 */
+            userRootJobCount: number | string;
+            /** Format: int32 */
+            activeJobCount: number | string;
+            /** Format: int32 */
+            failedJobCount: number | string;
         };
         SubmitAggregateJobRequestDto: {
             songQuery: components["schemas"]["SongQueryDto"];
@@ -7186,6 +9082,7 @@ export interface components {
             inputType?: null | string;
             options?: null | components["schemas"]["SubmissionOptionsDto"];
             resultDownloadBehavior?: null | components["schemas"]["DownloadBehaviorPolicyDto"];
+            artifactId?: null | string;
         };
         SubmitJobListRequestDto: {
             name: null | string;
@@ -7229,10 +9126,35 @@ export interface components {
             revision: number | string;
         };
         /**
+         * @default All
+         * @enum {unknown}
+         */
+        TransferCancellationScope: "All" | "Queued" | "InProgress";
+        /**
          * @default None
          * @enum {unknown}
          */
         TransferCancellationSource: "None" | "User" | "Peer" | "DaemonShutdown" | "CatalogInvalidation";
+        /** @enum {unknown} */
+        TransferCommandDirection: "Download" | "Upload";
+        TransferCommandReasonCountDto: {
+            reason: string;
+            /** Format: int32 */
+            count: number | string;
+        };
+        TransferCommandReceiptDto: {
+            /** Format: int32 */
+            resolvedCount: number | string;
+            /** Format: int32 */
+            succeededCount: number | string;
+            /** Format: int32 */
+            noOpCount: number | string;
+            /** Format: int32 */
+            rejectedCount: number | string;
+            /** Format: int32 */
+            failedCount: number | string;
+            reasons: components["schemas"]["TransferCommandReasonCountDto"][];
+        };
         TransferDetailDto: {
             source: components["schemas"]["TransferDetailSource"];
             live: null | components["schemas"]["TransferStateDto"];
@@ -7278,6 +9200,20 @@ export interface components {
             cancellationSource: components["schemas"]["TransferCancellationSource"];
             /** Format: int64 */
             revision: number | string;
+            /** Format: date-time */
+            requestedAtUtc?: null | string;
+            /** Format: date-time */
+            startedAtUtc?: null | string;
+            /** Format: date-time */
+            lastProgressAtUtc?: null | string;
+            /** Format: int64 */
+            bytesPerSecond?: null | number | string;
+            file?: null | components["schemas"]["FileMetadataDto"];
+            /** Format: date-time */
+            archivedAtUtc?: null | string;
+            groupRef?: null | string;
+            groupDisplayPath?: null | string;
+            availableActions?: null | components["schemas"]["ResourceActionDto"][];
         };
         TransferIdentityFieldsDto: {
             /** Format: uuid */
@@ -7289,6 +9225,8 @@ export interface components {
             username: null | string;
             remotePath: null | string;
             candidateKey: null | string;
+            groupRef?: null | string;
+            groupDisplayPath?: null | string;
         };
         TransferProgressFieldsDto: {
             /** Format: int64 */
@@ -7306,6 +9244,12 @@ export interface components {
             /** Format: int64 */
             queueRevision: number | string;
         };
+        TransferRetainedCoverageDto: {
+            state: components["schemas"]["TransferRetainedCoverageState"];
+            reason?: null | string;
+        };
+        /** @enum {unknown} */
+        TransferRetainedCoverageState: "Available" | "Degraded" | "Unavailable";
         TransferSchedulingFieldsDto: {
             /** Format: date-time */
             requestedAtUtc: string;
@@ -7332,6 +9276,7 @@ export interface components {
             status: components["schemas"]["TransferStatusFieldsDto"];
             progress: components["schemas"]["TransferProgressFieldsDto"];
             scheduling?: null | components["schemas"]["TransferSchedulingFieldsDto"];
+            file?: null | components["schemas"]["FileMetadataDto"];
         };
         TransferStatusFieldsDto: {
             state: string;
@@ -7349,6 +9294,11 @@ export interface components {
          * @enum {unknown}
          */
         TransferTerminalOutcome: "None" | "Succeeded" | "Cancelled" | "Failed" | "Interrupted";
+        TransferTimelinePageDto: {
+            items: components["schemas"]["TransferHistoryDto"][];
+            nextCursor: null | string;
+            retainedCoverage: components["schemas"]["TransferRetainedCoverageDto"];
+        };
         UploadRuntimeStateDto: {
             state: components["schemas"]["DaemonFeatureState"];
             reason: null | string;
@@ -7396,6 +9346,11 @@ export interface components {
         UserBrowsePhase: "waiting-for-peer" | "receiving" | "indexing" | "ready";
         /** @enum {unknown} */
         UserBrowseState: "queued" | "running" | "complete" | "failed" | "cancelled";
+        UsernameRestrictionStateDto: {
+            isBlocked: boolean;
+            configuredUsernameBlocked: boolean;
+            override: null | components["schemas"]["UserRestrictionOverrideState"];
+        };
         UserNotificationDto: {
             /** Format: uuid */
             notificationId: string;
@@ -7427,6 +9382,8 @@ export interface components {
         };
         UserProfileDto: {
             username: string;
+            uploadAccessBlocked: boolean;
+            privateMessagesBlocked: boolean;
             presence: components["schemas"]["UserProfilePresence"];
             status: components["schemas"]["UserProfileSectionDto"];
             info: components["schemas"]["UserProfileSectionDto"];
@@ -7455,6 +9412,15 @@ export interface components {
         UserProfileSectionDto: {
             state: components["schemas"]["ResourceSectionState"];
             reason: null | string;
+        };
+        /** @enum {unknown} */
+        UserRestrictionKind: "upload-access" | "private-messages";
+        /** @enum {unknown} */
+        UserRestrictionOverrideState: "blocked" | "allowed" | null;
+        UserRestrictionsDto: {
+            username: string;
+            uploadAccess: components["schemas"]["UsernameRestrictionStateDto"];
+            privateMessages: components["schemas"]["UsernameRestrictionStateDto"];
         };
         UserShareResolutionSummaryDto: {
             /** Format: int32 */

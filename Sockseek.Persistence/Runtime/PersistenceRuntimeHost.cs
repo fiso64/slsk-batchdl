@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Sockseek.Core;
 using Sockseek.Persistence.Read;
 using Sockseek.Persistence.Sqlite;
@@ -7,6 +6,8 @@ using Sockseek.Persistence.Chat;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sockseek.Persistence;
+using Sockseek.Persistence.PeerRestrictions;
+using Sockseek.Persistence.Planning;
 
 namespace Sockseek.Persistence.Runtime;
 
@@ -82,9 +83,14 @@ public sealed class PersistenceRuntimeHost
     public PersistenceHealthSnapshot? HealthSnapshot => inbox == null ? null : Health.Snapshot(inbox);
     public IPersistenceMutationSink? MutationSink => inbox;
     public IJobHistoryReader? JobHistory { get; private set; }
+    public ISubmissionStore? Submissions { get; private set; }
     public ISearchHistoryReader? SearchHistory { get; private set; }
     public ITransferHistoryReader? TransferHistory { get; private set; }
+    public ITransferAnalyticsReader? TransferAnalytics { get; private set; }
     public ChatPersistenceStore? Chat { get; private set; }
+    public PeerRestrictionOverrideStore? PeerRestrictions { get; private set; }
+    public InputArtifactStore? InputArtifacts { get; private set; }
+    public SearchViewStore? SearchViews { get; private set; }
     public long? DatabaseSizeBytes => FileSize(sqliteOptions.DatabasePath);
     public long? WalSizeBytes => FileSize(sqliteOptions.DatabasePath + "-wal");
     public PersistenceQueueSnapshot Queue => SnapshotQueue();
@@ -100,7 +106,9 @@ public sealed class PersistenceRuntimeHost
             var contextFactory = new SockseekDbContextFactory(SockseekDbContextOptions.Create(sqliteOptions));
             JobHistory = new JobHistoryReader(contextFactory);
             SearchHistory = new SearchHistoryReader(contextFactory);
-            TransferHistory = new TransferHistoryReader(contextFactory);
+            // The reader and archive commands share the existing persistence
+            // writer/inbox lifecycle; initialize the command-capable reader
+            // after the inbox is created below.
 
             var initializer = new SqliteInitializer(contextFactory, sqliteOptions, owner);
             Initialization = await initializer.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -119,6 +127,9 @@ public sealed class PersistenceRuntimeHost
                 .ConfigureAwait(false);
 
             inbox = new PersistenceInbox(writerOptions, Health, mutationObserver);
+            TransferHistory = new TransferHistoryReader(contextFactory, inbox);
+            TransferAnalytics = new TransferAnalyticsReader(contextFactory);
+            Submissions = new SubmissionStore(contextFactory, inbox);
             writer = new PersistenceWriter(
                 contextFactory,
                 inbox,
@@ -129,6 +140,39 @@ public sealed class PersistenceRuntimeHost
             writerTask = writer.RunAsync(writerStop.Token);
             Chat = new ChatPersistenceStore(contextFactory, inbox);
             await Chat.ReconcilePendingMessagesAsync(cancellationToken).ConfigureAwait(false);
+            PeerRestrictions = new PeerRestrictionOverrideStore(contextFactory, Health);
+            var inputArtifacts = new InputArtifactStore(
+                Path.Combine(
+                    Path.GetDirectoryName(sqliteOptions.GetFullDatabasePath())!,
+                    "planning",
+                    "input-artifacts"),
+                contextFactory,
+                Health);
+            try
+            {
+                await inputArtifacts.InitializeAsync(cancellationToken).ConfigureAwait(false);
+                InputArtifacts = inputArtifacts;
+            }
+            catch (Exception exception)
+            {
+                await inputArtifacts.DisposeAsync().ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
+                    throw;
+                PersistenceLogMessages.InputArtifactStorageUnavailable(logger, exception);
+            }
+            var searchViews = new SearchViewStore(sqliteOptions.GetFullDatabasePath());
+            try
+            {
+                await searchViews.InitializeAsync(cancellationToken).ConfigureAwait(false);
+                SearchViews = searchViews;
+            }
+            catch (Exception exception)
+            {
+                await searchViews.DisposeAsync().ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
+                    throw;
+                PersistenceLogMessages.SearchViewStorageUnavailable(logger, exception);
+            }
             IsStarted = true;
 
             return new PersistenceRuntimeStartup(Initialization, reconciliation, maximumDisplayId);
@@ -146,6 +190,13 @@ public sealed class PersistenceRuntimeHost
             writerStop?.Dispose();
             writerStop = null;
             Chat = null;
+            PeerRestrictions = null;
+            if (InputArtifacts is not null)
+                await InputArtifacts.DisposeAsync().ConfigureAwait(false);
+            InputArtifacts = null;
+            if (SearchViews is not null)
+                await SearchViews.DisposeAsync().ConfigureAwait(false);
+            SearchViews = null;
             ReleaseOwnership();
             throw PersistenceDatabaseErrors.Classify(ex, sqliteOptions.GetFullDatabasePath());
         }
@@ -173,9 +224,18 @@ public sealed class PersistenceRuntimeHost
             cancellationToken);
 
     public Task<RetentionResult> RunRetentionAsync(CancellationToken cancellationToken = default)
-        => ExecuteMaintenanceAsync(
-            ct => retention!.RunBatchAsync(ct),
-            cancellationToken);
+        => ExecuteMaintenanceAsync(RunRetentionBatchAsync, cancellationToken);
+
+    private async Task<RetentionResult> RunRetentionBatchAsync(CancellationToken cancellationToken)
+    {
+        RetentionResult result = await retention!.RunBatchAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (InputArtifacts is not null)
+            await InputArtifacts.PruneExpiredAsync(cancellationToken).ConfigureAwait(false);
+        if (SearchViews is not null)
+            await SearchViews.PruneExpiredAsync(cancellationToken).ConfigureAwait(false);
+        return result;
+    }
 
     private async Task<TResult> ExecuteMaintenanceAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
@@ -220,7 +280,11 @@ public sealed class PersistenceRuntimeHost
                 await writerTask.WaitAsync(drainTimeout, cancellationToken).ConfigureAwait(false);
             drained = true;
             if (runtimeSession?.Current != null)
-                await runtimeSession.StopAsync("Clean", cancellationToken).ConfigureAwait(false);
+                await runtimeSession.StopAsync(
+                    HealthSnapshot?.State == PersistenceHealthState.Unhealthy
+                        ? "Unhealthy"
+                        : "Clean",
+                    cancellationToken).ConfigureAwait(false);
             return new PersistenceRuntimeStop(true, runtimeId, SnapshotQueue());
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -254,6 +318,12 @@ public sealed class PersistenceRuntimeHost
                 writerStop?.Cancel();
             writerStop?.Dispose();
             writerStop = null;
+            if (InputArtifacts is not null)
+                await InputArtifacts.DisposeAsync().ConfigureAwait(false);
+            InputArtifacts = null;
+            if (SearchViews is not null)
+                await SearchViews.DisposeAsync().ConfigureAwait(false);
+            SearchViews = null;
             ReleaseOwnership();
             IsStarted = false;
         }
@@ -337,7 +407,7 @@ public sealed class PersistenceRuntimeHost
     {
         owner?.Dispose();
         owner = null;
-        SqliteConnection.ClearAllPools();
+        SqliteConnectionPool.Clear(SockseekDbContextOptions.CreateConnectionString(sqliteOptions));
     }
 
     private static long? FileSize(string path)

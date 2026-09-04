@@ -93,6 +93,27 @@ public sealed class UserBrowseApiTests
                 new[] { "one.flac", "two.flac" },
                 files1.Items.Concat(files2.Items).Select(item => item.File.Name).ToArray());
 
+            BrowseSearchPageDto searchFirst = await api.SearchUserSharesAsync(
+                complete.BrowseId, "FLAC", limit: 1);
+            var searchRows = new List<BrowseSearchEntryDto>(searchFirst.Items);
+            string? searchCursor = searchFirst.NextCursor;
+            while (searchCursor is not null)
+            {
+                BrowseSearchPageDto page = await api.SearchUserSharesAsync(
+                    complete.BrowseId, "FLAC", searchCursor, limit: 1);
+                Assert.AreEqual(searchFirst.BrowseRevision, page.BrowseRevision);
+                Assert.AreEqual(searchFirst.PublicMatchingFileCount, page.PublicMatchingFileCount);
+                searchRows.AddRange(page.Items);
+                searchCursor = page.NextCursor;
+            }
+            Assert.AreEqual(2, searchFirst.MatchingFileCount);
+            Assert.AreEqual(3, searchFirst.MatchingBytes);
+            Assert.AreEqual(2, searchRows.Count(row => row.Kind == BrowseSearchEntryKind.File));
+            CollectionAssert.AreEqual(
+                new[] { "one.flac", "two.flac" },
+                searchRows.Where(row => row.Kind == BrowseSearchEntryKind.File)
+                    .Select(row => row.Name).Order().ToArray());
+
             BrowseDirectoryEntryDto beta = roots2.Items.Single();
             BrowseFileEntryDto betaFile = (await api.GetUserShareFilesAsync(
                 complete.BrowseId, beta.DirectoryId)).Items.Single();
@@ -188,6 +209,16 @@ public sealed class UserBrowseApiTests
                         refreshed.BrowseId, cursor: roots1.NextCursor, limit: 1));
             Assert.AreEqual(HttpStatusCode.BadRequest, crossGeneration.StatusCode);
             Assert.AreEqual("invalid-cursor", crossGeneration.Code);
+
+            SockseekApiRequestException crossSearchGeneration =
+                await Assert.ThrowsExactlyAsync<SockseekApiRequestException>(() =>
+                    api.SearchUserSharesAsync(
+                        refreshed.BrowseId,
+                        "FLAC",
+                        searchFirst.NextCursor,
+                        limit: 1));
+            Assert.AreEqual(HttpStatusCode.BadRequest, crossSearchGeneration.StatusCode);
+            Assert.AreEqual("invalid-cursor", crossSearchGeneration.Code);
         }
         finally
         {

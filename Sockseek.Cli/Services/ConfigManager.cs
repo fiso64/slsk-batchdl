@@ -127,9 +127,8 @@ public static partial class ConfigManager
         var cliProfile = ParseTokensAsProfile("<cli>", NormalizeArgs(cliArgs)).Profile;
 
         return new ProfileJobSettingsResolver(
-            new DownloadSettings(),
-            catalog.DefaultProfile,
-            catalog.AutoProfiles,
+            baseDefaults: null,
+            catalog,
             namedProfiles,
             cliProfile,
             context,
@@ -456,7 +455,12 @@ public static partial class ConfigManager
             }
             else
             {
-                entry.Profile.Download.Add(action);
+                entry.Profile.Download.Add(
+                    action,
+                    DownloadSettingsPatchBuilder.DetectExplicitFields(
+                        flag,
+                        value,
+                        action));
                 downloadPatchBuilder?.Record(flag, value, action);
             }
         }
@@ -633,25 +637,36 @@ public static partial class ConfigManager
                 DaemonEngine(e => e.Uploads.Slots = Int()); break;
             case "--upload-speed-limit-kib":
                 DaemonEngine(e => e.Uploads.SpeedLimitKiBPerSecond = Int()); break;
-            case "--peer-blocked-user":
+            case "--upload-blocked-user":
                 {
                     var operation = ListOperation();
                     DaemonEngine(e =>
                     {
                         if (!operation.Append)
-                            e.PeerAccess.BlockedUsernames.Clear();
-                        e.PeerAccess.BlockedUsernames.Add(operation.Item);
+                            e.PeerRestrictions.UploadAccess.BlockedUsernames.Clear();
+                        e.PeerRestrictions.UploadAccess.BlockedUsernames.Add(operation.Item);
                     });
                     break;
                 }
-            case "--peer-blocked-ip":
+            case "--upload-blocked-ip":
                 {
                     var operation = ListOperation();
                     DaemonEngine(e =>
                     {
                         if (!operation.Append)
-                            e.PeerAccess.BlockedIpAddresses.Clear();
-                        e.PeerAccess.BlockedIpAddresses.Add(operation.Item);
+                            e.PeerRestrictions.UploadAccess.BlockedIpAddresses.Clear();
+                        e.PeerRestrictions.UploadAccess.BlockedIpAddresses.Add(operation.Item);
+                    });
+                    break;
+                }
+            case "--private-message-blocked-user":
+                {
+                    var operation = ListOperation();
+                    DaemonEngine(e =>
+                    {
+                        if (!operation.Append)
+                            e.PeerRestrictions.PrivateMessages.BlockedUsernames.Clear();
+                        e.PeerRestrictions.PrivateMessages.BlockedUsernames.Add(operation.Item);
                     });
                     break;
                 }
@@ -1103,6 +1118,16 @@ public static partial class ConfigManager
                 inputSeed: InputType.Spotify,
                 skipSeed: SkipMode.Tag,
                 albumArtSeed: AlbumArtOption.Most));
+        }
+
+        public static IReadOnlySet<string> DetectExplicitFields(
+            string flag,
+            string value,
+            Action<DownloadSettings> action)
+        {
+            var detector = new DownloadSettingsPatchBuilder();
+            detector.Record(flag, value, action);
+            return DownloadSettingsPatchDtoMapper.ExplicitFields(detector.Build());
         }
 
         private bool TryRecordSpecial(string flag, string value)

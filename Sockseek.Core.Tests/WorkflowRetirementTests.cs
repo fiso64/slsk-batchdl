@@ -169,7 +169,10 @@ public sealed class WorkflowRetirementTests
 
     private sealed class SelectiveFailureResolver : IJobSettingsResolver
     {
-        public DownloadSettings Resolve(DownloadSettings inherited, Job job)
+        public DownloadSettings Resolve(
+            DownloadSettings inherited,
+            Job job,
+            JobSettingsInheritance inheritance = JobSettingsInheritance.None)
         {
             if (job is SearchJob { QueryText: "broken" })
                 throw new InvalidOperationException("synthetic preparation failure");

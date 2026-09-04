@@ -10,8 +10,14 @@ public sealed class ServerOptions
     /// <summary>Maximum time allowed for graceful connection and service shutdown.</summary>
     public TimeSpan ShutdownTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public EngineSettings Engine { get; set; } = new();
-    public DownloadSettings DefaultDownload { get; set; } = new();
+    /// <summary>
+    /// Optional full operator replacement. Prefer sparse profiles/launch patches;
+    /// when supplied, every value in this object is treated as intentional.
+    /// </summary>
+    public DownloadSettings? DefaultDownload { get; set; }
+    public DownloadSettingsPatchDto? OperatorDownloadSettings { get; set; }
     public DownloadSettingsPatchDto? LaunchDownloadSettings { get; set; }
+    public IReadOnlyList<string> LaunchProfileNames { get; set; } = [];
     public ProfileCatalog Profiles { get; set; } = ProfileCatalog.Empty;
     public string? ConfigDir { get; set; }
     public Func<EngineSettings, ISoulseekClient>? ClientFactory { get; set; }
@@ -29,6 +35,7 @@ public sealed class ServerPersistenceOptions
     public int SearchResultCapacityPerSearch { get; set; } = 2_000;
     public int SearchResultGlobalCapacity { get; set; } = 20_000;
     public int IncompleteSearchTrackingCapacity { get; set; } = 1_024;
+    public int SearchMutationQueueCapacity { get; set; } = 256;
     public int SearchResultFlushCount { get; set; } = 200;
     public TimeSpan SearchResultFlushInterval { get; set; } = TimeSpan.FromMilliseconds(200);
     public TimeSpan TransferProgressFlushInterval { get; set; } = TimeSpan.FromSeconds(3);

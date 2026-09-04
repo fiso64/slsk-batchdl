@@ -37,7 +37,7 @@ public sealed class SqliteInitializationTests
 
         Assert.AreEqual("wal", result.JournalMode.ToLowerInvariant());
         Assert.AreEqual("2", result.SynchronousMode);
-        StringAssert.Contains(result.SchemaVersion, "AddJobNavigationIndexes");
+        StringAssert.Contains(result.SchemaVersion, "AddSearchViews");
 
         await using var context = await database.Factory.CreateDbContextAsync();
         await context.Database.OpenConnectionAsync();
@@ -51,6 +51,16 @@ public sealed class SqliteInitializationTests
             {
                 "runtime_sessions", "jobs", "search_jobs", "search_results", "transfers", "transfer_attempts",
                 "chat_conversations", "chat_room_subscriptions", "chat_messages", "notifications", "chat_sequences",
+                "submissions",
+                "transfer_accounting_checkpoints", "transfer_byte_buckets", "transfer_accounting_state",
+                "peer_restriction_overrides",
+                "input_artifacts", "input_artifact_pins",
+                "search_views", "search_view_revisions", "search_view_files",
+                "search_view_directories", "search_view_directory_versions",
+                "search_view_directory_files", "search_view_aggregate_tracks",
+                "search_view_aggregate_track_versions", "search_view_aggregate_track_files",
+                "search_view_aggregate_albums", "search_view_aggregate_album_versions",
+                "search_view_aggregate_album_directory_versions", "search_view_peers",
             },
             tables.ToArray());
     }
@@ -73,8 +83,19 @@ public sealed class SqliteInitializationTests
                 StartedAtUtc = 1,
                 Version = "previous-schema-fixture",
             });
-            previous.Jobs.Add(JobRow(jobId, runtimeId, 1, "Terminal", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch));
             await previous.SaveChangesAsync();
+            Guid workflowId = Guid.NewGuid();
+            await previous.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO jobs (
+                    id, workflow_id, last_runtime_id, last_sequence, display_id, kind,
+                    lifecycle_state, activity_phase, terminal_outcome, skip_reason,
+                    cancellation_source, failure_reason, created_at_utc, updated_at_utc,
+                    completed_at_utc, revision, payload_schema_version)
+                VALUES (
+                    {jobId}, {workflowId}, {runtimeId}, 1, 1, 'Generic',
+                    'Terminal', 'None', 'Succeeded', 'None',
+                    'None', 'None', 0, 0, 0, 1, 1);
+                """);
         }
 
         await using (var upgraded = await database.Factory.CreateDbContextAsync())
@@ -86,6 +107,13 @@ public sealed class SqliteInitializationTests
             var applied = await upgraded.Database.GetAppliedMigrationsAsync();
             CollectionAssert.Contains(applied.ToArray(), "20260712090000_AddHistoryQueryIndexes");
             CollectionAssert.Contains(applied.ToArray(), "20260712170220_AddTransferAttemptSourceIdentity");
+            CollectionAssert.Contains(applied.ToArray(), "20260829230000_AddSubmissions");
+            CollectionAssert.Contains(applied.ToArray(), "20260831120000_AddPeerRestrictions");
+            CollectionAssert.Contains(applied.ToArray(), "20260901010000_AddInputArtifacts");
+            CollectionAssert.Contains(applied.ToArray(), "20260901020000_AddSearchViews");
+            var upgradedJob = await upgraded.Jobs.SingleAsync(job => job.Id == jobId);
+            Assert.IsNull(upgradedJob.SubmissionId);
+            Assert.AreEqual("Legacy", upgradedJob.SemanticRole);
         }
     }
 
@@ -253,6 +281,7 @@ public sealed class SqliteInitializationTests
             var transfer = await context.Transfers.SingleAsync(x => x.Id == transferId);
             var attempt = await context.TransferAttempts.SingleAsync(x => x.Id == attemptId);
             var priorRuntime = await context.RuntimeSessions.SingleAsync(x => x.Id == first.Runtime.RuntimeId);
+            var accounting = await context.TransferAccountingStates.SingleAsync(x => x.Id == 1);
 
             Assert.AreEqual("Terminal", job.LifecycleState);
             Assert.AreEqual("Interrupted", job.FailureReason);
@@ -263,8 +292,10 @@ public sealed class SqliteInitializationTests
             Assert.AreEqual("Interrupted", transfer.State);
             Assert.AreEqual("Interrupted", attempt.State);
             Assert.AreEqual("Unclean", priorRuntime.ShutdownKind);
+            Assert.AreEqual(clock.GetUtcNow().ToUnixTimeMilliseconds(), accounting.CompleteFromUtc);
         }
 
+        long coverageAfterUncleanRestart = clock.GetUtcNow().ToUnixTimeMilliseconds();
         clock.Advance(TimeSpan.FromMinutes(1));
         await secondRuntime.StopAsync();
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -272,6 +303,12 @@ public sealed class SqliteInitializationTests
         var cleanRestart = await thirdRuntime.StartAsync("test-3");
         Assert.AreEqual(0, cleanRestart.UnfinishedRuntimeCount);
         Assert.AreEqual(0, cleanRestart.InterruptedJobCount);
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            Assert.AreEqual(
+                coverageAfterUncleanRestart,
+                (await context.TransferAccountingStates.SingleAsync(x => x.Id == 1)).CompleteFromUtc);
+        }
         await thirdRuntime.StopAsync();
     }
 
@@ -386,8 +423,12 @@ public sealed class SqliteInitializationTests
             }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'jobs';";
-        Assert.AreEqual(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        command.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('jobs', 'input_artifacts', 'search_views');
+            """;
+        Assert.AreEqual(3L, Convert.ToInt64(await command.ExecuteScalarAsync()));
 
         string restorePath = Path.Combine(Path.GetDirectoryName(database.Options.DatabasePath)!, "restored-app-data", "sockseek.db");
         var restored = await SqliteMaintenanceService.RestoreOfflineAsync(backupPath, restorePath);
@@ -406,8 +447,12 @@ public sealed class SqliteInitializationTests
             }.ToString());
         await restoredConnection.OpenAsync();
         await using var restoredCommand = restoredConnection.CreateCommand();
-        restoredCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'jobs';";
-        Assert.AreEqual(1L, Convert.ToInt64(await restoredCommand.ExecuteScalarAsync()));
+        restoredCommand.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('jobs', 'input_artifacts', 'search_views');
+            """;
+        Assert.AreEqual(3L, Convert.ToInt64(await restoredCommand.ExecuteScalarAsync()));
     }
 
     [TestMethod]
@@ -491,6 +536,13 @@ public sealed class SqliteInitializationTests
                 CreatedAtUtc = now.AddDays(-100).ToUnixTimeMilliseconds(),
                 Revision = 1,
             });
+            context.TransferByteBuckets.Add(new TransferByteBucketEntity
+            {
+                BucketStartUtc = now.AddDays(-100).ToUnixTimeMilliseconds(),
+                Direction = "Download",
+                Username = "peer",
+                Bytes = 123,
+            });
             await context.SaveChangesAsync();
         }
 
@@ -514,6 +566,10 @@ public sealed class SqliteInitializationTests
             Assert.AreEqual(0, await context.SearchResults.CountAsync());
             Assert.IsFalse(await context.Transfers.AnyAsync(transfer => transfer.Id == oldTransferId));
             Assert.IsTrue(await context.Transfers.AnyAsync(transfer => transfer.Id == activeTransferId));
+            Assert.AreEqual(0, await context.TransferByteBuckets.CountAsync());
+            Assert.AreEqual(
+                now.AddDays(-90).ToUnixTimeMilliseconds(),
+                (await context.TransferAccountingStates.SingleAsync(state => state.Id == 1)).CompleteFromUtc);
         }
     }
 

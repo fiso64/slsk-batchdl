@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Sockseek.Core;
 using Sockseek.Core.Events;
+using Sockseek.Core.Models;
 using Sockseek.Core.Snapshots;
 using Sockseek.Persistence.Write;
 
@@ -19,6 +20,7 @@ public sealed class EnginePersistenceAdapter
     private readonly ConcurrentDictionary<Guid, TrackedRevision> searchCompletionRevisions = new();
     private readonly ConcurrentDictionary<Guid, TransferAttemptPersistenceMutation> pendingTerminalAttempts = new();
     private readonly ConcurrentDictionary<Guid, Guid> transferWorkflowIds = new();
+    private readonly ConcurrentDictionary<Guid, AttemptAccountingState> activeAttempts = new();
 
     public EnginePersistenceAdapter(Guid runtimeId, IPersistenceMutationSink sink)
         : this(runtimeId, sink, handoffs: null)
@@ -146,19 +148,24 @@ public sealed class EnginePersistenceAdapter
 
             case TransferAttemptStartedChange attempt:
                 FlushPendingAttempt(attempt.Transfer.Id);
+                activeAttempts[attempt.Transfer.Id] = new AttemptAccountingState(
+                    attempt.AttemptId,
+                    attempt.Transfer.BytesTransferred);
                 sink.TryEnqueue(AttemptMutation(attempt, "Started", "None", null));
                 break;
 
             case TransferAttemptCompletedChange attempt:
                 pendingTerminalAttempts[attempt.Transfer.Id] = AttemptMutation(attempt, "Completed", "None", null);
+                activeAttempts.TryRemove(attempt.Transfer.Id, out _);
                 break;
 
             case TransferAttemptFailedChange attempt:
                 pendingTerminalAttempts[attempt.Transfer.Id] = AttemptMutation(
                     attempt,
                     "Failed",
-                    "AttemptFailed",
+                    TransferFailureReason.PeerFailure.ToString(),
                     attempt.Exception.Message);
+                activeAttempts.TryRemove(attempt.Transfer.Id, out _);
                 break;
 
             case TransferAttemptCancelledChange attempt:
@@ -167,6 +174,7 @@ public sealed class EnginePersistenceAdapter
                     "Cancelled",
                     attempt.Reason.ToString(),
                     null);
+                activeAttempts.TryRemove(attempt.Transfer.Id, out _);
                 break;
 
             case TransferCompletedChange completed:
@@ -209,7 +217,8 @@ public sealed class EnginePersistenceAdapter
                     completed.QueryText,
                     completed.ResultCount,
                     completed.LockedFileCount,
-                    "Complete"));
+                    "Complete",
+                    completed.ObservedPeerCount));
                 break;
 
             case WorkflowRetiredChange:
@@ -294,7 +303,14 @@ public sealed class EnginePersistenceAdapter
             job.ItemName,
             job.QueryText,
             PayloadSchemaVersion: 1,
-            PayloadJson(job.Payload));
+            PayloadJson(job.Payload),
+            job.SubmissionId,
+            job.SemanticRole.ToString(),
+            job.CreatedAtUtc,
+            job.SubmissionSpecificationJson,
+            job.RerunOfSubmissionId,
+            job.PreviewId,
+            job.ArtifactId);
     }
 
     private void EnqueueJobMutation(
@@ -322,6 +338,7 @@ public sealed class EnginePersistenceAdapter
                 search.ResultCount,
                 search.Revision,
                 search.IsComplete,
+                search.Definition,
             },
             SongJobSnapshotPayload song => new
             {
@@ -329,8 +346,15 @@ public sealed class EnginePersistenceAdapter
                 song.File,
                 song.DownloadSource,
                 song.ExactTarget,
+                song.Definition,
             },
-            AlbumJobSnapshotPayload album => new { album.Query, album.ResultCount, album.Directory },
+            AlbumJobSnapshotPayload album => new
+            {
+                album.Query,
+                album.ResultCount,
+                album.Directory,
+                album.Definition,
+            },
             RemoteFileJobSnapshotPayload remoteFile => new
             {
                 remoteFile.Target,
@@ -343,8 +367,18 @@ public sealed class EnginePersistenceAdapter
                 remoteDirectory.DirectorySource,
                 remoteDirectory.Directory,
             },
-            AggregateJobSnapshotPayload aggregate => new { aggregate.Query, SongCount = aggregate.Songs.Count },
-            AlbumAggregateJobSnapshotPayload aggregate => new { aggregate.Query, aggregate.AlbumCount },
+            AggregateJobSnapshotPayload aggregate => new
+            {
+                aggregate.Query,
+                SongCount = aggregate.Songs.Count,
+                aggregate.Definition,
+            },
+            AlbumAggregateJobSnapshotPayload aggregate => new
+            {
+                aggregate.Query,
+                aggregate.AlbumCount,
+                aggregate.Definition,
+            },
             JobListSnapshotPayload list => new { list.Count },
             RetrieveFolderJobSnapshotPayload retrieve => new
             {
@@ -392,7 +426,13 @@ public sealed class EnginePersistenceAdapter
             transfer.AttemptCount,
             failureReason,
             failureMessage,
-            cancellationSource);
+            cancellationSource,
+            transfer.RequestedAtUtc,
+            transfer.StartedAtUtc,
+            transfer.LastProgressAtUtc,
+            transfer.BytesPerSecond,
+            transfer.File,
+            AccountingObservations: AccountingObservations(transfer, change));
     }
 
     private TransferAttemptPersistenceMutation AttemptMutation(
@@ -450,7 +490,28 @@ public sealed class EnginePersistenceAdapter
             transfer.RemotePath,
             outputPath,
             failureReason,
-            failureMessage);
+            failureMessage,
+            transfer.Direction.ToString(),
+            GroupRef: null,
+            GroupDisplayPath: null,
+            AccountingObservations: AccountingObservations(transfer, change));
+    }
+
+    private IReadOnlyList<TransferAccountingObservation>? AccountingObservations(
+        TransferSnapshot transfer,
+        CoreChange change)
+    {
+        if (!activeAttempts.TryGetValue(transfer.Id, out AttemptAccountingState? attempt))
+            return null;
+        long cumulative = Math.Max(0, transfer.BytesTransferred - attempt.BaselineBytes);
+        return
+        [
+            new TransferAccountingObservation(
+                attempt.AttemptId,
+                transfer.Revision,
+                change.OccurredAtUtc,
+                cumulative),
+        ];
     }
 
     private static Guid TransferId(CoreChange change)
@@ -481,7 +542,11 @@ public sealed class EnginePersistenceAdapter
             change.JobId,
             change.Revision,
             change.Results.Select(result => new SearchResultPersistenceRecord(
-                StableResultId(change.JobId, result.Username, result.Filename),
+                StableResultId(
+                    change.JobId,
+                    result.Username,
+                    result.Filename,
+                    result.Visibility),
                 result.Sequence,
                 result.Revision,
                 result.Username,
@@ -501,11 +566,18 @@ public sealed class EnginePersistenceAdapter
                     Name = attribute.Type,
                     attribute.Value,
                 })),
-                result.ObservedAtUtc)).ToArray());
+                result.ObservedAtUtc,
+                result.QueueLength,
+                result.Visibility.ToString())).ToArray());
 
-    private static Guid StableResultId(Guid jobId, string username, string filename)
+    private static Guid StableResultId(
+        Guid jobId,
+        string username,
+        string filename,
+        SearchResultVisibility visibility = SearchResultVisibility.Public)
     {
-        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{jobId:N}\0{username}\0{filename}"));
+        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{jobId:N}\0{username}\0{filename}\0{visibility}"));
         return new Guid(bytes.AsSpan(0, 16));
     }
 
@@ -531,6 +603,7 @@ public sealed class EnginePersistenceAdapter
         {
             transferWorkflowIds.TryRemove(pair.Key, out _);
             pendingTerminalAttempts.TryRemove(pair.Key, out _);
+            activeAttempts.TryRemove(pair.Key, out _);
         }
     }
 
@@ -552,4 +625,6 @@ public sealed class EnginePersistenceAdapter
         Guid? ResultJobId);
 
     private sealed record TrackedRevision(Guid WorkflowId, long Revision);
+
+    private sealed record AttemptAccountingState(Guid AttemptId, long BaselineBytes);
 }

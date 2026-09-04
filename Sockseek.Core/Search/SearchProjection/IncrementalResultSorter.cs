@@ -4,7 +4,86 @@ using Sockseek.Core.Settings;
 using Soulseek;
 using SlFile = Soulseek.File;
 
+using System.Text.Json.Serialization;
+
 namespace Sockseek.Core.Services;
+
+[JsonConverter(typeof(JsonStringEnumConverter<SearchPreferenceTier>))]
+public enum SearchPreferenceTier
+{
+    Preferred,
+    Other,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<SearchPreferenceCondition>))]
+public enum SearchPreferenceCondition
+{
+    Format,
+    Length,
+    Bitrate,
+    SampleRate,
+    BitDepth,
+    Title,
+    Artist,
+    Album,
+    Username,
+}
+
+public readonly record struct SearchConditionFacts(
+    bool NecessaryConditionsSatisfied,
+    bool PreferredConditionsSatisfied,
+    IReadOnlyList<SearchPreferenceCondition>? SatisfiedPreferredConditions = null,
+    IReadOnlyList<SearchPreferenceCondition>? ConfiguredPreferredConditions = null)
+{
+    public SearchPreferenceTier PreferenceTier => PreferredConditionsSatisfied
+        ? SearchPreferenceTier.Preferred
+        : SearchPreferenceTier.Other;
+
+    public IReadOnlyList<SearchPreferenceCondition> UnsatisfiedPreferredConditions
+        => (ConfiguredPreferredConditions ?? [])
+            .Except(SatisfiedPreferredConditions ?? [])
+            .ToArray();
+}
+
+public sealed record ProjectedFileCandidate(
+    SearchProjectionInput Input,
+    FileCandidate Candidate,
+    SearchConditionFacts ConditionFacts,
+    SearchProjectionSortKey SortKey);
+
+public readonly record struct SearchProjectionSortKey(
+    uint HighFlags,
+    int UploadSpeedFast,
+    uint MidFlags,
+    int InferredTrackCount,
+    int UploadSpeedMedium,
+    int BitRate,
+    int StableTieBreaker);
+
+public sealed class SearchProjectionSortKeyComparer : IComparer<SearchProjectionSortKey>
+{
+    public static SearchProjectionSortKeyComparer Instance { get; } = new();
+
+    private SearchProjectionSortKeyComparer() { }
+
+    public int Compare(SearchProjectionSortKey x, SearchProjectionSortKey y)
+    {
+        int comparison = y.HighFlags.CompareTo(x.HighFlags);
+        if (comparison != 0) return comparison;
+        comparison = y.UploadSpeedFast.CompareTo(x.UploadSpeedFast);
+        if (comparison != 0) return comparison;
+        comparison = y.MidFlags.CompareTo(x.MidFlags);
+        if (comparison != 0) return comparison;
+        comparison = y.InferredTrackCount.CompareTo(x.InferredTrackCount);
+        if (comparison != 0) return comparison;
+        comparison = y.UploadSpeedMedium.CompareTo(x.UploadSpeedMedium);
+        if (comparison != 0) return comparison;
+        comparison = y.BitRate.CompareTo(x.BitRate);
+        return comparison != 0
+            ? comparison
+            : y.StableTieBreaker.CompareTo(x.StableTieBreaker);
+    }
+}
 
 public sealed class IncrementalResultSorter
 {
@@ -12,8 +91,9 @@ public sealed class IncrementalResultSorter
     private readonly SongQuery query;
     private readonly SearchSettings search;
     private readonly bool requireFileSatisfies;
+    private readonly bool retainProjectedRows;
     private List<ResultSorter.SortEntry> entries = [];
-    private readonly HashSet<PeerPathKey> seen = [];
+    private readonly HashSet<(PeerPathKey Path, SearchResultVisibility Visibility)>? seen;
     private int nextOriginalIndex;
 
     public IncrementalResultSorter(
@@ -23,11 +103,16 @@ public sealed class IncrementalResultSorter
         bool albumMode = false,
         bool useInfer = false,
         bool requireFileSatisfies = false,
-        bool ignoreStringSortConditions = false)
+        bool ignoreStringSortConditions = false,
+        bool retainProjectedRows = true,
+        bool deduplicateInputs = true,
+        Func<SearchProjectionInput, bool>? necessaryConditionEvaluator = null)
     {
         this.query = query;
         this.search = search;
         this.requireFileSatisfies = requireFileSatisfies;
+        this.retainProjectedRows = retainProjectedRows;
+        seen = deduplicateInputs ? [] : null;
         keyContext = ResultSorter.CreateSortKeyContext(
             [],
             query,
@@ -36,7 +121,8 @@ public sealed class IncrementalResultSorter
             useBracketCheck: !albumMode,
             useInfer,
             albumMode,
-            ignoreStringSortConditions);
+            ignoreStringSortConditions,
+            necessaryConditionEvaluator);
     }
 
     public int Count => entries.Count;
@@ -44,7 +130,7 @@ public sealed class IncrementalResultSorter
     public void Clear()
     {
         entries.Clear();
-        seen.Clear();
+        seen?.Clear();
         nextOriginalIndex = 0;
     }
 
@@ -53,15 +139,14 @@ public sealed class IncrementalResultSorter
         var newEntries = new List<ResultSorter.SortEntry>();
         foreach (var (response, file) in results)
         {
-            var key = new PeerPathKey(response.Username, file.Filename);
-            if (!seen.Add(key))
-                continue;
-
-            if (requireFileSatisfies && !ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, response, file, query))
+            var key = (new PeerPathKey(response.Username, file.Filename), SearchResultVisibility.Public);
+            if (seen != null && !seen.Add(key))
                 continue;
 
             var entry = ResultSorter.CreateSortEntry(response, file, keyContext, nextOriginalIndex++);
             if (!entry.HasValue)
+                continue;
+            if (requireFileSatisfies && !entry.Value.Key.ConditionFacts.NecessaryConditionsSatisfied)
                 continue;
 
             newEntries.Add(entry.Value);
@@ -70,31 +155,41 @@ public sealed class IncrementalResultSorter
         if (newEntries.Count == 0)
             return 0;
 
-        newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
-        MergeSortedEntries(newEntries);
+        if (retainProjectedRows)
+        {
+            newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
+            MergeSortedEntries(newEntries);
+        }
         return newEntries.Count;
     }
 
     public int AddRange(IEnumerable<SearchProjectionInput> results)
+        => AddRangeAndGetProjected(results).Count;
+
+    public IReadOnlyList<ProjectedFileCandidate> AddRangeAndGetProjected(
+        IEnumerable<SearchProjectionInput> results)
     {
         var newEntries = new List<ResultSorter.SortEntry>();
         foreach (var input in results)
         {
-            var key = new PeerPathKey(input.Username, input.Filename);
-            if (!seen.Add(key))
-                continue;
-            if (requireFileSatisfies
-                && !ConditionSatisfactionPolicy.SearchFileSatisfies(search.NecessaryCond, input, query))
+            var key = (new PeerPathKey(input.Username, input.Filename), input.Visibility);
+            if (seen != null && !seen.Add(key))
                 continue;
             var entry = ResultSorter.CreateSortEntry(input, keyContext, nextOriginalIndex++);
-            if (entry.HasValue)
-                newEntries.Add(entry.Value);
+            if (!entry.HasValue)
+                continue;
+            if (requireFileSatisfies && !entry.Value.Key.ConditionFacts.NecessaryConditionsSatisfied)
+                continue;
+            newEntries.Add(entry.Value);
         }
         if (newEntries.Count == 0)
-            return 0;
+            return [];
+        var added = newEntries.Select(Projected).ToArray();
+        if (!retainProjectedRows)
+            return added;
         newEntries.Sort(ResultSorter.SortEntryComparer.Instance);
         MergeSortedEntries(newEntries);
-        return newEntries.Count;
+        return added;
     }
 
     private void MergeSortedEntries(List<ResultSorter.SortEntry> newEntries)
@@ -141,5 +236,21 @@ public sealed class IncrementalResultSorter
     }
 
     public List<SearchProjectionInput> SnapshotInputs()
-        => entries.Select(entry => entry.Input).ToList();
+        => retainProjectedRows
+            ? entries.Select(entry => entry.Input).ToList()
+            : throw new InvalidOperationException(
+                "This incremental sorter was configured for disk-backed rows.");
+
+    public List<ProjectedFileCandidate> SnapshotProjectedFiles()
+        => retainProjectedRows
+            ? entries.Select(Projected).ToList()
+            : throw new InvalidOperationException(
+                "This incremental sorter was configured for disk-backed rows.");
+
+    private static ProjectedFileCandidate Projected(ResultSorter.SortEntry entry)
+        => new(
+            entry.Input,
+            entry.Input.ToFileCandidate(),
+            entry.Key.ConditionFacts,
+            entry.Key.PersistenceKey);
 }

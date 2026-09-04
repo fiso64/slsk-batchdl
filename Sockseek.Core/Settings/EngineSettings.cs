@@ -42,7 +42,7 @@ public class EngineSettings
 
     public UploadSettings Uploads { get; set; } = new();
 
-    public PeerAccessSettings PeerAccess { get; set; } = new();
+    public PeerRestrictionSettings PeerRestrictions { get; set; } = new();
 
     // ── Chats ────────────────────────────────────────────────────────────────
 

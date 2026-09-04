@@ -163,6 +163,38 @@ public sealed class PersistenceHandoffTrackerTests
         await tracker.WaitForWorkflowAsync(workflowId, CancellationToken.None);
     }
 
+    [TestMethod]
+    public async Task UploadRetirementWaitsForExactTerminalTransferCommitWithoutPolling()
+    {
+        var tracker = new PersistenceHandoffTracker();
+        Guid transferId = Guid.NewGuid();
+        tracker.BeginTransferTerminal(transferId, revision: 3);
+
+        Task handoff = tracker.WaitForTransferAsync(
+            transferId,
+            revision: 3,
+            CancellationToken.None);
+        tracker.Committed([TransferTerminal(transferId, revision: 2)]);
+        Assert.IsFalse(handoff.IsCompleted);
+
+        tracker.Committed([TransferTerminal(transferId, revision: 3)]);
+        await handoff;
+    }
+
+    [TestMethod]
+    public async Task TransferCommitBeforeWaitStillSatisfiesRetirement()
+    {
+        var tracker = new PersistenceHandoffTracker();
+        Guid transferId = Guid.NewGuid();
+        tracker.BeginTransferTerminal(transferId, revision: 4);
+        tracker.Committed([TransferTerminal(transferId, revision: 4)]);
+
+        await tracker.WaitForTransferAsync(
+            transferId,
+            revision: 4,
+            CancellationToken.None);
+    }
+
     private static JobPersistenceMutation JobMutation(
         Guid workflowId,
         Guid jobId,
@@ -207,4 +239,32 @@ public sealed class PersistenceHandoffTrackerTests
                 LockedFileCount: 0,
                 ResultPersistenceState: "Complete"),
             PendingResultBatches: []);
+
+    private static TransferTerminalPersistenceMutation TransferTerminal(
+        Guid transferId,
+        long revision)
+        => new(
+            new TransferPersistenceMutation(
+                Guid.NewGuid(),
+                Sequence: revision,
+                DateTimeOffset.UtcNow,
+                transferId,
+                revision,
+                PersistenceMutationPriority.Terminal,
+                JobId: null,
+                WorkflowId: null,
+                Direction: "Upload",
+                Source: "SoulseekPeer",
+                Username: "peer",
+                RemotePath: "file",
+                LocalPath: null,
+                State: "Completed",
+                TerminalOutcome: "Succeeded",
+                TotalBytes: 100,
+                TransferredBytes: 100,
+                AttemptCount: 1,
+                FailureReason: "None",
+                FailureMessage: null),
+            FinalAttempt: null,
+            OwningJob: null);
 }

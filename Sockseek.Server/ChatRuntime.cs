@@ -56,6 +56,7 @@ public sealed class ChatRuntime : IAsyncDisposable
     private int disposeState;
 
     internal int PeakIngressDepth => Volatile.Read(ref peakIngressDepth);
+    internal PeerRestrictionPolicy Restrictions => soulseek.Restrictions;
 
     public ChatRuntime(
         EngineSettings settings,
@@ -106,6 +107,30 @@ public sealed class ChatRuntime : IAsyncDisposable
     {
         lock (stateGate)
             return notificationSummary;
+    }
+
+    public ConversationSummaryDto MapConversation(ConversationRecord value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return ChatDtoMapper.ToDto(
+            value,
+            soulseek.Restrictions.IsPrivateMessageBlocked(value.DisplayUsername));
+    }
+
+    public async Task PublishPeerRestrictionsChangedAsync(
+        string username,
+        CancellationToken cancellationToken)
+    {
+        username = PeerUsername.Validate(username);
+        ConversationRecord? conversation = await store.GetConversationByPeerAsync(
+            Account,
+            username,
+            cancellationToken).ConfigureAwait(false);
+        if (conversation is not null)
+            await PublishConversationAsync(
+                conversation.ConversationId,
+                message: null,
+                cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -165,9 +190,6 @@ public sealed class ChatRuntime : IAsyncDisposable
         ChatIdentity.ValidateUsername(username);
         text = ChatIdentity.ValidateMessage(text);
         EnsureReady();
-        if (soulseek.AccessPolicy.IsUsernameBlocked(username))
-            throw new UnauthorizedAccessException("The peer is blocked by daemon policy.");
-
         string account = Account;
         ISoulseekClient client = Client;
         var prepared = await store.PrepareOutgoingPrivateMessageAsync(
@@ -420,7 +442,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                 Account, targetId, cancellationToken).ConfigureAwait(false);
             if (record is null)
                 return null;
-            conversation = ChatDtoMapper.ToDto(record);
+            conversation = MapConversation(record);
         }
         else
         {
@@ -632,7 +654,7 @@ public sealed class ChatRuntime : IAsyncDisposable
             ChatTelemetry.RecordIngress("private");
             if (sender is not ISoulseekClient client)
                 return;
-            bool discard = soulseek.AccessPolicy.IsUsernameBlocked(e.Username);
+            bool discard = soulseek.Restrictions.IsPrivateMessageBlocked(e.Username);
             if (!discard)
             {
                 ChatIdentity.ValidateUsername(e.Username);
@@ -674,11 +696,6 @@ public sealed class ChatRuntime : IAsyncDisposable
         try
         {
             ChatTelemetry.RecordIngress("room");
-            if (soulseek.AccessPolicy.IsUsernameBlocked(e.Username))
-            {
-                ChatTelemetry.RecordInboundResult("room", "blocked");
-                return;
-            }
             ChatIdentity.NormalizeRoom(e.RoomName);
             ChatIdentity.ValidateUsername(e.Username);
             ChatIdentity.ValidateMessage(e.Message);
@@ -1023,7 +1040,7 @@ public sealed class ChatRuntime : IAsyncDisposable
                         PublishTarget(new ChatTargetDeltaDto(
                             ChatTargetKind.Direct,
                             result.Message.TargetId,
-                            result.Conversation is null ? null : ChatDtoMapper.ToDto(result.Conversation),
+                            result.Conversation is null ? null : MapConversation(result.Conversation),
                             null,
                             [ChatDtoMapper.ToDto(result.Message)]));
                         ApplySummaryDelta(privateMessages: 1, notifications: 1);
@@ -1640,7 +1657,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         PublishTarget(new ChatTargetDeltaDto(
             message.TargetKind,
             message.TargetId,
-            prepared.Conversation is null ? null : ChatDtoMapper.ToDto(prepared.Conversation),
+            prepared.Conversation is null ? null : MapConversation(prepared.Conversation),
             prepared.Room is null ? null : MapRoom(prepared.Room),
             [ChatDtoMapper.ToDto(message)]));
     }
@@ -1672,7 +1689,7 @@ public sealed class ChatRuntime : IAsyncDisposable
         PublishTarget(new ChatTargetDeltaDto(
             ChatTargetKind.Direct,
             conversationId,
-            ChatDtoMapper.ToDto(conversation),
+            MapConversation(conversation),
             null,
             message is null ? null : [ChatDtoMapper.ToDto(message)]));
     }

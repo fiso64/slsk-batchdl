@@ -52,12 +52,12 @@ public sealed class ChatRuntimeTests
     }
 
     [TestMethod]
-    public async Task BlockedAndInvalidPrivateMessagesAreAcknowledgedWithoutPersistence()
+    public async Task PrivateMessageRestrictionDiscardsOnlyIncomingDirectMessages()
     {
         await using var database = await ChatDatabase.CreateAsync();
         var fake = SoulseekClientProxy.Create();
         var settings = Settings();
-        settings.PeerAccess.BlockedUsernames.Add("Alice");
+        settings.PeerRestrictions.PrivateMessages.BlockedUsernames.Add("Alice");
         await using var session = new DaemonSoulseekRuntime(settings, _ => fake.Client);
         await using var chat = new ChatRuntime(settings, session, database.Host.Chat!);
         await chat.StartAsync(CancellationToken.None);
@@ -68,8 +68,13 @@ public sealed class ChatRuntimeTests
             2, DateTime.UtcNow, "Bob", "   ", replayed: false));
         await WaitUntilAsync(() => fake.AcknowledgeCount == 2);
 
+        ChatMessageRecord outgoing = await chat.SendPrivateMessageAsync(
+            "Alice", Guid.NewGuid(), "outgoing remains allowed", CancellationToken.None);
+
         ChatStoreSummary summary = await database.Host.Chat!.GetSummaryAsync("local");
-        Assert.AreEqual(0, summary.UnreadPrivateMessages);
+        Assert.AreEqual(ChatMessageState.Sent, outgoing.State);
+        Assert.AreEqual(0, summary.UnreadPrivateMessages,
+            "A private-message restriction applies only to incoming direct messages.");
         Assert.AreEqual(0, summary.UnreadNotifications);
     }
 

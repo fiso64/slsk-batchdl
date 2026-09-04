@@ -14,17 +14,17 @@ public enum FolderSortMode
 
 public sealed class IncrementalAlbumFolderProjector
 {
-    // TODO [PERFORMANCE]: This stores raw rows incrementally, but the first
-    // snapshot after new results still rebuilds folder grouping/ranking from
-    // all raw rows. Large interactive album searches can visibly linger in
-    // ProcessingSearchResults. Make grouped folder state truly incremental and
-    // feed it while raw results arrive so the terminal snapshot mostly orders
-    // and materializes already-built folders.
     private readonly AlbumFolderProjectionPlan projectionPlan;
-    private readonly List<SearchProjectionInput> rawResults = [];
-    private readonly HashSet<PeerPathKey> seen = [];
-    private readonly Dictionary<PeerPathKey, AlbumFolderSignature> previousSignatures = [];
-    private List<AlbumFolder> previousSnapshot = [];
+    private readonly SearchSettings search;
+    private readonly FolderSortMode sortMode;
+    private readonly Dictionary<string, List<EvaluatedAlbumProjectionInput>> rowsByUser =
+        new(StringComparer.Ordinal);
+    private readonly HashSet<string> dirtyUsers = new(StringComparer.Ordinal);
+    private readonly HashSet<(PeerPathKey Path, SearchResultVisibility Visibility)> seen = [];
+    private readonly Dictionary<PeerPathKey, AlbumFolder> folders = [];
+    private readonly Dictionary<PeerPathKey, AlbumFolderSignature> signatures = [];
+    private readonly Dictionary<PeerPathKey, long> firstSequences = [];
+    private int nextOriginalIndex;
 
     public IncrementalAlbumFolderProjector(
         AlbumQuery query,
@@ -33,6 +33,8 @@ public sealed class IncrementalAlbumFolderProjector
         bool ignoreStringSortConditions = false,
         FolderSortMode sortMode = FolderSortMode.AlbumRanked)
     {
+        this.search = search;
+        this.sortMode = sortMode;
         projectionPlan = new AlbumFolderProjectionPlan(
             query,
             search,
@@ -41,34 +43,60 @@ public sealed class IncrementalAlbumFolderProjector
             sortMode);
     }
 
-    public int Count => rawResults.Count;
+    public int Count => seen.Count;
 
     internal int AddRange(IEnumerable<(SearchResponse Response, SlFile File)> results)
         => AddRange(results.Select((result, index) => SearchProjectionInput.FromLive(
             index + 1L, index + 1, result.Response, result.File, DateTimeOffset.UnixEpoch)));
 
     public int AddRange(IEnumerable<SearchProjectionInput> results)
+        => AddRange(results, admittedFiles: null);
+
+    private int AddRange(
+        IEnumerable<SearchProjectionInput> results,
+        List<ProjectedFileCandidate>? admittedFiles)
     {
-        var filtered = results.Where(ProjectionFilter);
         int added = 0;
-        foreach (var input in filtered)
+        foreach (SearchProjectionInput input in results)
         {
-            var key = new PeerPathKey(input.Username, input.Filename);
+            EvaluatedAlbumProjectionInput? evaluated = projectionPlan.Evaluate(
+                input,
+                nextOriginalIndex++);
+            if (evaluated == null)
+                continue;
+            var key = (
+                new PeerPathKey(input.Username, input.Filename),
+                input.Visibility);
             if (!seen.Add(key))
                 continue;
 
-            rawResults.Add(input);
+            if (!rowsByUser.TryGetValue(
+                    input.Username,
+                    out List<EvaluatedAlbumProjectionInput>? rows))
+            {
+                rows = [];
+                rowsByUser.Add(input.Username, rows);
+            }
+            rows.Add(evaluated.Value);
+            admittedFiles?.Add(new ProjectedFileCandidate(
+                input,
+                input.ToFileCandidate(),
+                evaluated.Value.SortEntry.Key.ConditionFacts,
+                evaluated.Value.SortEntry.Key.PersistenceKey));
+            dirtyUsers.Add(input.Username);
             added++;
         }
 
         return added;
     }
 
-    // TODO: Revisit AlbumQuery.SearchHint semantics. It may be cleaner for the hint
-    // to qualify folders that contain a matching track, while still showing all files
-    // from matching folders that were present in the search response.
-    private bool ProjectionFilter(SearchProjectionInput result)
-        => projectionPlan.Includes(result);
+    public AlbumFolderSearchViewChanges AddRangeForSearchView(
+        IEnumerable<SearchProjectionInput> results)
+    {
+        var admitted = new List<ProjectedFileCandidate>();
+        AddRange(results, admitted);
+        return new(GetChanges(), admitted);
+    }
 
     internal AlbumFolderProjectionChanges AddRangeAndGetChanges(IEnumerable<(SearchResponse Response, SlFile File)> results)
     {
@@ -84,45 +112,160 @@ public sealed class IncrementalAlbumFolderProjector
 
     public void Clear()
     {
-        rawResults.Clear();
+        rowsByUser.Clear();
+        dirtyUsers.Clear();
         seen.Clear();
-        previousSignatures.Clear();
-        previousSnapshot = [];
+        folders.Clear();
+        signatures.Clear();
+        firstSequences.Clear();
+        nextOriginalIndex = 0;
     }
 
     public List<AlbumFolder> Snapshot()
-        => projectionPlan.ProjectFilteredResults(rawResults, rawResults.Count);
+    {
+        RefreshDirtyUsers(null, null, null);
+        return OrderedFolders();
+    }
 
     public AlbumFolderProjectionChanges GetChanges()
     {
-        var folders = Snapshot();
-        var currentSignatures = new Dictionary<PeerPathKey, AlbumFolderSignature>();
         var added = new List<AlbumFolder>();
         var updated = new List<AlbumFolder>();
+        var removed = new List<AlbumFolder>();
+        RefreshDirtyUsers(added, updated, removed);
+        return new AlbumFolderProjectionChanges(
+            OrderedFolders(),
+            added,
+            updated,
+            removed);
+    }
 
-        foreach (var folder in folders)
+    private void RefreshDirtyUsers(
+        List<AlbumFolder>? added,
+        List<AlbumFolder>? updated,
+        List<AlbumFolder>? removed)
+    {
+        if (dirtyUsers.Count == 0)
+            return;
+        foreach (string username in dirtyUsers.Order(StringComparer.Ordinal))
         {
-            PeerPathKey key = FolderKey(folder);
-            var signature = AlbumFolderSignature.Create(folder);
-            currentSignatures.Add(key, signature);
+            PeerPathKey[] oldKeys = folders.Keys
+                .Where(key => string.Equals(key.Username, username, StringComparison.Ordinal))
+                .ToArray();
+            List<AlbumFolder> projected = projectionPlan.ProjectEvaluatedResults(
+                rowsByUser[username],
+                rowsByUser[username].Count);
+            var newKeys = new HashSet<PeerPathKey>();
+            foreach (AlbumFolder folder in projected)
+            {
+                PeerPathKey key = FolderKey(folder);
+                newKeys.Add(key);
+                AlbumFolderSignature signature = AlbumFolderSignature.Create(folder);
+                if (!signatures.TryGetValue(key, out AlbumFolderSignature previous))
+                    added?.Add(folder);
+                else if (signature != previous)
+                    updated?.Add(folder);
+                folders[key] = folder;
+                signatures[key] = signature;
+                firstSequences[key] = folder.Files.Count == 0
+                    ? long.MaxValue
+                    : folder.Files.Min(file => file.Candidate.Evidence.Sequence);
+            }
 
-            if (!previousSignatures.TryGetValue(key, out var previous))
-                added.Add(folder);
-            else if (!signature.Equals(previous))
-                updated.Add(folder);
+            foreach (PeerPathKey key in oldKeys)
+            {
+                if (newKeys.Contains(key))
+                    continue;
+                removed?.Add(folders[key]);
+                folders.Remove(key);
+                signatures.Remove(key);
+                firstSequences.Remove(key);
+            }
+        }
+        dirtyUsers.Clear();
+    }
+
+    private List<AlbumFolder> OrderedFolders()
+        => sortMode == FolderSortMode.DeterministicUnranked
+            ? folders.Values
+                .OrderBy(folder => folder.Username, StringComparer.Ordinal)
+                .ThenBy(folder => folder.FolderPath, StringComparer.Ordinal)
+                .ToList()
+            : folders.Values.Order(Comparer<AlbumFolder>.Create(CompareRanked)).ToList();
+
+    private int CompareRanked(AlbumFolder? x, AlbumFolder? y)
+    {
+        if (ReferenceEquals(x, y))
+            return 0;
+        if (x == null)
+            return 1;
+        if (y == null)
+            return -1;
+        ResultSorter.SortEntry? xEntry = x.SearchAggregateSortEntry;
+        ResultSorter.SortEntry? yEntry = y.SearchAggregateSortEntry;
+        if (xEntry.HasValue && yEntry.HasValue)
+        {
+            int comparison = ResultSorter.AlbumBeforeQualitySortEntryComparer.Instance.Compare(
+                xEntry.Value,
+                yEntry.Value);
+            if (comparison != 0)
+                return comparison;
+        }
+        else if (xEntry.HasValue)
+            return -1;
+        else if (yEntry.HasValue)
+            return 1;
+
+        if (AlbumQualityPolicy.ActiveConditions(search.NecessaryCond).IsActive)
+        {
+            int comparison = CompareCoverage(
+                x.SearchAudioQualityCoverage.Format,
+                y.SearchAudioQualityCoverage.Format);
+            if (comparison != 0)
+                return comparison;
+            comparison = CompareCoverage(
+                x.SearchAudioQualityCoverage.Bitrate,
+                y.SearchAudioQualityCoverage.Bitrate);
+            if (comparison != 0)
+                return comparison;
+            comparison = CompareCoverage(
+                x.SearchAudioQualityCoverage.SampleRate,
+                y.SearchAudioQualityCoverage.SampleRate);
+            if (comparison != 0)
+                return comparison;
+            comparison = CompareCoverage(
+                x.SearchAudioQualityCoverage.BitDepth,
+                y.SearchAudioQualityCoverage.BitDepth);
+            if (comparison != 0)
+                return comparison;
         }
 
-        var removed = previousSnapshot
-            .Where(folder => !currentSignatures.ContainsKey(FolderKey(folder)))
-            .ToList();
+        if (xEntry.HasValue && yEntry.HasValue)
+        {
+            int comparison = ResultSorter.SortEntryComparer.Instance.Compare(
+                xEntry.Value,
+                yEntry.Value);
+            if (comparison != 0)
+                return comparison;
+        }
+        else if (xEntry.HasValue)
+            return -1;
+        else if (yEntry.HasValue)
+            return 1;
 
-        previousSignatures.Clear();
-        foreach (var (key, signature) in currentSignatures)
-            previousSignatures.Add(key, signature);
-        previousSnapshot = folders;
-
-        return new AlbumFolderProjectionChanges(folders, added, updated, removed);
+        int rank = firstSequences[FolderKey(x)].CompareTo(firstSequences[FolderKey(y)]);
+        if (rank != 0)
+            return rank;
+        int username = string.Compare(x.Username, y.Username, StringComparison.Ordinal);
+        return username != 0
+            ? username
+            : string.Compare(x.FolderPath, y.FolderPath, StringComparison.Ordinal);
     }
+
+    private static int CompareCoverage(
+        AlbumQualityCoverageBucket x,
+        AlbumQualityCoverageBucket y)
+        => y.Bucket.CompareTo(x.Bucket);
 
     private static PeerPathKey FolderKey(AlbumFolder folder)
         => new(folder.Username, folder.FolderPath);
@@ -150,3 +293,7 @@ public sealed record AlbumFolderProjectionChanges(
 {
     public bool HasChanges => Added.Count > 0 || Updated.Count > 0 || Removed.Count > 0;
 }
+
+public sealed record AlbumFolderSearchViewChanges(
+    AlbumFolderProjectionChanges Folders,
+    IReadOnlyList<ProjectedFileCandidate> AdmittedFiles);

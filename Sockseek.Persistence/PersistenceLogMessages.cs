@@ -22,4 +22,10 @@ internal static partial class PersistenceLogMessages
 
     [LoggerMessage(4055, LogLevel.Information, "Persistence writer recovered after reconciling retained mutations")]
     internal static partial void WriterRecovered(ILogger logger);
+
+    [LoggerMessage(4056, LogLevel.Warning, "Input artifact blob storage is unavailable; browser file inputs are disabled")]
+    internal static partial void InputArtifactStorageUnavailable(ILogger logger, Exception exception);
+
+    [LoggerMessage(4057, LogLevel.Warning, "Search View storage is unavailable; search execution and raw history remain available")]
+    internal static partial void SearchViewStorageUnavailable(ILogger logger, Exception exception);
 }

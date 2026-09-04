@@ -179,7 +179,7 @@ public sealed class UploadCoordinatorTests
         await using var coordinator = new UploadCoordinator(
             catalogs,
             new ReadingProtocolInvoker(startOffset: 0),
-            new PeerAccessPolicy(new PeerAccessSettings()),
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
             new UploadScheduler(new UploadSettings { Slots = 1 }));
         using var cancellation = new CancellationTokenSource();
 
@@ -202,7 +202,7 @@ public sealed class UploadCoordinatorTests
         => new(
             fixture,
             protocol,
-            new PeerAccessPolicy(new PeerAccessSettings()),
+            new PeerRestrictionPolicy(new PeerRestrictionSettings()),
             new UploadScheduler(new UploadSettings { Slots = slots }),
             shutdownGrace);
 

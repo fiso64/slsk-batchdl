@@ -24,7 +24,7 @@
     type NewJobDraft,
   } from '../../prototype/job-preview';
   import { commitPreview } from '../../prototype/job-preview-runtime';
-  import type { ProposedCreateJobPreviewRequestDto, ProposedInputArtifactUploadDto, ProposedSubmitJobPreviewRequestDto } from '../../prototype/contracts/jobs';
+  import type { CommitJobPreviewRequestDto, CreateJobPreviewRequestDto } from '../../prototype/contracts/jobs';
   import {
     buildImportSettingsPatch,
     buildSubmissionOptions,
@@ -189,18 +189,20 @@
     return options;
   }
 
-  function proposedPreviewRequest(): ProposedCreateJobPreviewRequestDto {
-    const source: ProposedCreateJobPreviewRequestDto['source'] = draft.choice === 'csv' || draft.choice === 'list'
-      ? { kind: 'artifact', artifactId: `prototype:${draft.uploadedFileName}`, inputType: draft.choice }
+  function previewRequest(): CreateJobPreviewRequestDto {
+    const job: CreateJobPreviewRequestDto['job'] = draft.choice === 'csv' || draft.choice === 'list'
+      ? {
+          kind: 'extract',
+          input: '',
+          inputType: draft.choice,
+          artifactId: `prototype:${draft.uploadedFileName}`,
+        }
       : isInlineSourceChoice(draft.choice)
-        ? { kind: 'extract-input', input: resolvedSourceInput(), inputType: draft.choice }
-        : {
-            kind: 'job-draft',
-            draft: draft.choice === 'album'
-              ? { kind: 'album', albumQuery: { artist: draft.artist || null, album: draft.album || null, searchHint: null, uri: null, artistMaybeWrong: false } }
-              : { kind: 'song', songQuery: { artist: draft.artist || null, title: draft.title || null, album: draft.album || null, uri: null, length: null, artistMaybeWrong: false } },
-          };
-    return { source, options: currentSubmissionOptions() };
+        ? { kind: 'extract', input: resolvedSourceInput(), inputType: draft.choice }
+        : draft.choice === 'album'
+          ? { kind: 'album', albumQuery: { artist: draft.artist || null, album: draft.album || null, searchHint: null, uri: null, artistMaybeWrong: false } }
+          : { kind: 'song', songQuery: { artist: draft.artist || null, title: draft.title || null, album: draft.album || null, uri: null, length: null, artistMaybeWrong: false } };
+    return { job, options: currentSubmissionOptions() };
   }
 
   function buildPlan(): JobPreviewPlan {
@@ -211,20 +213,13 @@
 
   function review(): void {
     if (!valid) return;
-    const request = proposedPreviewRequest();
+    const request = previewRequest();
     void request;
     preview = buildPlan();
     selectedLeaves = new Set(previewLeafRefs(preview));
   }
 
   function acceptFile(file: File): void {
-    const request: ProposedInputArtifactUploadDto = {
-      filename: file.name,
-      contentType: file.type || 'application/octet-stream',
-      sizeBytes: file.size,
-      purpose: 'job-extraction-input',
-    };
-    void request;
     draft.uploadedFileName = file.name;
     draft.uploadedFileType = file.type;
     clearPreview();
@@ -257,8 +252,10 @@
 
   function startReviewed(): void {
     if (!preview || !selectedLeaves.size) return;
-    const request: ProposedSubmitJobPreviewRequestDto = {
-      selection: { mode: 'only', leafRefs: [...selectedLeaves] },
+    const request: CommitJobPreviewRequestDto = {
+      revision: 1,
+      selection: { mode: 'Only', refs: [...selectedLeaves] },
+      idempotencyKey: crypto.randomUUID(),
     };
     void request;
     commitLocalPlan(preview, selectedLeaves);
@@ -453,4 +450,3 @@
       </div>
     </div>
 </section>
-

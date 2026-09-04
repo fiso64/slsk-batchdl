@@ -10,7 +10,8 @@ public sealed record SubmitExtractJobRequestDto(
     string Input,
     string? InputType = null,
     SubmissionOptionsDto? Options = null,
-    DownloadBehaviorPolicyDto? ResultDownloadBehavior = null);
+    DownloadBehaviorPolicyDto? ResultDownloadBehavior = null,
+    string? ArtifactId = null);
 
 /// <summary>
 /// Starts a generic Soulseek discovery job from raw query text.
@@ -123,7 +124,8 @@ public sealed record ExtractJobDraftDto(
     string? InputType = null,
     DownloadSettingsPatchDto? DownloadSettings = null,
     DownloadBehaviorPolicyDto? ResultDownloadBehavior = null,
-    JobProvenanceDto? Provenance = null) : JobDraftDto;
+    JobProvenanceDto? Provenance = null,
+    string? ArtifactId = null) : JobDraftDto;
 
 public sealed record TrackSearchJobDraftDto(
     SongQueryDto SongQuery,
@@ -225,7 +227,6 @@ public sealed record StartFolderDownloadRequestDto(
     SubmissionOptionsDto? Options = null,
     AlbumQueryDto? AlbumQuery = null,
     AlbumFolderDownloadSelectionDto? Selection = null,
-    AlbumFolderDto? SelectedFolder = null,
     ExtractionMode? RequestedMode = null);
 
 /// <summary>
@@ -235,31 +236,3 @@ public sealed record AlbumFolderDownloadSelectionDto(
     IReadOnlyList<FileCandidateRefDto>? Files = null,
     bool ExactFiles = false,
     bool SkipTrackCountVerification = false);
-
-/// <summary>
-/// Projection options for viewing search results as file candidates.
-/// </summary>
-public sealed record FileSearchProjectionRequestDto(
-    SongQueryDto? SongQuery = null,
-    bool IncludeFullResults = false);
-
-/// <summary>
-/// Projection options for viewing search results as album folders.
-/// </summary>
-public sealed record FolderSearchProjectionRequestDto(
-    AlbumQueryDto AlbumQuery,
-    bool IncludeFiles = false);
-
-/// <summary>
-/// Projection options for grouping search results as aggregate track candidates.
-/// </summary>
-public sealed record AggregateTrackProjectionRequestDto(
-    SongQueryDto? SongQuery = null,
-    bool IncludeCandidates = false);
-
-/// <summary>
-/// Projection options for grouping search results as aggregate album candidates.
-/// </summary>
-public sealed record AggregateAlbumProjectionRequestDto(
-    AlbumQueryDto? AlbumQuery = null,
-    bool IncludeFolders = false);

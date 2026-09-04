@@ -429,6 +429,140 @@ public sealed class PeerBrowseArtifactStoreTests
     }
 
     [TestMethod]
+    public async Task MixedSearch_IndexesGlobalPathsAndReturnsAncestorsExactTotalsAndStablePages()
+    {
+        await using var directory = new TemporaryDirectory();
+        var store = new PeerBrowseArtifactStore(directory.Path);
+        PeerBrowseResource resource = await store.CreateQueuedAsync("local", "Peer");
+        await store.MarkRunningAsync(resource.BrowseId);
+        await using (PeerBrowseArtifactWriter writer = await store.BeginWriteAsync(resource))
+        {
+            await writer.BeginDirectoryAsync(@"Root\Música\Álbum", PeerShareVisibility.Public, 2);
+            await AddFileAsync(writer, "Track One.FLAC", 100, "flac");
+            await AddFileAsync(writer, "A+B \"Live\".flac", 20, "flac");
+            await writer.BeginDirectoryAsync(@"Root\Locked", PeerShareVisibility.Locked, 1);
+            await AddFileAsync(writer, "track secret.mp3", 50, "mp3");
+            await writer.BeginDirectoryAsync("Elsewhere", PeerShareVisibility.Public, 1);
+            await AddFileAsync(writer, "soundtrack.mp3", 30, "mp3");
+            await writer.CompleteAsync();
+        }
+
+        PeerBrowseSearchPage first = await store.SearchAsync(
+            resource.BrowseId, "TrAcK", null, null, null, 3);
+        PeerBrowseSearchPage second = await store.SearchAsync(
+            resource.BrowseId,
+            "TrAcK",
+            first.NextSortKey,
+            first.NextKind,
+            first.NextId,
+            20);
+        PeerBrowseSearchEntry[] rows = first.Items.Concat(second.Items).ToArray();
+
+        Assert.AreEqual(2, first.PublicMatchingFileCount);
+        Assert.AreEqual(130, first.PublicMatchingBytes);
+        Assert.AreEqual(1, first.LockedMatchingFileCount);
+        Assert.AreEqual(50, first.LockedMatchingBytes);
+        Assert.AreEqual(first.PublicMatchingFileCount, second.PublicMatchingFileCount);
+        Assert.AreEqual(3, rows.Count(row => row.Kind == PeerBrowseSearchEntryKind.File));
+        Assert.AreEqual(rows.Length, rows.Select(row => (row.Kind, row.EntryId)).Distinct().Count());
+        CollectionAssert.Contains(rows.Select(row => row.DisplayPath).ToArray(), "Root");
+        CollectionAssert.Contains(rows.Select(row => row.DisplayPath).ToArray(), @"Root\Música\Álbum");
+
+        PeerBrowseSearchEntry root = rows.Single(row =>
+            row.Kind == PeerBrowseSearchEntryKind.Directory && row.DisplayPath == "Root");
+        Assert.AreEqual(1, root.PublicMatchingFileCount);
+        Assert.AreEqual(100, root.PublicMatchingBytes);
+        Assert.AreEqual(1, root.LockedMatchingFileCount);
+        Assert.AreEqual(50, root.LockedMatchingBytes);
+
+        PeerBrowseSearchPage directoryMatch = await store.SearchAsync(
+            resource.BrowseId, "ÁLBUM", null, null, null, 20);
+        Assert.AreEqual(2, directoryMatch.PublicMatchingFileCount);
+        Assert.AreEqual(120, directoryMatch.PublicMatchingBytes);
+        Assert.AreEqual(2, directoryMatch.Items.Count(row => row.Kind == PeerBrowseSearchEntryKind.File));
+
+        PeerBrowseSearchPage punctuation = await store.SearchAsync(
+            resource.BrowseId, "+B \"", null, null, null, 20);
+        Assert.AreEqual(1, punctuation.PublicMatchingFileCount);
+        Assert.AreEqual("A+B \"Live\".flac", punctuation.Items.Single(
+            row => row.Kind == PeerBrowseSearchEntryKind.File).Name);
+
+        PeerBrowseSearchPage shortQuery = await store.SearchAsync(
+            resource.BrowseId, "ú", null, null, null, 20);
+        Assert.AreEqual(2, shortQuery.PublicMatchingFileCount);
+    }
+
+    [TestMethod]
+    public async Task MixedSearch_TrigramPredicateUsesTheArtifactVirtualIndex()
+    {
+        await using var directory = new TemporaryDirectory();
+        var store = new PeerBrowseArtifactStore(directory.Path);
+        PeerBrowseResource resource = await store.CreateQueuedAsync("local", "Peer");
+        await store.MarkRunningAsync(resource.BrowseId);
+        await using (PeerBrowseArtifactWriter writer = await store.BeginWriteAsync(resource))
+        {
+            await writer.BeginDirectoryAsync("Music", PeerShareVisibility.Public, 1);
+            await AddFileAsync(writer, "track.flac", 1, "flac");
+            await writer.CompleteAsync();
+        }
+
+        string artifactPath = Directory.EnumerateFiles(
+            Path.Combine(store.RootDirectory, "artifacts"), "*.sqlite").Single();
+        await using var connection = new SqliteConnection(
+            $"Data Source={artifactPath};Mode=ReadOnly;Pooling=False");
+        await connection.OpenAsync();
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText =
+            "EXPLAIN QUERY PLAN SELECT rowid FROM browse_search WHERE browse_search MATCH '\"track\"';";
+        var details = new List<string>();
+        await using SqliteDataReader reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            details.Add(reader.GetString(3));
+        Assert.IsTrue(
+            details.Any(detail => detail.Contains("VIRTUAL TABLE INDEX", StringComparison.OrdinalIgnoreCase)),
+            string.Join(Environment.NewLine, details));
+    }
+
+    [TestMethod]
+    public async Task ArtifactWithoutSearchIndex_RemainsBrowsableAndRequestsRefreshForSearch()
+    {
+        await using var directory = new TemporaryDirectory();
+        var store = new PeerBrowseArtifactStore(directory.Path);
+        PeerBrowseResource resource = await store.CreateQueuedAsync("local", "Peer");
+        await store.MarkRunningAsync(resource.BrowseId);
+        await using (PeerBrowseArtifactWriter writer = await store.BeginWriteAsync(resource))
+        {
+            await writer.BeginDirectoryAsync("Music", PeerShareVisibility.Public, 1);
+            await AddFileAsync(writer, "track.flac", 1, "flac");
+            await writer.CompleteAsync();
+        }
+
+        string artifactPath = Directory.EnumerateFiles(
+            Path.Combine(store.RootDirectory, "artifacts"), "*.sqlite").Single();
+        await using (var connection = new SqliteConnection(
+                         $"Data Source={artifactPath};Mode=ReadWrite;Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "DROP TABLE browse_search;";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        PeerBrowsePage<PeerBrowseDirectoryEntry> ordinary = await store.ReadDirectoriesAsync(
+            resource.BrowseId, null, null, false, null, null, 10);
+
+        Assert.AreEqual("Music", ordinary.Items.Single().Name);
+        try
+        {
+            await store.SearchAsync(resource.BrowseId, "track", null, null, null, 10);
+            Assert.Fail("Search should require refresh when the retained artifact has no index.");
+        }
+        catch (PeerBrowseSearchUnavailableException)
+        {
+        }
+    }
+
+    [TestMethod]
     public async Task MixedSeparatorsUseNormalizedLookupButRetainExactDownloadIdentity()
     {
         await using var directory = new TemporaryDirectory();
@@ -612,9 +746,14 @@ public sealed class PeerBrowseArtifactStoreTests
             resource.BrowseId, root.DirectoryId, null, null, null, 25);
         PeerBrowseDownloadResolution resolution = await store.ResolveDownloadSelectionAsync(
             resource.BrowseId, [root.DirectoryId], []);
+        PeerBrowseSearchPage search = await store.SearchAsync(
+            resource.BrowseId, "file", null, null, null, 25);
 
         Assert.AreEqual(25, page.Items.Count);
         Assert.IsNotNull(page.NextId);
+        Assert.AreEqual(25, search.Items.Count);
+        Assert.IsNotNull(search.NextId);
+        Assert.AreEqual(fileCount, search.PublicMatchingFileCount);
         Assert.AreEqual(fileCount, root.RecursiveFileCount);
         Assert.AreEqual(fileCount, resolution.Plans.Single().Entries.Count);
         Assert.AreEqual(1, resolution.CanonicalDirectoryRoots);
@@ -707,6 +846,16 @@ public sealed class PeerBrowseArtifactStoreTests
         await using PeerBrowseArtifactWriter writer = await store.BeginWriteAsync(resource);
         await writer.CompleteAsync();
         return resource;
+    }
+
+    private static async Task AddFileAsync(
+        PeerBrowseArtifactWriter writer,
+        string name,
+        long size,
+        string extension)
+    {
+        await writer.BeginFileAsync(new PeerBrowseWireFile(1, name, size, extension, 0));
+        await writer.EndFileAsync();
     }
 
     private static async Task CreatePreviousRegistryAsync(string path, bool includeLegacyColumn)

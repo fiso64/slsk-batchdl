@@ -11,21 +11,19 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
 {
     private readonly Channel<PersistenceMutation> critical;
     private readonly Channel<PersistenceMutation> ordinary;
+    private readonly Channel<PersistenceMutation> search;
     private readonly Channel<AwaitablePersistenceCommand> commands;
     private readonly Dictionary<Guid, TransferPersistenceMutation> progress = [];
     private readonly Dictionary<string, PersistenceMutation> degraded = [];
-    private readonly Dictionary<Guid, SearchResultBuffer> searchBuffers = [];
-    private readonly HashSet<Guid> incompleteSearches = [];
     private readonly object progressGate = new();
     private readonly object degradedGate = new();
-    private readonly object searchGate = new();
     private readonly SemaphoreSlim signal = new(0, 1);
     private readonly PersistenceHealth health;
     private readonly IPersistenceMutationObserver? mutationObserver;
     private int criticalDepth;
     private int ordinaryDepth;
+    private int searchDepth;
     private int bufferedSearchResultCount;
-    private int incompleteTrackingOverflowed;
     private int completed;
 
     public PersistenceInbox(
@@ -39,6 +37,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         this.mutationObserver = mutationObserver;
         critical = CreateChannel(options.CriticalQueueCapacity);
         ordinary = CreateChannel(options.OrdinaryQueueCapacity);
+        search = CreateChannel(options.SearchMutationQueueCapacity);
         commands = Channel.CreateBounded<AwaitablePersistenceCommand>(
             new BoundedChannelOptions(options.CriticalQueueCapacity)
             {
@@ -55,8 +54,9 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     public int ProgressCount { get { lock (progressGate) return progress.Count; } }
     public int DegradedCount { get { lock (degradedGate) return degraded.Count; } }
     public int BufferedSearchResultCount => Volatile.Read(ref bufferedSearchResultCount);
-    public int IncompleteSearchTrackingCount { get { lock (searchGate) return incompleteSearches.Count; } }
-    public bool IncompleteSearchTrackingOverflowed => Volatile.Read(ref incompleteTrackingOverflowed) != 0;
+    internal int SearchDepth => Volatile.Read(ref searchDepth);
+    public int IncompleteSearchTrackingCount => 0;
+    public bool IncompleteSearchTrackingOverflowed => false;
     internal bool IsCompleted => Volatile.Read(ref completed) != 0;
 
     public bool TryEnqueue(PersistenceMutation mutation)
@@ -69,14 +69,11 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
                 new InvalidOperationException("Persistence stopped before the mutation could be accepted."));
             return false;
         }
-        if (mutation is SearchResultsPersistenceMutation searchResults)
-            return TryBufferSearchResults(searchResults);
-        if (mutation is SearchCompletionPersistenceMutation searchCompletion)
-            return TryEnqueueSearchCompletion(searchCompletion);
+        if (mutation is SearchResultsPersistenceMutation or SearchCompletionPersistenceMutation)
+            return EnqueueSearchWithBackpressure(mutation);
         if (mutation is TransferTerminalPersistenceMutation terminalTransfer)
         {
-            RemoveBufferedTransfer(terminalTransfer.Transfer.TransferId);
-            return TryEnqueueCritical(terminalTransfer);
+            return TryEnqueueCritical(AbsorbBufferedTransfer(terminalTransfer));
         }
         if (mutation is TransferPersistenceMutation { Priority: PersistenceMutationPriority.Progress } transferProgress)
             return TrySetProgress(transferProgress);
@@ -156,22 +153,13 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             batch.Add(mutation);
         }
 
-        lock (searchGate)
+        while (batch.Count < Options.MaximumBatchSize
+            && search.Reader.TryRead(out var searchMutation))
         {
-            while (batch.Count < Options.MaximumBatchSize && searchBuffers.Count > 0)
-            {
-                var next = searchBuffers
-                    .Select(pair => (pair.Key, Mutation: pair.Value.Batches.Peek()))
-                    .OrderBy(item => item.Mutation.Sequence)
-                    .First();
-                SearchResultBuffer buffer = searchBuffers[next.Key];
-                buffer.Batches.Dequeue();
-                buffer.ResultCount -= next.Mutation.Results.Count;
-                if (buffer.Batches.Count == 0)
-                    searchBuffers.Remove(next.Key);
-                Interlocked.Add(ref bufferedSearchResultCount, -next.Mutation.Results.Count);
-                batch.Add(next.Mutation);
-            }
+            Interlocked.Decrement(ref searchDepth);
+            if (searchMutation is SearchResultsPersistenceMutation results)
+                Interlocked.Add(ref bufferedSearchResultCount, -results.Results.Count);
+            batch.Add(searchMutation);
         }
 
         if (includeProgress)
@@ -189,7 +177,7 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             }
         }
 
-        if (CriticalDepth > 0 || OrdinaryDepth > 0 || DegradedCount > 0 || BufferedSearchResultCount > 0
+        if (CriticalDepth > 0 || OrdinaryDepth > 0 || DegradedCount > 0 || SearchDepth > 0
             || includeProgress && ProgressCount > 0)
             Signal();
         return batch;
@@ -206,6 +194,9 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
     {
         Interlocked.Exchange(ref completed, 1);
         commands.Writer.TryComplete();
+        critical.Writer.TryComplete();
+        ordinary.Writer.TryComplete();
+        search.Writer.TryComplete();
         Signal();
     }
 
@@ -238,13 +229,24 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             if (progress.TryGetValue(mutation.TransferId, out var current))
             {
                 if (mutation.Revision > current.Revision)
-                    progress[mutation.TransferId] = mutation;
+                    progress[mutation.TransferId] = MergeTransfer(current, mutation);
+                else if (mutation.AccountingObservations is { Count: > 0 })
+                    progress[mutation.TransferId] = MergeTransfer(mutation, current);
                 Signal();
                 return true;
             }
 
             if (progress.Count >= Options.ProgressEntityCapacity)
             {
+                // Accounting-bearing progress is compacted per attempt/time
+                // bucket and must survive until a terminal cumulative snapshot.
+                // Active transfer concurrency is the representation bound.
+                if (mutation.AccountingObservations is { Count: > 0 })
+                {
+                    progress.Add(mutation.TransferId, mutation);
+                    Signal();
+                    return true;
+                }
                 health.RecordDroppedProgress();
                 return false;
             }
@@ -255,77 +257,100 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         return true;
     }
 
-    private void RemoveBufferedTransfer(Guid transferId)
+    private TransferTerminalPersistenceMutation AbsorbBufferedTransfer(
+        TransferTerminalPersistenceMutation terminal)
     {
+        Guid transferId = terminal.Transfer.TransferId;
+        TransferPersistenceMutation merged = terminal.Transfer;
         lock (progressGate)
-            progress.Remove(transferId);
+        {
+            if (progress.Remove(transferId, out TransferPersistenceMutation? buffered))
+                merged = MergeTransfer(buffered, merged);
+        }
         lock (degradedGate)
         {
-            foreach (string key in degraded
+            foreach (var pair in degraded
                 .Where(pair => pair.Value.EntityId == transferId)
-                .Select(pair => pair.Key)
                 .ToArray())
             {
-                degraded.Remove(key);
+                if (pair.Value is TransferPersistenceMutation transfer)
+                    merged = MergeTransfer(transfer, merged);
+                degraded.Remove(pair.Key);
             }
         }
+        return terminal with { Transfer = merged };
     }
 
-    private bool TryBufferSearchResults(SearchResultsPersistenceMutation mutation)
+    internal static TransferPersistenceMutation MergeTransfer(
+        TransferPersistenceMutation earlier,
+        TransferPersistenceMutation later)
     {
-        bool flushThresholdReached;
-        lock (searchGate)
-        {
-            int perSearchCount = searchBuffers.TryGetValue(mutation.SearchJobId, out var existing)
-                ? existing.ResultCount
-                : 0;
-            if (perSearchCount + mutation.Results.Count > Options.SearchResultCapacityPerSearch
-                || bufferedSearchResultCount + mutation.Results.Count > Options.SearchResultGlobalCapacity)
-            {
-                incompleteSearches.Add(mutation.SearchJobId);
-                if (incompleteSearches.Count > Options.IncompleteSearchTrackingCapacity)
-                    Volatile.Write(ref incompleteTrackingOverflowed, 1);
-                health.RecordDroppedSearchResults(mutation.Results.Count);
-                health.RecordIncompleteSearch();
-                return false;
-            }
+        IReadOnlyList<TransferAccountingObservation>? observations = MergeObservations(
+            earlier.AccountingObservations,
+            later.AccountingObservations);
+        return later with { AccountingObservations = observations };
+    }
 
-            if (existing == null)
+    private static IReadOnlyList<TransferAccountingObservation>? MergeObservations(
+        IReadOnlyList<TransferAccountingObservation>? first,
+        IReadOnlyList<TransferAccountingObservation>? second)
+    {
+        if (first is not { Count: > 0 }) return second;
+        if (second is not { Count: > 0 }) return first;
+        TransferAccountingObservation[] ordered = first.Concat(second)
+            .GroupBy(item => (item.AttemptId, item.Revision))
+            .Select(group => group.Last())
+            .ToArray();
+        var compact = new List<TransferAccountingObservation>();
+        foreach (IGrouping<Guid, TransferAccountingObservation> attempt in ordered
+            .GroupBy(item => item.AttemptId))
+        {
+            TransferAccountingObservation? pending = null;
+            long pendingBucket = 0;
+            foreach (TransferAccountingObservation observation in attempt
+                .OrderBy(item => item.OccurredAtUtc)
+                .ThenBy(item => item.Revision))
             {
-                existing = new SearchResultBuffer();
-                searchBuffers.Add(mutation.SearchJobId, existing);
+                long observedAt = observation.OccurredAtUtc.ToUniversalTime().ToUnixTimeMilliseconds();
+                Math.DivRem(
+                    observedAt,
+                    PersistenceWriter.AccountingBucketMilliseconds,
+                    out long remainder);
+                long bucket = observedAt - remainder;
+                if (pending is not null
+                    && (bucket != pendingBucket
+                        || observation.CumulativeBytes < pending.CumulativeBytes))
+                {
+                    compact.Add(pending);
+                }
+                pending = observation;
+                pendingBucket = bucket;
             }
-            existing.Batches.Enqueue(mutation);
-            existing.ResultCount += mutation.Results.Count;
-            Interlocked.Add(ref bufferedSearchResultCount, mutation.Results.Count);
-            flushThresholdReached = perSearchCount + mutation.Results.Count >= Options.SearchResultFlushCount;
+            if (pending is not null)
+                compact.Add(pending);
         }
-        if (flushThresholdReached)
+        return compact
+            .OrderBy(item => item.OccurredAtUtc)
+            .ThenBy(item => item.Revision)
+            .ToArray();
+    }
+
+    private bool EnqueueSearchWithBackpressure(PersistenceMutation mutation)
+    {
+        try
+        {
+            search.Writer.WriteAsync(mutation).AsTask().GetAwaiter().GetResult();
+            Interlocked.Increment(ref searchDepth);
+            if (mutation is SearchResultsPersistenceMutation results)
+                Interlocked.Add(ref bufferedSearchResultCount, results.Results.Count);
             Signal();
-        return true;
-    }
-
-    private bool TryEnqueueSearchCompletion(SearchCompletionPersistenceMutation completion)
-    {
-        IReadOnlyList<SearchResultsPersistenceMutation> pending;
-        bool incomplete;
-        lock (searchGate)
-        {
-            if (searchBuffers.Remove(completion.SearchJobId, out var buffered))
-            {
-                pending = buffered.Batches.ToArray();
-                Interlocked.Add(ref bufferedSearchResultCount, -buffered.ResultCount);
-            }
-            else
-            {
-                pending = [];
-            }
-            incomplete = incompleteSearches.Remove(completion.SearchJobId);
+            return true;
         }
-
-        if (incomplete)
-            completion = completion with { ResultPersistenceState = "Incomplete" };
-        return TryEnqueueCritical(new SearchTerminalPersistenceMutation(completion, pending));
+        catch (ChannelClosedException exception)
+        {
+            mutationObserver?.PermanentlyFailed([mutation], exception);
+            return false;
+        }
     }
 
     private void StoreDegraded(PersistenceMutation mutation)
@@ -334,6 +359,11 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         {
             if (degraded.TryGetValue(mutation.CoalescingKey, out var current))
             {
+                if (HasAccounting(current) || HasAccounting(mutation))
+                {
+                    degraded[mutation.CoalescingKey] = MergeAccountingMutation(current, mutation);
+                    return;
+                }
                 if (mutation.Revision > current.Revision
                     || mutation.Priority > current.Priority)
                     degraded[mutation.CoalescingKey] = mutation;
@@ -343,9 +373,23 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             if (degraded.Count >= Options.DegradedProjectionCapacity)
             {
                 var victim = degraded.Values
+                    .Where(item => !HasAccounting(item))
                     .OrderBy(item => item.Priority == PersistenceMutationPriority.Terminal ? 1 : 0)
                     .ThenBy(item => item.Sequence)
-                    .First();
+                    .FirstOrDefault();
+                if (victim is null)
+                {
+                    if (HasAccounting(mutation))
+                    {
+                        degraded.Add(mutation.CoalescingKey, mutation);
+                        return;
+                    }
+                    mutationObserver?.PermanentlyFailed(
+                        [mutation],
+                        new InvalidOperationException(
+                            "Persistence retained exact transfer accounting ahead of a lower-priority degraded projection."));
+                    return;
+                }
                 degraded.Remove(victim.CoalescingKey);
                 if (victim.Priority == PersistenceMutationPriority.Terminal)
                     health.RecordEvictedTerminalProjection();
@@ -356,6 +400,54 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
             }
             degraded.Add(mutation.CoalescingKey, mutation);
         }
+    }
+
+    private static bool HasAccounting(PersistenceMutation mutation)
+        => mutation switch
+        {
+            TransferPersistenceMutation transfer =>
+                transfer.AccountingObservations is { Count: > 0 },
+            TransferTerminalPersistenceMutation terminal =>
+                terminal.Transfer.AccountingObservations is { Count: > 0 }
+                || terminal.FinalAttempt?.AccountingObservations is { Count: > 0 },
+            TransferAttemptPersistenceMutation attempt =>
+                attempt.AccountingObservations is { Count: > 0 },
+            _ => false,
+        };
+
+    private static PersistenceMutation MergeAccountingMutation(
+        PersistenceMutation current,
+        PersistenceMutation incoming)
+    {
+        TransferPersistenceMutation? currentTransfer = current switch
+        {
+            TransferPersistenceMutation transfer => transfer,
+            TransferTerminalPersistenceMutation terminal => terminal.Transfer,
+            _ => null,
+        };
+        TransferPersistenceMutation? incomingTransfer = incoming switch
+        {
+            TransferPersistenceMutation transfer => transfer,
+            TransferTerminalPersistenceMutation terminal => terminal.Transfer,
+            _ => null,
+        };
+        if (currentTransfer is null || incomingTransfer is null)
+            return incoming.Revision > current.Revision
+                || incoming.Priority > current.Priority
+                    ? incoming
+                    : current;
+
+        bool incomingWins = incomingTransfer.Revision > currentTransfer.Revision
+            || incomingTransfer.Revision == currentTransfer.Revision
+                && incomingTransfer.Priority >= currentTransfer.Priority;
+        TransferPersistenceMutation merged = incomingWins
+            ? MergeTransfer(currentTransfer, incomingTransfer)
+            : MergeTransfer(incomingTransfer, currentTransfer);
+        TransferTerminalPersistenceMutation? terminalMutation = incoming as TransferTerminalPersistenceMutation
+            ?? current as TransferTerminalPersistenceMutation;
+        return terminalMutation is null
+            ? merged
+            : terminalMutation with { Transfer = merged };
     }
 
     private static Channel<PersistenceMutation> CreateChannel(int capacity)
@@ -378,9 +470,4 @@ public sealed class PersistenceInbox : IPersistenceMutationSink
         }
     }
 
-    private sealed class SearchResultBuffer
-    {
-        public Queue<SearchResultsPersistenceMutation> Batches { get; } = new();
-        public int ResultCount { get; set; }
-    }
 }

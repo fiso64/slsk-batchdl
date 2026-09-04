@@ -20,6 +20,7 @@ public sealed record ChatMessageDto(
 public sealed record ConversationSummaryDto(
     Guid ConversationId,
     string Username,
+    bool PrivateMessagesBlocked,
     bool Archived,
     int UnreadCount,
     long LastReadSequence,
@@ -143,10 +144,13 @@ public static class ChatDtoMapper
             value.State,
             value.FailureReason);
 
-    public static ConversationSummaryDto ToDto(ConversationRecord value)
+    public static ConversationSummaryDto ToDto(
+        ConversationRecord value,
+        bool privateMessagesBlocked)
         => new(
             value.ConversationId,
             value.DisplayUsername,
+            privateMessagesBlocked,
             value.ArchivedAtUtc is not null,
             value.UnreadCount,
             value.LastReadSequence,

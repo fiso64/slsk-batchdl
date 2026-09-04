@@ -12,6 +12,7 @@ public sealed record PersistedSearchMetadata(
     long Revision,
     long ResultCount,
     long LockedFileCount,
+    long ObservedPeerCount,
     bool IsComplete,
     DateTimeOffset? CompletedAtUtc,
     string ResultPersistenceState,
@@ -34,13 +35,15 @@ public sealed record PersistedSearchResult(
     int? UploadSpeed,
     bool? HasFreeUploadSlot,
     string? AttributesJson,
-    DateTimeOffset ObservedAtUtc)
+    DateTimeOffset ObservedAtUtc,
+    int? QueueLength,
+    SearchResultVisibility Visibility)
 {
     public SearchProjectionInput ToProjectionInput()
         => new(
             Sequence, checked((int)Revision), Username, ResponseFileCount, RemoteFilename, SizeBytes,
             BitRate, BitDepth, SampleRate, DurationSeconds, Extension, UploadSpeed, HasFreeUploadSlot,
-            DeserializeAttributes(AttributesJson), ObservedAtUtc);
+            DeserializeAttributes(AttributesJson), ObservedAtUtc, QueueLength, Visibility);
 
     private static IReadOnlyList<FileAttributeSnapshot>? DeserializeAttributes(string? json)
         => string.IsNullOrWhiteSpace(json)
@@ -124,7 +127,8 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
         var result = await context.SearchResults.AsNoTracking()
             .SingleOrDefaultAsync(row => row.SearchJobId == searchJobId
                 && row.Username == username
-                && row.RemoteFilename == remoteFilename, cancellationToken)
+                && row.RemoteFilename == remoteFilename
+                && row.Visibility == SearchResultVisibility.Public.ToString(), cancellationToken)
             .ConfigureAwait(false);
 
         return new PersistedSearchResultLookup(MapMetadata(metadata), result == null ? null : MapResult(result));
@@ -162,6 +166,7 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
             metadata.Revision,
             metadata.ResultCount,
             metadata.LockedFileCount,
+            metadata.ObservedPeerCount,
             metadata.IsComplete,
             FromUnix(metadata.CompletedAtUtc),
             metadata.ResultPersistenceState,
@@ -185,7 +190,11 @@ public sealed class SearchHistoryReader(IDbContextFactory<SockseekDbContext> con
             result.UploadSpeed,
             result.HasFreeUploadSlot,
             result.AttributesJson,
-            DateTimeOffset.FromUnixTimeMilliseconds(result.ObservedAtUtc));
+            DateTimeOffset.FromUnixTimeMilliseconds(result.ObservedAtUtc),
+            result.QueueLength,
+            Enum.TryParse<SearchResultVisibility>(result.Visibility, out var visibility)
+                ? visibility
+                : SearchResultVisibility.Public);
 
     private static DateTimeOffset? FromUnix(long? value)
         => value.HasValue ? DateTimeOffset.FromUnixTimeMilliseconds(value.Value) : null;

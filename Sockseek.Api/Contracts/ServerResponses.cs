@@ -139,6 +139,8 @@ public sealed record ResourceActionDto(
 /// <param name="SourceJobId">Provenance link for independently submitted follow-up jobs, such as downloads started from search results.</param>
 /// <param name="AvailableActions">Actions currently valid for this job.</param>
 /// <param name="PrintOption">Effective print mode for this job, when print-only behavior is active.</param>
+/// <param name="DiscoveryPublicFileCount">Raw public files observed by a search job; null for non-search jobs or unavailable legacy history.</param>
+/// <param name="DiscoveryObservedPeerCount">Distinct exact peer identities that supplied public or locked files. Locked-only peers count.</param>
 public sealed record JobSummaryDto(
     Guid JobId,
     int DisplayId,
@@ -162,7 +164,12 @@ public sealed record JobSummaryDto(
     IReadOnlyList<ResourceActionDto> AvailableActions,
     string? FailureDetail = null,
     ServerJobCancellationSource CancellationSource = ServerJobCancellationSource.None,
-    PrintOption PrintOption = PrintOption.None)
+    PrintOption PrintOption = PrintOption.None,
+    Guid? SubmissionId = null,
+    ServerJobRole Role = ServerJobRole.Legacy,
+    DateTimeOffset? CreatedAtUtc = null,
+    int? DiscoveryPublicFileCount = null,
+    int? DiscoveryObservedPeerCount = null)
 {
     public JobSummaryDto()
         : this(
@@ -278,4 +285,7 @@ public sealed record JobQuery(
     Guid? WorkflowId,
     bool IncludeAll,
     ServerJobSkipReason? SkipReason = null,
-    Guid? ParentJobId = null);
+    Guid? ParentJobId = null,
+    Guid? SubmissionId = null,
+    ServerJobRole? Role = null,
+    bool Archived = false);

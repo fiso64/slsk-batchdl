@@ -34,6 +34,7 @@ public class RemoteCliBackendTests
         string? url = null,
         bool enablePersistence = true)
     {
+        options.Engine.LogLevel = LogLevel.None;
         options.Persistence.Enabled = enablePersistence;
         if (enablePersistence)
         {
@@ -118,13 +119,15 @@ public class RemoteCliBackendTests
     }
 
     [TestMethod]
-    public async Task SockseekApiClient_TransferPage_PreservesContinuationHeader()
+    public async Task SockseekApiClient_TransferTimeline_ReadsBodyCursorAndCoverage()
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StringContent("[]"),
+            Content = new StringContent(
+                "{\"items\":[],\"nextCursor\":\"next-transfer-page\","
+                + "\"retainedCoverage\":{\"state\":\"Unavailable\","
+                + "\"reason\":\"PersistenceDisabled\"}}"),
         };
-        response.Headers.Add("X-Next-Cursor", "next-transfer-page");
         var handler = new CapturingResponseHandler(response);
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:5030/") };
         var client = new SockseekApiClient(http);
@@ -136,9 +139,61 @@ public class RemoteCliBackendTests
 
         Assert.AreEqual("next-transfer-page", page.NextCursor);
         Assert.AreEqual(0, page.Items.Count);
+        Assert.AreEqual(
+            TransferRetainedCoverageState.Unavailable,
+            page.RetainedCoverage.State);
         StringAssert.Contains(handler.RequestUri!.Query, "username=peer%20name");
         StringAssert.Contains(handler.RequestUri.Query, "cursor=previous-page");
         StringAssert.Contains(handler.RequestUri.Query, "limit=25");
+        StringAssert.Contains(handler.RequestUri.Query, "archived=false");
+    }
+
+    [TestMethod]
+    public async Task SockseekApiClient_DashboardAnalytics_ReadsCoverageAndEscapesRange()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+                {
+                  "accountingVersion": 1,
+                  "range": {
+                    "range": "24h",
+                    "startUtc": "2026-08-30T00:00:00Z",
+                    "endUtc": "2026-08-31T00:00:00Z",
+                    "bucketSeconds": 1800,
+                    "coverage": {
+                      "state": "Available",
+                      "completeFromUtc": "2026-08-01T00:00:00Z",
+                      "isComplete": true
+                    }
+                  },
+                  "bandwidth": [],
+                  "summary": {
+                    "downloadedBytes": 10,
+                    "downloadedFiles": 1,
+                    "uploadedBytes": 20,
+                    "uploadedFiles": 2,
+                    "distinctPeers": 3,
+                    "shareRatio": 2
+                  },
+                  "downloadPeers": [],
+                  "uploadPeers": [],
+                  "content": [],
+                  "errors": [],
+                  "comparison": null
+                }
+                """),
+        };
+        var handler = new CapturingResponseHandler(response);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:5030/") };
+        var client = new SockseekApiClient(http);
+
+        DashboardAnalyticsDto result = await client.GetDashboardAnalyticsAsync("24h");
+
+        Assert.AreEqual(1, result.AccountingVersion);
+        Assert.IsTrue(result.Range.Coverage.IsComplete);
+        Assert.AreEqual(2d, result.Summary.ShareRatio);
+        Assert.AreEqual("?range=24h", handler.RequestUri!.Query);
     }
 
     [TestMethod]
@@ -319,6 +374,14 @@ public class RemoteCliBackendTests
             Assert.IsNotNull(folders);
             Assert.AreEqual(1, folders!.Items.Count);
             Assert.AreEqual(2, folders.Items[0].Files!.Count);
+
+            RetrieveFolderJobPayloadDto? retrieval = await backend.RetrieveFolderAndWaitAsync(
+                searchSummary.JobId,
+                new RetrieveFolderRequestDto(folders.Items[0].Ref, albumQuery));
+            Assert.IsNotNull(retrieval);
+            Assert.AreEqual(
+                ServerFolderRetrievalOutcome.Completed,
+                retrieval.RetrievalOutcome);
 
             var downloadSummary = await backend.StartFolderDownloadAsync(
                 searchSummary.JobId,
@@ -1147,6 +1210,65 @@ public class RemoteCliBackendTests
                 File.Delete(inputPath);
             if (Directory.Exists(outputDir))
                 Directory.Delete(outputDir, true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RemotePrintJobs_UsesPagedPreviewAndDoesNotCreateRuntimeJobs()
+    {
+        string inputPath = Path.Combine(
+            Path.GetTempPath(),
+            "Sockseek-remote-preview-" + Guid.NewGuid() + ".csv");
+        await File.WriteAllLinesAsync(
+            inputPath,
+            [
+                "artist,title",
+                .. Enumerable.Range(0, 205).Select(index => $"Artist {index},Track {index}"),
+            ]);
+
+        string url = DynamicLoopbackUrl;
+        await using var app = BuildServer(new ServerOptions
+        {
+            Engine = new EngineSettings { LogLevel = LogLevel.None },
+            DefaultDownload = new DownloadSettings(),
+            Profiles = ProfileCatalog.Empty,
+        }, url);
+
+        try
+        {
+            await app.StartAsync();
+            url = GetBoundUrl(app);
+            await using var backend = new RemoteCliBackend(url);
+            await backend.StartAsync();
+            using var output = new StringWriter();
+
+            Sockseek.Cli.Program.CliExitCode exit = await Sockseek.Cli.Program.PrintRemoteJobPreviewAsync(
+                backend,
+                new SubmitExtractJobRequestDto(
+                    inputPath,
+                    InputType.CSV.ToString(),
+                    Options: new SubmissionOptionsDto(
+                        DownloadSettings: ConfigManager.CreateCliDownloadSettingsPatch(
+                            [inputPath, "--input-type", "csv", "--print", "jobs-full"]))),
+                PrintOption.Jobs | PrintOption.Full,
+                CancellationToken.None,
+                output);
+
+            Assert.AreEqual(Sockseek.Cli.Program.CliExitCode.Success, exit);
+            string rendered = output.ToString();
+            StringAssert.Contains(rendered, "205 jobs:");
+            StringAssert.Contains(rendered, "Artist:             Artist 0");
+            StringAssert.Contains(rendered, "Title:              Track 204");
+            Assert.HasCount(0, await backend.GetJobsAsync(
+                new JobQuery(null, null, null, null, IncludeAll: true)));
+            Assert.IsTrue(File.Exists(inputPath),
+                "Remote artifacts are immutable and must not mutate the client-owned CSV.");
+        }
+        finally
+        {
+            await app.StopAsync();
+            if (File.Exists(inputPath))
+                File.Delete(inputPath);
         }
     }
 

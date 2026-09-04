@@ -166,7 +166,7 @@ function roomSummary(id: string, name: string, kind: 'public' | 'private', phase
 }
 
 function conversationSummary(id: string, username: string, unread: number, messages: PrototypeChatMessage[]): ConversationSummaryDto {
-  return { conversationId: id, username, archived: false, unreadCount: unread, lastReadSequence: 0, revision: 1, lastMessage: messages.at(-1)?.dto ?? null };
+  return { conversationId: id, username, privateMessagesBlocked: false, archived: false, unreadCount: unread, lastReadSequence: 0, revision: 1, lastMessage: messages.at(-1)?.dto ?? null };
 }
 
 function baseRooms(): PrototypeChatRoom[] {

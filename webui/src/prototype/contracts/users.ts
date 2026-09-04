@@ -1,13 +1,12 @@
-/** Proposed mixed-tree browse query; filtering occurs before cursor pagination. */
-export interface ProposedShareTreeFilterRequestDto {
+import type { components } from '../../api/generated';
+
+export type BrowseSearchPageDto = components['schemas']['BrowseSearchPageDto'];
+export type UserRestrictionsDto = components['schemas']['UserRestrictionsDto'];
+export type SetUserRestrictionOverrideRequestDto = components['schemas']['SetUserRestrictionOverrideRequestDto'];
+
+/** Query state for the prototype's in-memory stand-in for the paged browse-search API. */
+export interface PrototypeShareTreeQuery {
   query: string | null;
   cursor: string | null;
   limit: number;
-}
-
-/** Proposed peer-access mutation needed by the prototype's chat block control. */
-export interface ProposedPeerAccessMutationDto {
-  username: string;
-  blocked: boolean;
-  semantics: 'chat-and-peer-access';
 }

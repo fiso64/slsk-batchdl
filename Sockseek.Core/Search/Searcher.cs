@@ -15,6 +15,7 @@ using Sockseek.Core.Settings;
 using Sockseek.Core.Events;
 using Sockseek.Core.Snapshots;
 using Sockseek.Core.PeerBrowsing;
+using Sockseek.Core.Planning;
 
 namespace Sockseek.Core.Services;
 
@@ -67,7 +68,7 @@ public partial class Searcher : IDisposable
 
     private static void InitializeDiscoveryProgress(Job job)
     {
-        if (job.Discovery is { RawResultCount: 0, LockedFileCount: 0 })
+        if (job.Discovery is { RawResultCount: 0, LockedFileCount: 0, ObservedPeerCount: 0 })
             return;
 
         job.Discovery = new DiscoverySummary();
@@ -76,13 +77,17 @@ public partial class Searcher : IDisposable
     private void UpdateDiscoveryProgress(Job job, SearchSession session)
     {
         job.Discovery ??= new DiscoverySummary();
-        var count = session.Revision;
+        var count = session.PublicFileCount;
         var locked = session.LockedFileCount;
-        if (job.Discovery.RawResultCount == count && job.Discovery.LockedFileCount == locked)
+        var peers = session.ObservedPeerCount;
+        if (job.Discovery.RawResultCount == count
+            && job.Discovery.LockedFileCount == locked
+            && job.Discovery.ObservedPeerCount == peers)
             return;
 
         job.Discovery.RawResultCount = count;
         job.Discovery.LockedFileCount = locked;
+        job.Discovery.ObservedPeerCount = peers;
         downloadEvents.RaiseJobDiscoveryChanged(job);
     }
 
@@ -103,11 +108,12 @@ public partial class Searcher : IDisposable
         Job? phaseOwner = null)
     {
         var session = job.Session;
+        var activityJob = phaseOwner ?? job;
+        activityJob.SearchObservationSession = session;
         session.ConfigureTimeProvider(timeProvider);
         void OnObserverFailed(string name, Exception ex)
             => LogSessionObserverFailure(name, ex, session.JobId);
         session.ObserverFailed += OnObserverFailed;
-        var activityJob = phaseOwner ?? job;
         InitializeDiscoveryProgress(activityJob);
         void OnResultsAdded(SearchResultsAddedChange _) => UpdateDiscoveryProgress(activityJob, session);
         void OnSearchChange(CoreChange change) => downloadEvents.RaiseSearchChange(ChangeOwner(change, activityJob.Id));
@@ -135,7 +141,12 @@ public partial class Searcher : IDisposable
             responseData.lockedFilesCount += session.LockedFileCount;
             UpdateDiscoveryProgress(activityJob, session);
             if (!ReferenceEquals(activityJob, job))
-                job.Discovery = new DiscoverySummary { RawResultCount = session.ResultCount, LockedFileCount = session.LockedFileCount };
+                job.Discovery = new DiscoverySummary
+                {
+                    RawResultCount = session.PublicFileCount,
+                    LockedFileCount = session.LockedFileCount,
+                    ObservedPeerCount = session.ObservedPeerCount,
+                };
             session.Complete();
             return JobOutcome.Done();
         }
@@ -177,6 +188,7 @@ public partial class Searcher : IDisposable
         Action<FileCandidate>? onFastSearchCandidate = null)
     {
         var session = new SearchSession(song.Id, timeProvider, song.Query.ToString(noInfo: true));
+        song.SearchObservationSession = session;
         void OnObserverFailed(string name, Exception ex)
             => LogSessionObserverFailure(name, ex, session.JobId);
         session.ObserverFailed += OnObserverFailed;
@@ -265,6 +277,7 @@ public partial class Searcher : IDisposable
     public async Task<JobOutcome?> SearchAggregate(AggregateJob job, SearchSettings search, ResponseData responseData, CancellationToken ct)
     {
         var session = new SearchSession(job.Id, timeProvider, job.Query.ToString(noInfo: true));
+        job.SearchObservationSession = session;
         void OnObserverFailed(string name, Exception ex)
             => LogSessionObserverFailure(name, ex, session.JobId);
         session.ObserverFailed += OnObserverFailed;
@@ -299,6 +312,8 @@ public partial class Searcher : IDisposable
         UpdateDiscoveryProgress(job, session);
         job.UpdateActivity(JobActivityPhase.ProcessingSearchResults);
         job.Songs = SearchResultProjector.AggregateTracks(session.Snapshot(), job.Query, search, userStats.UserSuccessCounts);
+        foreach (SongJob song in job.Songs)
+            SubmissionIdentity.AssignExecutionChild(job, song);
         return null;
     }
 
@@ -317,7 +332,10 @@ public partial class Searcher : IDisposable
                 IgnoreStringSortConditions: true,
                 SortMode: FolderSortMode.DeterministicUnranked),
             search);
-        return (SearchResultProjector.AggregateAlbums(folders.Items, job.Query, search), null);
+        var albums = SearchResultProjector.AggregateAlbums(folders.Items, job.Query, search);
+        foreach (AlbumJob album in albums)
+            SubmissionIdentity.AssignExecutionChild(job, album);
+        return (albums, null);
     }
 
 

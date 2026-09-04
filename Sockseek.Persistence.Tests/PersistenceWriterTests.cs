@@ -8,6 +8,7 @@ using Sockseek.Persistence.Read;
 using Sockseek.Persistence.Entities;
 using Sockseek.Persistence.Sqlite;
 using Sockseek.Persistence.Write;
+using Sockseek.Core.Snapshots;
 
 namespace Sockseek.Persistence.Tests;
 
@@ -55,7 +56,14 @@ public sealed class PersistenceWriterTests
         var inbox = new PersistenceInbox(options, health);
         Guid runtimeId = Guid.NewGuid();
         Guid transferId = Guid.NewGuid();
-        Assert.IsTrue(inbox.TryEnqueue(Transfer(runtimeId, transferId, revision: 1)));
+        Guid attemptId = Guid.NewGuid();
+        Assert.IsTrue(inbox.TryEnqueue(Transfer(runtimeId, transferId, revision: 1) with
+        {
+            AccountingObservations =
+            [
+                new(attemptId, 1, DateTimeOffset.UtcNow, 50),
+            ],
+        }));
 
         var terminalTransfer = Transfer(runtimeId, transferId, revision: 2) with
         {
@@ -70,6 +78,31 @@ public sealed class PersistenceWriterTests
         var batch = inbox.DrainBatch(includeProgress: false);
         Assert.AreEqual(1, batch.Count);
         Assert.IsInstanceOfType<TransferTerminalPersistenceMutation>(batch[0]);
+        var admitted = (TransferTerminalPersistenceMutation)batch[0];
+        Assert.AreEqual(1, admitted.Transfer.AccountingObservations?.Count);
+        Assert.AreEqual(50L, admitted.Transfer.AccountingObservations?.Single().CumulativeBytes);
+    }
+
+    [TestMethod]
+    public void AccountingProgress_UsesActiveTransferConcurrencyBeyondLegacyProjectionCapacity()
+    {
+        var options = new PersistenceWriterOptions { ProgressEntityCapacity = 1 };
+        var health = new PersistenceHealth();
+        var inbox = new PersistenceInbox(options, health);
+        Guid runtimeId = Guid.NewGuid();
+        foreach (Guid transferId in new[] { Guid.NewGuid(), Guid.NewGuid() })
+        {
+            Assert.IsTrue(inbox.TryEnqueue(Transfer(runtimeId, transferId, 1) with
+            {
+                AccountingObservations =
+                [
+                    new(Guid.NewGuid(), 1, DateTimeOffset.UtcNow, 1),
+                ],
+            }));
+        }
+
+        Assert.AreEqual(2, inbox.ProgressCount);
+        Assert.AreEqual(0L, health.Snapshot(inbox).DroppedProgressCount);
     }
 
     [TestMethod]
@@ -96,6 +129,190 @@ public sealed class PersistenceWriterTests
         Assert.IsNotNull(detail);
         Assert.IsNull(detail.Transfer.TotalBytes);
         Assert.AreEqual(42L, detail.Transfer.TransferredBytes);
+        await runtimeSession.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task TransferTimelineFields_RoundTripAuthoritativeTimesSpeedMetadataAndGroup()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var runtimeSession = new PersistenceRuntimeSession(database.Factory);
+        var runtime = (await runtimeSession.StartAsync("transfer-projection-test")).Runtime;
+        var options = new PersistenceWriterOptions();
+        var health = new PersistenceHealth();
+        var inbox = new PersistenceInbox(options, health);
+        Guid transferId = Guid.NewGuid();
+        DateTimeOffset requested = DateTimeOffset.UnixEpoch.AddHours(1);
+        DateTimeOffset started = requested.AddSeconds(2);
+        DateTimeOffset progressed = started.AddSeconds(3);
+        var mutation = Transfer(runtime.RuntimeId, transferId, revision: 1) with
+        {
+            OccurredAtUtc = progressed.AddMinutes(1),
+            RequestedAtUtc = requested,
+            StartedAtUtc = started,
+            LastProgressAtUtc = progressed,
+            BytesPerSecond = 12_345,
+            File = new TransferFileMetadataSnapshot(
+                "Track.flac", 100, "flac", 900, 24, 96_000, 180,
+                [new FileAttributeSnapshot("BitDepth", 24, 4)]),
+            GroupRef = @"Music\Artist\Album",
+            GroupDisplayPath = @"Public Music\Artist\Album",
+        };
+        Assert.IsTrue(inbox.TryEnqueue(mutation));
+        inbox.Complete();
+        await new PersistenceWriter(database.Factory, inbox, health, options)
+            .RunAsync(CancellationToken.None);
+
+        PersistedTransferDetail? detail = await new TransferHistoryReader(database.Factory)
+            .GetTransferAsync(transferId);
+        Assert.IsNotNull(detail);
+        Assert.AreEqual(requested, detail.Transfer.CreatedAtUtc);
+        Assert.AreEqual(started, detail.Transfer.StartedAtUtc);
+        Assert.AreEqual(progressed, detail.Transfer.LastProgressAtUtc);
+        Assert.AreEqual(12_345L, detail.Transfer.BytesPerSecond);
+        Assert.AreEqual("Track.flac", detail.Transfer.File?.Name);
+        Assert.AreEqual(24, detail.Transfer.File?.BitDepth);
+        Assert.AreEqual("BitDepth", detail.Transfer.File?.Attributes?.Single().Type);
+        Assert.AreEqual(@"Music\Artist\Album", detail.Transfer.GroupRef);
+        Assert.AreEqual(@"Public Music\Artist\Album", detail.Transfer.GroupDisplayPath);
+        Assert.IsNull(detail.Transfer.ArchivedAtUtc);
+        await runtimeSession.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task TransferAccounting_ReplaysRetriesAndCounterResetsIdempotently_AndQueriesBoundedSemantics()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var runtimeSession = new PersistenceRuntimeSession(database.Factory);
+        var runtime = (await runtimeSession.StartAsync("transfer-accounting-test")).Runtime;
+        DateTimeOffset start = new(
+            DateTimeOffset.UtcNow.AddHours(-1).Ticks / TimeSpan.FromMinutes(5).Ticks
+                * TimeSpan.FromMinutes(5).Ticks,
+            TimeSpan.Zero);
+
+        Guid downloadId = Guid.NewGuid();
+        Guid downloadAttempt = Guid.NewGuid();
+        var download = Transfer(runtime.RuntimeId, downloadId, revision: 4) with
+        {
+            OccurredAtUtc = start.AddMinutes(16),
+            Priority = PersistenceMutationPriority.Terminal,
+            State = "Completed",
+            TerminalOutcome = "Succeeded",
+            TransferredBytes = 25,
+            Username = "ExactPeer",
+            RequestedAtUtc = start,
+            AccountingObservations =
+            [
+                new(downloadAttempt, 1, start.AddMinutes(1), 10),
+                new(downloadAttempt, 2, start.AddMinutes(6), 25),
+                // A lower cumulative value is a new counter epoch, not a
+                // negative delta or a reason to double-count earlier bytes.
+                new(downloadAttempt, 3, start.AddMinutes(11), 5),
+            ],
+        };
+
+        Guid uploadId = Guid.NewGuid();
+        Guid uploadAttempt = Guid.NewGuid();
+        var upload = Transfer(runtime.RuntimeId, uploadId, revision: 2) with
+        {
+            OccurredAtUtc = start.AddMinutes(17),
+            Priority = PersistenceMutationPriority.Terminal,
+            Direction = "Upload",
+            State = "Completed",
+            TerminalOutcome = "Succeeded",
+            TransferredBytes = 40,
+            Username = "OtherPeer",
+            GroupRef = @"Music\Artist\Album",
+            GroupDisplayPath = @"Public Music\Artist\Album",
+            RequestedAtUtc = start,
+            AccountingObservations =
+            [
+                new(uploadAttempt, 2, start.AddMinutes(7), 40),
+            ],
+        };
+
+        Guid failedId = Guid.NewGuid();
+        Guid failedAttemptId = Guid.NewGuid();
+        var failed = Transfer(runtime.RuntimeId, failedId, revision: 2) with
+        {
+            OccurredAtUtc = start.AddMinutes(12),
+            Priority = PersistenceMutationPriority.Terminal,
+            Direction = "Upload",
+            State = "Failed",
+            TerminalOutcome = "Failed",
+            Username = "OtherPeer",
+            RequestedAtUtc = start,
+        };
+        var failedAttempt = new TransferAttemptPersistenceMutation(
+            runtime.RuntimeId,
+            Sequence: 3,
+            start.AddMinutes(12),
+            failedAttemptId,
+            Revision: 2,
+            PersistenceMutationPriority.Terminal,
+            failedId,
+            AttemptNumber: 1,
+            Source: "SoulseekPeer",
+            State: "Failed",
+            SourceUsername: "OtherPeer",
+            SourcePath: "remote",
+            OutputPath: null,
+            FailureReason: "NotShared",
+            FailureMessage: null,
+            Direction: "Upload");
+        PersistenceMutation[] mutations =
+        [
+            new TransferTerminalPersistenceMutation(download, null, null),
+            new TransferTerminalPersistenceMutation(upload, null, null),
+            new TransferTerminalPersistenceMutation(failed, failedAttempt, null),
+        ];
+
+        await RunCompletedWriterAsync(database, mutations);
+        await RunCompletedWriterAsync(database, mutations);
+
+        var analytics = await new TransferAnalyticsReader(database.Factory).GetAsync(
+            new TransferAnalyticsQuery(start, start.AddMinutes(30), TimeSpan.FromMinutes(5)));
+        Assert.AreEqual(30L, analytics.DownloadBytes);
+        Assert.AreEqual(40L, analytics.UploadBytes);
+        Assert.AreEqual(1, analytics.DownloadedFiles);
+        Assert.AreEqual(1, analytics.UploadedFiles);
+        Assert.AreEqual(2, analytics.DistinctPeers);
+        Assert.AreEqual(6, analytics.Buckets.Count);
+        Assert.AreEqual(30L, analytics.Peers.Single(peer => peer.Username == "ExactPeer").Bytes);
+        Assert.AreEqual(1, analytics.Content.Single().DownloadCount);
+        Assert.AreEqual(@"Music\Artist\Album", analytics.Content.Single().Identity);
+        Assert.AreEqual(@"Public Music\Artist\Album", analytics.Content.Single().DisplayPath);
+        Assert.AreEqual("NotShared", analytics.Errors.Single().Reason);
+        Assert.AreEqual(1, analytics.Errors.Single().Count);
+
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            for (int index = 0; index < 15; index++)
+            {
+                context.TransferByteBuckets.Add(new TransferByteBucketEntity
+                {
+                    BucketStartUtc = start.AddMinutes(20).ToUnixTimeMilliseconds(),
+                    Direction = "Download",
+                    Username = $"peer-{index:D2}",
+                    Bytes = index + 1,
+                });
+            }
+            await context.SaveChangesAsync();
+        }
+        var bounded = await new TransferAnalyticsReader(database.Factory).GetAsync(
+            new TransferAnalyticsQuery(
+                start,
+                start.AddMinutes(30),
+                TimeSpan.FromMinutes(5),
+                TopCount: 3));
+        Assert.AreEqual(3, bounded.Peers.Count(peer => peer.Direction == "Download"));
+        CollectionAssert.AreEqual(
+            new[] { "ExactPeer", "peer-14", "peer-13" },
+            bounded.Peers.Where(peer => peer.Direction == "Download")
+                .Select(peer => peer.Username)
+                .ToArray());
         await runtimeSession.StopAsync();
     }
 
@@ -175,13 +392,13 @@ public sealed class PersistenceWriterTests
             Job(runtime.RuntimeId, incompleteSearchId, 1, PersistenceMutationPriority.Structural, kind: "Search"),
             new SearchCompletionPersistenceMutation(
                 runtime.RuntimeId, 3, DateTimeOffset.UtcNow, incompleteSearchId, 2,
-                "incomplete", 7, 0, "Incomplete"),
+                "incomplete", 7, 3, "Incomplete", ObservedPeerCount: 2),
         ]);
         await RunCompletedWriterAsync(database,
         [
             new SearchCompletionPersistenceMutation(
                 runtime.RuntimeId, 4, DateTimeOffset.UtcNow, incompleteSearchId, 3,
-                "incomplete", 7, 0, "Complete"),
+                "incomplete", 7, 3, "Complete", ObservedPeerCount: 2),
         ]);
 
         var reader = new SearchHistoryReader(database.Factory);
@@ -195,6 +412,27 @@ public sealed class PersistenceWriterTests
         Assert.IsNotNull(incomplete);
         Assert.AreEqual("Incomplete", incomplete.ResultPersistenceState);
         Assert.AreEqual(7L, incomplete.ResultCount);
+        Assert.AreEqual(3L, incomplete.LockedFileCount);
+        Assert.AreEqual(2L, incomplete.ObservedPeerCount);
+
+        var jobs = new JobHistoryReader(database.Factory);
+        var listed = (await jobs.GetJobsAsync(new JobHistoryQuery(
+            Limit: 10,
+            IncludeAll: true))).Items.Single(job => job.Id == incompleteSearchId);
+        Assert.AreEqual(7L, listed.DiscoveryPublicFileCount);
+        Assert.AreEqual(3L, listed.DiscoveryLockedFileCount);
+        Assert.AreEqual(2L, listed.DiscoveryObservedPeerCount);
+
+        var byId = await jobs.GetJobAsync(incompleteSearchId);
+        Assert.AreEqual(7L, byId?.DiscoveryPublicFileCount);
+        Assert.AreEqual(3L, byId?.DiscoveryLockedFileCount);
+        Assert.AreEqual(2L, byId?.DiscoveryObservedPeerCount);
+
+        long displayId = byId!.DisplayId;
+        var byDisplayId = await jobs.GetJobByDisplayIdAsync(byId.WorkflowId, displayId);
+        Assert.AreEqual(7L, byDisplayId?.DiscoveryPublicFileCount);
+        Assert.AreEqual(3L, byDisplayId?.DiscoveryLockedFileCount);
+        Assert.AreEqual(2L, byDisplayId?.DiscoveryObservedPeerCount);
         await runtimeSession.StopAsync();
     }
 
@@ -275,136 +513,43 @@ public sealed class PersistenceWriterTests
     }
 
     [TestMethod]
-    public void Inbox_RemainsBounded_AndMarksSearchLossVisible()
+    public void SearchRowsAreNotRejectedByLegacyCountSettings()
     {
         var options = new PersistenceWriterOptions
         {
-            CriticalQueueCapacity = 1,
-            OrdinaryQueueCapacity = 1,
-            ProgressEntityCapacity = 1,
-            DegradedProjectionCapacity = 1,
             SearchResultCapacityPerSearch = 1,
             SearchResultGlobalCapacity = 1,
-            MaximumBatchSize = 1,
+            SearchMutationQueueCapacity = 4,
+            MaximumBatchSize = 4,
         };
         var health = new PersistenceHealth();
         var inbox = new PersistenceInbox(options, health);
         Guid runtimeId = Guid.NewGuid();
-
-        Assert.IsTrue(inbox.TryEnqueue(Job(runtimeId, Guid.NewGuid(), revision: 1, PersistenceMutationPriority.Terminal)));
-        Assert.IsFalse(inbox.TryEnqueue(Job(runtimeId, Guid.NewGuid(), revision: 1, PersistenceMutationPriority.Terminal)));
-        Assert.IsFalse(inbox.TryEnqueue(Job(runtimeId, Guid.NewGuid(), revision: 1, PersistenceMutationPriority.Terminal)));
-
-        Guid transferId = Guid.NewGuid();
-        Assert.IsTrue(inbox.TryEnqueue(Transfer(runtimeId, transferId, revision: 1)));
-        Assert.IsTrue(inbox.TryEnqueue(Transfer(runtimeId, transferId, revision: 2)));
-        Assert.IsFalse(inbox.TryEnqueue(Transfer(runtimeId, Guid.NewGuid(), revision: 1)));
-
         Guid searchJobId = Guid.NewGuid();
-        var tooLargeSearchBatch = new SearchResultsPersistenceMutation(
+        var rows = new SearchResultsPersistenceMutation(
             runtimeId,
             10,
             DateTimeOffset.UtcNow,
             searchJobId,
             2,
             [Result(1), Result(2)]);
-        Assert.IsFalse(inbox.TryEnqueue(tooLargeSearchBatch));
-
-        var snapshot = health.Snapshot(inbox);
-        Assert.IsTrue(inbox.CriticalDepth <= options.CriticalQueueCapacity);
-        Assert.IsTrue(inbox.DegradedCount <= options.DegradedProjectionCapacity);
-        Assert.IsTrue(inbox.ProgressCount <= options.ProgressEntityCapacity);
-        Assert.IsTrue(inbox.BufferedSearchResultCount <= options.SearchResultGlobalCapacity);
-        Assert.AreEqual(1L, snapshot.EvictedTerminalProjectionCount);
-        Assert.AreEqual(1L, snapshot.DroppedProgressCount);
-        Assert.AreEqual(2L, snapshot.DroppedSearchResultCount);
-        Assert.AreEqual(1L, snapshot.IncompleteSearchCount);
-        Assert.AreEqual(PersistenceHealthState.Degraded, snapshot.State);
-    }
-
-    [TestMethod]
-    public void IncompleteSearchTrackingOverflow_DoesNotPoisonUnrelatedCompletions()
-    {
-        var options = new PersistenceWriterOptions
-        {
-            SearchResultCapacityPerSearch = 1,
-            SearchResultGlobalCapacity = 1,
-            IncompleteSearchTrackingCapacity = 1,
-        };
-        var inbox = new PersistenceInbox(options, new PersistenceHealth());
-        Guid runtimeId = Guid.NewGuid();
-
-        foreach (Guid searchId in new[] { Guid.NewGuid(), Guid.NewGuid() })
-        {
-            Assert.IsFalse(inbox.TryEnqueue(new SearchResultsPersistenceMutation(
-                runtimeId,
-                1,
-                DateTimeOffset.UtcNow,
-                searchId,
-                1,
-                [Result(1), Result(2)])));
-        }
-
-        Guid unaffectedSearchId = Guid.NewGuid();
+        Assert.IsTrue(inbox.TryEnqueue(rows));
         Assert.IsTrue(inbox.TryEnqueue(new SearchCompletionPersistenceMutation(
             runtimeId,
-            2,
+            11,
             DateTimeOffset.UtcNow,
-            unaffectedSearchId,
+            searchJobId,
+            3,
+            "query",
             2,
-            "unaffected",
-            0,
             0,
             "Complete")));
 
-        PersistenceMutation mutation = inbox.DrainBatch().Single();
-        Assert.IsInstanceOfType<SearchTerminalPersistenceMutation>(mutation);
-        var terminal = (SearchTerminalPersistenceMutation)mutation;
-        Assert.AreEqual("Complete", terminal.Completion.ResultPersistenceState);
-    }
-
-    [TestMethod]
-    public void SimulatedWeekLongOutage_LossyBuffersRemainBoundedWithoutDiscardingIncompleteSearchIds()
-    {
-        var options = new PersistenceWriterOptions
-        {
-            CriticalQueueCapacity = 8,
-            OrdinaryQueueCapacity = 8,
-            ProgressEntityCapacity = 16,
-            DegradedProjectionCapacity = 32,
-            SearchResultCapacityPerSearch = 8,
-            SearchResultGlobalCapacity = 128,
-            IncompleteSearchTrackingCapacity = 64,
-            MaximumBatchSize = 16,
-        };
-        var health = new PersistenceHealth();
-        var inbox = new PersistenceInbox(options, health);
-        Guid runtimeId = Guid.NewGuid();
-
-        for (int day = 0; day < 7; day++)
-        {
-            for (int entity = 0; entity < 2_000; entity++)
-            {
-                inbox.TryEnqueue(Job(runtimeId, Guid.NewGuid(), 1, PersistenceMutationPriority.Terminal, terminal: true));
-                inbox.TryEnqueue(Transfer(runtimeId, Guid.NewGuid(), 1));
-                Guid searchId = Guid.NewGuid();
-                inbox.TryEnqueue(new SearchResultsPersistenceMutation(
-                    runtimeId, entity + 1L, DateTimeOffset.UtcNow, searchId, 1, [Result(1)]));
-            }
-        }
-
-        var snapshot = health.Snapshot(inbox);
-        Assert.IsTrue(inbox.CriticalDepth <= options.CriticalQueueCapacity);
-        Assert.IsTrue(inbox.OrdinaryDepth <= options.OrdinaryQueueCapacity);
-        Assert.IsTrue(inbox.ProgressCount <= options.ProgressEntityCapacity);
-        Assert.IsTrue(inbox.DegradedCount <= options.DegradedProjectionCapacity);
-        Assert.IsTrue(inbox.BufferedSearchResultCount <= options.SearchResultGlobalCapacity);
-        Assert.IsTrue(inbox.IncompleteSearchTrackingCount > options.IncompleteSearchTrackingCapacity);
-        Assert.IsTrue(inbox.IncompleteSearchTrackingOverflowed);
-        Assert.IsTrue(snapshot.DroppedProgressCount > 0);
-        Assert.IsTrue(snapshot.DroppedSearchResultCount > 0);
-        Assert.IsTrue(snapshot.EvictedTerminalProjectionCount > 0);
-        Assert.AreEqual(PersistenceHealthState.Degraded, snapshot.State);
+        IReadOnlyList<PersistenceMutation> drained = inbox.DrainBatch();
+        Assert.AreEqual(2, drained.Count);
+        Assert.IsInstanceOfType<SearchResultsPersistenceMutation>(drained[0]);
+        Assert.IsInstanceOfType<SearchCompletionPersistenceMutation>(drained[1]);
+        Assert.AreEqual(0L, health.Snapshot(inbox).DroppedSearchResultCount);
     }
 
     [TestMethod]
@@ -819,12 +964,44 @@ public sealed class PersistenceWriterTests
 
         var reader = new TransferHistoryReader(database.Factory);
         var first = await reader.GetTransfersAsync(new TransferHistoryQuery(Limit: 2, WorkflowId: workflowId));
+        Guid concurrentlyInsertedId = Guid.Parse("00000000-0000-0000-0000-000000000014");
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.Transfers.Add(new TransferEntity
+            {
+                Id = concurrentlyInsertedId,
+                WorkflowId = workflowId,
+                LastRuntimeId = runtime.RuntimeId,
+                LastSequence = 10,
+                Direction = "Download",
+                Source = "SoulseekPeer",
+                Username = "new-user",
+                State = "InProgress",
+                TerminalOutcome = "None",
+                TotalBytes = 100,
+                TransferredBytes = 25,
+                AttemptCount = 1,
+                CreatedAtUtc = 101,
+                FailureReason = "None",
+                Revision = 1,
+            });
+            TransferEntity changed = await context.Transfers.SingleAsync(item => item.Id == ids[0]);
+            changed.State = "ArchivedDisplayChange";
+            changed.Revision++;
+            await context.SaveChangesAsync();
+        }
         var second = await reader.GetTransfersAsync(new TransferHistoryQuery(first.NextCursor, 2, WorkflowId: workflowId));
-        CollectionAssert.AreEqual(ids.Take(2).ToArray(), first.Items.Select(item => item.Id).ToArray());
-        CollectionAssert.AreEqual(ids.Skip(2).ToArray(), second.Items.Select(item => item.Id).ToArray());
+        CollectionAssert.AreEqual(ids.Reverse().Take(2).ToArray(), first.Items.Select(item => item.Id).ToArray());
+        CollectionAssert.AreEqual(ids.Take(1).ToArray(), second.Items.Select(item => item.Id).ToArray());
         Assert.IsNull(second.NextCursor);
+        Assert.IsFalse(second.Items.Any(item => item.Id == concurrentlyInsertedId),
+            "A row inserted above the moving boundary must not enter an existing traversal.");
+        Assert.AreEqual(concurrentlyInsertedId, (await reader.GetTransfersAsync(new TransferHistoryQuery(
+            Limit: 1, WorkflowId: workflowId))).Items.Single().Id);
         Assert.AreEqual(1, (await reader.GetTransfersAsync(new TransferHistoryQuery(
             Limit: 10, WorkflowId: workflowId, Source: "YtDlpFallback"))).Items.Count);
+        Assert.AreEqual(4, (await reader.GetTransfersAsync(new TransferHistoryQuery(
+            Limit: 10, WorkflowId: workflowId, Direction: "download"))).Items.Count);
         Assert.AreEqual(ids[2], (await reader.GetTransfersAsync(new TransferHistoryQuery(
             Limit: 10, Username: "special-user", TerminalOutcome: "Succeeded"))).Items.Single().Id);
 
@@ -851,6 +1028,96 @@ public sealed class PersistenceWriterTests
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => reader.GetTransfersAsync(new TransferHistoryQuery(
             first.NextCursor + new string(' ', 129), 2)));
         await Assert.ThrowsExceptionAsync<ArgumentOutOfRangeException>(() => reader.GetAttemptsAsync(ids[0], 0, TransferHistoryReader.MaximumPageSize + 1));
+        await runtimeSession.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task TransferArchive_IsReversibleAndRejectsNonterminalRows()
+    {
+        await using var database = new WriterDatabase();
+        await database.Initializer.InitializeAsync();
+        var runtimeSession = new PersistenceRuntimeSession(database.Factory);
+        var runtime = (await runtimeSession.StartAsync("transfer-archive-test")).Runtime;
+        Guid terminalId = Guid.NewGuid();
+        Guid activeId = Guid.NewGuid();
+        await using (var context = await database.Factory.CreateDbContextAsync())
+        {
+            context.Transfers.AddRange(
+                new TransferEntity
+                {
+                    Id = terminalId,
+                    LastRuntimeId = runtime.RuntimeId,
+                    LastSequence = 1,
+                    Direction = "Upload",
+                    Source = "SoulseekPeer",
+                    Username = "peer",
+                    State = "Completed",
+                    TerminalOutcome = "Succeeded",
+                    TotalBytes = 100,
+                    TransferredBytes = 100,
+                    CreatedAtUtc = 100,
+                    CompletedAtUtc = 200,
+                    FailureReason = "None",
+                    Revision = 1,
+                },
+                new TransferEntity
+                {
+                    Id = activeId,
+                    LastRuntimeId = runtime.RuntimeId,
+                    LastSequence = 2,
+                    Direction = "Upload",
+                    Source = "SoulseekPeer",
+                    Username = "peer",
+                    State = "InProgress",
+                    TerminalOutcome = "None",
+                    TotalBytes = 100,
+                    TransferredBytes = 50,
+                    AttemptCount = 1,
+                    CreatedAtUtc = 101,
+                    StartedAtUtc = 101,
+                    FailureReason = "None",
+                    Revision = 1,
+                });
+            await context.SaveChangesAsync();
+        }
+
+        var options = new PersistenceWriterOptions();
+        var health = new PersistenceHealth();
+        var inbox = new PersistenceInbox(options, health);
+        var writer = new PersistenceWriter(database.Factory, inbox, health, options);
+        Task writerTask = writer.RunAsync(CancellationToken.None);
+        var reader = new TransferHistoryReader(database.Factory, inbox);
+
+        TransferArchiveResult archived = await reader.SetArchivedAsync(
+            new TransferArchiveFilter(Direction: "Upload", Username: "peer"),
+            archived: true);
+        Assert.AreEqual(2, archived.ResolvedCount);
+        Assert.AreEqual(1, archived.ChangedCount);
+        Assert.AreEqual(1, archived.RejectedCount);
+        Assert.AreEqual(1, archived.Reasons["nonterminal"]);
+        CollectionAssert.AreEqual(
+            new[] { activeId },
+            (await reader.GetTransfersAsync(new TransferHistoryQuery(Limit: 10)))
+                .Items.Select(item => item.Id).ToArray());
+        Assert.AreEqual(
+            terminalId,
+            (await reader.GetTransfersAsync(new TransferHistoryQuery(Limit: 10, Archived: true)))
+                .Items.Single().Id);
+
+        TransferArchiveResult restored = await reader.SetArchivedAsync(
+            new TransferArchiveFilter(TransferId: terminalId),
+            archived: false);
+        Assert.AreEqual(1, restored.ChangedCount);
+        Assert.AreEqual(2, (await reader.GetTransfersAsync(new TransferHistoryQuery(Limit: 10))).Items.Count);
+
+        TransferArchiveResult missing = await reader.SetArchivedAsync(
+            new TransferArchiveFilter(TransferId: Guid.NewGuid()),
+            archived: true);
+        Assert.AreEqual(1, missing.RejectedCount);
+        Assert.AreEqual(1, missing.Reasons["not-found"]);
+
+        inbox.Complete();
+        await writerTask;
         await runtimeSession.StopAsync();
     }
 

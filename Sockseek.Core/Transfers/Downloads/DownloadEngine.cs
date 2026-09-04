@@ -60,6 +60,14 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     public Job? GetJob(int displayId) => _jobs.GetJob(displayId);
     public IReadOnlyList<Job> GetJobsByWorkflow(Guid workflowId) => _jobs.GetJobsByWorkflow(workflowId);
 
+    public bool TryCancelTransfer(Guid transferId)
+    {
+        if (!_activeDownloads.TryGet(transferId, out var download))
+            return false;
+        download.Cts.Cancel();
+        return true;
+    }
+
     public bool TryNextCandidate(Guid jobId)
     {
         var job = _commandTargets.Resolve(jobId);
@@ -114,12 +122,16 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
     private readonly DownloadJobQueue _jobQueue = new();
 
     /// <summary>Enqueues a new root job for processing. Call <see cref="CompleteEnqueue"/> when done adding jobs.</summary>
-    public void Enqueue(Job job, DownloadSettings settings, Guid? sourceJobId = null)
+    public void Enqueue(
+        Job job,
+        DownloadSettings settings,
+        Guid? sourceJobId = null,
+        bool settingsAreFinal = false)
     {
         if (sourceJobId is Guid sourceId)
             _jobs.AssociateSource(job.Id, sourceId);
 
-        _jobQueue.Enqueue(job, settings, _workflowLifetime?.QueueRoot(job));
+        _jobQueue.Enqueue(job, settings, _workflowLifetime?.QueueRoot(job), settingsAreFinal);
     }
 
     /// <summary>Resumes an existing job without re-parenting it or replacing its prepared context.</summary>
@@ -442,7 +454,11 @@ public class DownloadEngine : IDisposable, IAsyncDisposable
                 {
                     Queue.Add(rootJob);
 
-                    foreach (var (id, ctx) in JobPreparer.PrepareSubtree(rootJob, settings!, _jobSettingsResolver))
+                    foreach (var (id, ctx) in JobPreparer.PrepareSubtree(
+                        rootJob,
+                        settings!,
+                        _jobSettingsResolver,
+                        rootSettingsAreFinal: queuedJob.SettingsAreFinal))
                         _contexts.Set(id, rootJob.WorkflowId, ctx);
 
                     _executionContext.ObservePreparedAutoProfiles(rootJob);
